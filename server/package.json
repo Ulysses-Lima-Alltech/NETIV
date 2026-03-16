@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsx watch index.ts",
     "start": "node dist/index.js",
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-migrations.cjs",
     "migrate": "tsx db/migrate.ts"
   },
   "dependencies": {
