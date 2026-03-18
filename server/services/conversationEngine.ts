@@ -18,7 +18,7 @@ import {
   type FileCategory,
 } from '../repositories/enterpriseRepository.js';
 import { generateChatCompletion, type ChatMessage } from './openaiService.js';
-import { buildAnaSystemPrompt, parseAnaJson, fallbackReplyFromRaw } from './anaAgentService.js';
+import { buildAnaSystemPrompt, type BuildAnaSystemPromptOpts, parseAnaJson, fallbackReplyFromRaw } from './anaAgentService.js';
 
 export interface IncomingMessageContext {
   conversationId: number;
@@ -27,38 +27,6 @@ export interface IncomingMessageContext {
 }
 
 const MAX_HISTORY = 14;
-
-/** Indica se a mensagem expressa intenção explícita de trocar de empreendimento (não mera menção). */
-function hasExplicitSwitchIntent(message: string): boolean {
-  const norm = (s: string) =>
-    s
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/\p{M}/gu, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-  const lower = norm(message);
-  const patterns = [
-    'agora quero',
-    'quero saber do',
-    'quero saber sobre',
-    'quero informacoes do',
-    'quero informacoes sobre',
-    'troca para',
-    'trocar para',
-    'muda para',
-    'mudar para',
-    'nao quero mais',
-    'nao gostei desse',
-    'prefiro o',
-    'me fala do',
-    'me fala sobre',
-    'fala do',
-    'fala sobre',
-    'quero o ', // espaço evita "quero o" solto; "quero o montaresa" = troca
-  ];
-  return patterns.some((p) => lower.includes(p));
-}
 
 function rowsToHistory(
   rows: { role: string; content: string | null }[],
@@ -79,34 +47,34 @@ function rowsToHistory(
   return list.filter((m) => m.content.length > 0).slice(-MAX_HISTORY);
 }
 
-/** Frases que indicam intenção explícita de trocar de empreendimento (não mera menção). */
 const SWITCH_INTENT_PATTERNS = [
-  'agora quero',
-  'quero saber do',
-  'quero saber sobre',
-  'quero informacoes do',
-  'quero informacoes sobre',
-  'troca para',
-  'trocar para',
-  'muda para',
-  'mudar para',
-  'nao quero mais',
-  'nao gostei desse',
-  'prefiro o',
-  'me fala do',
-  'me fala sobre',
-  'fala do',
-  'fala sobre',
+  'agora quero', 'quero saber do', 'quero saber sobre', 'quero informacoes do', 'quero informacoes sobre',
+  'troca para', 'trocar para', 'muda para', 'mudar para',
+  'nao quero mais', 'nao gostei desse', 'prefiro o',
+  'me fala do', 'me fala sobre', 'fala do', 'fala sobre', 'quero o ',
 ];
 
+const HANDOFF_INTENT_PATTERNS = [
+  'quero falar com um humano', 'quero falar com humano', 'falar com um humano',
+  'quero um atendente', 'quero atendente', 'preciso de atendente',
+  'prefiro falar com uma pessoa', 'prefiro falar com pessoa', 'falar com pessoa',
+  'me passa para alguem', 'passa para alguem', 'me passa um atendente',
+  'quero atendimento humano', 'atendimento humano',
+  'transferir para humano', 'transfere para humano',
+  'quero ser atendido por pessoa', 'atendido por pessoa',
+  'preciso falar com humano', 'preciso de um humano',
+];
+
+function normText(s: string): string {
+  return s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim();
+}
+
 function hasExplicitSwitchIntent(message: string): boolean {
-  const norm = message
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return SWITCH_INTENT_PATTERNS.some((p) => norm.includes(p));
+  return SWITCH_INTENT_PATTERNS.some((p) => normText(message).includes(p));
+}
+
+function hasExplicitHandoffIntent(message: string): boolean {
+  return HANDOFF_INTENT_PATTERNS.some((p) => normText(message).includes(p));
 }
 
 export async function handleIncomingMessage(ctx: IncomingMessageContext): Promise<void> {
@@ -123,9 +91,31 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   let conv = await getConversationById(conversationId);
   if (!conv) return;
 
+  if (conv.handoff || conv.classification === 'Handoff') {
+    return;
+  }
+
+  if (hasExplicitHandoffIntent(trimmed)) {
+    await applyAnaConversationUpdate(conversationId, {
+      classification: 'Handoff',
+      lead_temperature: conv.lead_temperature,
+      handoff: true,
+    });
+    const confirmMsg = 'Entendido! Um atendente vai entrar em contato em breve. Enquanto isso, sua mensagem já foi registrada.';
+    const sendResult = await sendTextMessage(toPhoneNumber, confirmMsg);
+    if (sendResult.success && sendResult.metaMessageId) {
+      await insertMessage(conversationId, 'assistant', confirmMsg, sendResult.metaMessageId);
+    }
+    return;
+  }
+
   const matched = await tryMatchActiveEnterpriseId(trimmed);
   if (matched) {
-    if (!conv.enterprise_id || conv.enterprise_id !== matched) {
+    const hasCurrentFocus = conv.enterprise_id != null;
+    const isDifferentEnterprise = conv.enterprise_id !== matched;
+    const shouldReclassify =
+      !hasCurrentFocus || (isDifferentEnterprise && hasExplicitSwitchIntent(trimmed));
+    if (shouldReclassify) {
       await setConversationEnterpriseId(conversationId, matched);
       conv = (await getConversationById(conversationId))!;
     }
@@ -151,14 +141,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
   const allEnterpriseNames =
     mode === 'scoped' ? (await listEnterprises(true)).map((e) => e.name) : [];
-  const systemPrompt = buildAnaSystemPrompt({
+  const promptOpts: BuildAnaSystemPromptOpts = {
     mode,
     enterprise: ent,
     variablesMap: vars,
     knowledgeText,
     fileInventory,
     allEnterpriseNames,
-  });
+  };
+  const systemPrompt = buildAnaSystemPrompt(promptOpts);
 
   const rows = await getMessagesByConversationId(conversationId);
   const history = rowsToHistory(rows, trimmed);

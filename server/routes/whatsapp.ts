@@ -78,6 +78,7 @@ router.get('/conversations', async (req, res) => {
         enterpriseId: r.enterprise_id ?? null,
         enterpriseName: r.enterprise_name ?? null,
         classificationStatus: r.classification ?? 'Novo',
+        handoff: r.handoff ?? false,
         leadStage: tempToStage(r.lead_temperature),
         createdAt: r.created_at.toISOString(),
         updatedAt: r.updated_at.toISOString(),

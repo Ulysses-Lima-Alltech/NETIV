@@ -59,15 +59,31 @@ export function InboxPage() {
     ? conversations.find((c) => c.id === selectedId) ?? null
     : null;
 
-  const loadConversations = useCallback(() => {
-    setConversationsLoading(true);
+  const loadConversations = useCallback((silent?: boolean) => {
+    if (!silent) setConversationsLoading(true);
     whatsappApi
       .getConversations()
       .then((data) => {
         setConversations(data.conversations.map(mapApiConversationToConversation));
       })
       .catch(() => setConversations([]))
-      .finally(() => setConversationsLoading(false));
+      .finally(() => { if (!silent) setConversationsLoading(false); });
+  }, []);
+
+  const loadMessages = useCallback((convId: string, silent?: boolean) => {
+    const id = parseInt(convId, 10);
+    if (Number.isNaN(id)) return;
+    if (!silent) setMessagesLoading(true);
+    if (!silent) setMessagesError(null);
+    whatsappApi
+      .getConversationMessages(id)
+      .then((data) => {
+        setMessages(
+          data.messages.map((m) => mapApiMessageToMessage(m, convId)).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+        );
+      })
+      .catch(() => { if (!silent) setMessagesError('Falha ao carregar'); })
+      .finally(() => { if (!silent) setMessagesLoading(false); });
   }, []);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
@@ -83,24 +99,17 @@ export function InboxPage() {
 
   useEffect(() => {
     if (!selectedId) { setMessages([]); setMessagesError(null); return; }
-    const id = parseInt(selectedId, 10);
-    if (Number.isNaN(id)) return;
-    let cancelled = false;
-    setMessagesLoading(true);
-    setMessagesError(null);
-    whatsappApi
-      .getConversationMessages(id)
-      .then((data) => {
-        if (!cancelled) {
-          setMessages(
-            data.messages.map((m) => mapApiMessageToMessage(m, selectedId)).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-          );
-        }
-      })
-      .catch(() => { if (!cancelled) setMessagesError('Falha ao carregar'); })
-      .finally(() => { if (!cancelled) setMessagesLoading(false); });
-    return () => { cancelled = true; };
-  }, [selectedId]);
+    loadMessages(selectedId);
+  }, [selectedId, loadMessages]);
+
+  const POLL_INTERVAL_MS = 5000;
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadConversations(true);
+      if (selectedId) loadMessages(selectedId, true);
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [loadConversations, loadMessages, selectedId]);
 
   const handleSendMessage = useCallback(
     async (text: string) => {

@@ -59,7 +59,7 @@ export async function listConversationsWithPreview(
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
      WHERE c.channel = $1
-     ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC
+     ORDER BY COALESCE(c.handoff, false) DESC, c.last_message_at DESC NULLS LAST, c.updated_at DESC
      LIMIT $2`,
     [channel, limit]
   );
@@ -81,9 +81,10 @@ export async function updateClassification(
   if (u.classification !== undefined && u.classification !== null && u.classification !== '') {
     classification = u.classification;
   }
+  const handoff = classification === 'Handoff';
   const { rows } = await query<ConversationRow>(
-    `UPDATE conversations SET enterprise_id = $1, classification = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
-    [enterprise_id, classification, conversationId]
+    `UPDATE conversations SET enterprise_id = $1, classification = $2, handoff = $3, updated_at = NOW() WHERE id = $4 RETURNING *`,
+    [enterprise_id, classification, handoff, conversationId]
   );
   return rows[0] ?? null;
 }

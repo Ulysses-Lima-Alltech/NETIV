@@ -25,7 +25,11 @@ JSON obrigatório (sem markdown):
   "summary": "",
   "send_file_category": null | "book" | "unidades" | "tabela_comercial" | "outro"
 }
-Use send_file_category APENAS quando o cliente pedir explicitamente um arquivo (ex.: book, tabela, unidades) E essa categoria aparecer na lista de arquivos disponíveis abaixo. Caso contrário null. Nunca peça categoria que não exista na lista.`;
+ENVIO DE ARQUIVOS:
+- Quando o cliente pedir book, material, catálogo, PDF, tabela, unidades, plantas ou similar E essa categoria existir na lista abaixo, SEMPRE preencha send_file_category com a categoria exata. O sistema enviará o arquivo automaticamente pelo WhatsApp.
+- Mapeamento: book = material, catálogo, PDF do empreendimento; tabela_comercial = preços, condições; unidades = plantas, quartos.
+- Se o arquivo NÃO existir na lista, deixe send_file_category null e NUNCA diga que vai enviar — seja transparente (ex: "no momento não tenho esse material").
+- Caso contrário null. Nunca use categoria que não exista na lista.`;
 
 const COMPORTAMENTO = `
 IDENTIDADE:
@@ -74,7 +78,7 @@ FORMATO:
 - Evitar blocos grandes de texto. Prefira curto/médio, 1 pergunta por mensagem.
 - Pode usar emojis de forma leve e natural (sem exagero).
 
-HANDOFF (passe para humano): preço exato, negociação, disponibilidade real, urgência, irritação, sensível. Nunca prometa prazo.
+HANDOFF (passe para humano): SEMPRE handoff: true quando o cliente pedir atendimento humano (ex.: quero falar com humano, quero atendente, prefiro pessoa, me passa para alguém, atendimento humano). Resposta breve confirmando a transferência. Também handoff para: preço exato, negociação, disponibilidade real, urgência, irritação, sensível. Nunca prometa prazo.
 Prioridade: variáveis → texto dos arquivos (extracted) → histórico.
 ${JSON_INSTRUCTION}`;
 
@@ -98,13 +102,16 @@ const CLASS_OK = new Set(['Novo', 'Qualificando', 'Interessado', 'Handoff']);
 const TEMP_OK = new Set(['frio', 'morno', 'quente']);
 const CAT_SET = new Set<string>(FILE_CATEGORIES);
 
-export function buildAnaSystemPrompt(opts: {
+export interface BuildAnaSystemPromptOpts {
   mode: 'triage' | 'scoped' | 'inactive_linked';
   enterprise: EnterpriseRow | null;
   variablesMap: Record<string, string>;
   knowledgeText: string;
   fileInventory: string;
-}): string {
+  allEnterpriseNames?: string[];
+}
+
+export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
   const base = COMPORTAMENTO;
 
   if (opts.mode === 'triage') {
@@ -126,17 +133,25 @@ Empreendimento inativo. Sem listar outros. send_file_category null.`;
   const addonsBlock = addons.length ? `\nExtras:\n${addons.map((a) => `- ${a}`).join('\n')}` : '';
   const know = opts.knowledgeText.trim() ? `\n--- Texto extraído dos arquivos ---\n${opts.knowledgeText.slice(0, 45_000)}` : '';
   const inv = opts.fileInventory.trim() || '(nenhum arquivo cadastrado — send_file_category sempre null)';
+  const namesList = (opts.allEnterpriseNames?.length ?? 0) > 0 ? opts.allEnterpriseNames!.join(', ') : '(nenhum outro cadastrado)';
 
   return `${base}
 
 ${LANGUAGE_HINT[e.language_style] || LANGUAGE_HINT.natural}
 
-OBRIGATÓRIO: Você só pode falar sobre o empreendimento atual: "${e.name}".
-É proibido mencionar, comparar ou sugerir outros empreendimentos ou revelar portfólio.
+Foco atual: "${e.name}". Mantenha o foco neste empreendimento em conversas normais.
+
+Troca de empreendimento:
+- NÃO apresente outros empreendimentos por conta própria. Não misture empreendimentos sem autorização explícita do cliente.
+- PODE abrir outras opções quando o cliente pedir explicitamente: "não gostei", "tem outro?", "quero ver outros", "quero comparar", "quero conhecer outras opções".
+- PODE aceitar a troca quando o cliente indicar outro empreendimento específico (ex: "agora quero o Montaresa"). Preencha "project" com o nome exato e o sistema reclassificará.
+- Empreendimentos disponíveis: ${namesList}
 
 Arquivos DESTE empreendimento que você pode enviar pelo WhatsApp (por categoria):
 ${inv}
 Somente estes; é proibido referir arquivos de outro empreendimento.
+
+Mapeamento: book = material, catálogo, PDF do empreendimento | unidades = plantas, quartos | tabela_comercial = preços, condições comerciais.
 
 Variáveis:
 ${formatVars(opts.variablesMap)}
