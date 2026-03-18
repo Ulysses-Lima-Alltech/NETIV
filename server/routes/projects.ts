@@ -1,5 +1,5 @@
-import { Router } from 'express';
-import multer from 'multer';
+import { Router, Request, Response, NextFunction } from 'express';
+import multer, { MulterError } from 'multer';
 import { randomBytes } from 'crypto';
 import { mkdirSync } from 'fs';
 import { join } from 'path';
@@ -47,7 +47,7 @@ const upload = multer({
     }
     cb(null, true);
   },
-  limits: { fileSize: 20 * 1024 * 1024 },
+  limits: { fileSize: 100 * 1024 * 1024 },
 });
 
 router.get('/', async (req, res) => {
@@ -171,7 +171,15 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-router.post('/:id/knowledge', upload.single('file'), async (req, res) => {
+function handleMulterError(err: unknown, _req: Request, res: Response, next: NextFunction): void {
+  if (err instanceof MulterError && err.code === 'LIMIT_FILE_SIZE') {
+    res.status(400).json({ error: 'Arquivo muito grande. Limite: 100 MB.' });
+    return;
+  }
+  next(err);
+}
+
+router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (req, res) => {
   try {
     const id = parseInt(String(req.params.id), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });

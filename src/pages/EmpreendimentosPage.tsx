@@ -375,7 +375,7 @@ export function EmpreendimentosPage() {
                     </span>
                     <input type="file" accept=".pdf,.txt,.md" onChange={onUpload} disabled={uploading} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                   </label>
-                  <span className="text-[11px] text-[#9CA3AF]">PDF, TXT ou MD (até 20 MB)</span>
+                  <span className="text-[11px] text-[#9CA3AF]">PDF, TXT ou MD (até 100 MB)</span>
                 </div>
 
                 {/* File list */}
