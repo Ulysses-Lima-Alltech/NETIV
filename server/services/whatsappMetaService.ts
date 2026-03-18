@@ -24,8 +24,12 @@ export async function sendTextMessage(to: string, text: string): Promise<SendTex
   const config = await getCfg();
   if (!config) {
     const c = await getWhatsAppConfig();
-    if (!c) return { success: false, error: 'Integração WhatsApp não configurada.' };
-    return { success: false, error: 'Token ou Phone Number ID ausente.' };
+    const detail = !c
+      ? 'Nenhuma config no banco'
+      : `token=${c.metaAccessToken ? 'sim' : 'NÃO'}, phoneId=${c.whatsappPhoneNumberId ? 'sim' : 'NÃO'}`;
+    console.error('[WhatsAppMeta] sendTextMessage: config inválida —', detail);
+    if (!c) return { success: false, error: 'Integração WhatsApp não configurada no banco.' };
+    return { success: false, error: `Token ou Phone Number ID ausente (${detail}).` };
   }
   const normalizedTo = to.replace(/\D/g, '');
   if (!normalizedTo) return { success: false, error: 'Número inválido.' };

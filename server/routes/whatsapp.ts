@@ -39,11 +39,11 @@ router.post('/send', async (req, res) => {
       }
       return res.json({ success: true, metaMessageId: result.metaMessageId, conversationId });
     }
-    const status = result.code && result.code >= 400 ? result.code : 400;
-    res.status(status).json({ success: false, error: result.error });
+    console.error('[WhatsApp] POST /send falhou:', { error: result.error, code: result.code });
+    res.status(result.code && result.code >= 400 ? result.code : 502).json({ success: false, error: result.error || 'Falha ao enviar via Meta.' });
   } catch (e) {
     console.error('[WhatsApp] POST /send:', e);
-    res.status(500).json({ success: false, error: 'Erro interno.' });
+    res.status(500).json({ success: false, error: 'Erro interno ao enviar.' });
   }
 });
 
@@ -128,7 +128,7 @@ router.post('/conversations/:id/send', async (req, res) => {
     const conv = await getConversationById(id);
     if (!conv) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
     const to = (conv.contact_phone || conv.external_contact_id || '').replace(/\D/g, '');
-    if (!to) return res.status(400).json({ success: false, error: 'Sem número.' });
+    if (!to) return res.status(400).json({ success: false, error: 'Sem número de telefone na conversa.' });
     const result = await sendTextMessage(to, message);
     if (result.success && result.metaMessageId) {
       await insertMessage(id, 'assistant', message, result.metaMessageId);
@@ -136,11 +136,11 @@ router.post('/conversations/:id/send', async (req, res) => {
     if (result.success) {
       return res.json({ success: true, metaMessageId: result.metaMessageId });
     }
-    const status = result.code && result.code >= 400 ? result.code : 400;
-    res.status(status).json({ success: false, error: result.error });
+    console.error('[WhatsApp] POST /conversations/:id/send falhou:', { convId: id, to: to.slice(-4), error: result.error, code: result.code });
+    res.status(result.code && result.code >= 400 ? result.code : 502).json({ success: false, error: result.error || 'Falha ao enviar via Meta.' });
   } catch (e) {
     console.error('[WhatsApp] POST send:', e);
-    res.status(500).json({ success: false, error: 'Erro ao enviar.' });
+    res.status(500).json({ success: false, error: 'Erro interno ao enviar.' });
   }
 });
 
