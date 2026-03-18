@@ -14,6 +14,7 @@ import {
   getFileForSend,
   getVariablesMap,
   logSentFile,
+  listEnterprises,
   type FileCategory,
 } from '../repositories/enterpriseRepository.js';
 import { generateChatCompletion, type ChatMessage } from './openaiService.js';
@@ -26,6 +27,38 @@ export interface IncomingMessageContext {
 }
 
 const MAX_HISTORY = 14;
+
+/** Indica se a mensagem expressa intenção explícita de trocar de empreendimento (não mera menção). */
+function hasExplicitSwitchIntent(message: string): boolean {
+  const norm = (s: string) =>
+    s
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/\p{M}/gu, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const lower = norm(message);
+  const patterns = [
+    'agora quero',
+    'quero saber do',
+    'quero saber sobre',
+    'quero informacoes do',
+    'quero informacoes sobre',
+    'troca para',
+    'trocar para',
+    'muda para',
+    'mudar para',
+    'nao quero mais',
+    'nao gostei desse',
+    'prefiro o',
+    'me fala do',
+    'me fala sobre',
+    'fala do',
+    'fala sobre',
+    'quero o ', // espaço evita "quero o" solto; "quero o montaresa" = troca
+  ];
+  return patterns.some((p) => lower.includes(p));
+}
 
 function rowsToHistory(
   rows: { role: string; content: string | null }[],
@@ -46,6 +79,36 @@ function rowsToHistory(
   return list.filter((m) => m.content.length > 0).slice(-MAX_HISTORY);
 }
 
+/** Frases que indicam intenção explícita de trocar de empreendimento (não mera menção). */
+const SWITCH_INTENT_PATTERNS = [
+  'agora quero',
+  'quero saber do',
+  'quero saber sobre',
+  'quero informacoes do',
+  'quero informacoes sobre',
+  'troca para',
+  'trocar para',
+  'muda para',
+  'mudar para',
+  'nao quero mais',
+  'nao gostei desse',
+  'prefiro o',
+  'me fala do',
+  'me fala sobre',
+  'fala do',
+  'fala sobre',
+];
+
+function hasExplicitSwitchIntent(message: string): boolean {
+  const norm = message
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return SWITCH_INTENT_PATTERNS.some((p) => norm.includes(p));
+}
+
 export async function handleIncomingMessage(ctx: IncomingMessageContext): Promise<void> {
   const { conversationId, userMessage, toPhoneNumber } = ctx;
   const trimmed = userMessage.trim();
@@ -60,9 +123,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   let conv = await getConversationById(conversationId);
   if (!conv) return;
 
-  if (!conv.enterprise_id) {
-    const matched = await tryMatchActiveEnterpriseId(trimmed);
-    if (matched) {
+  const matched = await tryMatchActiveEnterpriseId(trimmed);
+  if (matched) {
+    if (!conv.enterprise_id || conv.enterprise_id !== matched) {
       await setConversationEnterpriseId(conversationId, matched);
       conv = (await getConversationById(conversationId))!;
     }
@@ -86,12 +149,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       .join('; ');
   }
 
+  const allEnterpriseNames =
+    mode === 'scoped' ? (await listEnterprises(true)).map((e) => e.name) : [];
   const systemPrompt = buildAnaSystemPrompt({
     mode,
     enterprise: ent,
     variablesMap: vars,
     knowledgeText,
     fileInventory,
+    allEnterpriseNames,
   });
 
   const rows = await getMessagesByConversationId(conversationId);
@@ -157,7 +223,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         await logSentFile(conversationId, file.id);
         const mid = docRes.metaMessageId || `doc-${Date.now()}`;
         await insertMessage(conversationId, 'assistant', `[Arquivo: ${file.originalName}]`, mid);
+        console.log('[ConversationEngine] Arquivo enviado:', file.originalName, 'conv:', conversationId);
+      } else {
+        console.error('[ConversationEngine] Falha ao enviar documento:', docRes.error, 'conv:', conversationId, 'file:', file.originalName);
       }
+    } else {
+      console.warn('[ConversationEngine] Cliente pediu arquivo categoria', cat, 'mas nenhum arquivo encontrado para empreendimento', eid);
     }
   }
 }
