@@ -7,7 +7,7 @@ import {
   type WhatsAppConfigUpdate,
   type AIConfigPublic,
   type AIConfigUpdate,
-  type ProjectItem,
+  type ProjectListItem,
 } from '../api/client';
 
 const field =
@@ -58,7 +58,7 @@ export function SettingsWhatsAppPage() {
     openaiApiKeyInput: '', openaiBaseUrl: null, modelColdLead: 'gpt-4', modelHotLead: 'gpt-4o', temperature: 0.4, maxTokens: 500, leadScoreThreshold: 0.75, aiEnabled: false,
   });
   const [showOpenAIKey, setShowOpenAIKey] = useState(false);
-  const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectMessage, setProjectMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [newProjectName, setNewProjectName] = useState('');
@@ -218,7 +218,7 @@ export function SettingsWhatsAppPage() {
             <input type="text" value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)} placeholder="Nome do novo projeto" className={`flex-1 ${field}`} />
             <button type="button" onClick={() => {
               const name = newProjectName.trim(); if (!name) return; setProjectMessage(null);
-              projectsApi.create(name).then(() => { setNewProjectName(''); setProjectMessage({ type: 'success', text: 'Projeto criado.' }); return projectsApi.list(false); }).then((data) => setProjects(data.projects)).catch((err: Error) => setProjectMessage({ type: 'error', text: err.message ?? 'Erro ao criar.' }));
+              projectsApi.create({ name }).then(() => { setNewProjectName(''); setProjectMessage({ type: 'success', text: 'Projeto criado.' }); return projectsApi.list(false); }).then((data) => setProjects(data.projects)).catch((err: Error) => setProjectMessage({ type: 'error', text: err.message ?? 'Erro ao criar.' }));
             }} disabled={!newProjectName.trim()} className={btnPrimary}>Adicionar</button>
           </div>
           {projectsLoading ? (
@@ -240,11 +240,11 @@ export function SettingsWhatsAppPage() {
                     </>
                   ) : (
                     <>
-                      <span className={`flex-1 text-[14px] font-medium ${!p.active ? 'text-[#9CA3AF]' : 'text-[#111827]'}`}>
-                        {p.name}{!p.active && <span className="ml-2 text-[10px] font-medium text-[#9CA3AF] bg-[#F3F4F6] rounded px-1.5 py-px">inativo</span>}
+                      <span className={`flex-1 text-[14px] font-medium ${p.status !== 'ativo' ? 'text-[#9CA3AF]' : 'text-[#111827]'}`}>
+                        {p.name}{p.status !== 'ativo' && <span className="ml-2 text-[10px] font-medium text-[#9CA3AF] bg-[#F3F4F6] rounded px-1.5 py-px">inativo</span>}
                       </span>
-                      {p.active && <button type="button" onClick={() => { setEditingProjectId(p.id); setEditingProjectName(p.name); setProjectMessage(null); }} className="text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8] transition-colors">Editar</button>}
-                      {p.active && <button type="button" onClick={() => {
+                      {p.status === 'ativo' && <button type="button" onClick={() => { setEditingProjectId(p.id); setEditingProjectName(p.name); setProjectMessage(null); }} className="text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8] transition-colors">Editar</button>}
+                      {p.status === 'ativo' && <button type="button" onClick={() => {
                         if (!window.confirm(`Inativar "${p.name}"? Conversas já classificadas manterão a referência.`)) return; setProjectMessage(null);
                         projectsApi.delete(p.id).then(() => { setProjectMessage({ type: 'success', text: 'Projeto inativado.' }); return projectsApi.list(false); }).then((data) => setProjects(data.projects)).catch((err: Error) => setProjectMessage({ type: 'error', text: err.message ?? 'Erro ao inativar.' }));
                       }} className="text-[13px] font-medium text-red-500 hover:text-red-700 transition-colors">Inativar</button>}
