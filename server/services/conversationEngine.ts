@@ -53,7 +53,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   if (!trimmed) return;
 
   const aiConfig = await getOpenAIConfig();
-  if (!aiConfig?.aiEnabled || !aiConfig.openaiApiKey?.trim()) return;
+  if (!aiConfig?.openaiApiKey?.trim()) {
+    console.warn('[ConversationEngine] OpenAI API Key não configurada — ignorando mensagem.');
+    return;
+  }
 
   let conv = await getConversationById(conversationId);
   if (!conv) return;

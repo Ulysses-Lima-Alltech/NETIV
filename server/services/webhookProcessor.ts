@@ -3,7 +3,6 @@ import { logWebhookEvent } from '../repositories/webhookEventRepository.js';
 import { findOrCreateConversation } from '../repositories/conversationRepository.js';
 import { insertMessage, findMessageByMetaId } from '../repositories/messageRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
-import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { handleIncomingMessage } from './conversationEngine.js';
 
 export async function verifyWebhook(mode: string, token: string, challenge: string): Promise<string | null> {
@@ -50,13 +49,14 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           await insertMessage(conv.id, 'user', bodyText, msg.id);
         }
         if (bodyText) {
-          const aiConfig = await getOpenAIConfig();
-          if (aiConfig?.aiEnabled && aiConfig.openaiApiKey?.trim()) {
+          try {
             await handleIncomingMessage({
               conversationId: conv.id,
               userMessage: bodyText,
               toPhoneNumber: String(msg.from),
             });
+          } catch (e) {
+            console.error('[WebhookProcessor] Erro ao processar com IA:', e instanceof Error ? e.message : e);
           }
         }
       }

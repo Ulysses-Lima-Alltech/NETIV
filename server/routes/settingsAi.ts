@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getOpenAIConfigPublic, updateOpenAIConfig } from '../repositories/openaiConfigRepository.js';
+import { getOpenAIConfig, getOpenAIConfigPublic, updateOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { openAISettingUpdateSchema } from '../validators/ai.js';
 
 const router = Router();
@@ -31,6 +31,53 @@ router.put('/ai', async (req, res) => {
   } catch (e) {
     console.error('[Settings] PUT ai:', e);
     res.status(500).json({ error: 'Erro ao salvar configuração de IA.' });
+  }
+});
+
+router.post('/ai/test', async (_req, res) => {
+  try {
+    const cfg = await getOpenAIConfig();
+    if (!cfg?.openaiApiKey?.trim()) {
+      return res.status(400).json({ success: false, error: 'API Key não configurada.' });
+    }
+
+    const baseUrl = (cfg.openaiBaseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
+    const model = cfg.modelColdLead || cfg.modelHotLead || 'gpt-4o-mini';
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    const apiRes = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${cfg.openaiApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: 'Responda apenas: OK' }],
+        max_tokens: 5,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+    const data = (await apiRes.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      error?: { message?: string; code?: string };
+    };
+
+    if (!apiRes.ok) {
+      const errMsg = data.error?.message ?? `HTTP ${apiRes.status}`;
+      return res.status(400).json({ success: false, error: errMsg, model, baseUrl });
+    }
+
+    const reply = data.choices?.[0]?.message?.content?.trim() ?? '';
+    res.json({ success: true, model, baseUrl, reply });
+  } catch (e) {
+    console.error('[Settings] POST ai/test:', e);
+    const msg = e instanceof Error ? e.message : 'Erro ao testar.';
+    res.status(500).json({ success: false, error: msg });
   }
 });
 

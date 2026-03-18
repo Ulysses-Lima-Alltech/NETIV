@@ -122,22 +122,19 @@ async function processOneMessage(
   }
 
   const aiConfig = await getOpenAIConfig();
-  if (aiConfig?.aiEnabled && aiConfig.openaiApiKey?.trim()) {
+  if (!aiConfig?.openaiApiKey?.trim()) {
+    console.error('[Webhook Meta] OpenAI API Key não configurada — mensagem não processada.', { conversationId: conv.id });
+    return;
+  }
+
+  try {
     await handleIncomingMessage({
       conversationId: conv.id,
       userMessage: textBody,
       toPhoneNumber: from,
     });
-    return;
-  }
-
-  try {
-    await sendReply(
-      from,
-      'Olá! No momento o assistente automático está desligado. Em breve um consultor da Quero Meu Apê retorna o contato.'
-    );
   } catch (e) {
-    console.error('[Webhook Meta] send:', e);
+    console.error('[Webhook Meta] Erro ao processar com IA:', e instanceof Error ? e.message : e);
   }
 }
 
