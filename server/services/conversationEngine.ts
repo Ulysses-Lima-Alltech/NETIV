@@ -6,7 +6,6 @@ import {
   applyAnaConversationUpdate,
 } from '../repositories/conversationRepository.js';
 import { sendTextMessage, sendDocumentMessage } from './whatsappMetaService.js';
-import { hasWhatsAppEnv, sendTextMessage as sendTextMessageEnv } from './whatsappService.js';
 import { tryMatchActiveEnterpriseId } from '../repositories/enterpriseMatch.js';
 import {
   getActiveEnterpriseById,
@@ -144,15 +143,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   const sendResult = await sendTextMessage(toPhoneNumber, replyText);
   if (sendResult.success && sendResult.metaMessageId) {
     await insertMessage(conversationId, 'assistant', replyText, sendResult.metaMessageId);
-  } else if (hasWhatsAppEnv()) {
-    try {
-      await sendTextMessageEnv(toPhoneNumber, replyText);
-      await insertMessage(conversationId, 'assistant', replyText, `env-${Date.now()}`);
-    } catch (e) {
-      console.error('[ConversationEngine]', e);
-    }
   } else {
-    console.error('[ConversationEngine] WhatsApp:', sendResult.error);
+    console.error('[ConversationEngine] Falha ao enviar WhatsApp:', sendResult.error);
   }
 
   const cat = structured.send_file_category;

@@ -9,7 +9,7 @@ const REQUEST_TIMEOUT_MS = 120000;
 
 async function getCfg(): Promise<WhatsAppIntegrationConfig | null> {
   const c = await getWhatsAppConfig();
-  if (!c || !c.enabled || !c.metaAccessToken?.trim() || !c.whatsappPhoneNumberId?.trim()) return null;
+  if (!c || !c.metaAccessToken?.trim() || !c.whatsappPhoneNumberId?.trim()) return null;
   return c;
 }
 
@@ -25,7 +25,6 @@ export async function sendTextMessage(to: string, text: string): Promise<SendTex
   if (!config) {
     const c = await getWhatsAppConfig();
     if (!c) return { success: false, error: 'Integração WhatsApp não configurada.' };
-    if (!c.enabled) return { success: false, error: 'Integração desabilitada.' };
     return { success: false, error: 'Token ou Phone Number ID ausente.' };
   }
   const normalizedTo = to.replace(/\D/g, '');

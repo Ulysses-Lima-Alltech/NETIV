@@ -1,31 +1,25 @@
 import { Router, type Request, type Response } from 'express';
-import { config } from '../config.js';
-import { sendTextMessage, hasWhatsAppEnv } from '../services/whatsappService.js';
-import { sendTextMessage as sendTextMeta } from '../services/whatsappMetaService.js';
+import { sendTextMessage } from '../services/whatsappMetaService.js';
 import { findOrCreateConversation } from '../repositories/conversationRepository.js';
 import { insertMessage, findMessageByMetaId } from '../repositories/messageRepository.js';
 import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { handleIncomingMessage } from '../services/conversationEngine.js';
+import { config } from '../config.js';
 
 const router = Router();
 
 const NON_TEXT_MESSAGE = 'No momento só consigo responder a mensagens de texto.';
 
 async function canSendWhatsApp(): Promise<boolean> {
-  if (hasWhatsAppEnv()) return true;
   const c = await getWhatsAppConfig();
-  return !!(c?.enabled && c?.metaAccessToken?.trim() && c?.whatsappPhoneNumberId?.trim());
+  return !!(c?.metaAccessToken?.trim() && c?.whatsappPhoneNumberId?.trim());
 }
 
 async function sendReply(to: string, text: string): Promise<void> {
-  const r = await sendTextMeta(to, text);
+  const r = await sendTextMessage(to, text);
   if (r.success) return;
-  if (hasWhatsAppEnv()) {
-    await sendTextMessage(to, text);
-    return;
-  }
-  throw new Error(r.error || 'Sem canal de envio WhatsApp.');
+  throw new Error(r.error || 'Falha ao enviar WhatsApp.');
 }
 
 async function getVerifyToken(): Promise<string> {
