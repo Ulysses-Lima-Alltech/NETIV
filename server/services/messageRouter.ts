@@ -12,16 +12,12 @@ export interface RouteMessageResult {
   error?: string;
 }
 
-/**
- * Gera resposta com IA. Se leadStage for informado, usa-o para escolher o modelo
- * (COLD/WARM → model_cold_lead, HOT → model_hot_lead). Caso contrário usa leadScore vs threshold.
- */
 export async function routeAndGenerate(
   messages: ChatMessage[],
   userMessage: string,
   leadStage?: LeadStage
 ): Promise<RouteMessageResult> {
-  const config = getOpenAIConfig();
+  const config = await getOpenAIConfig();
   if (!config?.openaiApiKey?.trim()) {
     return { success: false, error: 'OpenAI API Key não configurada.' };
   }

@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "315c2d3b-2207-4d15-a3a6-b645d443853b"
+      }
+    },
+    "android": {
+      "package": "com.ulysseslima.inboxapp"
+    }
+  }
+}

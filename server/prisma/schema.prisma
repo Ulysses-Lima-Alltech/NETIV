@@ -1,0 +1,122 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model IntegrationSetting {
+  id                      Int      @id @default(1)
+  openai_api_key          String   @default("")
+  openai_base_url         String?
+  model_cold_lead         String   @default("gpt-4o-mini")
+  model_hot_lead         String   @default("gpt-4o")
+  temperature             Float    @default(0.5)
+  max_tokens              Int      @default(700)
+  lead_score_threshold    Float    @default(0.75)
+  ai_enabled              Boolean  @default(false)
+  meta_access_token       String   @default("")
+  whatsapp_phone_number_id String  @default("")
+  whatsapp_business_account_id String @default("")
+  api_version             String   @default("v21.0")
+  webhook_verify_token    String   @default("")
+  default_send_phone_number String?
+  default_country_code   String?
+  whatsapp_enabled        Boolean  @default(false)
+  updated_at              DateTime @updatedAt
+}
+
+model Enterprise {
+  id            Int       @id @default(autoincrement())
+  name          String    @unique
+  slug          String    @unique
+  status        String    @default("ativo")
+  language_style String   @default("natural")
+  prompt_addons String   @default("[]")
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  variables     EnterpriseVariable[]
+  files         EnterpriseFile[]
+  conversations Conversation[]
+}
+
+model EnterpriseVariable {
+  id           Int        @id @default(autoincrement())
+  enterprise_id Int
+  var_key      String
+  value        String     @default("")
+  updated_at   DateTime   @updatedAt
+
+  enterprise   Enterprise @relation(fields: [enterprise_id], references: [id], onDelete: Cascade)
+  @@unique([enterprise_id, var_key])
+}
+
+model EnterpriseFile {
+  id            Int       @id @default(autoincrement())
+  enterprise_id Int
+  category      String
+  original_name String
+  storage_path  String
+  mime_type     String
+  size_bytes    BigInt    @default(0)
+  extracted_text String?
+  is_active     Boolean   @default(true)
+  created_at    DateTime  @default(now())
+
+  enterprise    Enterprise @relation(fields: [enterprise_id], references: [id], onDelete: Cascade)
+  sent_logs     SentFileLog[]
+}
+
+model Conversation {
+  id                  Int       @id @default(autoincrement())
+  channel             String    @default("whatsapp")
+  external_contact_id String
+  contact_phone       String?
+  customer_name       String?
+  enterprise_id       Int?
+  classification      String    @default("Novo")
+  lead_temperature    String    @default("frio")
+  handoff             Boolean   @default(false)
+  meta_phone_number_id String?
+  last_message_at     DateTime?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+
+  enterprise Enterprise? @relation(fields: [enterprise_id], references: [id], onDelete: SetNull)
+  messages   Message[]
+  sent_files SentFileLog[]
+
+  @@unique([channel, external_contact_id])
+}
+
+model Message {
+  id              Int       @id @default(autoincrement())
+  conversation_id Int
+  role            String
+  content         String?
+  meta_message_id String?   @unique
+  created_at      DateTime  @default(now())
+
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+}
+
+model SentFileLog {
+  id                 Int       @id @default(autoincrement())
+  conversation_id    Int
+  enterprise_file_id Int
+  created_at         DateTime  @default(now())
+
+  conversation   Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  enterprise_file EnterpriseFile @relation(fields: [enterprise_file_id], references: [id], onDelete: Cascade)
+}
+
+model WebhookEvent {
+  id              Int      @id @default(autoincrement())
+  meta_message_id String?
+  direction       String?
+  payload         String?
+  created_at      DateTime @default(now())
+}

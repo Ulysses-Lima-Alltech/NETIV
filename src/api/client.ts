@@ -1,4 +1,7 @@
-const API_BASE = '/api';
+const API_BASE =
+  import.meta.env.VITE_API_URL != null && String(import.meta.env.VITE_API_URL).trim() !== ''
+    ? `${String(import.meta.env.VITE_API_URL).replace(/\/$/, '')}/api`
+    : '/api';
 
 async function request<T>(
   path: string,
@@ -50,6 +53,8 @@ export interface ConversationListItem {
   lastMessagePreview: string | null;
   projectId: number | null;
   projectName: string | null;
+  enterpriseId?: number | null;
+  enterpriseName?: string | null;
   classificationStatus: string;
   leadStage: string | null;
   createdAt: string;
@@ -129,23 +134,72 @@ export const whatsappApi = {
     }),
 };
 
-export interface ProjectItem {
+export type FileCategory = 'book' | 'unidades' | 'tabela_comercial' | 'outro';
+
+export interface ProjectVariables {
+  priceLabel?: string;
+  commercialConditions?: string;
+  availability?: string;
+  observations?: string;
+  /** @deprecated compat */
+  notes?: string;
+}
+
+export interface KnowledgeFileItem {
   id: number;
+  category: FileCategory;
+  originalName: string;
+  mime: string;
+  size: number;
+  isActive?: boolean;
+  createdAt: string;
+}
+
+export interface EmpreendimentoDTO {
+  id: number;
+  slug: string;
   name: string;
-  active: boolean;
+  status: 'ativo' | 'inativo';
+  languageStyle: 'informal' | 'natural' | 'formal' | 'culta';
+  variables: ProjectVariables;
+  promptAddons: string[];
   createdAt: string;
   updatedAt: string;
+  knowledgeFiles?: KnowledgeFileItem[];
 }
+
+export type ProjectListItem = Omit<EmpreendimentoDTO, 'knowledgeFiles'>;
 
 export const projectsApi = {
   list: (activeOnly = true) =>
-    request<{ projects: ProjectItem[] }>(`/projects${activeOnly ? '?active=1' : ''}`),
-  create: (name: string) =>
-    request<ProjectItem>('/projects', { method: 'POST', body: { name: name.trim() } }),
-  update: (id: number, body: { name?: string; active?: boolean }) =>
-    request<ProjectItem>(`/projects/${id}`, { method: 'PATCH', body }),
-  delete: (id: number) =>
-    request<ProjectItem>(`/projects/${id}`, { method: 'DELETE' }),
+    request<{ projects: ProjectListItem[] }>(`/projects${activeOnly ? '?active=1' : ''}`),
+  get: (id: number) =>
+    request<EmpreendimentoDTO & { knowledgeFiles: KnowledgeFileItem[] }>(`/projects/${id}`),
+  create: (body: { name: string; slug?: string; languageStyle?: EmpreendimentoDTO['languageStyle'] }) =>
+    request<ProjectListItem>('/projects', { method: 'POST', body }),
+  update: (
+    id: number,
+    body: {
+      name?: string;
+      status?: 'ativo' | 'inativo';
+      slug?: string;
+      languageStyle?: EmpreendimentoDTO['languageStyle'];
+      variables?: ProjectVariables;
+      promptAddons?: string[];
+    }
+  ) => request<ProjectListItem>(`/projects/${id}`, { method: 'PATCH', body }),
+  delete: (id: number) => request<ProjectListItem>(`/projects/${id}`, { method: 'DELETE' }),
+  uploadKnowledge: async (projectId: number, file: File, category: FileCategory): Promise<KnowledgeFileItem> => {
+    const fd = new FormData();
+    fd.append('category', category);
+    fd.append('file', file);
+    const res = await fetch(`${API_BASE}/projects/${projectId}/knowledge`, { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error ?? `Erro ${res.status}`);
+    return data as KnowledgeFileItem;
+  },
+  deleteKnowledge: (projectId: number, fileId: number) =>
+    request<{ ok: boolean }>(`/projects/${projectId}/knowledge/${fileId}`, { method: 'DELETE' }),
 };
 
 export interface LeadAnalysisResponse {

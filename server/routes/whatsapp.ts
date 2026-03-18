@@ -1,13 +1,23 @@
 import { Router } from 'express';
 import { sendTextMessage } from '../services/whatsappMetaService.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
-import { findOrCreateConversation, listConversationsWithPreview, getConversationById, updateClassification } from '../repositories/conversationRepository.js';
-import { getProjectById } from '../repositories/projectRepository.js';
-import { insertMessage } from '../repositories/messageRepository.js';
-import { getMessagesByConversationId } from '../repositories/messageRepository.js';
+import {
+  findOrCreateConversation,
+  listConversationsWithPreview,
+  getConversationById,
+  updateClassification,
+} from '../repositories/conversationRepository.js';
+import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
+import { insertMessage, getMessagesByConversationId } from '../repositories/messageRepository.js';
 import { sendMessageSchema, updateClassificationSchema } from '../validators/whatsapp.js';
 
 const router = Router();
+
+function tempToStage(t: string | null): string {
+  if (t === 'quente') return 'HOT';
+  if (t === 'morno') return 'WARM';
+  return 'COLD';
+}
 
 router.post('/send', async (req, res) => {
   try {
@@ -20,17 +30,11 @@ router.post('/send', async (req, res) => {
     const result = await sendTextMessage(to, message);
 
     if (result.success) {
-      const config = getWhatsAppConfig();
+      const config = await getWhatsAppConfig();
       let conversationId: number | undefined;
       if (config && result.metaMessageId) {
-        const conv = findOrCreateConversation(
-          'whatsapp',
-          to,
-          to,
-          null,
-          config.whatsappPhoneNumberId
-        );
-        insertMessage(conv.id, 'outbound', result.metaMessageId, 'sent', message, null);
+        const conv = await findOrCreateConversation('whatsapp', to, to, null, config.whatsappPhoneNumberId);
+        await insertMessage(conv.id, 'assistant', message, result.metaMessageId ?? null);
         conversationId = conv.id;
       }
       return res.json({ success: true, metaMessageId: result.metaMessageId, conversationId });
@@ -39,18 +43,14 @@ router.post('/send', async (req, res) => {
     res.status(status).json({ success: false, error: result.error });
   } catch (e) {
     console.error('[WhatsApp] POST /send:', e);
-    res.status(500).json({ success: false, error: 'Erro interno ao enviar mensagem.' });
+    res.status(500).json({ success: false, error: 'Erro interno.' });
   }
 });
 
-router.get('/config/check', (req, res) => {
+router.get('/config/check', async (_req, res) => {
   try {
-    const config = getWhatsAppConfig();
-    const ok = !!(
-      config?.enabled &&
-      config.metaAccessToken &&
-      config.whatsappPhoneNumberId
-    );
+    const config = await getWhatsAppConfig();
+    const ok = !!(config?.enabled && config.metaAccessToken && config.whatsappPhoneNumberId);
     res.json({ configured: ok });
   } catch (e) {
     console.error('[WhatsApp] GET config/check:', e);
@@ -58,36 +58,38 @@ router.get('/config/check', (req, res) => {
   }
 });
 
-router.get('/conversations', (req, res) => {
+router.get('/conversations', async (req, res) => {
   try {
     const channel = (req.query.channel as string) || 'whatsapp';
     const limit = Math.min(parseInt(String(req.query.limit), 10) || 100, 500);
-    const rows = listConversationsWithPreview(channel, limit);
+    const rows = await listConversationsWithPreview(channel, limit);
     res.json({
       conversations: rows.map((r) => ({
         id: String(r.id),
         channel: r.channel,
-        externalContactId: r.external_id,
+        externalContactId: r.external_contact_id,
         contactPhone: r.contact_phone,
-        contactName: r.contact_name,
-        status: r.status,
-        lastMessageAt: r.last_message_at,
+        contactName: r.customer_name,
+        status: 'open',
+        lastMessageAt: r.last_message_at?.toISOString() ?? null,
         lastMessagePreview: r.last_message_preview ?? null,
-        projectId: r.project_id ?? null,
-        projectName: (r as { project_name?: string | null }).project_name ?? null,
-        classificationStatus: r.classification_status ?? 'Novo',
-        leadStage: r.lead_stage ?? null,
-        createdAt: r.created_at,
-        updatedAt: r.updated_at,
+        projectId: r.enterprise_id ?? null,
+        projectName: r.enterprise_name ?? null,
+        enterpriseId: r.enterprise_id ?? null,
+        enterpriseName: r.enterprise_name ?? null,
+        classificationStatus: r.classification ?? 'Novo',
+        leadStage: tempToStage(r.lead_temperature),
+        createdAt: r.created_at.toISOString(),
+        updatedAt: r.updated_at.toISOString(),
       })),
     });
   } catch (e) {
     console.error('[WhatsApp] GET conversations:', e);
-    res.status(500).json({ error: 'Erro ao listar conversas.' });
+    res.status(500).json({ error: 'Erro ao listar.' });
   }
 });
 
-router.patch('/conversations/:id/classification', (req, res) => {
+router.patch('/conversations/:id/classification', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
@@ -97,21 +99,23 @@ router.patch('/conversations/:id/classification', (req, res) => {
       return res.status(400).json({ error: msg });
     }
     const { project_id, classification_status } = parsed.data;
-    const conv = updateClassification(id, {
-      project_id: project_id ?? null,
-      classification_status,
+    const conv = await updateClassification(id, {
+      enterprise_id: project_id !== undefined ? project_id : undefined,
+      classification: classification_status,
     });
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
-    const projectName = conv.project_id ? (getProjectById(conv.project_id)?.name ?? null) : null;
+    const projectName = conv.enterprise_id ? (await getEnterpriseById(conv.enterprise_id))?.name ?? null : null;
     res.json({
       id: conv.id,
-      projectId: conv.project_id ?? null,
+      projectId: conv.enterprise_id ?? null,
       projectName,
-      classificationStatus: conv.classification_status ?? 'Novo',
+      enterpriseId: conv.enterprise_id ?? null,
+      enterpriseName: projectName,
+      classificationStatus: conv.classification ?? 'Novo',
     });
   } catch (e) {
-    console.error('[WhatsApp] PATCH conversations/:id/classification:', e);
-    res.status(500).json({ error: 'Erro ao atualizar classificação.' });
+    console.error('[WhatsApp] PATCH classification:', e);
+    res.status(500).json({ error: 'Erro ao atualizar.' });
   }
 });
 
@@ -119,16 +123,15 @@ router.post('/conversations/:id/send', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
-    const body = req.body as { message?: string };
-    const message = typeof body.message === 'string' ? body.message.trim() : '';
+    const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
     if (!message) return res.status(400).json({ success: false, error: 'Campo "message" é obrigatório.' });
-    const conv = getConversationById(id);
+    const conv = await getConversationById(id);
     if (!conv) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
-    const to = (conv.contact_phone || conv.external_id || '').replace(/\D/g, '');
-    if (!to) return res.status(400).json({ success: false, error: 'Conversa sem número de contato.' });
+    const to = (conv.contact_phone || conv.external_contact_id || '').replace(/\D/g, '');
+    if (!to) return res.status(400).json({ success: false, error: 'Sem número.' });
     const result = await sendTextMessage(to, message);
     if (result.success && result.metaMessageId) {
-      insertMessage(id, 'outbound', result.metaMessageId, 'sent', message, null);
+      await insertMessage(id, 'assistant', message, result.metaMessageId);
     }
     if (result.success) {
       return res.json({ success: true, metaMessageId: result.metaMessageId });
@@ -136,33 +139,33 @@ router.post('/conversations/:id/send', async (req, res) => {
     const status = result.code && result.code >= 400 ? result.code : 400;
     res.status(status).json({ success: false, error: result.error });
   } catch (e) {
-    console.error('[WhatsApp] POST conversations/:id/send:', e);
-    res.status(500).json({ success: false, error: 'Erro ao enviar mensagem.' });
+    console.error('[WhatsApp] POST send:', e);
+    res.status(500).json({ success: false, error: 'Erro ao enviar.' });
   }
 });
 
-router.get('/conversations/:id/messages', (req, res) => {
+router.get('/conversations/:id/messages', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
-    const conv = getConversationById(id);
+    const conv = await getConversationById(id);
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
-    const rows = getMessagesByConversationId(id);
+    const rows = await getMessagesByConversationId(id);
     res.json({
       conversationId: id,
       messages: rows.map((m) => ({
         id: String(m.id),
-        conversationId: m.conversation_id,
-        direction: m.direction,
-        type: m.type ?? 'text',
-        content: m.content ?? m.body_text,
-        status: m.status,
+        conversationId: id,
+        direction: m.role === 'user' ? 'inbound' : 'outbound',
+        type: 'text',
+        content: m.content,
+        status: 'sent',
         externalMessageId: m.meta_message_id,
-        createdAt: m.created_at,
+        createdAt: m.created_at.toISOString(),
       })),
     });
   } catch (e) {
-    console.error('[WhatsApp] GET conversations/:id/messages:', e);
+    console.error('[WhatsApp] GET messages:', e);
     res.status(500).json({ error: 'Erro ao listar mensagens.' });
   }
 });

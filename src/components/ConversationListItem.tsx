@@ -1,11 +1,6 @@
-import type { Conversation, Empreendimento } from '../types';
+import type { Conversation } from '../types';
 import { formatConversationTime, formatStatus } from '../utils/format';
 import { FlameIcon } from './FlameIcon';
-
-const empreendimentoStyles: Record<Empreendimento, string> = {
-  Montaresa: 'bg-violet-100 text-violet-800 border-violet-200',
-  Evora: 'bg-amber-100 text-amber-800 border-amber-200',
-};
 
 interface ConversationListItemProps {
   conversation: Conversation;
@@ -16,9 +11,6 @@ interface ConversationListItemProps {
 export function ConversationListItem({ conversation, isSelected, onClick }: ConversationListItemProps) {
   const displayName = conversation.leadName.trim() || 'Lead sem nome';
   const projectDisplay = conversation.projectName || conversation.empreendimento;
-  const empreendimentoClass = conversation.empreendimento
-    ? empreendimentoStyles[conversation.empreendimento]
-    : 'bg-gray-100 text-gray-600 border-gray-200';
 
   return (
     <button
@@ -26,39 +18,38 @@ export function ConversationListItem({ conversation, isSelected, onClick }: Conv
       onClick={onClick}
       aria-label={`Conversa com ${displayName}${conversation.unreadCount > 0 ? `, ${conversation.unreadCount} não lidas` : ''}`}
       className={`
-        w-full text-left px-4 py-3.5 border-b border-gray-100 transition-colors
-        focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1
-        ${isSelected ? 'bg-gray-100 border-l-4 border-l-blue-500' : 'bg-white hover:bg-gray-50'}
+        w-full text-left px-4 py-3.5 border-b border-[#F3F4F6] transition-all
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6] focus-visible:ring-inset
+        ${isSelected
+          ? 'bg-[#EFF6FF] border-l-[3px] border-l-[#3B82F6]'
+          : 'bg-white hover:bg-[#F9FAFB]'}
       `}
     >
       <div className="flex justify-between items-center gap-2 min-h-6">
-        <span className="font-medium text-gray-900 truncate flex-1 text-[15px] leading-tight">
+        <span className={`font-medium truncate flex-1 text-[14px] leading-tight ${isSelected ? 'text-[#1D4ED8]' : 'text-[#111827]'}`}>
           {displayName}
         </span>
-        <span className="text-xs text-gray-500 shrink-0 tabular-nums">
+        <span className="text-[11px] text-[#9CA3AF] shrink-0 tabular-nums">
           {formatConversationTime(conversation.updatedAt)}
         </span>
       </div>
-      <p className="text-sm text-gray-600 truncate mt-1 leading-snug">
+      <p className="text-[13px] text-[#6B7280] truncate mt-1 leading-snug">
         {conversation.lastMessage || 'Sem mensagens'}
       </p>
       <div className="flex items-center gap-1.5 mt-2 flex-wrap">
         {projectDisplay && (
-          <span
-            className={`inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded border ${empreendimentoClass}`}
-            title="Projeto"
-          >
+          <span className="inline-flex items-center text-[10px] font-semibold uppercase tracking-wide px-2 py-[2px] rounded bg-[#EFF6FF] text-[#3B82F6]">
             {projectDisplay}
           </span>
         )}
         <span title={`Lead ${conversation.temperatura}`} className="inline-flex items-center p-0.5">
           <FlameIcon temperatura={conversation.temperatura} size="sm" />
         </span>
-        <span className="text-[11px] px-2 py-0.5 rounded bg-gray-200 text-gray-700 border border-gray-200">
+        <span className="text-[10px] font-medium px-2 py-[2px] rounded bg-[#F3F4F6] text-[#6B7280]">
           {formatStatus(conversation.status)}
         </span>
         {conversation.unreadCount > 0 && (
-          <span className="text-[11px] font-semibold bg-blue-500 text-white rounded-full min-w-5 h-5 px-1.5 flex items-center justify-center">
+          <span className="text-[10px] font-bold bg-[#F97316] text-white rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">
             {conversation.unreadCount}
           </span>
         )}

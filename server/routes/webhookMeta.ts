@@ -1,34 +1,61 @@
 import { Router, type Request, type Response } from 'express';
 import { config } from '../config.js';
-import { generateText } from '../services/openaiResponsesService.js';
 import { sendTextMessage, hasWhatsAppEnv } from '../services/whatsappService.js';
+import { sendTextMessage as sendTextMeta } from '../services/whatsappMetaService.js';
+import { findOrCreateConversation } from '../repositories/conversationRepository.js';
+import { insertMessage, findMessageByMetaId } from '../repositories/messageRepository.js';
+import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
+import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
+import { handleIncomingMessage } from '../services/conversationEngine.js';
 
 const router = Router();
 
-const FALLBACK_MESSAGE = 'Tive um problema ao processar sua mensagem agora. Tente novamente em instantes.';
 const NON_TEXT_MESSAGE = 'No momento só consigo responder a mensagens de texto.';
 
-/** GET /webhook — validação da Meta (hub.mode, hub.verify_token, hub.challenge) */
-router.get('/', (req: Request, res: Response) => {
+async function canSendWhatsApp(): Promise<boolean> {
+  if (hasWhatsAppEnv()) return true;
+  const c = await getWhatsAppConfig();
+  return !!(c?.enabled && c?.metaAccessToken?.trim() && c?.whatsappPhoneNumberId?.trim());
+}
+
+async function sendReply(to: string, text: string): Promise<void> {
+  const r = await sendTextMeta(to, text);
+  if (r.success) return;
+  if (hasWhatsAppEnv()) {
+    await sendTextMessage(to, text);
+    return;
+  }
+  throw new Error(r.error || 'Sem canal de envio WhatsApp.');
+}
+
+async function getVerifyToken(): Promise<string> {
+  try {
+    const dbCfg = await getWhatsAppConfig();
+    if (dbCfg?.webhookVerifyToken?.trim()) return dbCfg.webhookVerifyToken;
+  } catch { /* DB indisponível, usa fallback */ }
+  return config.meta.verifyToken;
+}
+
+router.get('/', async (req: Request, res: Response) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  if (mode === 'subscribe' && token === config.meta.verifyToken && challenge != null && String(challenge).length > 0) {
+  const expected = await getVerifyToken();
+  if (mode === 'subscribe' && expected && token === expected && challenge != null && String(challenge).length > 0) {
     res.status(200).type('text/plain').send(String(challenge));
     return;
   }
   res.status(403).end();
 });
 
-/** POST /webhook — recebe eventos da Meta; responde 200 rápido e processa em background */
 router.post('/', (req: Request, res: Response) => {
   res.status(200).send('OK');
 
   const payload = req.body;
   if (!payload || typeof payload !== 'object') return;
-
   if (payload.object !== 'whatsapp_business_account') return;
+
   const entry = payload.entry;
   if (!Array.isArray(entry)) return;
 
@@ -36,18 +63,25 @@ router.post('/', (req: Request, res: Response) => {
     const changes = item.changes;
     if (!Array.isArray(changes)) continue;
     for (const change of changes) {
-      if (change.field !== 'messages') continue;
+      if (change?.field !== 'messages') continue;
       const value = change.value;
-      if (!value || !Array.isArray(value.messages)) continue;
+      if (!value) continue;
+      const messages = value.messages;
+      if (!Array.isArray(messages) || messages.length === 0) continue;
+      const phoneNumberId = value.metadata?.phone_number_id ?? null;
+      const contact = value.contacts?.[0];
+      const contactName = contact?.profile?.name ?? null;
 
-      for (const msg of value.messages) {
-        const from = msg.from;
-        const type = msg.type;
-        const textBody = type === 'text' && msg.text?.body ? String(msg.text.body).trim() : null;
+      for (const msg of messages) {
+        const msgId = msg.id ? String(msg.id) : null;
+
+        const from = String(msg.from || '');
+        const type = msg?.type ?? 'unknown';
+        const textBody = type === 'text' && msg.text?.body != null ? String(msg.text.body).trim() : null;
 
         setImmediate(() => {
-          processOneMessage(String(from), type, textBody).catch((e) => {
-            console.error('[Webhook Meta] processOneMessage:', e instanceof Error ? e.message : String(e));
+          processOneMessage(from, type, textBody, msgId, contactName, phoneNumberId).catch((e) => {
+            console.error('[Webhook Meta]', e instanceof Error ? e.message : String(e));
           });
         });
       }
@@ -55,29 +89,55 @@ router.post('/', (req: Request, res: Response) => {
   }
 });
 
-async function processOneMessage(from: string, type: string, textBody: string | null): Promise<void> {
-  if (!hasWhatsAppEnv()) {
-    console.error('[Webhook Meta] META_WHATSAPP_TOKEN ou META_PHONE_NUMBER_ID não configurados.');
+async function processOneMessage(
+  from: string,
+  type: string,
+  textBody: string | null,
+  metaMessageId: string | null,
+  contactName: string | null,
+  phoneNumberId: string | null
+): Promise<void> {
+  if (!(await canSendWhatsApp())) {
+    console.error('[Webhook Meta] WhatsApp não configurado.');
     return;
   }
 
-  let reply: string;
+  if (metaMessageId && (await findMessageByMetaId(metaMessageId))) return;
+
+  const conv = await findOrCreateConversation('whatsapp', from, from, contactName, phoneNumberId);
+
   if (type !== 'text' || !textBody) {
-    reply = NON_TEXT_MESSAGE;
-  } else {
     try {
-      reply = await generateText(textBody, {
-        systemPrompt: 'Você é um assistente prestativo. Responda de forma clara e concisa.',
-      });
-    } catch {
-      reply = FALLBACK_MESSAGE;
+      await sendReply(from, NON_TEXT_MESSAGE);
+    } catch (e) {
+      console.error('[Webhook Meta] send:', e);
     }
+    return;
+  }
+
+  if (metaMessageId) {
+    await insertMessage(conv.id, 'user', textBody, metaMessageId);
+  } else {
+    await insertMessage(conv.id, 'user', textBody, `in-${Date.now()}`);
+  }
+
+  const aiConfig = await getOpenAIConfig();
+  if (aiConfig?.aiEnabled && aiConfig.openaiApiKey?.trim()) {
+    await handleIncomingMessage({
+      conversationId: conv.id,
+      userMessage: textBody,
+      toPhoneNumber: from,
+    });
+    return;
   }
 
   try {
-    await sendTextMessage(from, reply);
+    await sendReply(
+      from,
+      'Olá! No momento o assistente automático está desligado. Em breve um consultor da Quero Meu Apê retorna o contato.'
+    );
   } catch (e) {
-    console.error('[Webhook Meta] sendTextMessage:', e instanceof Error ? e.message : String(e));
+    console.error('[Webhook Meta] send:', e);
   }
 }
 

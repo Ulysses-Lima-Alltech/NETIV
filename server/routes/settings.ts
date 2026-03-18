@@ -5,39 +5,18 @@ import { whatsappSettingUpdateSchema } from '../validators/settings.js';
 
 const router = Router();
 
-function isDatabaseError(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : String(e);
-  return (
-    msg.includes('SQLITE_') ||
-    msg.includes('no such column') ||
-    msg.includes('no such table') ||
-    msg.includes('database') ||
-    msg.includes('schema')
-  );
-}
-
-function getSafeErrorMessage(e: unknown, genericMessage: string): string {
-  if (isDatabaseError(e)) {
-    return 'Configuração do banco desatualizada. Reinicie o servidor para aplicar atualizações e tente novamente.';
-  }
-  return genericMessage;
-}
-
-router.get('/whatsapp', (req, res) => {
+router.get('/whatsapp', async (_req, res) => {
   try {
-    const config = getWhatsAppConfigPublic();
-    if (!config) {
-      return res.status(404).json({ error: 'Configuração WhatsApp não encontrada.' });
-    }
+    const config = await getWhatsAppConfigPublic();
+    if (!config) return res.status(404).json({ error: 'Configuração não encontrada.' });
     res.json(config);
   } catch (e) {
     console.error('[Settings] GET whatsapp:', e);
-    const message = getSafeErrorMessage(e, 'Erro ao obter configuração.');
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: 'Erro ao obter configuração.' });
   }
 });
 
-router.put('/whatsapp', (req, res) => {
+router.put('/whatsapp', async (req, res) => {
   try {
     const parsed = whatsappSettingUpdateSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -45,34 +24,32 @@ router.put('/whatsapp', (req, res) => {
       return res.status(400).json({ error: msg });
     }
     const update = parsed.data;
-    const merged = updateWhatsAppConfig(update);
+    let merged = await updateWhatsAppConfig(update);
     const validationError = validateConfigForEnabled(merged);
     if (validationError) {
-      updateWhatsAppConfig({ enabled: false });
+      merged = await updateWhatsAppConfig({ enabled: false });
       return res.status(400).json({ error: validationError });
     }
-    const publicConfig = getWhatsAppConfigPublic();
-    if (!publicConfig) return res.status(500).json({ error: 'Erro ao obter configuração após salvar.' });
+    const publicConfig = await getWhatsAppConfigPublic();
+    if (!publicConfig) return res.status(500).json({ error: 'Erro após salvar.' });
     res.json(publicConfig);
   } catch (e) {
     console.error('[Settings] PUT whatsapp:', e);
-    const message = getSafeErrorMessage(e, 'Erro ao salvar configuração.');
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: 'Erro ao salvar.' });
   }
 });
 
-router.post('/whatsapp/test', async (req, res) => {
+router.post('/whatsapp/test', async (_req, res) => {
   try {
     const result = await testConnection();
     if (result.success) {
-      return res.json({ success: true, message: 'Conexão com a Meta validada com sucesso.' });
+      return res.json({ success: true, message: 'Conexão validada.' });
     }
     const errorMessage = result.detail ? `${result.error} ${result.detail}` : result.error;
     res.status(400).json({ success: false, error: errorMessage });
   } catch (e) {
     console.error('[Settings] POST whatsapp/test:', e);
-    const message = getSafeErrorMessage(e, 'Erro ao testar conexão.');
-    res.status(500).json({ success: false, error: message });
+    res.status(500).json({ success: false, error: 'Erro ao testar.' });
   }
 });
 

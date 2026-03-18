@@ -37,7 +37,7 @@ export function ChatComposer({ onSend, disabled = false, placeholder = 'Digite s
   };
 
   return (
-    <div className="flex gap-2 items-end p-4 border-t border-gray-200 bg-white">
+    <div className="flex gap-3 items-end p-4 border-t border-[#E5E7EB] bg-white">
       <textarea
         ref={textareaRef}
         value={text}
@@ -48,15 +48,16 @@ export function ChatComposer({ onSend, disabled = false, placeholder = 'Digite s
         disabled={disabled}
         rows={1}
         aria-label="Mensagem"
-        className="flex-1 min-h-[40px] max-h-[96px] resize-none px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
+        className="flex-1 min-h-[42px] max-h-[96px] resize-none px-3.5 py-[10px] text-[14px] border border-[#E5E7EB] rounded-[10px] bg-white transition focus:border-[#3B82F6] focus:ring-[3px] focus:ring-[rgba(59,130,246,0.15)] focus:outline-none disabled:bg-[#F9FAFB] disabled:text-[#9CA3AF] placeholder:text-[#9CA3AF]"
       />
       <button
         type="button"
         onClick={send}
         disabled={disabled || !text.trim()}
         aria-label="Enviar mensagem"
-        className="shrink-0 px-4 py-2 bg-blue-500 text-white text-sm font-medium rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        className="shrink-0 inline-flex items-center gap-1.5 px-5 py-[10px] text-[14px] font-semibold text-white bg-[#F97316] rounded-[10px] hover:bg-[#EA580C] active:bg-[#C2410C] disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F97316] focus-visible:ring-offset-2"
       >
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         Enviar
       </button>
     </div>

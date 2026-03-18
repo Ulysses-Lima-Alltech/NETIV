@@ -12,6 +12,8 @@ export interface GenerateCompletionParams {
   messages: ChatMessage[];
   temperature: number;
   maxTokens: number;
+  /** Força saída JSON (gpt-4o-mini+). */
+  responseFormatJson?: boolean;
 }
 
 export interface GenerateCompletionResult {
@@ -21,11 +23,21 @@ export interface GenerateCompletionResult {
 }
 
 export async function generateChatCompletion(params: GenerateCompletionParams): Promise<GenerateCompletionResult> {
-  const { apiKey, baseUrl, model, messages, temperature, maxTokens } = params;
+  const { apiKey, baseUrl, model, messages, temperature, maxTokens, responseFormatJson } = params;
   const url = (baseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '') + '/chat/completions';
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  const body: Record<string, unknown> = {
+    model,
+    messages,
+    temperature,
+    max_tokens: maxTokens,
+  };
+  if (responseFormatJson) {
+    body.response_format = { type: 'json_object' };
+  }
 
   try {
     const res = await fetch(url, {
@@ -34,12 +46,7 @@ export async function generateChatCompletion(params: GenerateCompletionParams): 
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature,
-        max_tokens: maxTokens,
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
 

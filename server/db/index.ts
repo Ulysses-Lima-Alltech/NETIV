@@ -39,6 +39,7 @@ function runMigrations(database: Database.Database): void {
     '010_openai_columns_safety.sql',
     '011_conversations_project_classification.sql',
     '012_projects_table.sql',
+    '013_empreendimento_agent.sql',
   ];
   for (const name of migrations) {
     const sql = readFileSync(join(migrationsDir, name), 'utf-8');

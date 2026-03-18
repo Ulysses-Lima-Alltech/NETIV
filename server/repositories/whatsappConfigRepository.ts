@@ -3,11 +3,9 @@ import type {
   WhatsAppIntegrationConfigPublic,
   WhatsAppIntegrationConfigUpdate,
 } from '../types/settings.js';
-import { getDb } from '../db/index.js';
+import { query } from '../db/pg.js';
 
-const INTEGRATION_TYPE = 'whatsapp';
-
-type SettingsRow = {
+type Row = {
   meta_access_token: string;
   whatsapp_phone_number_id: string;
   whatsapp_business_account_id: string;
@@ -15,66 +13,72 @@ type SettingsRow = {
   webhook_verify_token: string;
   default_send_phone_number: string | null;
   default_country_code: string | null;
-  enabled: number;
-  created_at: string;
-  updated_at: string;
+  whatsapp_enabled: boolean;
+  created_at: Date | null;
+  updated_at: Date;
 };
 
-function rowToConfig(row: SettingsRow): WhatsAppIntegrationConfig {
+function rowToConfig(row: Row): WhatsAppIntegrationConfig {
   return {
-    metaAccessToken: row.meta_access_token,
-    whatsappPhoneNumberId: row.whatsapp_phone_number_id,
-    whatsappBusinessAccountId: row.whatsapp_business_account_id,
-    apiVersion: row.api_version,
-    webhookVerifyToken: row.webhook_verify_token,
+    metaAccessToken: row.meta_access_token ?? '',
+    whatsappPhoneNumberId: row.whatsapp_phone_number_id ?? '',
+    whatsappBusinessAccountId: row.whatsapp_business_account_id ?? '',
+    apiVersion: row.api_version ?? 'v21.0',
+    webhookVerifyToken: row.webhook_verify_token ?? '',
     defaultSendPhoneNumber: row.default_send_phone_number,
-    defaultCountryCode: row.default_country_code ?? null,
-    enabled: row.enabled === 1,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    defaultCountryCode: row.default_country_code,
+    enabled: !!row.whatsapp_enabled,
+    createdAt: row.created_at?.toISOString?.() ?? row.updated_at?.toISOString?.() ?? '',
+    updatedAt: row.updated_at?.toISOString?.() ?? '',
   };
 }
 
-const SELECT_COLS = `meta_access_token, whatsapp_phone_number_id, whatsapp_business_account_id,
-  api_version, webhook_verify_token, default_send_phone_number, default_country_code, enabled, created_at, updated_at`;
-
-export function getWhatsAppConfig(): WhatsAppIntegrationConfig | null {
-  const database = getDb();
-  const row = database
-    .prepare(`SELECT ${SELECT_COLS} FROM integration_settings WHERE integration_type = ? LIMIT 1`)
-    .get('whatsapp') as SettingsRow | undefined;
-  if (!row) return null;
-  return rowToConfig(row);
+export async function getWhatsAppConfig(): Promise<WhatsAppIntegrationConfig | null> {
+  const { rows } = await query<Row>(
+    `SELECT meta_access_token, whatsapp_phone_number_id, whatsapp_business_account_id,
+      api_version, webhook_verify_token, default_send_phone_number, default_country_code,
+      whatsapp_enabled, created_at, updated_at
+     FROM integration_settings WHERE id = 1`
+  );
+  if (!rows[0]) return null;
+  return rowToConfig(rows[0]);
 }
 
-export function updateWhatsAppConfig(update: WhatsAppIntegrationConfigUpdate): WhatsAppIntegrationConfig {
-  const database = getDb();
-  const current = getWhatsAppConfig();
+export async function updateWhatsAppConfig(update: WhatsAppIntegrationConfigUpdate): Promise<WhatsAppIntegrationConfig> {
+  const current = await getWhatsAppConfig();
   const metaAccessToken = update.metaAccessToken ?? current?.metaAccessToken ?? '';
   const whatsappPhoneNumberId = update.whatsappPhoneNumberId ?? current?.whatsappPhoneNumberId ?? '';
   const whatsappBusinessAccountId = update.whatsappBusinessAccountId ?? current?.whatsappBusinessAccountId ?? '';
   const apiVersion = update.apiVersion ?? current?.apiVersion ?? 'v21.0';
   const webhookVerifyToken = update.webhookVerifyToken ?? current?.webhookVerifyToken ?? '';
-  const defaultSendPhoneNumber = update.defaultSendPhoneNumber !== undefined ? update.defaultSendPhoneNumber : current?.defaultSendPhoneNumber ?? null;
-  const defaultCountryCode = update.defaultCountryCode !== undefined ? update.defaultCountryCode : current?.defaultCountryCode ?? null;
-  const enabled = update.enabled !== undefined ? (update.enabled ? 1 : 0) : (current?.enabled ? 1 : 0);
+  const defaultSendPhoneNumber =
+    update.defaultSendPhoneNumber !== undefined ? update.defaultSendPhoneNumber : current?.defaultSendPhoneNumber ?? null;
+  const defaultCountryCode =
+    update.defaultCountryCode !== undefined ? update.defaultCountryCode : current?.defaultCountryCode ?? null;
+  const enabled = update.enabled !== undefined ? update.enabled : (current?.enabled ?? false);
 
-  database
-    .prepare(
-      `UPDATE integration_settings SET
-        meta_access_token = ?, whatsapp_phone_number_id = ?, whatsapp_business_account_id = ?,
-        api_version = ?, webhook_verify_token = ?, default_send_phone_number = ?, default_country_code = ?, enabled = ?,
-        updated_at = datetime('now')
-       WHERE integration_type = ?`
-    )
-    .run(metaAccessToken, whatsappPhoneNumberId, whatsappBusinessAccountId, apiVersion, webhookVerifyToken, defaultSendPhoneNumber, defaultCountryCode, enabled, 'whatsapp');
-
-  const row = database.prepare(`SELECT ${SELECT_COLS} FROM integration_settings WHERE integration_type = ? LIMIT 1`).get('whatsapp') as SettingsRow;
-  return rowToConfig(row);
+  await query(
+    `UPDATE integration_settings SET
+      meta_access_token = $1, whatsapp_phone_number_id = $2, whatsapp_business_account_id = $3,
+      api_version = $4, webhook_verify_token = $5, default_send_phone_number = $6, default_country_code = $7,
+      whatsapp_enabled = $8, updated_at = NOW()
+     WHERE id = 1`,
+    [
+      metaAccessToken,
+      whatsappPhoneNumberId,
+      whatsappBusinessAccountId,
+      apiVersion,
+      webhookVerifyToken,
+      defaultSendPhoneNumber,
+      defaultCountryCode,
+      enabled,
+    ]
+  );
+  return (await getWhatsAppConfig())!;
 }
 
-export function getWhatsAppConfigPublic(): WhatsAppIntegrationConfigPublic | null {
-  const c = getWhatsAppConfig();
+export async function getWhatsAppConfigPublic(): Promise<WhatsAppIntegrationConfigPublic | null> {
+  const c = await getWhatsAppConfig();
   if (!c) return null;
   return {
     metaAccessTokenMasked: c.metaAccessToken.length > 0,
@@ -90,7 +94,6 @@ export function getWhatsAppConfigPublic(): WhatsAppIntegrationConfigPublic | nul
   };
 }
 
-/** Validate that when enabled=true, required fields are present (after merge). */
 export function validateConfigForEnabled(config: WhatsAppIntegrationConfig): string | null {
   if (!config.enabled) return null;
   if (!config.metaAccessToken?.trim()) return 'Token da Meta é obrigatório quando a integração está ativa.';

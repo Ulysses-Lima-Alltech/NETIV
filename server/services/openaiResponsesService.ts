@@ -10,8 +10,7 @@ export interface OpenAICredentials {
   model: string;
 }
 
-/** Resolve credenciais: env tem prioridade; fallback para config do banco (key/url → OPENAI_API_KEY, OPENAI_BASE_URL). */
-export function getOpenAICredentials(): OpenAICredentials | null {
+export async function getOpenAICredentials(): Promise<OpenAICredentials | null> {
   const fromEnv = config.openai.apiKey?.trim();
   if (fromEnv) {
     return {
@@ -20,7 +19,7 @@ export function getOpenAICredentials(): OpenAICredentials | null {
       model: config.openai.model,
     };
   }
-  const fromDb = getOpenAIConfig();
+  const fromDb = await getOpenAIConfig();
   if (fromDb?.openaiApiKey?.trim()) {
     const baseUrl = (fromDb.openaiBaseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
     return {
@@ -32,7 +31,6 @@ export function getOpenAICredentials(): OpenAICredentials | null {
   return null;
 }
 
-/** Erro padronizado para o serviço de Responses. */
 export class OpenAIResponsesError extends Error {
   constructor(
     message: string,
@@ -68,29 +66,22 @@ function extractTextFromOutput(output: unknown): string {
   return parts.join('\n').trim();
 }
 
-/**
- * Gera texto via OpenAI Responses API (/v1/responses).
- * Usa credenciais de env (OPENAI_*) ou do banco; model opcional com fallback para OPENAI_MODEL.
- */
 export async function generateText(
   message: string,
   options?: { systemPrompt?: string; model?: string }
 ): Promise<string> {
-  const creds = getOpenAICredentials();
+  const creds = await getOpenAICredentials();
   if (!creds) {
     throw new OpenAIResponsesError(
-      'OPENAI_API_KEY não configurada. Defina a variável de ambiente ou configure em Configurações > IA.',
+      'OPENAI_API_KEY não configurada.',
       'NO_API_KEY'
     );
   }
-
   const model = options?.model?.trim() || creds.model;
   const input = buildInput(message, options?.systemPrompt);
   const url = `${creds.baseUrl}${RESPONSES_PATH}`;
-
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -101,29 +92,20 @@ export async function generateText(
       body: JSON.stringify({ model, input }),
       signal: controller.signal,
     });
-
     clearTimeout(timeout);
     const data = (await res.json()) as {
       output?: unknown[];
       error?: { message?: string; code?: string };
     };
-
     if (!res.ok) {
-      const msg = data.error?.message ?? `Erro HTTP ${res.status}`;
-      console.error('[OpenAI Responses] API error:', msg);
-      throw new OpenAIResponsesError(msg, 'API_ERROR');
+      throw new OpenAIResponsesError(data.error?.message ?? `Erro HTTP ${res.status}`, 'API_ERROR');
     }
-
     const text = extractTextFromOutput(data.output);
-    if (!text) {
-      throw new OpenAIResponsesError('Resposta vazia da API.', 'EMPTY_RESPONSE');
-    }
+    if (!text) throw new OpenAIResponsesError('Resposta vazia.', 'EMPTY_RESPONSE');
     return text;
   } catch (e) {
     clearTimeout(timeout);
     if (e instanceof OpenAIResponsesError) throw e;
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error('[OpenAI Responses] Request failed:', msg);
-    throw new OpenAIResponsesError(msg, 'REQUEST_FAILED');
+    throw new OpenAIResponsesError(e instanceof Error ? e.message : String(e), 'REQUEST_FAILED');
   }
 }

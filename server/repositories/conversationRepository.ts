@@ -1,113 +1,134 @@
-import { getDb } from '../db/index.js';
+import { query } from '../db/pg.js';
+import { getActiveEnterpriseById } from './enterpriseRepository.js';
 
 export interface ConversationRow {
   id: number;
   channel: string;
-  external_id: string;
+  external_contact_id: string;
   contact_phone: string | null;
-  contact_name: string | null;
+  customer_name: string | null;
+  enterprise_id: number | null;
+  classification: string;
+  lead_temperature: string;
+  handoff: boolean;
   meta_phone_number_id: string | null;
-  status: string;
-  last_message_at: string | null;
-  lead_stage: string;
-  lead_score: number;
-  lead_intent_now: string;
-  lead_reason: string | null;
-  lead_last_analyzed_at: string | null;
-  project: string | null;
-  project_id: number | null;
-  classification_status: string;
-  created_at: string;
-  updated_at: string;
+  last_message_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
 }
 
-export function findOrCreateConversation(
+export async function findOrCreateConversation(
   channel: string,
   externalId: string,
   contactPhone: string | null,
   contactName: string | null,
   metaPhoneNumberId: string | null
-): ConversationRow {
-  const database = getDb();
-  let row = database
-    .prepare(
-      `SELECT id, channel, external_id, contact_phone, contact_name, meta_phone_number_id, status, last_message_at,
-              lead_stage, lead_score, lead_intent_now, lead_reason, lead_last_analyzed_at, project, project_id, classification_status, created_at, updated_at
-       FROM conversations WHERE channel = ? AND external_id = ?`
-    )
-    .get(channel, externalId) as ConversationRow | undefined;
-
-  if (row) {
-  database
-    .prepare(
-      `UPDATE conversations SET contact_phone = ?, contact_name = ?, meta_phone_number_id = ?, updated_at = datetime('now')
-         WHERE id = ?`
-    )
-    .run(contactPhone ?? row.contact_phone, contactName ?? row.contact_name, metaPhoneNumberId ?? row.meta_phone_number_id, row.id);
-    database.prepare(`UPDATE conversations SET last_message_at = datetime('now') WHERE id = ?`).run(row.id);
-    return database.prepare('SELECT * FROM conversations WHERE id = ?').get(row.id) as ConversationRow;
-  }
-
-  const result = database
-    .prepare(
-      `INSERT INTO conversations (channel, external_id, contact_phone, contact_name, meta_phone_number_id, status, last_message_at)
-       VALUES (?, ?, ?, ?, ?, 'open', datetime('now'))`
-    )
-    .run(channel, externalId, contactPhone, contactName, metaPhoneNumberId);
-  return database.prepare('SELECT * FROM conversations WHERE id = ?').get(result.lastInsertRowid) as ConversationRow;
+): Promise<ConversationRow> {
+  const { rows } = await query<ConversationRow>(
+    `INSERT INTO conversations (channel, external_contact_id, contact_phone, customer_name, meta_phone_number_id, last_message_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())
+     ON CONFLICT (channel, external_contact_id) DO UPDATE SET
+       contact_phone = COALESCE(EXCLUDED.contact_phone, conversations.contact_phone),
+       customer_name = COALESCE(EXCLUDED.customer_name, conversations.customer_name),
+       meta_phone_number_id = COALESCE(EXCLUDED.meta_phone_number_id, conversations.meta_phone_number_id),
+       last_message_at = NOW(), updated_at = NOW()
+     RETURNING *`,
+    [channel, externalId, contactPhone, contactName, metaPhoneNumberId]
+  );
+  return rows[0];
 }
 
-export function getConversationById(id: number): ConversationRow | null {
-  const database = getDb();
-  const row = database.prepare('SELECT * FROM conversations WHERE id = ?').get(id);
-  return (row as ConversationRow) ?? null;
-}
-
-export function listConversations(channel: string = 'whatsapp', limit: number = 100): ConversationRow[] {
-  const database = getDb();
-  const rows = database
-    .prepare(
-      `SELECT * FROM conversations WHERE channel = ? ORDER BY COALESCE(last_message_at, updated_at, created_at) DESC LIMIT ?`
-    )
-    .all(channel, limit);
-  return rows as ConversationRow[];
+export async function getConversationById(id: number): Promise<ConversationRow | null> {
+  const { rows } = await query<ConversationRow>(`SELECT * FROM conversations WHERE id = $1`, [id]);
+  return rows[0] ?? null;
 }
 
 export interface ConversationWithPreview extends ConversationRow {
   last_message_preview: string | null;
-  project_name: string | null;
+  enterprise_name: string | null;
 }
 
-export function listConversationsWithPreview(channel: string = 'whatsapp', limit: number = 100): ConversationWithPreview[] {
-  const database = getDb();
-  const rows = database
-    .prepare(
-      `SELECT c.*,
-        (SELECT COALESCE(content, body_text) FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message_preview,
-        p.name as project_name
-       FROM conversations c
-       LEFT JOIN projects p ON p.id = c.project_id
-       WHERE c.channel = ?
-       ORDER BY COALESCE(c.last_message_at, c.updated_at, c.created_at) DESC
-       LIMIT ?`
-    )
-    .all(channel, limit);
-  return rows as ConversationWithPreview[];
+export async function listConversationsWithPreview(
+  channel: string = 'whatsapp',
+  limit: number = 100
+): Promise<ConversationWithPreview[]> {
+  const { rows } = await query<ConversationWithPreview>(
+    `SELECT c.*,
+      (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_preview,
+      e.name AS enterprise_name
+     FROM conversations c
+     LEFT JOIN enterprises e ON e.id = c.enterprise_id
+     WHERE c.channel = $1
+     ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC
+     LIMIT $2`,
+    [channel, limit]
+  );
+  return rows;
 }
 
-export function updateClassification(
+export async function updateClassification(
   conversationId: number,
-  update: { project_id?: number | null; classification_status?: string }
-): ConversationRow | null {
-  const database = getDb();
-  const current = database.prepare('SELECT id, project_id, classification_status FROM conversations WHERE id = ?').get(conversationId) as
-    | { id: number; project_id: number | null; classification_status: string }
-    | undefined;
-  if (!current) return null;
-  const project_id = update.project_id !== undefined ? update.project_id : current.project_id;
-  const classification_status = update.classification_status !== undefined ? update.classification_status : current.classification_status;
-  database
-    .prepare("UPDATE conversations SET project_id = ?, classification_status = ?, updated_at = datetime('now') WHERE id = ?")
-    .run(project_id, classification_status, conversationId);
-  return getConversationById(conversationId);
+  u: { enterprise_id?: number | null; classification?: string }
+): Promise<ConversationRow | null> {
+  const cur = await getConversationById(conversationId);
+  if (!cur) return null;
+  let enterprise_id = u.enterprise_id !== undefined ? u.enterprise_id : cur.enterprise_id;
+  if (enterprise_id != null) {
+    const ok = await getActiveEnterpriseById(enterprise_id);
+    if (!ok) enterprise_id = cur.enterprise_id;
+  }
+  let classification = cur.classification;
+  if (u.classification !== undefined && u.classification !== null && u.classification !== '') {
+    classification = u.classification;
+  }
+  const { rows } = await query<ConversationRow>(
+    `UPDATE conversations SET enterprise_id = $1, classification = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
+    [enterprise_id, classification, conversationId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function setConversationEnterpriseId(
+  conversationId: number,
+  enterpriseId: number | null
+): Promise<ConversationRow | null> {
+  if (enterpriseId != null) {
+    const ok = await getActiveEnterpriseById(enterpriseId);
+    if (!ok) return null;
+  }
+  const { rows } = await query<ConversationRow>(
+    `UPDATE conversations SET enterprise_id = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+    [enterpriseId, conversationId]
+  );
+  return rows[0] ?? null;
+}
+
+const CLASSIFICATIONS = new Set(['Novo', 'Qualificando', 'Interessado', 'Handoff']);
+
+export async function applyAnaConversationUpdate(
+  conversationId: number,
+  meta: {
+    classification?: string;
+    lead_temperature?: string;
+    customer_name?: string;
+    handoff?: boolean;
+  }
+): Promise<void> {
+  const conv = await getConversationById(conversationId);
+  if (!conv) return;
+  let classification = meta.classification?.trim() || conv.classification;
+  if (meta.handoff) classification = 'Handoff';
+  if (!CLASSIFICATIONS.has(classification)) classification = conv.classification;
+  let lead_temperature = conv.lead_temperature;
+  const t = (meta.lead_temperature || '').toLowerCase();
+  if (t === 'quente') lead_temperature = 'quente';
+  else if (t === 'morno') lead_temperature = 'morno';
+  else if (t === 'frio') lead_temperature = 'frio';
+  const cn = meta.customer_name?.trim();
+  await query(
+    `UPDATE conversations SET classification = $1, lead_temperature = $2, handoff = $3,
+     customer_name = CASE WHEN $4::text IS NOT NULL AND length(trim($4)) > 0 THEN trim($4) ELSE customer_name END,
+     updated_at = NOW() WHERE id = $5`,
+    [classification, lead_temperature, !!meta.handoff, cn ?? null, conversationId]
+  );
 }

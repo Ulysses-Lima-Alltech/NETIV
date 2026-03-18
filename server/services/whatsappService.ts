@@ -28,8 +28,10 @@ export async function sendTextMessage(to: string, body: string): Promise<void> {
 
   const url = `${META_GRAPH_BASE}/${config.meta.apiVersion}/${config.meta.phoneNumberId}/messages`;
   const payload = {
-    messaging_product: 'whatsapp',
+    messaging_product: 'whatsapp' as const,
+    recipient_type: 'individual' as const,
     to: normalizedTo,
+    type: 'text' as const,
     text: { body },
   };
 
@@ -48,13 +50,23 @@ export async function sendTextMessage(to: string, body: string): Promise<void> {
     });
 
     clearTimeout(timeout);
-    const data = (await res.json()) as { error?: { message?: string; code?: number } };
+    let data: { error?: { message?: string; code?: number }; messages?: Array<{ id: string }> };
+    try {
+      const text = await res.text();
+      data = text ? (JSON.parse(text) as typeof data) : {};
+    } catch {
+      console.error('[WhatsApp] Meta response not valid JSON, status=', res.status);
+      throw new Error('Resposta inválida da Meta.');
+    }
 
     if (!res.ok) {
       const msg = data.error?.message ?? `Erro HTTP ${res.status}`;
-      console.error('[WhatsApp] Meta API error:', msg);
+      const code = data.error?.code;
+      console.error('[WhatsApp] Meta API error:', { status: res.status, code, message: msg });
       throw new Error(msg);
     }
+    const last4 = normalizedTo.slice(-4);
+    console.log('[WhatsApp] Message sent to ***' + last4);
   } catch (e) {
     clearTimeout(timeout);
     const message = e instanceof Error ? e.message : 'Erro ao enviar mensagem';

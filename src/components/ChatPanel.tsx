@@ -1,19 +1,19 @@
 import { useEffect, useRef } from 'react';
-import type { Conversation, Message, Empreendimento } from '../types';
+import type { Conversation, Message } from '../types';
 import { MessageBubble } from './MessageBubble';
 import { ChatComposer } from './ChatComposer';
 import { FlameIcon } from './FlameIcon';
 import { formatDateSeparator, formatStatus } from '../utils/format';
 
-const empreendimentoStyles: Record<Empreendimento, string> = {
-  Montaresa: 'bg-violet-100 text-violet-800 border-violet-200',
-  Evora: 'bg-amber-100 text-amber-800 border-amber-200',
-};
-
-const STATUS_OPTIONS: { value: 'Novo' | 'Handoff'; label: string }[] = [
+const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'Novo', label: 'Novo' },
+  { value: 'Qualificando', label: 'Qualificando' },
+  { value: 'Interessado', label: 'Interessado' },
   { value: 'Handoff', label: 'Handoff' },
 ];
+
+const selectField =
+  'text-[13px] border border-[#E5E7EB] rounded-[8px] px-2.5 py-[6px] bg-white transition focus:border-[#3B82F6] focus:ring-[3px] focus:ring-[rgba(59,130,246,0.15)] focus:outline-none';
 
 interface ChatPanelProps {
   conversation: Conversation | null;
@@ -45,108 +45,101 @@ export function ChatPanel({
 
   if (!conversation) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-white text-gray-500 p-8">
-        <p className="text-center">Selecione uma conversa à esquerda</p>
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#F9FAFB] text-[#6B7280] p-8">
+        <div className="w-14 h-14 rounded-full bg-[#EFF6FF] flex items-center justify-center mb-4">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </div>
+        <p className="text-[15px] font-medium text-[#111827] mb-1">Selecione uma conversa</p>
+        <p className="text-[13px] text-[#9CA3AF]">Escolha uma conversa na lista à esquerda para começar.</p>
       </div>
     );
   }
 
   const displayName = conversation.leadName.trim() || 'Lead sem nome';
-
   let lastDate = '';
 
   return (
     <div className="flex flex-col h-full bg-white">
-      {/* Header */}
-      <header className="shrink-0 px-5 py-4 border-b border-gray-200">
+      <header className="shrink-0 px-5 py-4 border-b border-[#E5E7EB] bg-white">
         <div className="flex flex-wrap items-start gap-3">
           <div className="flex-1 min-w-0">
-            <h3 className="text-base font-semibold text-gray-900 truncate leading-tight">{displayName}</h3>
+            <h3 className="text-[15px] font-semibold text-[#111827] truncate leading-tight">{displayName}</h3>
             {conversation.leadPhone && (
-              <p className="text-sm text-gray-600 truncate mt-0.5">{conversation.leadPhone}</p>
+              <p className="text-[13px] text-[#6B7280] truncate mt-0.5">{conversation.leadPhone}</p>
             )}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {(conversation.projectName || conversation.empreendimento) && (
-              <span
-                className={`inline-flex items-center text-xs font-medium px-2.5 py-1 rounded border ${
-                  conversation.empreendimento ? empreendimentoStyles[conversation.empreendimento] : 'bg-gray-100 text-gray-700 border-gray-200'
-                }`}
-                title="Projeto"
-              >
+              <span className="inline-flex items-center text-[11px] font-semibold px-2.5 py-1 rounded-[6px] bg-[#EFF6FF] text-[#3B82F6]">
                 {conversation.projectName || conversation.empreendimento}
               </span>
             )}
             <span title={`Lead ${conversation.temperatura}`} className="inline-flex items-center p-1">
               <FlameIcon temperatura={conversation.temperatura} size="md" />
             </span>
-            <span className="text-xs font-medium px-2.5 py-1 rounded bg-gray-200 text-gray-700">
+            <span className="text-[11px] font-medium px-2.5 py-1 rounded-[6px] bg-[#F3F4F6] text-[#6B7280]">
               {formatStatus(conversation.status)}
             </span>
           </div>
         </div>
         {onClassificationChange && (
-          <div className="flex flex-wrap gap-3 mt-3 pt-3 border-t border-gray-100">
+          <div className="flex flex-wrap gap-3 mt-3 pt-3 border-t border-[#F3F4F6]">
             <label className="flex items-center gap-2">
-              <span className="text-sm text-gray-600">Projeto:</span>
+              <span className="text-[13px] text-[#6B7280]">Projeto:</span>
               <select
                 value={conversation.projectId ?? ''}
                 onChange={(e) => {
                   const v = e.target.value;
-                  onClassificationChange({
-                    projectId: v === '' ? null : Number(v),
-                  });
+                  onClassificationChange({ projectId: v === '' ? null : Number(v) });
                 }}
-                className="text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                className={selectField}
               >
                 <option value="">— Empreendimento</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
+                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </label>
             <label className="flex items-center gap-2">
-              <span className="text-sm text-gray-600">Status:</span>
+              <span className="text-[13px] text-[#6B7280]">Status:</span>
               <select
                 value={conversation.classificationStatus ?? conversation.status ?? 'Novo'}
-                onChange={(e) => {
-                  onClassificationChange({ classificationStatus: e.target.value as 'Novo' | 'Handoff' });
-                }}
-                className="text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                onChange={(e) => { onClassificationChange({ classificationStatus: e.target.value }); }}
+                className={selectField}
               >
-                {STATUS_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
+                {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </label>
           </div>
         )}
       </header>
 
-      {/* Messages */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0 p-4">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0 p-4 bg-[#F9FAFB]">
         {loadError ? (
-          <p className="text-center text-red-600 py-8">Falha ao carregar</p>
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center mb-3">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#EF4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            </div>
+            <p className="text-[13px] text-red-600">Falha ao carregar mensagens</p>
+          </div>
         ) : isLoadingMessages ? (
-          <div className="flex items-center justify-center py-12 text-gray-500">Carregando...</div>
+          <div className="flex flex-col items-center justify-center py-12 gap-3">
+            <div className="h-5 w-5 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin" />
+            <span className="text-[13px] text-[#6B7280]">Carregando…</span>
+          </div>
         ) : messages.length === 0 ? (
-          <p className="text-center text-gray-500 py-8">Sem mensagens ainda</p>
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <p className="text-[13px] text-[#9CA3AF]">Sem mensagens ainda</p>
+          </div>
         ) : (
           <>
             {messages.map((msg) => {
               const dateLabel = formatDateSeparator(msg.createdAt);
               const showDate = dateLabel !== lastDate;
               if (showDate) lastDate = dateLabel;
-
               return (
                 <div key={msg.id}>
                   {showDate && (
                     <div className="flex justify-center my-4">
-                      <span className="text-xs text-gray-400 bg-gray-100 px-3 py-1 rounded-full">
+                      <span className="text-[11px] font-medium text-[#9CA3AF] bg-white border border-[#E5E7EB] px-3 py-1 rounded-full shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
                         {dateLabel}
                       </span>
                     </div>
@@ -160,7 +153,6 @@ export function ChatPanel({
         )}
       </div>
 
-      {/* Composer */}
       {!loadError && !isLoadingMessages && (
         <ChatComposer onSend={onSendMessage} disabled={isSending} />
       )}

@@ -13,8 +13,10 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
   const leadStage = (c.leadStage || '').toUpperCase();
   const temperatura = leadStage === 'HOT' ? 'quente' : leadStage === 'WARM' ? 'morno' : 'frio';
   const projectName = c.projectName ?? null;
-  const empreendimento = projectName === 'Evora' || projectName === 'Montaresa' ? projectName : null;
-  const status = (c.classificationStatus === 'Handoff' ? 'Handoff' : 'Novo') as Conversation['status'];
+  const empreendimento = projectName;
+  const status = (['Handoff', 'Qualificando', 'Interessado', 'Novo'].includes(c.classificationStatus)
+    ? c.classificationStatus
+    : 'Novo') as Conversation['status'];
   return {
     id: c.id,
     leadName,
@@ -68,23 +70,19 @@ export function InboxPage() {
       .finally(() => setConversationsLoading(false));
   }, []);
 
-  useEffect(() => {
-    loadConversations();
-  }, [loadConversations]);
+  useEffect(() => { loadConversations(); }, [loadConversations]);
 
   useEffect(() => {
     projectsApi
       .list(true)
-      .then((data) => setProjects(data.projects))
+      .then((data) =>
+        setProjects(data.projects.map((p) => ({ id: p.id, name: p.name, active: p.status === 'ativo' })))
+      )
       .catch(() => setProjects([]));
   }, []);
 
   useEffect(() => {
-    if (!selectedId) {
-      setMessages([]);
-      setMessagesError(null);
-      return;
-    }
+    if (!selectedId) { setMessages([]); setMessagesError(null); return; }
     const id = parseInt(selectedId, 10);
     if (Number.isNaN(id)) return;
     let cancelled = false;
@@ -99,15 +97,9 @@ export function InboxPage() {
           );
         }
       })
-      .catch(() => {
-        if (!cancelled) setMessagesError('Falha ao carregar');
-      })
-      .finally(() => {
-        if (!cancelled) setMessagesLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+      .catch(() => { if (!cancelled) setMessagesError('Falha ao carregar'); })
+      .finally(() => { if (!cancelled) setMessagesLoading(false); });
+    return () => { cancelled = true; };
   }, [selectedId]);
 
   const handleSendMessage = useCallback(
@@ -166,7 +158,7 @@ export function InboxPage() {
                     projectName: data.projectName ?? c.projectName,
                     classificationStatus: data.classificationStatus ?? c.classificationStatus,
                     status: (data.classificationStatus ?? c.status) as Conversation['status'],
-                    empreendimento: data.projectName === 'Evora' || data.projectName === 'Montaresa' ? data.projectName : data.projectName ? null : c.empreendimento,
+                    empreendimento: data.projectName ?? c.empreendimento,
                   }
                 : c
             )
@@ -178,39 +170,43 @@ export function InboxPage() {
   );
 
   return (
-    <div className="h-screen flex flex-col bg-white text-gray-900">
-      <nav className="shrink-0 flex items-center justify-end gap-4 px-4 py-2 border-b border-gray-200 bg-white">
-        <Link to="/settings/integrations/whatsapp" className="text-sm text-blue-600 hover:text-blue-800">
-          Configurações
-        </Link>
-        <Link to="/enviar-whatsapp" className="text-sm text-gray-500 hover:text-gray-700">Enviar WhatsApp (técnico)</Link>
+    <div className="h-screen flex flex-col bg-[#F9FAFB] text-[#111827]">
+      <nav className="shrink-0 flex items-center justify-between px-5 h-14 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm sticky top-0 z-30">
+        <span className="text-[15px] font-semibold text-[#111827]">Inbox</span>
+        <div className="flex items-center gap-5">
+          <Link to="/settings/empreendimentos" className="text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8] transition-colors">
+            Empreendimentos
+          </Link>
+          <Link to="/settings/integrations/whatsapp" className="text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8] transition-colors">
+            Configurações
+          </Link>
+          <Link to="/enviar-whatsapp" className="text-[13px] font-medium text-[#6B7280] hover:text-[#111827] transition-colors">
+            Enviar WhatsApp
+          </Link>
+        </div>
       </nav>
+
       <div className="flex-1 flex flex-col md:flex-row min-h-0">
         <button
           type="button"
           aria-label={sidebarOpen ? 'Fechar lista de conversas' : 'Abrir lista de conversas'}
           onClick={() => setSidebarOpen((o) => !o)}
-          className="md:hidden fixed top-14 left-4 z-20 px-3 py-2 bg-white border border-gray-200 rounded-lg shadow-sm"
+          className="md:hidden fixed top-[68px] left-4 z-20 w-9 h-9 flex items-center justify-center bg-white border border-[#E5E7EB] rounded-[10px] shadow-sm text-[#6B7280] hover:text-[#111827] transition-colors"
         >
-          {sidebarOpen ? '✕' : '☰'}
+          {sidebarOpen ? (
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          ) : (
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          )}
         </button>
         {sidebarOpen && (
           <div className="fixed inset-0 bg-black/30 z-10 md:hidden" aria-hidden onClick={() => setSidebarOpen(false)} />
         )}
-        <aside
-          className={`
-          w-[320px] shrink-0 flex flex-col h-full md:relative md:translate-x-0
-          fixed inset-y-0 left-0 z-20 transform transition-transform duration-200 ease-out
-          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-        `}
-        >
+        <aside className={`w-[340px] shrink-0 flex flex-col h-full md:relative md:translate-x-0 fixed inset-y-0 left-0 z-20 transform transition-transform duration-200 ease-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
           <ConversationList
             conversations={conversations}
             selectedId={selectedId}
-            onSelect={(id) => {
-              setSelectedId(id);
-              setSidebarOpen(false);
-            }}
+            onSelect={(id) => { setSelectedId(id); setSidebarOpen(false); }}
             isLoading={conversationsLoading}
             onNewMessage={() => setNewMessageOpen(true)}
           />
@@ -228,11 +224,7 @@ export function InboxPage() {
           />
         </main>
       </div>
-      <NewMessageModal
-        open={newMessageOpen}
-        onClose={() => setNewMessageOpen(false)}
-        onSent={handleNewMessageSent}
-      />
+      <NewMessageModal open={newMessageOpen} onClose={() => setNewMessageOpen(false)} onSent={handleNewMessageSent} />
     </div>
   );
 }

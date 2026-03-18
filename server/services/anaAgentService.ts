@@ -1,0 +1,146 @@
+import type { EnterpriseRow } from '../repositories/enterpriseRepository.js';
+import { parseAddons, FILE_CATEGORIES, type FileCategory } from '../repositories/enterpriseRepository.js';
+
+export interface AnaStructuredReply {
+  reply: string;
+  classification: string;
+  lead_temperature: string;
+  project: string;
+  handoff: boolean;
+  customer_name: string;
+  summary: string;
+  /** Se o cliente pediu material (ex.: book) e existe arquivo nesta categoria neste empreendimento. */
+  send_file_category: FileCategory | null;
+}
+
+const JSON_INSTRUCTION = `
+JSON obrigatório (sem markdown):
+{
+  "reply": "texto ao cliente",
+  "classification": "Novo" | "Qualificando" | "Interessado" | "Handoff",
+  "lead_temperature": "frio" | "morno" | "quente",
+  "project": "nome do empreendimento ou vazio",
+  "handoff": false,
+  "customer_name": "",
+  "summary": "",
+  "send_file_category": null | "book" | "unidades" | "tabela_comercial" | "outro"
+}
+Use send_file_category APENAS quando o cliente pedir explicitamente um arquivo (ex.: book, tabela, unidades) E essa categoria aparecer na lista de arquivos disponíveis abaixo. Caso contrário null. Nunca peça categoria que não exista na lista.`;
+
+const COMPORTAMENTO = `
+Ana — Quero Meu Apê (Netiv). Atendente humana no WhatsApp.
+Natural, curto/médio, 1 pergunta por mensagem. Nunca diga que é IA.
+Proibido "como posso ajudar?" vazio. Não invente dados.
+HANDOFF: humano, preço exato, negociação, disponibilidade real, urgência, irritação, sensível. Nunca prometa prazo.
+Prioridade: variáveis → texto dos arquivos (extracted) → histórico.
+${JSON_INSTRUCTION}`;
+
+const LANGUAGE_HINT: Record<string, string> = {
+  informal: 'Tom informal BR.',
+  natural: 'Tom natural.',
+  formal: 'Tom formal.',
+  culta: 'Tom culto.',
+};
+
+function formatVars(v: Record<string, string>): string {
+  return [
+    `• Preço: ${v.preco?.trim() || '[não informado]'}`,
+    `• Condições: ${v.condicoes?.trim() || '[não informado]'}`,
+    `• Disponibilidade: ${v.disponibilidade?.trim() || '[não informado]'}`,
+    `• Observações: ${v.observacoes?.trim() || '[nenhuma]'}`,
+  ].join('\n');
+}
+
+const CLASS_OK = new Set(['Novo', 'Qualificando', 'Interessado', 'Handoff']);
+const TEMP_OK = new Set(['frio', 'morno', 'quente']);
+const CAT_SET = new Set<string>(FILE_CATEGORIES);
+
+export function buildAnaSystemPrompt(opts: {
+  mode: 'triage' | 'scoped' | 'inactive_linked';
+  enterprise: EnterpriseRow | null;
+  variablesMap: Record<string, string>;
+  knowledgeText: string;
+  fileInventory: string;
+}): string {
+  const base = COMPORTAMENTO;
+
+  if (opts.mode === 'triage') {
+    return `${base}
+
+TRIAGEM — sem empreendimento vinculado.
+Descubra qual empreendimento o cliente quer. PROIBIDO nomear/listar/explicar empreendimentos ou portfólio.
+send_file_category sempre null aqui.`;
+  }
+
+  if (opts.mode === 'inactive_linked') {
+    return `${base}
+
+Empreendimento inativo. Sem listar outros. send_file_category null.`;
+  }
+
+  const e = opts.enterprise!;
+  const addons = parseAddons(e.prompt_addons);
+  const addonsBlock = addons.length ? `\nExtras:\n${addons.map((a) => `- ${a}`).join('\n')}` : '';
+  const know = opts.knowledgeText.trim() ? `\n--- Texto extraído dos arquivos ---\n${opts.knowledgeText.slice(0, 45_000)}` : '';
+  const inv = opts.fileInventory.trim() || '(nenhum arquivo cadastrado — send_file_category sempre null)';
+
+  return `${base}
+
+${LANGUAGE_HINT[e.language_style] || LANGUAGE_HINT.natural}
+
+OBRIGATÓRIO: Você só pode falar sobre o empreendimento atual: "${e.name}".
+É proibido mencionar, comparar ou sugerir outros empreendimentos ou revelar portfólio.
+
+Arquivos DESTE empreendimento que você pode enviar pelo WhatsApp (por categoria):
+${inv}
+Somente estes; é proibido referir arquivos de outro empreendimento.
+
+Variáveis:
+${formatVars(opts.variablesMap)}
+${addonsBlock}
+${know}`;
+}
+
+export function parseAnaJson(raw: string): AnaStructuredReply | null {
+  if (!raw || typeof raw !== 'string') return null;
+  let s = raw.trim();
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) s = fence[1].trim();
+  try {
+    const o = JSON.parse(s) as Record<string, unknown>;
+    const reply = typeof o.reply === 'string' ? o.reply.trim() : '';
+    if (!reply) return null;
+    let classification = typeof o.classification === 'string' ? o.classification.trim() : 'Novo';
+    if (!CLASS_OK.has(classification)) classification = 'Novo';
+    let lead_temperature = typeof o.lead_temperature === 'string' ? o.lead_temperature.trim().toLowerCase() : 'frio';
+    if (!TEMP_OK.has(lead_temperature)) lead_temperature = 'frio';
+    let send_file_category: FileCategory | null = null;
+    const sc = o.send_file_category;
+    if (typeof sc === 'string' && CAT_SET.has(sc)) send_file_category = sc as FileCategory;
+    return {
+      reply,
+      classification,
+      lead_temperature,
+      project: typeof o.project === 'string' ? o.project : '',
+      handoff: Boolean(o.handoff),
+      customer_name: typeof o.customer_name === 'string' ? o.customer_name.trim() : '',
+      summary: typeof o.summary === 'string' ? o.summary.trim() : '',
+      send_file_category,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function fallbackReplyFromRaw(_raw: string): AnaStructuredReply {
+  return {
+    reply: 'Oi — prefiro não chutar. Em uma frase, o que você precisa?',
+    classification: 'Novo',
+    lead_temperature: 'frio',
+    project: '',
+    handoff: false,
+    customer_name: '',
+    summary: '',
+    send_file_category: null,
+  };
+}

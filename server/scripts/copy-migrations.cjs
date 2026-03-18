@@ -12,8 +12,15 @@ if (!fs.existsSync(srcDir)) {
 }
 
 fs.mkdirSync(destDir, { recursive: true });
-const files = fs.readdirSync(srcDir).filter((f) => f.endsWith('.sql'));
-for (const f of files) {
+for (const f of fs.readdirSync(srcDir).filter((f) => f.endsWith('.sql'))) {
   fs.copyFileSync(path.join(srcDir, f), path.join(destDir, f));
 }
-console.log('[copy-migrations] Copied', files.length, 'file(s) to dist/db/migrations');
+const pgSrc = path.join(srcDir, 'pg');
+const pgDest = path.join(destDir, 'pg');
+if (fs.existsSync(pgSrc)) {
+  fs.mkdirSync(pgDest, { recursive: true });
+  for (const f of fs.readdirSync(pgSrc).filter((x) => x.endsWith('.sql'))) {
+    fs.copyFileSync(path.join(pgSrc, f), path.join(pgDest, f));
+  }
+}
+console.log('[copy-migrations] OK');

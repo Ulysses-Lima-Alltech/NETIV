@@ -1,7 +1,5 @@
 export type ConversationStatus = 'NOVO' | 'EM_ANDAMENTO' | 'QUALIFICADO' | 'HANDOFF' | 'Novo' | 'Handoff';
 
-export type Empreendimento = 'Montaresa' | 'Evora';
-
 export type LeadTemperatura = 'quente' | 'morno' | 'frio';
 
 export interface Conversation {
@@ -12,7 +10,7 @@ export interface Conversation {
   updatedAt: string; // ISO date
   unreadCount: number;
   status: ConversationStatus;
-  empreendimento: Empreendimento | null;
+  empreendimento: string | null;
   temperatura: LeadTemperatura;
   /** ID do projeto (backend). */
   projectId?: number | null;
