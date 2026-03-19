@@ -350,14 +350,32 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     if (cat && eid && ent && eid === ent.id) {
       const file = await getFileForSend(eid, cat as FileCategory);
       if (file) {
-        const docRes = await sendDocumentMessage(toPhoneNumber, file.path, file.originalName);
-        if (docRes.success) {
+        const docRes = await sendDocumentMessage(toPhoneNumber, file.path, file.originalName, file.mime, {
+          enterpriseId: eid,
+          enterpriseName: ent.name,
+          conversationId,
+          fileCategory: cat,
+          enterpriseFileId: file.id,
+          relativeStoragePath: file.relativeStoragePath,
+          absolutePath: file.path,
+        });
+        if (docRes.success && docRes.metaMessageId) {
           await logSentFile(conversationId, file.id);
-          const mid = docRes.metaMessageId || `doc-${Date.now()}`;
-          await insertMessage(conversationId, 'assistant', `[Arquivo: ${file.originalName}]`, mid);
+          await insertMessage(
+            conversationId,
+            'assistant',
+            `[Arquivo: ${file.originalName}]`,
+            docRes.metaMessageId
+          );
           console.log('[ConversationEngine] Arquivo enviado:', file.originalName, 'conv:', conversationId);
         } else {
           console.error('[ConversationEngine] Falha ao enviar documento:', docRes.error, 'conv:', conversationId, 'file:', file.originalName);
+          const fallbackText =
+            `Não consegui enviar o arquivo "${file.originalName}" pelo WhatsApp neste momento. Peça o material a um atendente ou tente novamente em instantes.`;
+          const fixRes = await sendTextMessage(toPhoneNumber, fallbackText);
+          if (fixRes.success && fixRes.metaMessageId) {
+            await insertMessage(conversationId, 'assistant', fallbackText, fixRes.metaMessageId);
+          }
         }
       } else {
         console.warn('[ConversationEngine] Cliente pediu arquivo categoria', cat, 'mas nenhum arquivo encontrado para empreendimento', eid);

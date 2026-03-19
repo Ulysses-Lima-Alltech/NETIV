@@ -299,7 +299,7 @@ export async function loadAgentKnowledgeText(enterpriseId: number): Promise<stri
 export async function getFileForSend(
   enterpriseId: number,
   category: FileCategory
-): Promise<{ id: number; path: string; originalName: string; mime: string } | null> {
+): Promise<{ id: number; path: string; originalName: string; mime: string; relativeStoragePath: string } | null> {
   const { rows } = await query<{ id: number; storage_path: string; original_name: string; mime_type: string }>(
     `SELECT id, storage_path, original_name, mime_type FROM enterprise_files
      WHERE enterprise_id = $1 AND category = $2 AND is_active = true
@@ -311,7 +311,13 @@ export async function getFileForSend(
   if (!r) return null;
   const path = join(enterpriseDir(enterpriseId), r.storage_path);
   if (!existsSync(path)) return null;
-  return { id: r.id, path, originalName: r.original_name, mime: r.mime_type };
+  return {
+    id: r.id,
+    path,
+    originalName: r.original_name,
+    mime: r.mime_type,
+    relativeStoragePath: r.storage_path,
+  };
 }
 
 export async function logSentFile(conversationId: number, enterpriseFileId: number): Promise<void> {
