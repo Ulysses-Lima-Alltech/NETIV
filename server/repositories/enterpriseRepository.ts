@@ -6,6 +6,20 @@ import { query } from '../db/pg.js';
 export const FILE_CATEGORIES = ['book', 'unidades', 'tabela_comercial', 'outro'] as const;
 export type FileCategory = (typeof FILE_CATEGORIES)[number];
 
+const FILE_CATEGORY_SET = new Set<string>(FILE_CATEGORIES);
+
+/**
+ * Alinha o valor vindo da ANA/JSON com as categorias do banco (`enterprise_files.category`).
+ * Corrige espaços, caixa, hífen vs underscore e plural acidental "books".
+ */
+export function normalizeFileCategory(input: string | null | undefined): FileCategory | null {
+  if (input == null || typeof input !== 'string') return null;
+  let s = input.trim().toLowerCase().replace(/-/g, '_').replace(/\s+/g, '_');
+  if (s === 'books') s = 'book';
+  if (FILE_CATEGORY_SET.has(s)) return s as FileCategory;
+  return null;
+}
+
 const VAR_KEYS = ['preco', 'condicoes', 'disponibilidade', 'observacoes'] as const;
 
 export type LanguageStyle = 'informal' | 'natural' | 'formal' | 'culta';
@@ -298,19 +312,45 @@ export async function loadAgentKnowledgeText(enterpriseId: number): Promise<stri
 
 export async function getFileForSend(
   enterpriseId: number,
-  category: FileCategory
+  category: FileCategory | string
 ): Promise<{ id: number; path: string; originalName: string; mime: string; relativeStoragePath: string } | null> {
+  const catNorm = normalizeFileCategory(String(category));
+  if (!catNorm) {
+    console.warn('[getFileForSend] categoria inválida após normalização', { enterpriseId, category });
+    return null;
+  }
+
   const { rows } = await query<{ id: number; storage_path: string; original_name: string; mime_type: string }>(
     `SELECT id, storage_path, original_name, mime_type FROM enterprise_files
      WHERE enterprise_id = $1 AND category = $2 AND is_active = true
      ORDER BY created_at DESC, id DESC
      LIMIT 1`,
-    [enterpriseId, category]
+    [enterpriseId, catNorm]
   );
   const r = rows[0];
-  if (!r) return null;
+  if (!r) {
+    const { rows: byEnt } = await query<{ category: string; n: string }>(
+      `SELECT category, COUNT(*)::text AS n FROM enterprise_files WHERE enterprise_id = $1 GROUP BY category ORDER BY category`,
+      [enterpriseId]
+    );
+    console.warn('[getFileForSend] nenhuma linha ativa para a categoria pedida', {
+      enterpriseId,
+      categoryRequested: catNorm,
+      categoriesPresentInDb: byEnt.map((x) => `${x.category}(${x.n})`),
+    });
+    return null;
+  }
   const path = join(enterpriseDir(enterpriseId), r.storage_path);
-  if (!existsSync(path)) return null;
+  if (!existsSync(path)) {
+    console.warn('[getFileForSend] linha no banco mas arquivo ausente no disco', {
+      enterpriseId,
+      category: catNorm,
+      enterprise_file_id: r.id,
+      storage_path: r.storage_path,
+      absolutePath: path,
+    });
+    return null;
+  }
   return {
     id: r.id,
     path,

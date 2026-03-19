@@ -1,5 +1,5 @@
 import type { EnterpriseRow } from '../repositories/enterpriseRepository.js';
-import { parseAddons, FILE_CATEGORIES, type FileCategory } from '../repositories/enterpriseRepository.js';
+import { parseAddons, normalizeFileCategory, type FileCategory } from '../repositories/enterpriseRepository.js';
 
 export interface AnaStructuredReply {
   reply: string;
@@ -100,7 +100,6 @@ function formatVars(v: Record<string, string>): string {
 
 const CLASS_OK = new Set(['Novo', 'Qualificado', 'Reserva', 'Handoff']);
 const TEMP_OK = new Set(['frio', 'morno', 'quente']);
-const CAT_SET = new Set<string>(FILE_CATEGORIES);
 
 export interface BuildAnaSystemPromptOpts {
   mode: 'triage' | 'scoped' | 'inactive_linked';
@@ -175,7 +174,10 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
     if (!TEMP_OK.has(lead_temperature)) lead_temperature = 'frio';
     let send_file_category: FileCategory | null = null;
     const sc = o.send_file_category;
-    if (typeof sc === 'string' && CAT_SET.has(sc)) send_file_category = sc as FileCategory;
+    if (typeof sc === 'string') {
+      const norm = normalizeFileCategory(sc);
+      if (norm) send_file_category = norm;
+    }
     return {
       reply,
       classification,
