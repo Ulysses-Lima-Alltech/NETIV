@@ -139,6 +139,8 @@ export const whatsappApi = {
       method: 'POST',
       body: { message },
     }),
+  deleteConversation: (conversationId: number) =>
+    request<{ success: boolean }>(`/whatsapp/conversations/${conversationId}`, { method: 'DELETE' }),
 };
 
 export type FileCategory = 'book' | 'unidades' | 'tabela_comercial' | 'outro';
@@ -305,7 +307,10 @@ export const appointmentsApi = {
     request<{ available: boolean; eligibleBrokerCount: number; suggestedBrokerId?: number }>('/appointments/check-availability', { method: 'POST', body }),
   updateStatus: (id: number, status: string) =>
     request<Appointment>(`/appointments/${id}/status`, { method: 'PATCH', body: { status } }),
-  cancel: (id: number) => request<Appointment>(`/appointments/${id}`, { method: 'DELETE' }),
+  cancel: (id: number) =>
+    request<Appointment>(`/appointments/${id}/status`, { method: 'PATCH', body: { status: 'CANCELADO' } }),
+  delete: (id: number) =>
+    request<Record<string, never>>(`/appointments/${id}`, { method: 'DELETE' }),
 };
 
 export interface LeadAnalysisResponse {

@@ -6,6 +6,7 @@ import {
   listConversationsWithPreview,
   getConversationById,
   updateClassification,
+  deleteConversation,
 } from '../repositories/conversationRepository.js';
 import { reprocessLastUserMessage } from '../services/conversationEngine.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
@@ -91,6 +92,19 @@ router.get('/conversations', async (req, res) => {
   }
 });
 
+router.delete('/conversations/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    const deleted = await deleteConversation(id);
+    if (!deleted) return res.status(404).json({ error: 'Conversa não encontrada.' });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[WhatsApp] DELETE conversation:', e);
+    res.status(500).json({ error: 'Erro ao excluir.' });
+  }
+});
+
 router.patch('/conversations/:id/classification', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -109,9 +123,11 @@ router.patch('/conversations/:id/classification', async (req, res) => {
     });
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
     if (convBefore?.handoff === true && conv.handoff === false) {
-      setImmediate(() => {
-        reprocessLastUserMessage(id).catch((e) => console.error('[WhatsApp] reprocessLastUserMessage:', e));
-      });
+      try {
+        await reprocessLastUserMessage(id);
+      } catch (e) {
+        console.error('[WhatsApp] reprocessLastUserMessage:', e);
+      }
     }
     const projectName = conv.enterprise_id ? (await getEnterpriseById(conv.enterprise_id))?.name ?? null : null;
     res.json({

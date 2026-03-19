@@ -6,6 +6,7 @@ interface ConversationListProps {
   conversations: Conversation[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onDelete?: (id: string) => void;
   onNewMessage?: () => void;
   isLoading?: boolean;
 }
@@ -14,6 +15,7 @@ export function ConversationList({
   conversations,
   selectedId,
   onSelect,
+  onDelete,
   onNewMessage,
   isLoading = false,
 }: ConversationListProps) {
@@ -73,7 +75,7 @@ export function ConversationList({
           <ul className="list-none p-0 m-0" role="list">
             {filtered.map((conv) => (
               <li key={conv.id}>
-                <ConversationListItem conversation={conv} isSelected={selectedId === conv.id} onClick={() => onSelect(conv.id)} />
+                <ConversationListItem conversation={conv} isSelected={selectedId === conv.id} onClick={() => onSelect(conv.id)} onDelete={onDelete} />
               </li>
             ))}
           </ul>

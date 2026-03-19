@@ -98,9 +98,13 @@ export function InboxPage() {
         const apiMapped = data.messages
           .map((m) => mapApiMessageToMessage(m, convId))
           .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        let isNewConversation = false;
         setMessages((prev) => {
           const currentConvMessages = prev.filter((m) => m.conversationId === convId);
-          if (currentConvMessages.length === 0) return apiMapped;
+          if (currentConvMessages.length === 0) {
+            isNewConversation = true;
+            return apiMapped;
+          }
           const apiHasSameText = (text: string) => apiMapped.some((a) => a.text === text);
           const prevRealAndTemp = currentConvMessages.filter(
             (m) =>
@@ -114,7 +118,9 @@ export function InboxPage() {
             (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           );
         });
-        if (shouldScroll) {
+        if (isNewConversation) {
+          setTimeout(() => scrollToBottom(), 0);
+        } else if (shouldScroll) {
           setTimeout(() => scrollToBottom(), 0);
         }
       })
@@ -185,6 +191,26 @@ export function InboxPage() {
       if (conversationId != null) setSelectedId(String(conversationId));
     },
     [loadConversations]
+  );
+
+  const handleDeleteConversation = useCallback(
+    async (id: string) => {
+      if (!confirm('Deseja excluir esta conversa?')) return;
+      const numId = parseInt(id, 10);
+      if (Number.isNaN(numId)) return;
+      try {
+        await whatsappApi.deleteConversation(numId);
+        setConversations((prev) => prev.filter((c) => c.id !== id));
+        if (selectedId === id) {
+          setSelectedId(null);
+          setMessages([]);
+          setMessagesError(null);
+        }
+      } catch (e) {
+        console.error('[InboxPage] deleteConversation:', e);
+      }
+    },
+    [selectedId]
   );
 
   const handleClassificationChange = useCallback(
@@ -261,6 +287,7 @@ export function InboxPage() {
             conversations={conversations}
             selectedId={selectedId}
             onSelect={(id) => { setSelectedId(id); setSidebarOpen(false); }}
+            onDelete={handleDeleteConversation}
             isLoading={conversationsLoading}
             onNewMessage={() => setNewMessageOpen(true)}
           />

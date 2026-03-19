@@ -7,6 +7,7 @@ import { listByBroker } from '../repositories/brokerAvailabilityRepository.js';
 import {
   createAppointment,
   hasBrokerConflict,
+  countBrokerAppointmentsOnDate,
 } from '../repositories/appointmentRepository.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
 const TZ_BUSINESS = 'America/Sao_Paulo';
@@ -91,28 +92,55 @@ async function brokerHasAvailabilityForSlot(
   );
 }
 
+/**
+ * Encontra o corretor elegível para o slot.
+ * Avalia TODOS os corretores vinculados ao empreendimento, filtra os disponíveis
+ * e escolhe aquele com MENOR quantidade de agendamentos no dia (distribuição justa).
+ * Desempate: last_assigned_at ASC, depois id ASC.
+ */
 export async function findEligibleBroker(
   enterpriseId: number,
   startAt: Date,
   endAt: Date
 ): Promise<number | null> {
-  const brokers = await query<{ id: number; last_assigned_at: Date | null }>(
+  const { rows: brokers } = await query<{ id: number; last_assigned_at: Date | null }>(
     `SELECT c.id, c.last_assigned_at
      FROM corretores c
      INNER JOIN corretor_empreendimentos ce ON ce.corretor_id = c.id
      WHERE c.active = true
        AND COALESCE(c.receiving_enabled, true) = true
-       AND ce.enterprise_id = $1
-     ORDER BY c.last_assigned_at ASC NULLS FIRST, c.id ASC`,
+       AND ce.enterprise_id = $1`,
     [enterpriseId]
   );
-  for (const b of brokers.rows) {
+
+  const available: { id: number; last_assigned_at: Date | null }[] = [];
+  for (const b of brokers) {
     const hasAvail = await brokerHasAvailabilityForSlot(b.id, startAt, endAt);
     if (!hasAvail) continue;
     const conflict = await hasBrokerConflict(b.id, startAt, endAt);
-    if (!conflict) return b.id;
+    if (!conflict) available.push(b);
   }
-  return null;
+
+  if (available.length === 0) return null;
+
+  const withCount = await Promise.all(
+    available.map(async (b) => ({
+      ...b,
+      appointmentsCountToday: await countBrokerAppointmentsOnDate(b.id, startAt),
+    }))
+  );
+
+  withCount.sort((a, b) => {
+    if (a.appointmentsCountToday !== b.appointmentsCountToday) {
+      return a.appointmentsCountToday - b.appointmentsCountToday;
+    }
+    const aLast = a.last_assigned_at ? new Date(a.last_assigned_at).getTime() : 0;
+    const bLast = b.last_assigned_at ? new Date(b.last_assigned_at).getTime() : 0;
+    if (aLast !== bLast) return aLast - bLast;
+    return a.id - b.id;
+  });
+
+  return withCount[0].id;
 }
 
 export async function checkAvailability(

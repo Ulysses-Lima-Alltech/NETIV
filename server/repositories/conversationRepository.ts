@@ -44,6 +44,12 @@ export async function getConversationById(id: number): Promise<ConversationRow |
   return rows[0] ?? null;
 }
 
+/** Exclui a conversa e suas mensagens (CASCADE). Retorna true se excluiu. */
+export async function deleteConversation(id: number): Promise<boolean> {
+  const result = await query(`DELETE FROM conversations WHERE id = $1`, [id]);
+  return (result.rowCount ?? 0) > 0;
+}
+
 const VALID_CLASSIFICATIONS = new Set(['Novo', 'Qualificado', 'Reserva', 'Handoff']);
 
 function toValidClassification(s: string | null | undefined): string {

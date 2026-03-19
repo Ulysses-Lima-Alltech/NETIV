@@ -143,6 +143,14 @@ export function AgendaPage() {
     appointmentsApi.updateStatus(a.id, 'CANCELADO').then(() => loadAppointments()).catch(() => {});
   };
 
+  const handleDelete = (a: Appointment) => {
+    if (!confirm('Deseja excluir este agendamento?')) return;
+    appointmentsApi
+      .delete(a.id)
+      .then(() => setAppointments((prev) => prev.filter((x) => x.id !== a.id)))
+      .catch(() => {});
+  };
+
   const getProjectName = (id: number) => projects.find((p) => p.id === id)?.name ?? `#${id}`;
   const getBrokerName = (id: number | null) => (id ? corretores.find((c) => c.id === id)?.fullName ?? `#${id}` : '—');
 
@@ -294,15 +302,24 @@ export function AgendaPage() {
                         </span>
                       </td>
                       <td className="py-3.5 px-4">
-                        {a.status !== 'CANCELADO' && a.status !== 'REALIZADO' && a.status !== 'NO_SHOW' && (
+                        <span className="flex flex-wrap gap-2">
+                          {a.status !== 'CANCELADO' && a.status !== 'REALIZADO' && a.status !== 'NO_SHOW' && (
+                            <button
+                              type="button"
+                              onClick={() => handleCancel(a)}
+                              className="text-[12px] font-medium text-[#9CA3AF] hover:text-amber-600 transition-colors"
+                            >
+                              Cancelar
+                            </button>
+                          )}
                           <button
                             type="button"
-                            onClick={() => handleCancel(a)}
+                            onClick={() => handleDelete(a)}
                             className="text-[12px] font-medium text-[#9CA3AF] hover:text-red-600 transition-colors"
                           >
-                            Cancelar
+                            Excluir
                           </button>
-                        )}
+                        </span>
                       </td>
                     </tr>
                   ))}

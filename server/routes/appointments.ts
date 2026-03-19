@@ -3,7 +3,7 @@ import {
   listAppointments,
   getAppointmentById,
   updateAppointmentStatus,
-  cancelAppointment,
+  deleteAppointment,
 } from '../repositories/appointmentRepository.js';
 import { checkAvailability, assignAppointment } from '../services/appointmentService.js';
 import {
@@ -196,17 +196,17 @@ router.patch('/:id/status', async (req, res) => {
   }
 });
 
-// DELETE /:id — cancela (soft)
+// DELETE /:id — exclusão real (não é cancelamento; use PATCH /:id/status para cancelar)
 router.delete('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
-    const updated = await cancelAppointment(id);
-    if (!updated) return res.status(404).json({ error: 'Agendamento não encontrado.' });
-    res.json(toAppointmentDto(updated));
+    const deleted = await deleteAppointment(id);
+    if (!deleted) return res.status(404).json({ error: 'Agendamento não encontrado.' });
+    res.status(204).send();
   } catch (e) {
     console.error('[Appointments] DELETE:', e);
-    res.status(500).json({ error: 'Erro ao cancelar.' });
+    res.status(500).json({ error: 'Erro ao excluir.' });
   }
 });
 

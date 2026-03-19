@@ -28,6 +28,7 @@ export interface IncomingMessageContext {
 
 /** Reprocessa a última mensagem do usuário sem resposta quando handoff muda true→false. */
 export async function reprocessLastUserMessage(conversationId: number): Promise<void> {
+  console.log('[ANA REPROCESS]', { conversationId });
   const conv = await getConversationById(conversationId);
   if (!conv) return;
   const toPhoneNumber = (conv.contact_phone || conv.external_contact_id || '').trim();

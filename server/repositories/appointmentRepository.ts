@@ -125,3 +125,24 @@ export async function hasBrokerConflict(
   );
   return rows.length > 0;
 }
+
+/** Conta agendamentos do corretor no mesmo dia (CONFIRMADO ou PENDENTE_CONFIRMACAO). */
+export async function countBrokerAppointmentsOnDate(
+  brokerId: number,
+  date: Date | string
+): Promise<number> {
+  const dateStr = typeof date === 'string' ? date : date.toISOString().slice(0, 10);
+  const { rows } = await query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM appointments
+     WHERE broker_id = $1 AND start_at::date = $2::date
+       AND status IN ('CONFIRMADO', 'PENDENTE_CONFIRMACAO')`,
+    [brokerId, dateStr]
+  );
+  return parseInt(rows[0]?.count ?? '0', 10);
+}
+
+/** Exclui o agendamento (exclusão real). Retorna true se excluiu. */
+export async function deleteAppointment(id: number): Promise<boolean> {
+  const result = await query(`DELETE FROM appointments WHERE id = $1`, [id]);
+  return (result.rowCount ?? 0) > 0;
+}
