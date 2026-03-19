@@ -51,18 +51,6 @@ export const assignPendingSchema = z.object({
   brokerId: z.number().int().positive('Selecione um corretor'),
 });
 
-export const assignPendingSchema = z.object({
-  brokerId: z.number().int().positive('Corretor obrigatório'),
-});
-
-export const assignPendingSchema = z.object({
-  brokerId: z.number().int().positive('Corretor obrigatório'),
-});
-
-export const assignPendingSchema = z.object({
-  brokerId: z.number().int().positive('Selecione um corretor'),
-});
-
 export const updateAppointmentSchema = z.object({
   customerName: z.string().min(1).max(255).optional(),
   customerPhone: z.string().max(32).optional(),
