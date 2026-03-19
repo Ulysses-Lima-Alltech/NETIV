@@ -189,7 +189,11 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
     if (!req.file) {
       return res.status(400).json({ error: fv || 'Envie o campo file.' });
     }
-    if (!req.file.mimetype || (!req.file.mimetype.includes('pdf') && !req.file.mimetype.startsWith('text/'))) {
+    const filename = (req.file.originalname || '').toLowerCase();
+    const mime = req.file.mimetype || '';
+    const isPdf = mime.includes('pdf') || filename.endsWith('.pdf');
+    const isTxt = mime.startsWith('text/') || filename.endsWith('.txt') || filename.endsWith('.md');
+    if (!isPdf && !isTxt) {
       return res.status(400).json({ error: 'Tipo inválido. Envie PDF, TXT ou MD.' });
     }
     const cat = (req.body?.category as string) || 'outro';
