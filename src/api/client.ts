@@ -280,7 +280,10 @@ export const projectsApi = {
     return data as KnowledgeFileItem;
   },
   deleteKnowledge: (projectId: number, fileId: number) =>
-    request<{ ok: boolean }>(`/projects/${projectId}/knowledge/${fileId}`, { method: 'DELETE' }),
+    request<{ ok: boolean; removed?: boolean; deactivated?: boolean; message?: string }>(
+      `/projects/${projectId}/knowledge/${fileId}`,
+      { method: 'DELETE' }
+    ),
 };
 
 export interface Corretor {

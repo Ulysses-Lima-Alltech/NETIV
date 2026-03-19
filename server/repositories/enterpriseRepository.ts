@@ -277,16 +277,46 @@ export async function registerEnterpriseFile(
   return rows[0].id;
 }
 
-export async function deleteEnterpriseFile(enterpriseId: number, fileId: number): Promise<boolean> {
+export type DeleteEnterpriseFileResult =
+  | { ok: false; reason: 'not_found' }
+  | { ok: true; mode: 'removed' }
+  | { ok: true; mode: 'deactivated'; message: string };
+
+const MSG_DEACTIVATED_HISTORICO =
+  'Arquivo já utilizado em envios. Ele foi desativado, mas mantido no histórico.';
+
+/**
+ * Remove o arquivo do disco e do banco apenas se nunca entrou em `sent_files_log`.
+ * Se já houver envios registrados, mantém a linha (FK) e o arquivo no storage, apenas `is_active = false`.
+ */
+export async function deleteEnterpriseFile(
+  enterpriseId: number,
+  fileId: number
+): Promise<DeleteEnterpriseFileResult> {
   const { rows } = await query<{ storage_path: string }>(
     `SELECT storage_path FROM enterprise_files WHERE id = $1 AND enterprise_id = $2`,
     [fileId, enterpriseId]
   );
-  if (!rows[0]) return false;
+  if (!rows[0]) return { ok: false, reason: 'not_found' };
+
+  const { rows: usedRows } = await query<{ used: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM sent_files_log WHERE enterprise_file_id = $1) AS used`,
+    [fileId]
+  );
+  const hasSendHistory = usedRows[0]?.used === true;
+
+  if (hasSendHistory) {
+    await query(
+      `UPDATE enterprise_files SET is_active = false WHERE id = $1 AND enterprise_id = $2`,
+      [fileId, enterpriseId]
+    );
+    return { ok: true, mode: 'deactivated', message: MSG_DEACTIVATED_HISTORICO };
+  }
+
   const p = join(enterpriseDir(enterpriseId), rows[0].storage_path);
   if (existsSync(p)) unlinkSync(p);
   await query(`DELETE FROM enterprise_files WHERE id = $1`, [fileId]);
-  return true;
+  return { ok: true, mode: 'removed' };
 }
 
 const MAX_KNOWLEDGE = 48_000;
