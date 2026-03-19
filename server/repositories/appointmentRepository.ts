@@ -103,6 +103,16 @@ export async function cancelAppointment(id: number): Promise<AppointmentRow | nu
   return updateAppointmentStatus(id, 'CANCELADO');
 }
 
+/** Atribui corretor ao agendamento (para atribuição manual de pendentes). */
+export async function updateAppointmentBroker(id: number, brokerId: number, status: string): Promise<AppointmentRow | null> {
+  if (!APPOINTMENT_STATUSES.includes(status as AppointmentStatus)) return null;
+  const { rows } = await query<AppointmentRow>(
+    `UPDATE appointments SET broker_id = $1, status = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
+    [brokerId, status, id]
+  );
+  return rows[0] ?? null;
+}
+
 export async function hasBrokerConflict(
   brokerId: number,
   startAt: Date,
@@ -146,3 +156,4 @@ export async function deleteAppointment(id: number): Promise<boolean> {
   const result = await query(`DELETE FROM appointments WHERE id = $1`, [id]);
   return (result.rowCount ?? 0) > 0;
 }
+

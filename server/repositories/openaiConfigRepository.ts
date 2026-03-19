@@ -9,7 +9,8 @@ type Row = {
   temperature: number;
   max_tokens: number;
   lead_score_threshold: number;
-  ai_enabled: boolean;
+  /** PostgreSQL BOOLEAN ou INTEGER (0/1) em migrações legadas */
+  ai_enabled: boolean | number;
   updated_at: Date;
 };
 
@@ -22,7 +23,7 @@ function rowToConfig(row: Row): OpenAIConfig {
     temperature: Number(row.temperature) ?? 0.5,
     maxTokens: row.max_tokens ?? 700,
     leadScoreThreshold: Number(row.lead_score_threshold) ?? 0.75,
-    aiEnabled: !!row.ai_enabled,
+    aiEnabled: row.ai_enabled === true || row.ai_enabled === 1,
     updatedAt: row.updated_at?.toISOString?.() ?? new Date().toISOString(),
   };
 }

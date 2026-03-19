@@ -44,11 +44,18 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 router.post('/', (req: Request, res: Response) => {
+  console.log('[ANA DEBUG] webhook received');
   res.status(200).send('OK');
 
   const payload = req.body;
-  if (!payload || typeof payload !== 'object') return;
-  if (payload.object !== 'whatsapp_business_account') return;
+  if (!payload || typeof payload !== 'object') {
+    console.log('[ANA DEBUG] payload inválido ou ausente');
+    return;
+  }
+  if (payload.object !== 'whatsapp_business_account') {
+    console.log('[ANA DEBUG] payload.object !== whatsapp_business_account', payload.object);
+    return;
+  }
 
   const entry = payload.entry;
   if (!Array.isArray(entry)) return;
@@ -75,7 +82,10 @@ router.post('/', (req: Request, res: Response) => {
 
         setImmediate(() => {
           processOneMessage(from, type, textBody, msgId, contactName, phoneNumberId).catch((e) => {
-            console.error('[Webhook Meta]', e instanceof Error ? e.message : String(e));
+            console.error('[ANA DEBUG] Erro em processOneMessage:', e instanceof Error ? e.message : String(e));
+            if (e instanceof Error && e.stack) {
+              console.error('[ANA DEBUG] Stack:', e.stack);
+            }
           });
         });
       }
@@ -92,19 +102,24 @@ async function processOneMessage(
   phoneNumberId: string | null
 ): Promise<void> {
   if (!(await canSendWhatsApp())) {
-    console.error('[Webhook Meta] WhatsApp não configurado.');
+    console.error('[ANA DEBUG] WhatsApp não configurado — mensagem ignorada.');
     return;
   }
 
-  if (metaMessageId && (await findMessageByMetaId(metaMessageId))) return;
+  if (metaMessageId && (await findMessageByMetaId(metaMessageId))) {
+    console.log('[ANA DEBUG] mensagem já processada (idempotência)', { metaMessageId });
+    return;
+  }
 
   const conv = await findOrCreateConversation('whatsapp', from, from, contactName, phoneNumberId);
+  console.log('[ANA DEBUG] conversa obtida', { conversationId: conv.id, from });
 
   if (type !== 'text' || !textBody) {
+    console.log('[ANA DEBUG] mensagem não textual, enviando resposta fixa', { type, hasBody: !!textBody });
     try {
       await sendReply(from, NON_TEXT_MESSAGE);
     } catch (e) {
-      console.error('[Webhook Meta] send:', e);
+      console.error('[ANA DEBUG] Falha ao enviar resposta para não-texto:', e instanceof Error ? e.message : e);
     }
     return;
   }
@@ -114,21 +129,41 @@ async function processOneMessage(
   } else {
     await insertMessage(conv.id, 'user', textBody, `in-${Date.now()}`);
   }
+  console.log('[ANA DEBUG] message saved', { conversationId: conv.id, metaMessageId: metaMessageId ?? 'gerado' });
 
   const aiConfig = await getOpenAIConfig();
-  if (!aiConfig?.openaiApiKey?.trim()) {
-    console.error('[Webhook Meta] OpenAI API Key não configurada — mensagem não processada.', { conversationId: conv.id });
+  console.log('[ANA DEBUG] aiConfig loaded', {
+    hasConfig: !!aiConfig,
+    hasApiKey: !!aiConfig?.openaiApiKey?.trim(),
+    aiEnabled: aiConfig?.aiEnabled,
+    conversationId: conv.id,
+  });
+  if (!aiConfig) {
+    console.error('[ANA DEBUG] getOpenAIConfig retornou null — integration_settings id=1 inexistente?', { conversationId: conv.id });
     return;
   }
+  if (!aiConfig.openaiApiKey?.trim()) {
+    console.error('[ANA DEBUG] OpenAI API Key não configurada — mensagem salva mas não processada pela IA', { conversationId: conv.id });
+    return;
+  }
+  if (!aiConfig.aiEnabled) {
+    console.log('[ANA DEBUG] aiEnabled check blocked — ai_enabled=false no banco. Ative em Configurações > IA.', { conversationId: conv.id });
+    return;
+  }
+  console.log('[ANA DEBUG] aiEnabled check passed');
 
   try {
+    console.log('[ANA DEBUG] chamando handleIncomingMessage', { conversationId: conv.id });
     await handleIncomingMessage({
       conversationId: conv.id,
       userMessage: textBody,
       toPhoneNumber: from,
     });
   } catch (e) {
-    console.error('[Webhook Meta] Erro ao processar com IA:', e instanceof Error ? e.message : e);
+    console.error('[ANA DEBUG] Erro ao processar com IA:', e instanceof Error ? e.message : String(e));
+    if (e instanceof Error && e.stack) {
+      console.error('[ANA DEBUG] Stack:', e.stack);
+    }
   }
 }
 

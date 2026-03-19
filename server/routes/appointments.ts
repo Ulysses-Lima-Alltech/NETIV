@@ -5,7 +5,7 @@ import {
   updateAppointmentStatus,
   deleteAppointment,
 } from '../repositories/appointmentRepository.js';
-import { checkAvailability, assignAppointment } from '../services/appointmentService.js';
+import { checkAvailability, assignAppointment, assignPendingAppointment } from '../services/appointmentService.js';
 import {
   checkAvailabilitySchema,
   assignAppointmentSchema,
@@ -111,6 +111,42 @@ router.get('/', async (req, res) => {
   } catch (e) {
     console.error('[Appointments] GET:', e);
     res.status(500).json({ error: 'Erro ao listar agendamentos.' });
+  }
+});
+
+// POST /:id/assign — atribuição manual para PENDENTE_DISTRIBUICAO (antes de /:id)
+router.post('/:id/assign', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    const body = req.body as { brokerId?: number };
+    const brokerId = body?.brokerId;
+    if (brokerId == null || typeof brokerId !== 'number' || brokerId < 1) {
+      return res.status(400).json({ error: 'brokerId é obrigatório.' });
+    }
+    const result = await assignPendingAppointment(id, brokerId);
+    res.json({
+      appointment: {
+        id: result.appointment.id,
+        customerName: result.appointment.customer_name,
+        customerPhone: result.appointment.customer_phone,
+        enterpriseId: result.appointment.enterprise_id,
+        brokerId: result.appointment.broker_id,
+        city: result.appointment.city,
+        startAt: result.appointment.start_at instanceof Date ? result.appointment.start_at.toISOString() : String(result.appointment.start_at),
+        endAt: result.appointment.end_at instanceof Date ? result.appointment.end_at.toISOString() : String(result.appointment.end_at),
+        status: result.appointment.status,
+        source: result.appointment.source,
+        notes: result.appointment.notes,
+        createdAt: result.appointment.created_at instanceof Date ? result.appointment.created_at.toISOString() : String(result.appointment.created_at),
+        updatedAt: result.appointment.updated_at instanceof Date ? result.appointment.updated_at.toISOString() : String(result.appointment.updated_at),
+      },
+      broker: result.broker,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Erro ao atribuir.';
+    console.error('[Appointments] assign :id:', e);
+    res.status(400).json({ error: msg });
   }
 });
 

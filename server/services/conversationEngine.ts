@@ -113,25 +113,49 @@ function hasExplicitHandoffIntent(message: string): boolean {
 export async function handleIncomingMessage(ctx: IncomingMessageContext): Promise<void> {
   const { conversationId, userMessage, toPhoneNumber } = ctx;
 
+  console.log('[ANA DEBUG] handleIncomingMessage start', { conversationId, toPhoneNumber });
+
   const release = await acquireConversationLock(conversationId);
   try {
     const trimmed = userMessage.trim();
-    if (!trimmed) return;
-
-    const aiConfig = await getOpenAIConfig();
-    if (!aiConfig?.openaiApiKey?.trim()) {
-      console.warn('[ConversationEngine] OpenAI API Key não configurada — ignorando mensagem.');
+    if (!trimmed) {
+      console.log('[ANA DEBUG] mensagem vazia após trim — ignorando');
       return;
     }
 
+    const aiConfig = await getOpenAIConfig();
+    console.log('[ANA DEBUG] aiConfig loaded (handleIncomingMessage)', {
+      hasConfig: !!aiConfig,
+      hasApiKey: !!aiConfig?.openaiApiKey?.trim(),
+      aiEnabled: aiConfig?.aiEnabled,
+      conversationId,
+    });
+    if (!aiConfig) {
+      console.error('[ANA DEBUG] getOpenAIConfig retornou null — ignorando mensagem.');
+      return;
+    }
+    if (!aiConfig.openaiApiKey?.trim()) {
+      console.warn('[ANA DEBUG] OpenAI API Key não configurada — ignorando mensagem.');
+      return;
+    }
+    if (!aiConfig.aiEnabled) {
+      console.log('[ANA DEBUG] aiEnabled check blocked — ai_enabled=false no banco.');
+      return;
+    }
+    console.log('[ANA DEBUG] aiEnabled check passed');
+
     let conv = await getConversationById(conversationId);
-    if (!conv) return;
+    if (!conv) {
+      console.error('[ANA DEBUG] conversa inexistente', { conversationId });
+      return;
+    }
+    console.log('[ANA DEBUG] conversation loaded', { conversationId, handoff: conv.handoff, classification: conv.classification });
 
     // Revalidação imediata antes do bloqueio: sempre buscar estado mais recente (evita race: usuário muda Handoff→ANA durante processamento)
     const latestConv = await getConversationById(conversationId);
     let effectiveConv = latestConv ?? conv;
 
-    console.log('[ANA FLOW]', {
+    console.log('[ANA DEBUG] handoff check', {
       handoff: effectiveConv.handoff,
       classification: effectiveConv.classification,
       conversationId,
@@ -139,8 +163,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     // Decisão final SEMPRE com base no estado mais recente. Modo handoff: NÃO responder. Modo ANA: SEMPRE responder via IA.
     if (effectiveConv.handoff === true || effectiveConv.classification === 'Handoff') {
+      console.log('[ANA DEBUG] handoff check blocked — conversa em modo humano, ANA não responde', {
+        conversationId,
+        handoff: effectiveConv.handoff,
+        classification: effectiveConv.classification,
+      });
       return;
     }
+    console.log('[ANA DEBUG] handoff check passed');
 
     if (hasExplicitHandoffIntent(trimmed)) {
       await applyAnaConversationUpdate(conversationId, {
@@ -208,6 +238,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     messages.push({ role: 'user', content: trimmed });
 
     const model = aiConfig.modelColdLead || aiConfig.modelHotLead || 'gpt-4o-mini';
+    console.log('[ANA DEBUG] building AI context', { mode, model });
+    console.log('[ANA DEBUG] calling AI provider', { model });
     const result = await generateChatCompletion({
       apiKey: aiConfig.openaiApiKey,
       baseUrl: aiConfig.openaiBaseUrl,
@@ -217,6 +249,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       maxTokens: Math.max(aiConfig.maxTokens ?? 600, 800),
       responseFormatJson: true,
     });
+
+    if (result.success) {
+      console.log('[ANA DEBUG] AI response received', { hasContent: !!result.content?.trim() });
+    } else {
+      console.error('[ANA DEBUG] AI call failed', { error: result.error });
+    }
 
     let structured =
       result.success && result.content ? parseAnaJson(result.content) : null;
@@ -244,11 +282,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
 
     const replyText = structured.reply.slice(0, 4000);
+    console.log('[ANA DEBUG] sending WhatsApp reply', { toPhoneNumber, replyLength: replyText.length });
     const sendResult = await sendTextMessage(toPhoneNumber, replyText);
     if (sendResult.success && sendResult.metaMessageId) {
       await insertMessage(conversationId, 'assistant', replyText, sendResult.metaMessageId);
+      console.log('[ANA DEBUG] WhatsApp reply sent', { metaMessageId: sendResult.metaMessageId });
+      console.log('[ANA DEBUG] assistant message saved');
     } else {
-      console.error('[ConversationEngine] Falha ao enviar WhatsApp:', sendResult.error);
+      console.error('[ANA DEBUG] Falha ao enviar WhatsApp:', sendResult.error, { toPhoneNumber });
     }
 
     const cat = structured.send_file_category;

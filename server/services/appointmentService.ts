@@ -1,35 +1,43 @@
 import { query } from '../db/pg.js';
-import {
-  listCorretoresByEnterprise,
-  getCorretorById,
-} from '../repositories/corretorRepository.js';
+import { getCorretorById, listCorretoresByEnterprise } from '../repositories/corretorRepository.js';
 import { listByBroker } from '../repositories/brokerAvailabilityRepository.js';
 import {
   createAppointment,
   hasBrokerConflict,
   countBrokerAppointmentsOnDate,
+  getAppointmentById,
+  updateAppointmentBroker,
+  type AppointmentRow,
 } from '../repositories/appointmentRepository.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
-const TZ_BUSINESS = 'America/Sao_Paulo';
 
+const TZ_BUSINESS = 'America/Sao_Paulo';
+const DEBUG_ASSIGN = true; // logs temporários para auditoria
+
+/** Dia da semana em America/Sao_Paulo: 0=domingo, 1=segunda, ..., 6=sábado (convenção JS, alinhado ao banco). */
 function getDayOfWeekInTz(d: Date): number {
   const dayName = new Intl.DateTimeFormat('en-US', { timeZone: TZ_BUSINESS, weekday: 'long' }).format(d);
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   return days.indexOf(dayName);
 }
 
+/** Horário em HH:MM no timezone de negócio (normalizado para comparação com slots). */
 function getTimeStringInTz(d: Date): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: TZ_BUSINESS,
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
     hour12: false,
   }).formatToParts(d);
   const h = parts.find((p) => p.type === 'hour')?.value ?? '00';
   const m = parts.find((p) => p.type === 'minute')?.value ?? '00';
-  const s = parts.find((p) => p.type === 'second')?.value ?? '00';
-  return `${h.padStart(2, '0')}:${m.padStart(2, '0')}:${s.padStart(2, '0')}`;
+  return `${h.padStart(2, '0')}:${m.padStart(2, '0')}`;
+}
+
+/** Normaliza tempo para HH:MM para evitar falha de comparação (DB pode retornar HH:MM ou HH:MM:SS). */
+function normalizeTimeHHMM(t: string): string {
+  const s = String(t ?? '').trim();
+  return s.length >= 5 ? s.slice(0, 5) : s;
 }
 
 export interface CheckAvailabilityResult {
@@ -73,6 +81,14 @@ function toIso(d: Date): string {
  * Usa dia da semana e horário em America/Sao_Paulo de forma explícita,
  * independente do timezone do ambiente.
  */
+/** Comparação segura de horários em HH:MM (evita falha DB retornar HH:MM:SS). */
+function timeLte(a: string, b: string): boolean {
+  return normalizeTimeHHMM(a) <= normalizeTimeHHMM(b);
+}
+function timeGte(a: string, b: string): boolean {
+  return normalizeTimeHHMM(a) >= normalizeTimeHHMM(b);
+}
+
 async function brokerHasAvailabilityForSlot(
   brokerId: number,
   startAt: Date,
@@ -87,8 +103,8 @@ async function brokerHasAvailabilityForSlot(
     (s) =>
       s.active &&
       s.weekday === dow &&
-      s.start_time <= startTimeStr &&
-      s.end_time >= endTimeStr
+      timeLte(s.start_time, startTimeStr) &&
+      timeGte(s.end_time, endTimeStr)
   );
 }
 
@@ -103,8 +119,12 @@ export async function findEligibleBroker(
   startAt: Date,
   endAt: Date
 ): Promise<number | null> {
-  const { rows: brokers } = await query<{ id: number; last_assigned_at: Date | null }>(
-    `SELECT c.id, c.last_assigned_at
+  const dow = getDayOfWeekInTz(startAt);
+  const startTimeStr = getTimeStringInTz(startAt);
+  const endTimeStr = getTimeStringInTz(endAt);
+
+  const { rows: brokers } = await query<{ id: number; full_name: string; active: boolean; receiving_enabled: boolean | null; last_assigned_at: Date | null }>(
+    `SELECT c.id, c.full_name, c.active, c.receiving_enabled, c.last_assigned_at
      FROM corretores c
      INNER JOIN corretor_empreendimentos ce ON ce.corretor_id = c.id
      WHERE c.active = true
@@ -113,12 +133,36 @@ export async function findEligibleBroker(
     [enterpriseId]
   );
 
+  if (DEBUG_ASSIGN) {
+    console.log('[ASSIGN DEBUG] enterpriseId=%d startAt=%s endAt=%s weekday=%d slotTime=%s-%s',
+      enterpriseId, startAt.toISOString(), endAt.toISOString(), dow, startTimeStr, endTimeStr);
+    console.log('[ASSIGN DEBUG] corretores encontrados:', brokers.length, brokers.map((b) => `${b.id}:${b.full_name}`).join(', '));
+  }
+
   const available: { id: number; last_assigned_at: Date | null }[] = [];
   for (const b of brokers) {
     const hasAvail = await brokerHasAvailabilityForSlot(b.id, startAt, endAt);
-    if (!hasAvail) continue;
     const conflict = await hasBrokerConflict(b.id, startAt, endAt);
-    if (!conflict) available.push(b);
+    const linkedToEnterprise = true; // já filtrado pela query
+    const eligible = hasAvail && !conflict;
+
+    if (DEBUG_ASSIGN) {
+      const rejectReason = !linkedToEnterprise ? 'notLinked' : !b.active ? 'inactive' : !hasAvail ? 'noAvailability' : conflict ? 'hasConflict' : null;
+      console.log(`[ASSIGN DEBUG] broker ${b.id} ${b.full_name}`);
+      console.log(`  - active: ${b.active}`);
+      console.log(`  - linkedToEnterprise: ${linkedToEnterprise}`);
+      console.log(`  - weekday: ${dow}`);
+      console.log(`  - hasAvailability: ${hasAvail}`);
+      console.log(`  - hasConflict: ${conflict}`);
+      console.log(`  - eligible: ${eligible}`);
+      if (rejectReason) console.log(`  - motivo reprovação: ${rejectReason}`);
+    }
+
+    if (hasAvail && !conflict) available.push({ id: b.id, last_assigned_at: b.last_assigned_at });
+  }
+
+  if (DEBUG_ASSIGN) {
+    console.log('[ASSIGN DEBUG] elegíveis:', available.length, available.map((a) => a.id).join(', ') || '(nenhum)');
   }
 
   if (available.length === 0) return null;
@@ -237,5 +281,30 @@ export async function assignAppointment(data: {
     empreendimento: ent?.name ?? null,
     dataHora: toIso(app.start_at),
     cliente: app.customer_name,
+  };
+}
+
+/** Atribui corretor a um agendamento PENDENTE_DISTRIBUICAO (valida disponibilidade e conflito). */
+export async function assignPendingAppointment(
+  appointmentId: number,
+  brokerId: number
+): Promise<{ appointment: AppointmentRow; broker: { id: number; fullName: string; phone: string } }> {
+  const app = await getAppointmentById(appointmentId);
+  if (!app) throw new Error('Agendamento não encontrado.');
+  if (app.status !== 'PENDENTE_DISTRIBUICAO') throw new Error('Apenas agendamentos pendentes de distribuição podem ser atribuídos.');
+  const brokers = await listCorretoresByEnterprise(app.enterprise_id);
+  const broker = brokers.find((b) => b.id === brokerId);
+  if (!broker) throw new Error('Corretor não vinculado a este empreendimento.');
+  const hasAvail = await brokerHasAvailabilityForSlot(brokerId, app.start_at, app.end_at);
+  if (!hasAvail) throw new Error('Corretor não possui disponibilidade no horário do agendamento.');
+  const conflict = await hasBrokerConflict(brokerId, app.start_at, app.end_at, appointmentId);
+  if (conflict) throw new Error('Corretor possui conflito de horário com outro agendamento.');
+  const updated = await updateAppointmentBroker(appointmentId, brokerId, 'CONFIRMADO');
+  if (!updated) throw new Error('Erro ao atualizar agendamento.');
+  await query(`UPDATE corretores SET last_assigned_at = NOW(), updated_at = NOW() WHERE id = $1`, [brokerId]);
+  const b = await getCorretorById(brokerId);
+  return {
+    appointment: updated,
+    broker: b ? { id: b.id, fullName: b.full_name, phone: b.phone } : { id: brokerId, fullName: broker.full_name, phone: broker.phone },
   };
 }

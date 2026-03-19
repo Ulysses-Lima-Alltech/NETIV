@@ -51,6 +51,12 @@ export function AgendaPage() {
   const [endTime, setEndTime] = useState('10:00');
   const [notes, setNotes] = useState('');
 
+  const [assignModalAppointment, setAssignModalAppointment] = useState<Appointment | null>(null);
+  const [assignBrokerId, setAssignBrokerId] = useState<number | ''>('');
+  const [assignErr, setAssignErr] = useState<string | null>(null);
+  const [assigning, setAssigning] = useState(false);
+  const [corretoresByEnterprise, setCorretoresByEnterprise] = useState<{ id: number; fullName: string }[]>([]);
+
   useEffect(() => {
     projectsApi.list(false).then((d) => setProjects(d.projects.map((p) => ({ id: p.id, name: p.name })))).catch(() => setProjects([]));
     corretoresApi.list().then((d) => setCorretores(d.corretores.map((c) => ({ id: c.id, fullName: c.fullName })))).catch(() => setCorretores([]));
@@ -73,6 +79,35 @@ export function AgendaPage() {
   useEffect(() => {
     loadAppointments();
   }, [loadAppointments]);
+
+  useEffect(() => {
+    if (assignModalAppointment) {
+      corretoresApi.list({ enterpriseId: assignModalAppointment.enterpriseId }).then((d) => setCorretoresByEnterprise(d.corretores.map((c) => ({ id: c.id, fullName: c.fullName })))).catch(() => setCorretoresByEnterprise([]));
+    } else {
+      setCorretoresByEnterprise([]);
+    }
+  }, [assignModalAppointment]);
+
+  const openAssignModal = (a: Appointment) => {
+    setAssignModalAppointment(a);
+    setAssignBrokerId('');
+    setAssignErr(null);
+  };
+  const closeAssignModal = () => setAssignModalAppointment(null);
+
+  const handleAssignConfirm = () => {
+    if (!assignModalAppointment || assignBrokerId === '') return;
+    setAssigning(true);
+    setAssignErr(null);
+    appointmentsApi
+      .assignPending(assignModalAppointment.id, assignBrokerId as number)
+      .then(() => {
+        loadAppointments();
+        closeAssignModal();
+      })
+      .catch((e) => setAssignErr(e instanceof Error ? e.message : 'Erro ao atribuir'))
+      .finally(() => setAssigning(false));
+  };
 
   const openNew = () => {
     const today = formatDateForInput(new Date());
@@ -312,6 +347,15 @@ export function AgendaPage() {
                               Cancelar
                             </button>
                           )}
+                          {a.status === 'PENDENTE_DISTRIBUICAO' && (
+                            <button
+                              type="button"
+                              onClick={() => openAssignModal(a)}
+                              className="text-[12px] font-medium text-[#3B82F6] hover:text-[#1D4ED8] transition-colors"
+                            >
+                              Atribuir
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => handleDelete(a)}
@@ -394,6 +438,41 @@ export function AgendaPage() {
                 {saving ? 'Salvando…' : 'Confirmar agendamento'}
               </button>
               <button type="button" onClick={closeModal} className={btnGhost}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {assignModalAppointment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={closeAssignModal}>
+          <div className={`${card} w-full max-w-md shadow-xl max-h-[90vh] overflow-y-auto`} onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-[16px] font-semibold text-[#111827] mb-5">Atribuir corretor</h2>
+            <p className="text-[13px] text-[#6B7280] mb-4">
+              Agendamento de <strong>{assignModalAppointment.customerName}</strong> em {formatDateTime(assignModalAppointment.startAt)}
+            </p>
+            {assignErr && (
+              <div className="mb-4 text-[13px] text-red-600 bg-red-50 border border-red-100 rounded-[10px] px-4 py-3">
+                {assignErr}
+              </div>
+            )}
+            <label>
+              <span className={label}>Corretor</span>
+              <select
+                className={field}
+                value={assignBrokerId}
+                onChange={(e) => setAssignBrokerId(e.target.value === '' ? '' : Number(e.target.value))}
+              >
+                <option value="">Selecione o corretor</option>
+                {corretoresByEnterprise.map((c) => (
+                  <option key={c.id} value={c.id}>{c.fullName}</option>
+                ))}
+              </select>
+            </label>
+            <div className="flex gap-3 mt-6">
+              <button type="button" onClick={handleAssignConfirm} disabled={assigning || assignBrokerId === ''} className={btnPrimary}>
+                {assigning ? 'Atribuindo…' : 'Confirmar atribuição'}
+              </button>
+              <button type="button" onClick={closeAssignModal} className={btnGhost}>Cancelar</button>
             </div>
           </div>
         </div>

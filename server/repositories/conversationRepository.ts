@@ -173,9 +173,9 @@ export async function applyAnaConversationUpdate(
   await query(
     `UPDATE conversations SET classification = $1, lead_temperature = $2, handoff = $3,
      customer_name = CASE WHEN $4::text IS NOT NULL AND length(trim($4)) > 0 THEN trim($4) ELSE customer_name END,
-     classification_before_handoff = CASE WHEN $3 = true AND $6 IS NOT NULL THEN $6 ELSE
+     classification_before_handoff = CASE WHEN $3 = true AND ($6::text) IS NOT NULL THEN $6::text ELSE
        (CASE WHEN $3 = false THEN NULL ELSE classification_before_handoff END) END,
      updated_at = NOW() WHERE id = $5`,
-    [classification, lead_temperature, handoff, cn ?? null, conversationId, saveBeforeHandoff]
+    [classification, lead_temperature, handoff, cn ?? null, conversationId, saveBeforeHandoff ?? null]
   );
 }

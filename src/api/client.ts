@@ -311,6 +311,11 @@ export const appointmentsApi = {
     request<Appointment>(`/appointments/${id}/status`, { method: 'PATCH', body: { status: 'CANCELADO' } }),
   delete: (id: number) =>
     request<Record<string, never>>(`/appointments/${id}`, { method: 'DELETE' }),
+  assignPending: (id: number, brokerId: number) =>
+    request<{ appointment: Appointment; broker: { id: number; fullName: string; phone: string } }>(
+      `/appointments/${id}/assign`,
+      { method: 'POST', body: { brokerId } }
+    ),
 };
 
 export interface LeadAnalysisResponse {
