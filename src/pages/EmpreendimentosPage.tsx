@@ -76,6 +76,8 @@ export function EmpreendimentosPage() {
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
   const [uploadCategory, setUploadCategory] = useState<FileCategory>('book');
+  const [showInactiveKnowledge, setShowInactiveKnowledge] = useState(false);
+  const [knowledgeNotice, setKnowledgeNotice] = useState<string | null>(null);
 
   /* ── Data loading (unchanged) ── */
 
@@ -111,8 +113,16 @@ export function EmpreendimentosPage() {
   }, []);
 
   useEffect(() => {
-    if (selectedId != null) { loadDetail(selectedId); }
-    else { setDetail(null); setDetailLoading(false); setFiles([]); setErr(null); }
+    if (selectedId != null) {
+      loadDetail(selectedId);
+    } else {
+      setDetail(null);
+      setDetailLoading(false);
+      setFiles([]);
+      setErr(null);
+      setKnowledgeNotice(null);
+      setShowInactiveKnowledge(false);
+    }
   }, [selectedId, loadDetail]);
 
   const save = () => {
@@ -153,8 +163,20 @@ export function EmpreendimentosPage() {
 
   const removeFile = (fileId: number) => {
     if (selectedId == null) return;
-    projectsApi.deleteKnowledge(selectedId, fileId).then(() => loadDetail(selectedId)).catch(() => {});
+    setErr(null);
+    projectsApi
+      .deleteKnowledge(selectedId, fileId)
+      .then((res) => {
+        if (res.deactivated && res.message) setKnowledgeNotice(res.message);
+        else setKnowledgeNotice(null);
+        loadDetail(selectedId);
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : 'Erro ao remover arquivo'));
   };
+
+  const knowledgeActive = files.filter((f) => f.isActive !== false);
+  const knowledgeInactive = files.filter((f) => f.isActive === false);
+  const knowledgeDisplayed = showInactiveKnowledge ? files : knowledgeActive;
 
   /* ── Render ── */
 
@@ -281,6 +303,21 @@ export function EmpreendimentosPage() {
                   {err}
                 </div>
               )}
+              {knowledgeNotice && (
+                <div className="flex items-start justify-between gap-3 text-[13px] text-[#065F46] bg-emerald-50 border border-emerald-100 rounded-[10px] px-4 py-3">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-px text-emerald-600"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                    <span className="leading-snug">{knowledgeNotice}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setKnowledgeNotice(null)}
+                    className="shrink-0 text-[12px] font-medium text-emerald-700 hover:text-emerald-900 underline-offset-2 hover:underline"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              )}
 
               {/* ── Card 1: Dados gerais ── */}
               <section className={card}>
@@ -375,31 +412,91 @@ export function EmpreendimentosPage() {
                   <span className="text-[11px] text-[#9CA3AF]">PDF, TXT ou MD (até 100 MB)</span>
                 </div>
 
+                {/* Arquivos desativados ficam ocultos por padrão; API envia isActive alinhado a is_active */}
+                {knowledgeInactive.length > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <p className="text-[12px] text-[#6B7280]">
+                      {showInactiveKnowledge
+                        ? `${knowledgeInactive.length} arquivo(s) desativado(s) — mantido(s) por causa do histórico de envios.`
+                        : `${knowledgeInactive.length} arquivo(s) desativado(s) oculto(s).`}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowInactiveKnowledge((v) => !v)}
+                      className={btnGhost}
+                    >
+                      {showInactiveKnowledge ? 'Ocultar desativados' : 'Mostrar desativados'}
+                    </button>
+                  </div>
+                )}
+
                 {/* File list */}
                 {files.length === 0 ? (
                   <p className="text-[13px] text-[#9CA3AF] py-1">Nenhum arquivo cadastrado.</p>
+                ) : knowledgeDisplayed.length === 0 ? (
+                  <div className="rounded-[10px] border border-dashed border-[#D1D5DB] bg-[#FAFAFB] px-4 py-3 text-[13px] text-[#6B7280]">
+                    <p>Nenhum arquivo ativo. Os desativados permanecem só para histórico.</p>
+                    {knowledgeInactive.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowInactiveKnowledge(true)}
+                        className={`${btnGhost} mt-2`}
+                      >
+                        Mostrar {knowledgeInactive.length} desativado(s)
+                      </button>
+                    )}
+                  </div>
                 ) : (
                   <ul className="space-y-2">
-                    {files.map((f) => (
-                      <li key={f.id} className="group flex items-center gap-3 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-3 transition hover:border-[#D1D5DB]">
-                        <div className="shrink-0 w-8 h-8 rounded-lg bg-[#F3F4F6] flex items-center justify-center">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B7280" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[13px] font-medium text-[#111827] truncate">{f.originalName}</p>
-                          <span className="inline-block mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#3B82F6] bg-[#EFF6FF] rounded px-1.5 py-[1px]">
-                            {CAT_LABEL[f.category] || f.category}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => removeFile(f.id)}
-                          className="shrink-0 text-[12px] font-medium text-[#9CA3AF] hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all"
+                    {knowledgeDisplayed.map((f) => {
+                      const isInactive = f.isActive === false;
+                      return (
+                        <li
+                          key={f.id}
+                          className={`group flex items-center gap-3 rounded-[10px] border px-4 py-3 transition ${
+                            isInactive
+                              ? 'border-[#E5E7EB] bg-[#F9FAFB] opacity-[0.72]'
+                              : 'border-[#E5E7EB] bg-white hover:border-[#D1D5DB]'
+                          }`}
                         >
-                          Remover
-                        </button>
-                      </li>
-                    ))}
+                          <div
+                            className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${
+                              isInactive ? 'bg-[#E5E7EB]' : 'bg-[#F3F4F6]'
+                            }`}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B7280" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-[13px] font-medium truncate ${isInactive ? 'text-[#6B7280]' : 'text-[#111827]'}`}>
+                              {f.originalName}
+                            </p>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                              <span className="inline-block text-[10px] font-semibold uppercase tracking-wide text-[#3B82F6] bg-[#EFF6FF] rounded px-1.5 py-[1px]">
+                                {CAT_LABEL[f.category] || f.category}
+                              </span>
+                              {isInactive && (
+                                <span className="inline-block text-[10px] font-semibold uppercase tracking-wide text-[#92400E] bg-amber-100 rounded px-1.5 py-[1px]">
+                                  Desativado
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {!isInactive ? (
+                            <button
+                              type="button"
+                              onClick={() => removeFile(f.id)}
+                              className="shrink-0 text-[12px] font-medium text-[#9CA3AF] hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all"
+                            >
+                              Remover
+                            </button>
+                          ) : (
+                            <span className="shrink-0 text-[11px] text-[#9CA3AF] max-w-[100px] text-right leading-tight" title="Arquivo usado em envios; não pode ser excluído do histórico.">
+                              Histórico
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </section>
