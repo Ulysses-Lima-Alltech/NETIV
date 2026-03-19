@@ -7,6 +7,7 @@ import webhookMetaRouter from './routes/webhookMeta.js';
 import { initPostgres } from './db/pg.js';
 import { getWhatsAppConfig } from './repositories/whatsappConfigRepository.js';
 import { getOpenAIConfig } from './repositories/openaiConfigRepository.js';
+import { bootstrapFirstAdmin } from './bootstrap/adminBootstrap.js';
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -31,6 +32,12 @@ app.get('/health', async (_req, res) => {
 
 initPostgres()
   .then(async () => {
+    try {
+      await bootstrapFirstAdmin();
+    } catch (e) {
+      console.error('[startup] Falha no bootstrap do admin:', e instanceof Error ? e.stack ?? e.message : e);
+    }
+
     try {
       const wa = await getWhatsAppConfig();
       const ai = await getOpenAIConfig();
