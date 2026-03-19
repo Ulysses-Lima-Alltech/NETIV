@@ -37,3 +37,28 @@ export async function getMessagesByConversationId(conversationId: number): Promi
   );
   return rows;
 }
+
+/**
+ * Última mensagem do usuário que ainda precisa de resposta da IA.
+ * Lógica: compara última mensagem do usuário vs última da IA.
+ * Retorna a mensagem do usuário se não existe IA ou se o usuário é mais recente.
+ */
+export async function getLastUserMessageNeedingReply(conversationId: number): Promise<MessageRow | null> {
+  const [userRows, assistantRows] = await Promise.all([
+    query<MessageRow>(
+      `SELECT * FROM messages WHERE conversation_id = $1 AND role = 'user' ORDER BY created_at DESC LIMIT 1`,
+      [conversationId]
+    ),
+    query<MessageRow>(
+      `SELECT * FROM messages WHERE conversation_id = $1 AND role = 'assistant' ORDER BY created_at DESC LIMIT 1`,
+      [conversationId]
+    ),
+  ]);
+  const lastUser = userRows.rows[0];
+  if (!lastUser || !lastUser.content?.trim()) return null;
+  const lastAssistant = assistantRows.rows[0];
+  if (!lastAssistant) return lastUser;
+  const userTime = new Date(lastUser.created_at).getTime();
+  const assistantTime = new Date(lastAssistant.created_at).getTime();
+  return userTime > assistantTime ? lastUser : null;
+}

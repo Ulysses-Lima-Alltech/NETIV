@@ -7,6 +7,7 @@ import {
   getConversationById,
   updateClassification,
 } from '../repositories/conversationRepository.js';
+import { reprocessLastUserMessage } from '../services/conversationEngine.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
 import { insertMessage, getMessagesByConversationId } from '../repositories/messageRepository.js';
 import { sendMessageSchema, updateClassificationSchema } from '../validators/whatsapp.js';
@@ -100,12 +101,18 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       return res.status(400).json({ error: msg });
     }
     const { project_id, classification_status, handoff } = parsed.data;
+    const convBefore = handoff === false ? await getConversationById(id) : null;
     const conv = await updateClassification(id, {
       enterprise_id: project_id !== undefined ? project_id : undefined,
       classification: classification_status,
       handoff,
     });
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
+    if (convBefore?.handoff === true && conv.handoff === false) {
+      setImmediate(() => {
+        reprocessLastUserMessage(id).catch((e) => console.error('[WhatsApp] reprocessLastUserMessage:', e));
+      });
+    }
     const projectName = conv.enterprise_id ? (await getEnterpriseById(conv.enterprise_id))?.name ?? null : null;
     res.json({
       id: conv.id,

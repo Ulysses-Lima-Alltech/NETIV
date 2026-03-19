@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import type { Conversation, Message } from '../types';
 import { MessageBubble } from './MessageBubble';
 import { ChatComposer } from './ChatComposer';
@@ -24,6 +24,7 @@ interface ChatPanelProps {
   onClassificationChange?: (updates: { projectId?: number | null; classificationStatus?: string; handoff?: boolean }) => void;
   projects?: { id: number; name: string; active: boolean }[];
   isSending?: boolean;
+  onScrollContainerRef?: (el: HTMLDivElement | null) => void;
 }
 
 export function ChatPanel({
@@ -35,13 +36,18 @@ export function ChatPanel({
   onClassificationChange,
   projects = [],
   isSending = false,
+  onScrollContainerRef,
 }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  const setRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+      onScrollContainerRef?.(el);
+    },
+    [onScrollContainerRef]
+  );
 
   if (!conversation) {
     return (
@@ -145,7 +151,7 @@ export function ChatPanel({
         )}
       </header>
 
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0 p-4 bg-[#F9FAFB]">
+      <div ref={setRef} className="flex-1 overflow-y-auto min-h-0 p-4 bg-[#F9FAFB]">
         {loadError ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center mb-3">

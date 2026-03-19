@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import type { Conversation, Message } from '../types';
 import { whatsappApi, projectsApi } from '../api/client';
@@ -54,6 +54,18 @@ export function InboxPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [newMessageOpen, setNewMessageOpen] = useState(false);
   const [projects, setProjects] = useState<{ id: number; name: string; active: boolean }[]>([]);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+
+  const isUserAtBottom = useCallback(() => {
+    const el = chatScrollRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    const el = chatScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
 
   const selectedConversation = selectedId
     ? conversations.find((c) => c.id === selectedId) ?? null
@@ -77,18 +89,38 @@ export function InboxPage() {
   const loadMessages = useCallback((convId: string, silent?: boolean) => {
     const id = parseInt(convId, 10);
     if (Number.isNaN(id)) return;
+    const shouldScroll = isUserAtBottom();
     if (!silent) setMessagesLoading(true);
     if (!silent) setMessagesError(null);
     whatsappApi
       .getConversationMessages(id)
       .then((data) => {
-        setMessages(
-          data.messages.map((m) => mapApiMessageToMessage(m, convId)).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-        );
+        const apiMapped = data.messages
+          .map((m) => mapApiMessageToMessage(m, convId))
+          .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        setMessages((prev) => {
+          const currentConvMessages = prev.filter((m) => m.conversationId === convId);
+          if (currentConvMessages.length === 0) return apiMapped;
+          const apiHasSameText = (text: string) => apiMapped.some((a) => a.text === text);
+          const prevRealAndTemp = currentConvMessages.filter(
+            (m) =>
+              (!String(m.id).startsWith('temp-') && !String(m.id).startsWith('sent-')) ||
+              !apiHasSameText(m.text)
+          );
+          const existingIds = new Set(prevRealAndTemp.map((m) => m.id));
+          const newMessages = apiMapped.filter((m) => !existingIds.has(m.id));
+          if (newMessages.length === 0) return prev;
+          return [...prevRealAndTemp, ...newMessages].sort(
+            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          );
+        });
+        if (shouldScroll) {
+          setTimeout(() => scrollToBottom(), 0);
+        }
       })
       .catch(() => { if (!silent) setMessagesError('Falha ao carregar'); })
       .finally(() => { if (!silent) setMessagesLoading(false); });
-  }, []);
+  }, [isUserAtBottom, scrollToBottom]);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
 
@@ -128,7 +160,11 @@ export function InboxPage() {
         text,
         createdAt: new Date().toISOString(),
       };
+      const shouldScroll = isUserAtBottom();
       setMessages((prev) => [...prev, tempMessage]);
+      if (shouldScroll) {
+        setTimeout(() => scrollToBottom(), 0);
+      }
       try {
         await whatsappApi.sendToConversation(id, text);
         setMessages((prev) => prev.map((m) => (m.id === tempMessage.id ? { ...tempMessage, id: `sent-${Date.now()}` } : m)));
@@ -139,7 +175,7 @@ export function InboxPage() {
         setSending(false);
       }
     },
-    [selectedId, loadConversations]
+    [selectedId, loadConversations, isUserAtBottom, scrollToBottom]
   );
 
   const handleNewMessageSent = useCallback(
@@ -239,6 +275,7 @@ export function InboxPage() {
             isSending={sending}
             onClassificationChange={handleClassificationChange}
             projects={projects}
+            onScrollContainerRef={(el) => { chatScrollRef.current = el; }}
           />
         </main>
       </div>

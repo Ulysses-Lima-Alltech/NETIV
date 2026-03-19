@@ -1,4 +1,4 @@
-import { getMessagesByConversationId, insertMessage } from '../repositories/messageRepository.js';
+import { getMessagesByConversationId, getLastUserMessageNeedingReply, insertMessage } from '../repositories/messageRepository.js';
 import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import {
   getConversationById,
@@ -24,6 +24,25 @@ export interface IncomingMessageContext {
   conversationId: number;
   userMessage: string;
   toPhoneNumber: string;
+}
+
+/** Reprocessa a última mensagem do usuário sem resposta quando handoff muda true→false. */
+export async function reprocessLastUserMessage(conversationId: number): Promise<void> {
+  const conv = await getConversationById(conversationId);
+  if (!conv) return;
+  const toPhoneNumber = (conv.contact_phone || conv.external_contact_id || '').trim();
+  if (!toPhoneNumber) {
+    console.warn('[ConversationEngine] reprocessLastUserMessage: sem telefone na conversa', conversationId);
+    return;
+  }
+  const lastUserMsg = await getLastUserMessageNeedingReply(conversationId);
+  if (!lastUserMsg?.content?.trim()) return;
+  console.log('[ConversationEngine] Reprocessando última mensagem pendente ao sair de handoff', { conversationId });
+  await handleIncomingMessage({
+    conversationId,
+    userMessage: lastUserMsg.content,
+    toPhoneNumber,
+  });
 }
 
 /** Lock leve por conversationId: garante que apenas UMA mensagem por conversa seja processada por vez. */
