@@ -44,6 +44,7 @@ export function AgendaPage() {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [enterpriseId, setEnterpriseId] = useState<number | ''>('');
+  const [brokerId, setBrokerId] = useState<number | ''>('');
   const [city, setCity] = useState('');
   const [dateStr, setDateStr] = useState('');
   const [startTime, setStartTime] = useState('09:00');
@@ -78,6 +79,7 @@ export function AgendaPage() {
     setCustomerName('');
     setCustomerPhone('');
     setEnterpriseId('');
+    setBrokerId('');
     setCity('');
     setDateStr(today);
     setStartTime('09:00');
@@ -117,6 +119,7 @@ export function AgendaPage() {
         customerName: name,
         customerPhone: customerPhone.trim(),
         enterpriseId: entId,
+        brokerId: brokerId === '' ? undefined : (brokerId as number),
         city: city.trim(),
         startAt: startAt.toISOString(),
         endAt: endAt.toISOString(),
@@ -144,8 +147,9 @@ export function AgendaPage() {
   const getBrokerName = (id: number | null) => (id ? corretores.find((c) => c.id === id)?.fullName ?? `#${id}` : '—');
 
   const location = useLocation();
+  const isActive = (path: string) => location.pathname.includes(path) || (path === '/inbox' && location.pathname === '/');
   const navBtn = (path: string) =>
-    `inline-flex items-center px-4 py-2 rounded-[10px] text-[13px] font-medium text-white transition-all duration-200 ${location.pathname === path || (path !== '/inbox' && location.pathname.startsWith(path)) ? 'bg-[#F97316]' : 'bg-[#60A5FA] hover:bg-[#F97316]'}`;
+    `inline-flex items-center px-4 py-2 rounded-[10px] text-[13px] font-medium text-white transition-all duration-200 ${isActive(path) ? 'bg-[#F97316]' : 'bg-[#60A5FA] hover:bg-[#F97316]'}`;
 
   const statusClass: Record<string, string> = {
     CONFIRMADO: 'bg-[#D1FAE5] text-[#059669]',
@@ -333,6 +337,15 @@ export function AgendaPage() {
                   <option value="">Selecione</option>
                   {projects.map((p) => (
                     <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className={label}>Corretor</span>
+                <select className={field} value={brokerId} onChange={(e) => setBrokerId(e.target.value === '' ? '' : Number(e.target.value))}>
+                  <option value="">Distribuição automática</option>
+                  {corretores.map((c) => (
+                    <option key={c.id} value={c.id}>{c.fullName}</option>
                   ))}
                 </select>
               </label>

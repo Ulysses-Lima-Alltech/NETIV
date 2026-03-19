@@ -145,8 +145,9 @@ export function SettingsWhatsAppPage() {
   }
 
   const location = useLocation();
+  const isActive = (path: string) => location.pathname.includes(path) || (path === '/inbox' && location.pathname === '/');
   const navBtn = (path: string) =>
-    `inline-flex items-center px-4 py-2 rounded-[10px] text-[13px] font-medium text-white transition-all duration-200 ${location.pathname === path || (path !== '/inbox' && location.pathname.startsWith(path)) ? 'bg-[#F97316]' : 'bg-[#60A5FA] hover:bg-[#F97316]'}`;
+    `inline-flex items-center px-4 py-2 rounded-[10px] text-[13px] font-medium text-white transition-all duration-200 ${isActive(path) ? 'bg-[#F97316]' : 'bg-[#60A5FA] hover:bg-[#F97316]'}`;
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
@@ -160,6 +161,7 @@ export function SettingsWhatsAppPage() {
             <Link to="/settings/empreendimentos" className={navBtn('/settings/empreendimentos')}>Empreendimentos</Link>
             <Link to="/settings/corretores" className={navBtn('/settings/corretores')}>Corretores</Link>
             <Link to="/agenda" className={navBtn('/agenda')}>Agenda</Link>
+            <Link to="/settings/integrations/whatsapp" className={navBtn('/settings/integrations/whatsapp')}>Configurações</Link>
           </div>
           <h1 className="text-[15px] font-semibold text-[#111827]">Configurações</h1>
         </div>

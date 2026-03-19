@@ -153,13 +153,19 @@ export async function assignAppointment(data: {
   endAt: Date;
   notes?: string;
   source?: string;
+  brokerId?: number | null;
 }): Promise<AssignAppointmentResult> {
-  // Revalida imediatamente antes de criar para evitar race conditions
-  const brokerId = await findEligibleBroker(
-    data.enterpriseId,
-    data.startAt,
-    data.endAt
-  );
+  // Se brokerId informado, usa ele; senão distribuição automática
+  let brokerId: number | null;
+  if (data.brokerId != null && data.brokerId > 0) {
+    brokerId = data.brokerId;
+  } else {
+    brokerId = await findEligibleBroker(
+      data.enterpriseId,
+      data.startAt,
+      data.endAt
+    );
+  }
   const status = brokerId ? 'CONFIRMADO' : 'PENDENTE_DISTRIBUICAO';
   const app = await createAppointment({
     customerName: data.customerName,

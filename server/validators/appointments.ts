@@ -21,6 +21,7 @@ export const assignAppointmentSchema = z.object({
   endAt: z.string().datetime().or(z.coerce.date()),
   notes: z.string().max(2000).optional().default(''),
   source: z.string().max(40).optional().default('ANA'),
+  brokerId: z.number().int().positive().nullable().optional(),
 }).refine(
   (d) => new Date(d.startAt).getTime() < new Date(d.endAt).getTime(),
   { message: 'Data/hora início deve ser anterior à data/hora fim', path: ['endAt'] }

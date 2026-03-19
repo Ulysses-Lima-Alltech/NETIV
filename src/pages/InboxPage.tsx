@@ -59,10 +59,9 @@ export function InboxPage() {
     ? conversations.find((c) => c.id === selectedId) ?? null
     : null;
   const location = useLocation();
-  const navBtn = (path: string) => {
-    const isActive = location.pathname === path || (path !== '/inbox' && location.pathname.startsWith(path));
-    return `inline-flex items-center px-4 py-2 rounded-[10px] text-[13px] font-medium text-white transition-all duration-200 ${isActive ? 'bg-[#F97316]' : 'bg-[#60A5FA] hover:bg-[#F97316]'}`;
-  };
+  const isActive = (path: string) => location.pathname.includes(path) || (path === '/inbox' && location.pathname === '/');
+  const navBtn = (path: string) =>
+    `inline-flex items-center px-4 py-2 rounded-[10px] text-[13px] font-medium text-white transition-all duration-200 ${isActive(path) ? 'bg-[#F97316]' : 'bg-[#60A5FA] hover:bg-[#F97316]'}`;
 
   const loadConversations = useCallback((silent?: boolean) => {
     if (!silent) setConversationsLoading(true);

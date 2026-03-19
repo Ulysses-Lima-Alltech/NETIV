@@ -99,15 +99,17 @@ export async function updateClassification(
       if (classification !== 'Handoff') classificationBeforeHandoff = toValidClassification(classification);
       classification = 'Handoff';
     } else {
-      if (classification === 'Handoff') {
-        const restored = curRow.classification_before_handoff?.trim();
-        classification = toValidClassification(restored || 'Novo');
-        classificationBeforeHandoff = null;
-      }
+      // Modo ANA: garantir limpeza total. handoff=false → classification NUNCA pode ser Handoff.
+      const restored = curRow.classification_before_handoff?.trim();
+      const candidate = toValidClassification(restored || 'Novo');
+      classification = candidate === 'Handoff' ? 'Novo' : candidate;
+      classificationBeforeHandoff = null;
     }
   } else {
     handoff = classification === 'Handoff';
   }
+  // Garantia final: se handoff=false, classification não pode ser Handoff
+  if (!handoff && classification === 'Handoff') classification = 'Novo';
   const savedForHandoff = handoff ? (classificationBeforeHandoff ?? null) : null;
   const { rows } = await query<ConversationRow>(
     `UPDATE conversations SET enterprise_id = $1, classification = $2, handoff = $3,

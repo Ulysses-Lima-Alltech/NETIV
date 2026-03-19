@@ -87,6 +87,7 @@ router.post('/assign', async (req, res) => {
       endAt: new Date(d.endAt),
       notes: d.notes,
       source: d.source,
+      brokerId: d.brokerId ?? undefined,
     });
     res.status(201).json(result);
   } catch (e) {

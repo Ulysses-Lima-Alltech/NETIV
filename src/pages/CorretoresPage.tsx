@@ -29,6 +29,7 @@ export function CorretoresPage() {
   const [err, setErr] = useState<string | null>(null);
 
   const [availability, setAvailability] = useState<BrokerAvailability[]>([]);
+  const [draftSlots, setDraftSlots] = useState<{ weekday: number; startTime: string; endTime: string }[]>([]);
   const [newSlotWeekday, setNewSlotWeekday] = useState(1);
   const [newSlotStart, setNewSlotStart] = useState('09:00');
   const [newSlotEnd, setNewSlotEnd] = useState('18:00');
@@ -37,6 +38,14 @@ export function CorretoresPage() {
   const [editSlotStart, setEditSlotStart] = useState('09:00');
   const [editSlotEnd, setEditSlotEnd] = useState('18:00');
   const [editSlotActive, setEditSlotActive] = useState(true);
+
+  const HORARIO_COMERCIAL: { weekday: number; startTime: string; endTime: string }[] = [
+    { weekday: 1, startTime: '09:00', endTime: '18:00' }, // seg
+    { weekday: 2, startTime: '09:00', endTime: '18:00' }, // ter
+    { weekday: 3, startTime: '09:00', endTime: '18:00' }, // qua
+    { weekday: 4, startTime: '09:00', endTime: '18:00' }, // qui
+    { weekday: 5, startTime: '09:00', endTime: '18:00' }, // sex
+  ];
 
   useEffect(() => {
     projectsApi.list(false).then((d) => setProjects(d.projects.map((p) => ({ id: p.id, name: p.name })))).catch(() => setProjects([]));
@@ -101,6 +110,26 @@ export function CorretoresPage() {
       .catch(() => {});
   };
 
+  const applyHorarioComercial = () => {
+    if (editingId != null) {
+      Promise.all(
+        HORARIO_COMERCIAL.map((s) =>
+          corretoresApi.createAvailability(editingId, { weekday: s.weekday, startTime: s.startTime, endTime: s.endTime, active: true })
+        )
+      ).then(() => corretoresApi.getAvailability(editingId!).then((d) => setAvailability(d.availability))).catch(() => {});
+    } else {
+      setDraftSlots([...HORARIO_COMERCIAL]);
+    }
+  };
+
+  const addDraftSlot = () => {
+    setDraftSlots((prev) => [...prev, { weekday: newSlotWeekday, startTime: newSlotStart.slice(0, 5), endTime: newSlotEnd.slice(0, 5) }]);
+  };
+
+  const removeDraftSlot = (idx: number) => {
+    setDraftSlots((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   const openNew = () => {
     setEditingId(null);
     setFullName('');
@@ -109,6 +138,7 @@ export function CorretoresPage() {
     setRealEstateAgency('');
     setActive(true);
     setSelectedEnterpriseIds([]);
+    setDraftSlots([{ weekday: 1, startTime: '09:00', endTime: '18:00' }]);
     setErr(null);
     setModalOpen(true);
   };
@@ -149,6 +179,20 @@ export function CorretoresPage() {
     } else {
       corretoresApi
         .create({ fullName: n, city: city.trim(), phone: phone.trim(), realEstateAgency: realEstateAgency.trim(), enterpriseIds: selectedEnterpriseIds })
+        .then(async (created) => {
+          if (draftSlots.length > 0) {
+            const results = await Promise.allSettled(
+              draftSlots.map((s) =>
+                corretoresApi.createAvailability(created.id, { weekday: s.weekday, startTime: s.startTime, endTime: s.endTime, active: true })
+              )
+            );
+            results.forEach((r, i) => {
+              if (r.status === 'rejected') {
+                console.warn('[CorretoresPage] Falha ao criar horário', draftSlots[i], r.reason);
+              }
+            });
+          }
+        })
         .then(() => { loadList(); closeModal(); })
         .catch((e) => setErr(e instanceof Error ? e.message : 'Erro ao cadastrar'))
         .finally(() => setSaving(false));
@@ -161,10 +205,9 @@ export function CorretoresPage() {
   };
 
   const location = useLocation();
-  const navBtn = (path: string) => {
-    const isActive = location.pathname === path || (path !== '/inbox' && path !== '/agenda' && location.pathname.startsWith(path));
-    return `inline-flex items-center px-4 py-2 rounded-[10px] text-[13px] font-medium text-white transition-all duration-200 ${isActive ? 'bg-[#F97316]' : 'bg-[#60A5FA] hover:bg-[#F97316]'}`;
-  };
+  const isActive = (path: string) => location.pathname.includes(path) || (path === '/inbox' && location.pathname === '/');
+  const navBtn = (path: string) =>
+    `inline-flex items-center px-4 py-2 rounded-[10px] text-[13px] font-medium text-white transition-all duration-200 ${isActive(path) ? 'bg-[#F97316]' : 'bg-[#60A5FA] hover:bg-[#F97316]'}`;
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
@@ -250,7 +293,8 @@ export function CorretoresPage() {
 
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={closeModal}>
-          <div className={`${card} w-full max-w-md shadow-xl`} onClick={(e) => e.stopPropagation()}>
+          <div className={`${card} w-full max-w-md shadow-xl max-h-[90vh] flex flex-col overflow-hidden`} onClick={(e) => e.stopPropagation()}>
+            <div className="overflow-y-auto flex-1 min-h-0 pb-20">
             <h2 className="text-[16px] font-semibold text-[#111827] mb-5">
               {editingId != null ? 'Editar corretor' : 'Novo corretor'}
             </h2>
@@ -297,13 +341,15 @@ export function CorretoresPage() {
                   )}
                 </div>
               </div>
-              {editingId != null && (
-                <>
-                  <div>
-                    <span className={label}>Disponibilidade semanal</span>
-                    <p className="text-[12px] text-[#9CA3AF] mb-2">Horários em que o corretor está disponível para agendamentos.</p>
-                    <div className="space-y-2">
-                      {availability.map((s) => (
+              <div>
+                <span className={label}>Disponibilidade semanal</span>
+                <p className="text-[12px] text-[#9CA3AF] mb-2">Horários em que o corretor está disponível para agendamentos.</p>
+                <button type="button" onClick={applyHorarioComercial} className="mb-3 text-[12px] font-medium text-[#3B82F6] hover:text-[#1D4ED8]">
+                  Horário comercial (Seg–Sex 09:00–18:00)
+                </button>
+                {editingId != null ? (
+                  <div className="space-y-2">
+                    {availability.map((s) => (
                         <div key={s.id} className="flex items-center gap-2 flex-wrap">
                           {editingSlotId === s.id ? (
                             <>
@@ -348,15 +394,35 @@ export function CorretoresPage() {
                     <span className={label + ' mb-0'}>Ativo</span>
                   </label>
                 </>
+              ) : (
+                <div className="space-y-2">
+                  {draftSlots.map((s, idx) => (
+                    <div key={idx} className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[13px] flex-1">{WEEKDAYS[s.weekday]} {s.startTime}–{s.endTime}</span>
+                      <button type="button" onClick={() => removeDraftSlot(idx)} className="text-[12px] text-[#9CA3AF] hover:text-red-600">Remover</button>
+                    </div>
+                  ))}
+                  <div className="flex flex-wrap gap-2 pt-2 border-t border-[#E5E7EB]">
+                    <select className={field + ' w-24'} value={newSlotWeekday} onChange={(e) => setNewSlotWeekday(Number(e.target.value))}>
+                      {WEEKDAYS.map((d, i) => (
+                        <option key={i} value={i}>{d}</option>
+                      ))}
+                    </select>
+                    <input type="time" className={field + ' w-24'} value={newSlotStart} onChange={(e) => setNewSlotStart(e.target.value)} />
+                    <input type="time" className={field + ' w-24'} value={newSlotEnd} onChange={(e) => setNewSlotEnd(e.target.value)} />
+                    <button type="button" onClick={addDraftSlot} className={btnGhost + ' text-[12px]'}>Adicionar horário</button>
+                  </div>
+                </div>
               )}
             </div>
-            <div className="flex gap-3 mt-6">
-              <button type="button" onClick={save} disabled={saving} className={btnPrimary}>
-                {saving ? 'Salvando…' : editingId != null ? 'Salvar' : 'Cadastrar'}
-              </button>
-              <button type="button" onClick={closeModal} className={btnGhost}>Cancelar</button>
-            </div>
           </div>
+          <div className="shrink-0 border-t border-[#E5E7EB] bg-white flex gap-3 pt-4 px-6 pb-6 -mx-6 -mb-6">
+            <button type="button" onClick={save} disabled={saving} className={btnPrimary}>
+              {saving ? 'Salvando…' : editingId != null ? 'Salvar' : 'Cadastrar'}
+            </button>
+            <button type="button" onClick={closeModal} className={btnGhost}>Cancelar</button>
+          </div>
+        </div>
         </div>
       )}
     </div>

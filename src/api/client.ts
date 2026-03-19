@@ -294,6 +294,7 @@ export const appointmentsApi = {
     customerName: string;
     customerPhone?: string;
     enterpriseId: number;
+    brokerId?: number;
     city?: string;
     startAt: string;
     endAt: string;
