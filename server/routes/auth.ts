@@ -1,6 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { findByEmail, verifyPassword, createSession, getSessionUser, deleteSession, toPublic } from '../repositories/userRepository.js';
+import {
+  findByEmail,
+  findByEmailIncludingInactive,
+  verifyPassword,
+  createSession,
+  deleteSession,
+  toPublic,
+} from '../repositories/userRepository.js';
 import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
@@ -19,18 +26,37 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
       return;
     }
     const { email, password } = parsed.data;
+    const normalized = email.trim().toLowerCase();
+    console.log('[Auth][login] e-mail recebido (normalizado):', normalized);
+
     const user = await findByEmail(email);
-    if (!user || !(await verifyPassword(user.password_hash, password))) {
+    if (!user) {
+      const any = await findByEmailIncludingInactive(email);
+      if (any) {
+        console.log('[Auth][login] usuário existe mas está inativo, id:', any.id);
+      } else {
+        console.log('[Auth][login] nenhum usuário ativo encontrado para este e-mail');
+      }
       res.status(401).json({ error: 'E-mail ou senha incorretos.' });
       return;
     }
+
+    console.log('[Auth][login] usuário ativo encontrado, id:', user.id, 'role:', user.role);
+    const passwordOk = await verifyPassword(user.password_hash, password);
+    if (!passwordOk) {
+      console.log('[Auth][login] senha inválida para user id:', user.id);
+      res.status(401).json({ error: 'E-mail ou senha incorretos.' });
+      return;
+    }
+
     const token = await createSession(user.id);
+    console.log('[Auth][login] sessão criada, token (prefixo):', token.slice(0, 8), '… user id:', user.id);
     res.json({
       token,
       user: toPublic(user),
     });
   } catch (e) {
-    console.error('[Auth] POST login:', e);
+    console.error('[Auth][login] erro completo:', e instanceof Error ? e.stack ?? e.message : e);
     res.status(500).json({ error: 'Erro ao fazer login.' });
   }
 });
