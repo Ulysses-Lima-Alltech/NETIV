@@ -7,8 +7,8 @@ import { formatDateSeparator, formatStatus } from '../utils/format';
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'Novo', label: 'Novo' },
-  { value: 'Qualificando', label: 'Qualificando' },
-  { value: 'Interessado', label: 'Interessado' },
+  { value: 'Qualificado', label: 'Qualificado' },
+  { value: 'Reserva', label: 'Reserva' },
   { value: 'Handoff', label: 'Handoff' },
 ];
 
@@ -21,7 +21,7 @@ interface ChatPanelProps {
   isLoadingMessages: boolean;
   loadError: string | null;
   onSendMessage: (text: string) => void;
-  onClassificationChange?: (updates: { projectId?: number | null; classificationStatus?: string }) => void;
+  onClassificationChange?: (updates: { projectId?: number | null; classificationStatus?: string; handoff?: boolean }) => void;
   projects?: { id: number; name: string; active: boolean }[];
   isSending?: boolean;
 }
@@ -84,6 +84,39 @@ export function ChatPanel({
         </div>
         {onClassificationChange && (
           <div className="flex flex-wrap gap-3 mt-3 pt-3 border-t border-[#F3F4F6]">
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] text-[#6B7280]">Modo:</span>
+              <div
+                role="group"
+                aria-label="Modo da conversa"
+                className="inline-flex p-0.5 rounded-[10px] bg-[#F3F4F6] border border-[#E5E7EB] transition-all duration-200"
+              >
+                <button
+                  type="button"
+                  onClick={() => onClassificationChange({ handoff: false })}
+                  title="ANA: resposta automática da ANA"
+                  className={`px-4 py-2 rounded-[8px] text-[13px] font-medium transition-all duration-200 ${
+                    !conversation.handoff
+                      ? 'bg-[#F97316] text-white shadow-sm'
+                      : 'text-[#6B7280] hover:text-[#111827] hover:bg-[#E5E7EB]/60'
+                  }`}
+                >
+                  ANA
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onClassificationChange({ handoff: true })}
+                  title="Handoff: apenas atendimento humano"
+                  className={`px-4 py-2 rounded-[8px] text-[13px] font-medium transition-all duration-200 ${
+                    conversation.handoff
+                      ? 'bg-[#F97316] text-white shadow-sm'
+                      : 'text-[#6B7280] hover:text-[#111827] hover:bg-[#E5E7EB]/60'
+                  }`}
+                >
+                  Handoff
+                </button>
+              </div>
+            </div>
             <label className="flex items-center gap-2">
               <span className="text-[13px] text-[#6B7280]">Projeto:</span>
               <select

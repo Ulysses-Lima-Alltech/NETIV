@@ -9,6 +9,7 @@ export interface ConversationRow {
   customer_name: string | null;
   enterprise_id: number | null;
   classification: string;
+  classification_before_handoff?: string | null;
   lead_temperature: string;
   handoff: boolean;
   meta_phone_number_id: string | null;
@@ -43,6 +44,14 @@ export async function getConversationById(id: number): Promise<ConversationRow |
   return rows[0] ?? null;
 }
 
+const VALID_CLASSIFICATIONS = new Set(['Novo', 'Qualificado', 'Reserva', 'Handoff']);
+
+function toValidClassification(s: string | null | undefined): string {
+  const t = (s || '').trim();
+  if (t === 'Interessado' || t === 'Qualificando') return 'Qualificado';
+  return VALID_CLASSIFICATIONS.has(t) ? t : 'Novo';
+}
+
 export interface ConversationWithPreview extends ConversationRow {
   last_message_preview: string | null;
   enterprise_name: string | null;
@@ -59,7 +68,7 @@ export async function listConversationsWithPreview(
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
      WHERE c.channel = $1
-     ORDER BY COALESCE(c.handoff, false) DESC, c.last_message_at DESC NULLS LAST, c.updated_at DESC
+     ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC
      LIMIT $2`,
     [channel, limit]
   );
@@ -68,7 +77,7 @@ export async function listConversationsWithPreview(
 
 export async function updateClassification(
   conversationId: number,
-  u: { enterprise_id?: number | null; classification?: string }
+  u: { enterprise_id?: number | null; classification?: string; handoff?: boolean }
 ): Promise<ConversationRow | null> {
   const cur = await getConversationById(conversationId);
   if (!cur) return null;
@@ -81,10 +90,30 @@ export async function updateClassification(
   if (u.classification !== undefined && u.classification !== null && u.classification !== '') {
     classification = u.classification;
   }
-  const handoff = classification === 'Handoff';
+  let handoff: boolean;
+  let classificationBeforeHandoff: string | null = null;
+  const curRow = cur as ConversationRow & { classification_before_handoff?: string | null };
+  if (u.handoff !== undefined) {
+    handoff = Boolean(u.handoff);
+    if (handoff) {
+      if (classification !== 'Handoff') classificationBeforeHandoff = toValidClassification(classification);
+      classification = 'Handoff';
+    } else {
+      if (classification === 'Handoff') {
+        const restored = curRow.classification_before_handoff?.trim();
+        classification = toValidClassification(restored || 'Novo');
+        classificationBeforeHandoff = null;
+      }
+    }
+  } else {
+    handoff = classification === 'Handoff';
+  }
+  const savedForHandoff = handoff ? (classificationBeforeHandoff ?? null) : null;
   const { rows } = await query<ConversationRow>(
-    `UPDATE conversations SET enterprise_id = $1, classification = $2, handoff = $3, updated_at = NOW() WHERE id = $4 RETURNING *`,
-    [enterprise_id, classification, handoff, conversationId]
+    `UPDATE conversations SET enterprise_id = $1, classification = $2, handoff = $3,
+     classification_before_handoff = CASE WHEN $3 = false THEN NULL ELSE COALESCE($5::text, classification_before_handoff) END,
+     updated_at = NOW() WHERE id = $4 RETURNING *`,
+    [enterprise_id, toValidClassification(classification), handoff, conversationId, savedForHandoff]
   );
   return rows[0] ?? null;
 }
@@ -104,7 +133,7 @@ export async function setConversationEnterpriseId(
   return rows[0] ?? null;
 }
 
-const CLASSIFICATIONS = new Set(['Novo', 'Qualificando', 'Interessado', 'Handoff']);
+const CLASSIFICATIONS = new Set(['Novo', 'Qualificado', 'Reserva', 'Handoff']);
 
 export async function applyAnaConversationUpdate(
   conversationId: number,
@@ -117,19 +146,28 @@ export async function applyAnaConversationUpdate(
 ): Promise<void> {
   const conv = await getConversationById(conversationId);
   if (!conv) return;
-  let classification = meta.classification?.trim() || conv.classification;
-  if (meta.handoff) classification = 'Handoff';
-  if (!CLASSIFICATIONS.has(classification)) classification = conv.classification;
+  let classification = toValidClassification(meta.classification?.trim() || conv.classification);
+  const handoff = !!meta.handoff;
+  if (handoff) {
+    classification = 'Handoff';
+  }
   let lead_temperature = conv.lead_temperature;
   const t = (meta.lead_temperature || '').toLowerCase();
   if (t === 'quente') lead_temperature = 'quente';
   else if (t === 'morno') lead_temperature = 'morno';
   else if (t === 'frio') lead_temperature = 'frio';
   const cn = meta.customer_name?.trim();
+  const curRow = conv as ConversationRow & { classification_before_handoff?: string | null };
+  const saveBeforeHandoff =
+    handoff && conv.classification !== 'Handoff'
+      ? toValidClassification(conv.classification)
+      : null;
   await query(
     `UPDATE conversations SET classification = $1, lead_temperature = $2, handoff = $3,
      customer_name = CASE WHEN $4::text IS NOT NULL AND length(trim($4)) > 0 THEN trim($4) ELSE customer_name END,
+     classification_before_handoff = CASE WHEN $3 = true AND $6 IS NOT NULL THEN $6 ELSE
+       (CASE WHEN $3 = false THEN NULL ELSE classification_before_handoff END) END,
      updated_at = NOW() WHERE id = $5`,
-    [classification, lead_temperature, !!meta.handoff, cn ?? null, conversationId]
+    [classification, lead_temperature, handoff, cn ?? null, conversationId, saveBeforeHandoff]
   );
 }

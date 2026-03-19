@@ -17,7 +17,7 @@ const JSON_INSTRUCTION = `
 JSON obrigatório (sem markdown):
 {
   "reply": "texto ao cliente",
-  "classification": "Novo" | "Qualificando" | "Interessado" | "Handoff",
+  "classification": "Novo" | "Qualificado" | "Reserva" | "Handoff",
   "lead_temperature": "frio" | "morno" | "quente",
   "project": "nome do empreendimento ou vazio",
   "handoff": false,
@@ -98,7 +98,7 @@ function formatVars(v: Record<string, string>): string {
   ].join('\n');
 }
 
-const CLASS_OK = new Set(['Novo', 'Qualificando', 'Interessado', 'Handoff']);
+const CLASS_OK = new Set(['Novo', 'Qualificado', 'Reserva', 'Handoff']);
 const TEMP_OK = new Set(['frio', 'morno', 'quente']);
 const CAT_SET = new Set<string>(FILE_CATEGORIES);
 
@@ -169,6 +169,7 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
     const reply = typeof o.reply === 'string' ? o.reply.trim() : '';
     if (!reply) return null;
     let classification = typeof o.classification === 'string' ? o.classification.trim() : 'Novo';
+    if (classification === 'Interessado' || classification === 'Qualificando') classification = 'Qualificado';
     if (!CLASS_OK.has(classification)) classification = 'Novo';
     let lead_temperature = typeof o.lead_temperature === 'string' ? o.lead_temperature.trim().toLowerCase() : 'frio';
     if (!TEMP_OK.has(lead_temperature)) lead_temperature = 'frio';

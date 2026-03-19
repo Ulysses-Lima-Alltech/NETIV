@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import type { Conversation, Message } from '../types';
 import { whatsappApi, projectsApi } from '../api/client';
 import type { ConversationListItem as ApiConversation, MessageListItem } from '../api/client';
@@ -14,9 +14,8 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
   const temperatura = leadStage === 'HOT' ? 'quente' : leadStage === 'WARM' ? 'morno' : 'frio';
   const projectName = c.projectName ?? null;
   const empreendimento = projectName;
-  const status = (['Handoff', 'Qualificando', 'Interessado', 'Novo'].includes(c.classificationStatus)
-    ? c.classificationStatus
-    : 'Novo') as Conversation['status'];
+  const raw = c.classificationStatus || 'Novo';
+  const status = (raw === 'Interessado' || raw === 'Qualificando' ? 'Qualificado' : ['Handoff', 'Qualificado', 'Reserva', 'Novo'].includes(raw) ? raw : 'Novo') as Conversation['status'];
   return {
     id: c.id,
     leadName,
@@ -29,7 +28,8 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     temperatura,
     projectId: c.projectId ?? null,
     projectName: projectName ?? null,
-    classificationStatus: c.classificationStatus || 'Novo',
+    classificationStatus: status,
+    handoff: c.handoff ?? (status === 'Handoff'),
   };
 }
 
@@ -58,6 +58,11 @@ export function InboxPage() {
   const selectedConversation = selectedId
     ? conversations.find((c) => c.id === selectedId) ?? null
     : null;
+  const location = useLocation();
+  const navBtn = (path: string) => {
+    const isActive = location.pathname === path || (path !== '/inbox' && location.pathname.startsWith(path));
+    return `inline-flex items-center px-4 py-2 rounded-[10px] text-[13px] font-medium text-white transition-all duration-200 ${isActive ? 'bg-[#F97316]' : 'bg-[#60A5FA] hover:bg-[#F97316]'}`;
+  };
 
   const loadConversations = useCallback((silent?: boolean) => {
     if (!silent) setConversationsLoading(true);
@@ -148,15 +153,16 @@ export function InboxPage() {
   );
 
   const handleClassificationChange = useCallback(
-    (updates: { projectId?: number | null; classificationStatus?: string }) => {
+    (updates: { projectId?: number | null; classificationStatus?: string; handoff?: boolean }) => {
       if (!selectedId) return;
       const id = parseInt(selectedId, 10);
       if (Number.isNaN(id)) return;
+      const body: { project_id?: number | null; classification_status?: string; handoff?: boolean } = {};
+      if (updates.projectId !== undefined) body.project_id = updates.projectId;
+      if (updates.classificationStatus !== undefined) body.classification_status = updates.classificationStatus;
+      if (updates.handoff !== undefined) body.handoff = updates.handoff;
       whatsappApi
-        .updateClassification(id, {
-          project_id: updates.projectId,
-          classification_status: updates.classificationStatus,
-        })
+        .updateClassification(id, body)
         .then((data) => {
           setConversations((prev) =>
             prev.map((c) =>
@@ -168,6 +174,7 @@ export function InboxPage() {
                     classificationStatus: data.classificationStatus ?? c.classificationStatus,
                     status: (data.classificationStatus ?? c.status) as Conversation['status'],
                     empreendimento: data.projectName ?? c.empreendimento,
+                    handoff: data.handoff ?? c.handoff,
                   }
                 : c
             )
@@ -182,15 +189,18 @@ export function InboxPage() {
     <div className="h-screen flex flex-col bg-[#F9FAFB] text-[#111827]">
       <nav className="shrink-0 flex items-center justify-between px-5 h-14 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm sticky top-0 z-30">
         <span className="text-[15px] font-semibold text-[#111827]">Inbox</span>
-        <div className="flex items-center gap-5">
-          <Link to="/settings/empreendimentos" className="text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8] transition-colors">
+        <div className="flex items-center gap-2 p-1.5 rounded-[12px] bg-[#F3F4F6]/60 border border-[#E5E7EB]/80">
+          <Link to="/settings/empreendimentos" className={navBtn('/settings/empreendimentos')}>
             Empreendimentos
           </Link>
-          <Link to="/settings/integrations/whatsapp" className="text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8] transition-colors">
-            Configurações
+          <Link to="/settings/corretores" className={navBtn('/settings/corretores')}>
+            Corretores
           </Link>
-          <Link to="/enviar-whatsapp" className="text-[13px] font-medium text-[#6B7280] hover:text-[#111827] transition-colors">
-            Enviar WhatsApp
+          <Link to="/agenda" className={navBtn('/agenda')}>
+            Agenda
+          </Link>
+          <Link to="/settings/integrations/whatsapp" className={navBtn('/settings/integrations/whatsapp')}>
+            Configurações
           </Link>
         </div>
       </nav>

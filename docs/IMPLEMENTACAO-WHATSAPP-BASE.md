@@ -12,7 +12,6 @@
 | `server/validators/whatsapp.ts` | Schema Zod para envio de mensagem (to, message) |
 | `server/db/migrations/005_integration_settings_extra.sql` | Colunas provider, default_country_code, created_at em integration_settings |
 | `server/db/migrations/006_conversations_messages_extra.sql` | Coluna last_message_at em conversations; type, content, error_message, sent_at, delivered_at, read_at, updated_at em messages |
-| `src/pages/WhatsAppTestPage.tsx` | Tela de teste: lista de conversas, mensagens e envio |
 
 ### ARQUIVOS ALTERADOS
 
@@ -32,7 +31,7 @@
 | `server/routes/index.ts` | Rota /webhooks/whatsapp (alias do webhook) |
 | `src/api/client.ts` | Tipos ConversationListItem, MessageListItem; defaultCountryCode; settingsApi.testWhatsApp(); whatsappApi.getConversations, getConversationMessages |
 | `src/pages/SettingsWhatsAppPage.tsx` | Campo defaultCountryCode; teste de conexão via settingsApi.testWhatsApp() |
-| `src/App.tsx` | Rota /enviar-whatsapp → WhatsAppTestPage; rota /whatsapp-enviar → SendWhatsAppPage |
+| `src/App.tsx` | Rotas: Inbox, Agenda, Empreendimentos, Corretores, Configurações WhatsApp |
 
 ### MIGRATIONS
 
@@ -70,7 +69,7 @@
 
 | Nome | Finalidade |
 |------|------------|
-| WhatsAppTestPage | Tela de teste: lista de conversas (GET /whatsapp/conversations), mensagens ao selecionar (GET /conversations/:id/messages), envio (POST /send) e feedback de status |
+| NewMessageModal | Modal do fluxo "+ Nova" no Inbox: número + mensagem (opcional), envio via whatsappApi.send() |
 
 ### SERVICES NOVOS / ALTERADOS
 
@@ -101,9 +100,7 @@
 
 ### 3. Como testar envio manual
 
-1. **Tela de teste** (Enviar WhatsApp / `/enviar-whatsapp`): lista de conversas à esquerda; ao clicar, carrega mensagens e o número fica fixo; em baixo, digite a mensagem e **Enviar**. Sem conversa selecionada, informe o número no campo e a mensagem.
-2. **Envio simples** (`/whatsapp-enviar`): apenas número, mensagem e botão Enviar.
-3. Todas as chamadas passam pelo backend (POST /api/whatsapp/send); o front nunca usa o token.
+1. Use o fluxo **"+ Nova"** no Inbox: clique em **Nova**, informe o número (com DDD) e a mensagem (opcional; padrão "Olá!"), e **Iniciar conversa**. Todas as chamadas passam pelo backend (POST /api/whatsapp/send); o front nunca usa o token.
 
 ### 4. Como configurar / verificar o webhook na Meta
 

@@ -44,16 +44,15 @@
 |--------|------------|
 | `api/client.ts` | Cliente HTTP para `/api` (settings, whatsapp send/check) |
 | `pages/SettingsWhatsAppPage.tsx` | Tela Configurações > Integrações > WhatsApp |
-| `pages/SendWhatsAppPage.tsx` | Tela de teste de envio (número + mensagem) |
 
 ### Alterados
 
 | Arquivo | Alteração |
 |--------|------------|
 | `vite.config.ts` | Proxy `/api` e `/webhook` para `http://localhost:3001` |
-| `App.tsx` | Rotas `/settings/integrations/whatsapp` e `/enviar-whatsapp` |
+| `App.tsx` | Rotas: Inbox, Agenda, Empreendimentos, Corretores, Configurações WhatsApp |
 | `package.json` (raiz) | Scripts `dev:server`, `dev:all` e dependência `concurrently` |
-| `src/pages/InboxPage.tsx` | Link para Configurações e Enviar WhatsApp na nav |
+| `src/pages/InboxPage.tsx` | Links de navegação; fluxo "+ Nova" para enviar mensagens |
 | `.gitignore` | `server/data`, `.env` |
 
 ---
@@ -127,9 +126,9 @@ npm run dev
 
 ### 3. Testar envio de mensagem
 
-1. Acesse **Enviar WhatsApp** (link no topo) ou `/enviar-whatsapp`.
+1. Acesse o fluxo **"+ Nova"** no Inbox (botão na lista de conversas).
 2. Informe o **número do destinatário** (ex.: `5511999999999`, com DDI, sem + ou espaços).
-3. Digite a **mensagem** e clique em **Enviar**.
+3. Digite a **mensagem** (opcional; padrão "Olá!") e clique em **Iniciar conversa**.
 4. O backend usa a configuração salva e chama a Meta; o resultado aparece na própria tela.
 
 ### 4. Configurar o webhook na Meta

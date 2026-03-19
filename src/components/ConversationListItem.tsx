@@ -20,7 +20,7 @@ export function ConversationListItem({ conversation, isSelected, onClick }: Conv
       className={`
         w-full text-left px-4 py-3.5 border-b border-[#F3F4F6] transition-all
         focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6] focus-visible:ring-inset
-        ${(conversation.status === 'Handoff' || conversation.classificationStatus === 'Handoff')
+        ${(conversation.handoff === true || conversation.status === 'Handoff' || conversation.classificationStatus === 'Handoff')
           ? isSelected
             ? 'bg-[#FEF2F2] border-l-[3px] border-l-[#DC2626]'
             : 'bg-[#FFFBEB] hover:bg-[#FEF3C7] border-l-[3px] border-l-[#F59E0B]'
@@ -41,7 +41,7 @@ export function ConversationListItem({ conversation, isSelected, onClick }: Conv
         {conversation.lastMessage || 'Sem mensagens'}
       </p>
       <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-        {(conversation.status === 'Handoff' || conversation.classificationStatus === 'Handoff') && (
+        {(conversation.handoff === true || conversation.status === 'Handoff' || conversation.classificationStatus === 'Handoff') && (
           <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-[2px] rounded bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA]">
             <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             Handoff
@@ -55,7 +55,7 @@ export function ConversationListItem({ conversation, isSelected, onClick }: Conv
         <span title={`Lead ${conversation.temperatura}`} className="inline-flex items-center p-0.5">
           <FlameIcon temperatura={conversation.temperatura} size="sm" />
         </span>
-        {conversation.status !== 'Handoff' && conversation.classificationStatus !== 'Handoff' && (
+        {!conversation.handoff && conversation.status !== 'Handoff' && conversation.classificationStatus !== 'Handoff' && (
           <span className="text-[10px] font-medium px-2 py-[2px] rounded bg-[#F3F4F6] text-[#6B7280]">
             {formatStatus(conversation.status)}
           </span>

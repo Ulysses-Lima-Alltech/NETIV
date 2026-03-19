@@ -1,4 +1,4 @@
-export type ConversationStatus = 'NOVO' | 'EM_ANDAMENTO' | 'QUALIFICADO' | 'HANDOFF' | 'Novo' | 'Handoff';
+export type ConversationStatus = 'NOVO' | 'EM_ANDAMENTO' | 'QUALIFICADO' | 'HANDOFF' | 'Novo' | 'Qualificado' | 'Reserva' | 'Handoff';
 
 export type LeadTemperatura = 'quente' | 'morno' | 'frio';
 
@@ -17,6 +17,8 @@ export interface Conversation {
   /** Nome do projeto para exibição (pode ser de projeto inativo). */
   projectName?: string | null;
   classificationStatus?: string;
+  /** true = atendimento humano (ANA não responde), false = ANA responde. */
+  handoff?: boolean;
 }
 
 export type MessageSender = 'LEAD' | 'AGENT';

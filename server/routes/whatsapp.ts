@@ -99,10 +99,11 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       const msg = parsed.error.issues.map((e: { message: string }) => e.message).join('; ') || 'Dados inválidos.';
       return res.status(400).json({ error: msg });
     }
-    const { project_id, classification_status } = parsed.data;
+    const { project_id, classification_status, handoff } = parsed.data;
     const conv = await updateClassification(id, {
       enterprise_id: project_id !== undefined ? project_id : undefined,
       classification: classification_status,
+      handoff,
     });
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
     const projectName = conv.enterprise_id ? (await getEnterpriseById(conv.enterprise_id))?.name ?? null : null;
@@ -113,6 +114,7 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       enterpriseId: conv.enterprise_id ?? null,
       enterpriseName: projectName,
       classificationStatus: conv.classification ?? 'Novo',
+      handoff: conv.handoff ?? false,
     });
   } catch (e) {
     console.error('[WhatsApp] PATCH classification:', e);

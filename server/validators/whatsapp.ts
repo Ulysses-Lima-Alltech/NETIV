@@ -9,10 +9,11 @@ export const sendMessageSchema = z.object({
 
 export type SendMessageDto = z.infer<typeof sendMessageSchema>;
 
-const classificationStatusValues = ['Novo', 'Qualificando', 'Interessado', 'Handoff'] as const;
+const classificationStatusValues = ['Novo', 'Qualificado', 'Reserva', 'Handoff'] as const;
 
 export const updateClassificationSchema = z.object({
   project_id: z.number().int().positive().nullable().optional(),
   classification_status: z.enum(classificationStatusValues).optional(),
+  handoff: z.boolean().optional(),
 });
 export type UpdateClassificationDto = z.infer<typeof updateClassificationSchema>;

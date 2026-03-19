@@ -57,6 +57,7 @@ export interface ConversationListItem {
   enterpriseName?: string | null;
   classificationStatus: string;
   leadStage: string | null;
+  handoff?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -122,11 +123,17 @@ export const whatsappApi = {
   },
   getConversationMessages: (conversationId: number) =>
     request<{ conversationId: number; messages: MessageListItem[] }>(`/whatsapp/conversations/${conversationId}/messages`),
-  updateClassification: (conversationId: number, body: { project_id?: number | null; classification_status?: string }) =>
-    request<{ id: number; projectId: number | null; projectName: string | null; classificationStatus: string }>(
-      `/whatsapp/conversations/${conversationId}/classification`,
-      { method: 'PATCH', body }
-    ),
+  updateClassification: (
+    conversationId: number,
+    body: { project_id?: number | null; classification_status?: string; handoff?: boolean }
+  ) =>
+    request<{
+      id: number;
+      projectId: number | null;
+      projectName: string | null;
+      classificationStatus: string;
+      handoff?: boolean;
+    }>(`/whatsapp/conversations/${conversationId}/classification`, { method: 'PATCH', body }),
   sendToConversation: (conversationId: number, message: string) =>
     request<{ success: boolean; metaMessageId?: string }>(`/whatsapp/conversations/${conversationId}/send`, {
       method: 'POST',
@@ -200,6 +207,104 @@ export const projectsApi = {
   },
   deleteKnowledge: (projectId: number, fileId: number) =>
     request<{ ok: boolean }>(`/projects/${projectId}/knowledge/${fileId}`, { method: 'DELETE' }),
+};
+
+export interface Corretor {
+  id: number;
+  fullName: string;
+  city: string;
+  phone: string;
+  realEstateAgency: string;
+  active: boolean;
+  enterpriseIds?: number[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BrokerAvailability {
+  id: number;
+  weekday: number;
+  startTime: string;
+  endTime: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const corretoresApi = {
+  list: (params?: { enterpriseId?: number }) => {
+    const q = params?.enterpriseId != null ? `?enterpriseId=${params.enterpriseId}` : '';
+    return request<{ corretores: Corretor[] }>(`/corretores${q}`);
+  },
+  get: (id: number) => request<Corretor>(`/corretores/${id}`),
+  create: (body: { fullName: string; city?: string; phone?: string; realEstateAgency?: string; enterpriseIds?: number[] }) =>
+    request<Corretor>('/corretores', { method: 'POST', body }),
+  update: (id: number, body: { fullName?: string; city?: string; phone?: string; realEstateAgency?: string; active?: boolean; enterpriseIds?: number[] }) =>
+    request<Corretor>(`/corretores/${id}`, { method: 'PATCH', body }),
+  inactivate: (id: number) =>
+    request<Corretor>(`/corretores/${id}`, { method: 'DELETE' }),
+  delete: (id: number) =>
+    request<{ ok: boolean }>(`/corretores/${id}?permanent=1`, { method: 'DELETE' }),
+  getAvailability: (brokerId: number) =>
+    request<{ availability: BrokerAvailability[] }>(`/corretores/${brokerId}/availability`),
+  createAvailability: (brokerId: number, body: { weekday: number; startTime: string; endTime: string; active?: boolean }) =>
+    request<BrokerAvailability>(`/corretores/${brokerId}/availability`, { method: 'POST', body }),
+  updateAvailability: (brokerId: number, availabilityId: number, body: { weekday?: number; startTime?: string; endTime?: string; active?: boolean }) =>
+    request<BrokerAvailability>(`/corretores/${brokerId}/availability/${availabilityId}`, { method: 'PATCH', body }),
+  deleteAvailability: (brokerId: number, availabilityId: number) =>
+    request<{ ok: boolean }>(`/corretores/${brokerId}/availability/${availabilityId}`, { method: 'DELETE' }),
+};
+
+export interface Appointment {
+  id: number;
+  customerName: string;
+  customerPhone: string;
+  enterpriseId: number;
+  brokerId: number | null;
+  city: string;
+  startAt: string;
+  endAt: string;
+  status: string;
+  source: string;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AssignAppointmentResult {
+  appointment: Appointment;
+  broker: { id: number; fullName: string; phone: string } | null;
+  empreendimento: string | null;
+  dataHora: string;
+  cliente: string;
+}
+
+export const appointmentsApi = {
+  list: (params?: { enterpriseId?: number; brokerId?: number; status?: string; date?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.enterpriseId != null) q.set('enterpriseId', String(params.enterpriseId));
+    if (params?.brokerId != null) q.set('brokerId', String(params.brokerId));
+    if (params?.status) q.set('status', params.status);
+    if (params?.date) q.set('date', params.date);
+    const query = q.toString();
+    return request<{ appointments: Appointment[] }>(`/appointments${query ? `?${query}` : ''}`);
+  },
+  get: (id: number) => request<Appointment>(`/appointments/${id}`),
+  assign: (body: {
+    customerName: string;
+    customerPhone?: string;
+    enterpriseId: number;
+    city?: string;
+    startAt: string;
+    endAt: string;
+    notes?: string;
+    source?: string;
+  }) => request<AssignAppointmentResult>('/appointments/assign', { method: 'POST', body }),
+  checkAvailability: (body: { enterpriseId: number; city?: string; startAt: string; endAt: string }) =>
+    request<{ available: boolean; eligibleBrokerCount: number; suggestedBrokerId?: number }>('/appointments/check-availability', { method: 'POST', body }),
+  updateStatus: (id: number, status: string) =>
+    request<Appointment>(`/appointments/${id}/status`, { method: 'PATCH', body: { status } }),
+  cancel: (id: number) => request<Appointment>(`/appointments/${id}`, { method: 'DELETE' }),
 };
 
 export interface LeadAnalysisResponse {

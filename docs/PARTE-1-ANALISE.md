@@ -35,7 +35,7 @@ Convenções de nome: **snake_case** no banco, **camelCase** nos tipos TypeScrip
 
 - **Entrada**: `src/main.tsx` → `App.tsx` com React Router.
 - **Rotas**: rotas em `App.tsx` (path element); não há módulo de rotas separado.
-- **Páginas**: `src/pages/*.tsx` — uma por rota (InboxPage, SettingsWhatsAppPage, SendWhatsAppPage).
+- **Páginas**: `src/pages/*.tsx` — uma por rota (InboxPage, SettingsWhatsAppPage, AgendaPage, etc.).
 - **Componentes**: `src/components/*.tsx` — reutilizáveis (ConversationList, ChatPanel, ChatComposer, MessageBubble, etc.).
 - **API**: `src/api/client.ts` — funções que fazem `fetch` para `/api/*`; `mockApi.ts` para dados mock do inbox.
 - **Tipos**: `src/types.ts` — tipos globais do front (Conversation, Message, etc.).
