@@ -64,7 +64,17 @@ router.get('/conversations', async (req, res) => {
   try {
     const channel = (req.query.channel as string) || 'whatsapp';
     const limit = Math.min(parseInt(String(req.query.limit), 10) || 100, 500);
-    const rows = await listConversationsWithPreview(channel, limit);
+    const mode = req.query.mode as string | undefined;
+    const status = req.query.status as string | undefined;
+    const enterpriseId = req.query.enterpriseId != null ? parseInt(String(req.query.enterpriseId), 10) : undefined;
+    const search = req.query.search as string | undefined;
+    const filters: { mode?: 'ANA' | 'handoff'; status?: string; enterpriseId?: number; search?: string } = {};
+    if (mode === 'ANA' || mode === 'handoff') filters.mode = mode;
+    if (status && status !== 'all') filters.status = status;
+    if (enterpriseId != null && !Number.isNaN(enterpriseId)) filters.enterpriseId = enterpriseId;
+    if (search && search.trim() !== '') filters.search = search.trim();
+    const hasFilters = Object.keys(filters).length > 0;
+    const rows = await listConversationsWithPreview(channel, limit, hasFilters ? filters : undefined);
     res.json({
       conversations: rows.map((r) => ({
         id: String(r.id),

@@ -63,20 +63,64 @@ export interface ConversationWithPreview extends ConversationRow {
   enterprise_name: string | null;
 }
 
+export interface ListConversationsFilters {
+  mode?: 'all' | 'ANA' | 'handoff';
+  status?: string;
+  enterpriseId?: number;
+  search?: string;
+}
+
 export async function listConversationsWithPreview(
   channel: string = 'whatsapp',
-  limit: number = 100
+  limit: number = 100,
+  filters?: ListConversationsFilters
 ): Promise<ConversationWithPreview[]> {
+  const conditions: string[] = ['c.channel = $1'];
+  const params: unknown[] = [channel];
+  let paramIndex = 2;
+
+  if (filters?.mode === 'ANA') {
+    conditions.push('(c.handoff = false OR c.handoff IS NULL)');
+  } else if (filters?.mode === 'handoff') {
+    conditions.push('c.handoff = true');
+  }
+
+  if (filters?.status && filters.status !== 'all' && filters.status !== '') {
+    conditions.push(`c.classification = $${paramIndex}`);
+    params.push(filters.status);
+    paramIndex += 1;
+  }
+
+  if (filters?.enterpriseId != null) {
+    conditions.push(`c.enterprise_id = $${paramIndex}`);
+    params.push(filters.enterpriseId);
+    paramIndex += 1;
+  }
+
+  if (filters?.search && filters.search.trim() !== '') {
+    const searchTerm = `%${filters.search.trim().replace(/%/g, '\\%').replace(/_/g, '\\_')}%`;
+    conditions.push(
+      `(c.customer_name ILIKE $${paramIndex} OR c.contact_phone ILIKE $${paramIndex} OR EXISTS (
+        SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content ILIKE $${paramIndex}
+      ))`
+    );
+    params.push(searchTerm);
+    paramIndex += 1;
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  params.push(limit);
+
   const { rows } = await query<ConversationWithPreview>(
     `SELECT c.*,
       (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_preview,
       e.name AS enterprise_name
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
-     WHERE c.channel = $1
+     ${whereClause}
      ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC
-     LIMIT $2`,
-    [channel, limit]
+     LIMIT $${paramIndex}`,
+    params
   );
   return rows;
 }

@@ -3,20 +3,63 @@ const API_BASE =
     ? `${String(import.meta.env.VITE_API_URL).replace(/\/$/, '')}/api`
     : '/api';
 
+const AUTH_TOKEN_KEY = 'auth_token';
+
+export function getStoredAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+export function setStoredAuthToken(token: string | null): void {
+  if (token == null) localStorage.removeItem(AUTH_TOKEN_KEY);
+  else localStorage.setItem(AUTH_TOKEN_KEY, token);
+}
+
+/** Chamado quando a API retorna 401 (sessão inválida/expirada). Limpa token e redireciona para login. */
+function handleUnauthorized(): void {
+  setStoredAuthToken(null);
+  const base = typeof import.meta.env.BASE_URL === 'string' ? import.meta.env.BASE_URL.replace(/\/$/, '') : '';
+  window.location.href = `${base}/login`;
+}
+
 async function request<T>(
   path: string,
   options: { method?: string; body?: unknown; headers?: Record<string, string> } = {}
 ): Promise<T> {
   const { method = 'GET', body, headers = {} } = options;
+  const token = getStoredAuthToken();
   const res = await fetch(`${API_BASE}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...headers,
+    },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error('Sessão expirada. Faça login novamente.');
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as { error?: string }).error ?? `Erro ${res.status}`);
   return data as T;
 }
+
+export type UserRole = 'ADMIN' | 'COLLABORATOR';
+
+export interface AuthUser {
+  id: number;
+  name: string;
+  email: string;
+  role: UserRole;
+}
+
+export const authApi = {
+  login: (email: string, password: string) =>
+    request<{ token: string; user: AuthUser }>('/auth/login', { method: 'POST', body: { email, password } }),
+  me: () => request<{ user: AuthUser }>('/auth/me'),
+  logout: () => request<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
+};
 
 export interface WhatsAppConfigPublic {
   metaAccessTokenMasked: boolean;
@@ -114,10 +157,21 @@ export const whatsappApi = {
       body: { to, message },
     }),
   configCheck: () => request<{ configured: boolean }>('/whatsapp/config/check'),
-  getConversations: (params?: { channel?: string; limit?: number }) => {
+  getConversations: (params?: {
+    channel?: string;
+    limit?: number;
+    mode?: 'all' | 'ANA' | 'handoff';
+    status?: string;
+    enterpriseId?: number;
+    search?: string;
+  }) => {
     const q = new URLSearchParams();
     if (params?.channel) q.set('channel', params.channel);
     if (params?.limit != null) q.set('limit', String(params.limit));
+    if (params?.mode && params.mode !== 'all') q.set('mode', params.mode);
+    if (params?.status && params.status !== 'all') q.set('status', params.status);
+    if (params?.enterpriseId != null) q.set('enterpriseId', String(params.enterpriseId));
+    if (params?.search?.trim()) q.set('search', params.search.trim());
     const query = q.toString();
     return request<{ conversations: ConversationListItem[] }>(`/whatsapp/conversations${query ? `?${query}` : ''}`);
   },
@@ -328,4 +382,24 @@ export interface LeadAnalysisResponse {
 export const leadApi = {
   analyze: (messages: string[]) =>
     request<LeadAnalysisResponse>('/lead/analyze', { method: 'POST', body: { messages } }),
+};
+
+export interface UserListItem {
+  id: number;
+  name: string;
+  email: string;
+  role: UserRole;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const usersApi = {
+  list: () => request<{ users: UserListItem[] }>('/users'),
+  create: (body: { name: string; email: string; password: string; role: UserRole; active: boolean }) =>
+    request<{ user: UserListItem }>('/users', { method: 'POST', body }),
+  update: (id: number, body: { name?: string; email?: string; role?: UserRole; active?: boolean }) =>
+    request<{ user: UserListItem }>(`/users/${id}`, { method: 'PATCH', body }),
+  updatePassword: (id: number, newPassword: string) =>
+    request<{ ok: boolean }>(`/users/${id}/password`, { method: 'PATCH', body: { newPassword } }),
 };

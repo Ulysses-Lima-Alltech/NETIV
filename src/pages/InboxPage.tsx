@@ -1,11 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { AppNav } from '../components/AppNav';
 import type { Conversation, Message } from '../types';
 import { whatsappApi, projectsApi } from '../api/client';
 import type { ConversationListItem as ApiConversation, MessageListItem } from '../api/client';
 import { ConversationList } from '../components/ConversationList';
 import { ChatPanel } from '../components/ChatPanel';
 import { NewMessageModal } from '../components/NewMessageModal';
+import {
+  InboxFilterBar,
+  DEFAULT_INBOX_FILTERS,
+  hasActiveInboxFilters,
+  inboxFiltersToApiParams,
+  type InboxFilters,
+} from '../components/InboxFilterBar';
 
 function mapApiConversationToConversation(c: ApiConversation): Conversation {
   const leadName = c.contactName?.trim() || c.contactPhone || c.externalContactId || 'Sem nome';
@@ -54,7 +61,14 @@ export function InboxPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [newMessageOpen, setNewMessageOpen] = useState(false);
   const [projects, setProjects] = useState<{ id: number; name: string; active: boolean }[]>([]);
+  const [filters, setFilters] = useState<InboxFilters>(DEFAULT_INBOX_FILTERS);
+  const [searchDebounced, setSearchDebounced] = useState(filters.search);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(filters.search), 400);
+    return () => clearTimeout(t);
+  }, [filters.search]);
 
   const isUserAtBottom = useCallback(() => {
     const el = chatScrollRef.current;
@@ -70,21 +84,18 @@ export function InboxPage() {
   const selectedConversation = selectedId
     ? conversations.find((c) => c.id === selectedId) ?? null
     : null;
-  const location = useLocation();
-  const isActive = (path: string) => location.pathname.includes(path) || (path === '/inbox' && location.pathname === '/');
-  const navBtn = (path: string) =>
-    `inline-flex items-center px-4 py-2 rounded-[10px] text-[13px] font-medium text-white transition-all duration-200 ${isActive(path) ? 'bg-[#F97316]' : 'bg-[#60A5FA] hover:bg-[#F97316]'}`;
 
   const loadConversations = useCallback((silent?: boolean) => {
     if (!silent) setConversationsLoading(true);
+    const params = inboxFiltersToApiParams({ ...filters, search: searchDebounced });
     whatsappApi
-      .getConversations()
+      .getConversations({ ...params, limit: 200 })
       .then((data) => {
         setConversations(data.conversations.map(mapApiConversationToConversation));
       })
       .catch(() => setConversations([]))
       .finally(() => { if (!silent) setConversationsLoading(false); });
-  }, []);
+  }, [filters, searchDebounced]);
 
   const loadMessages = useCallback((convId: string, silent?: boolean) => {
     const id = parseInt(convId, 10);
@@ -129,6 +140,8 @@ export function InboxPage() {
   }, [isUserAtBottom, scrollToBottom]);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
+
+  const clearFilters = useCallback(() => setFilters(DEFAULT_INBOX_FILTERS), []);
 
   useEffect(() => {
     projectsApi
@@ -250,20 +263,7 @@ export function InboxPage() {
     <div className="h-screen flex flex-col bg-[#F9FAFB] text-[#111827]">
       <nav className="shrink-0 flex items-center justify-between px-5 h-14 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm sticky top-0 z-30">
         <span className="text-[15px] font-semibold text-[#111827]">Inbox</span>
-        <div className="flex items-center gap-2 p-1.5 rounded-[12px] bg-[#F3F4F6]/60 border border-[#E5E7EB]/80">
-          <Link to="/settings/empreendimentos" className={navBtn('/settings/empreendimentos')}>
-            Empreendimentos
-          </Link>
-          <Link to="/settings/corretores" className={navBtn('/settings/corretores')}>
-            Corretores
-          </Link>
-          <Link to="/agenda" className={navBtn('/agenda')}>
-            Agenda
-          </Link>
-          <Link to="/settings/integrations/whatsapp" className={navBtn('/settings/integrations/whatsapp')}>
-            Configurações
-          </Link>
-        </div>
+        <AppNav />
       </nav>
 
       <div className="flex-1 flex flex-col md:flex-row min-h-0">
@@ -283,6 +283,13 @@ export function InboxPage() {
           <div className="fixed inset-0 bg-black/30 z-10 md:hidden" aria-hidden onClick={() => setSidebarOpen(false)} />
         )}
         <aside className={`w-[340px] shrink-0 flex flex-col h-full md:relative md:translate-x-0 fixed inset-y-0 left-0 z-20 transform transition-transform duration-200 ease-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+          <InboxFilterBar
+            filters={filters}
+            onChange={setFilters}
+            projects={projects}
+            onClear={clearFilters}
+            hasActiveFilters={hasActiveInboxFilters(filters)}
+          />
           <ConversationList
             conversations={conversations}
             selectedId={selectedId}

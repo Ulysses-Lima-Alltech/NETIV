@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link } from 'react-router-dom';
+import { AppNav } from '../components/AppNav';
 import { appointmentsApi, projectsApi, corretoresApi } from '../api/client';
 import type { Appointment, AssignAppointmentResult } from '../api/client';
 
@@ -189,11 +190,6 @@ export function AgendaPage() {
   const getProjectName = (id: number) => projects.find((p) => p.id === id)?.name ?? `#${id}`;
   const getBrokerName = (id: number | null) => (id ? corretores.find((c) => c.id === id)?.fullName ?? `#${id}` : '—');
 
-  const location = useLocation();
-  const isActive = (path: string) => location.pathname.includes(path) || (path === '/inbox' && location.pathname === '/');
-  const navBtn = (path: string) =>
-    `inline-flex items-center px-4 py-2 rounded-[10px] text-[13px] font-medium text-white transition-all duration-200 ${isActive(path) ? 'bg-[#F97316]' : 'bg-[#60A5FA] hover:bg-[#F97316]'}`;
-
   const statusClass: Record<string, string> = {
     CONFIRMADO: 'bg-[#D1FAE5] text-[#059669]',
     PENDENTE_CONFIRMACAO: 'bg-[#FEF3C7] text-[#D97706]',
@@ -216,16 +212,7 @@ export function AgendaPage() {
     <div className="min-h-screen bg-[#F9FAFB]">
       <header className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
         <div className="max-w-[1200px] mx-auto flex items-center gap-4 px-6 h-14">
-          <Link to="/inbox" className={navBtn('/inbox')}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1.5 shrink-0"><path d="m15 18-6-6 6-6"/></svg>
-            Inbox
-          </Link>
-          <div className="flex items-center gap-2 p-1.5 rounded-[12px] bg-[#F3F4F6]/60 border border-[#E5E7EB]/80">
-            <Link to="/settings/empreendimentos" className={navBtn('/settings/empreendimentos')}>Empreendimentos</Link>
-            <Link to="/settings/corretores" className={navBtn('/settings/corretores')}>Corretores</Link>
-            <Link to="/agenda" className={navBtn('/agenda')}>Agenda</Link>
-            <Link to="/settings/integrations/whatsapp" className={navBtn('/settings/integrations/whatsapp')}>Configurações</Link>
-          </div>
+          <AppNav />
           <h1 className="text-[15px] font-semibold text-[#111827]">Agenda</h1>
         </div>
       </header>
