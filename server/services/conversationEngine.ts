@@ -16,6 +16,7 @@ import {
   logSentFile,
   listEnterprises,
   type FileCategory,
+  type EnterpriseRow,
 } from '../repositories/enterpriseRepository.js';
 import { generateChatCompletion, type ChatMessage } from './openaiService.js';
 import { buildAnaSystemPrompt, type BuildAnaSystemPromptOpts, parseAnaJson, fallbackReplyFromRaw } from './anaAgentService.js';
@@ -82,8 +83,12 @@ function rowsToHistory(
 
 const SWITCH_INTENT_PATTERNS = [
   'agora quero', 'quero saber do', 'quero saber sobre', 'quero informacoes do', 'quero informacoes sobre',
+  'quero falar do', 'quero falar sobre', 'quero falar sobre o', 'quero falar sobre a',
+  'tenho interesse no', 'tenho interesse em',
+  'me passe mais', 'me passe mais informacoes', 'me passe mais informacoes do', 'me passe mais informacoes sobre',
+  'me passa mais', 'me passa mais informacoes', 'me passa mais informacoes do', 'me passa mais informacoes sobre',
   'troca para', 'trocar para', 'muda para', 'mudar para',
-  'nao quero mais', 'nao gostei desse', 'prefiro o',
+  'nao quero mais', 'nao gostei desse', 'prefiro o', 'nao me interessa mais',
   'me fala do', 'me fala sobre', 'fala do', 'fala sobre', 'quero o ',
 ];
 
@@ -104,6 +109,43 @@ function normText(s: string): string {
 
 function hasExplicitSwitchIntent(message: string): boolean {
   return SWITCH_INTENT_PATTERNS.some((p) => normText(message).includes(p));
+}
+
+function tryMatchEnterpriseByLastMention(activeEnterprises: EnterpriseRow[], message: string): number | null {
+  const lower = normText(message);
+  let anchorIndex = -1;
+  let anchorLen = 0;
+
+  for (const p of SWITCH_INTENT_PATTERNS) {
+    const idx = lower.lastIndexOf(p);
+    if (idx > anchorIndex) {
+      anchorIndex = idx;
+      anchorLen = p.length;
+    }
+  }
+
+  const tail = anchorIndex >= 0 ? lower.slice(anchorIndex + anchorLen) : lower;
+
+  let best: { id: number; lastIndex: number } | null = null;
+
+  for (const p of activeEnterprises) {
+    const nameNorm = normText(p.name);
+    const slugNorm = normText(p.slug || '');
+
+    let lastIndex = -1;
+    if (nameNorm.length >= 2) {
+      lastIndex = Math.max(lastIndex, tail.lastIndexOf(nameNorm));
+    }
+    if (slugNorm.length >= 2) {
+      lastIndex = Math.max(lastIndex, tail.lastIndexOf(slugNorm));
+    }
+
+    if (lastIndex >= 0 && (!best || lastIndex > best.lastIndex)) {
+      best = { id: p.id, lastIndex };
+    }
+  }
+
+  return best?.id ?? null;
 }
 
 function hasExplicitHandoffIntent(message: string): boolean {
@@ -186,12 +228,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
-    const matched = await tryMatchActiveEnterpriseId(trimmed);
+    const explicitSwitch = hasExplicitSwitchIntent(trimmed);
+    let matched: number | null = null;
+    let activeEnterprisesForContext: EnterpriseRow[] | null = null;
+
+    if (explicitSwitch) {
+      activeEnterprisesForContext = await listEnterprises(true);
+      matched = tryMatchEnterpriseByLastMention(activeEnterprisesForContext, trimmed);
+    } else {
+      matched = await tryMatchActiveEnterpriseId(trimmed);
+    }
+
     if (matched) {
       const hasCurrentFocus = effectiveConv.enterprise_id != null;
       const isDifferentEnterprise = effectiveConv.enterprise_id !== matched;
-      const shouldReclassify =
-        !hasCurrentFocus || (isDifferentEnterprise && hasExplicitSwitchIntent(trimmed));
+      const shouldReclassify = !hasCurrentFocus || (isDifferentEnterprise && explicitSwitch);
       if (shouldReclassify) {
         await setConversationEnterpriseId(conversationId, matched);
         effectiveConv = (await getConversationById(conversationId)) ?? effectiveConv;
@@ -217,7 +268,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     const allEnterpriseNames =
-      mode === 'scoped' ? (await listEnterprises(true)).map((e) => e.name) : [];
+      mode === 'scoped'
+        ? (activeEnterprisesForContext ?? (await listEnterprises(true))).map((e) => e.name)
+        : [];
     const promptOpts: BuildAnaSystemPromptOpts = {
       mode,
       enterprise: ent,

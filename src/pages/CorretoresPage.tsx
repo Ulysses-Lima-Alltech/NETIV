@@ -302,6 +302,18 @@ export function CorretoresPage() {
       .catch(() => {});
   };
 
+  const handleExclude = (id: number) => {
+    if (!confirm("Excluir este corretor permanentemente?")) return;
+    corretoresApi
+      .delete(id)
+      .then(() => loadList())
+      .catch((e) => {
+        const msg = e instanceof Error ? e.message : "Erro ao excluir corretor.";
+        setErr(msg);
+        alert(msg);
+      });
+  };
+
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
       <header className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
@@ -408,6 +420,13 @@ export function CorretoresPage() {
                             Inativar
                           </button>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => handleExclude(c.id)}
+                          className="text-[12px] font-medium text-[#9CA3AF] hover:text-red-600 transition-colors"
+                        >
+                          Excluir
+                        </button>
                       </td>
                     </tr>
                   ))}

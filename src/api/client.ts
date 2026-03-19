@@ -36,11 +36,15 @@ async function request<T>(
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  if (res.status === 401) {
-    handleUnauthorized();
-    throw new Error('Sessão expirada. Faça login novamente.');
-  }
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    const isLoginFailure = path === '/auth/login' && method === 'POST';
+    if (isLoginFailure) {
+      throw new Error((data as { error?: string }).error ?? 'E-mail ou senha incorretos.');
+    }
+    handleUnauthorized();
+    throw new Error((data as { error?: string }).error ?? 'Sessão expirada. Faça login novamente.');
+  }
   if (!res.ok) throw new Error((data as { error?: string }).error ?? `Erro ${res.status}`);
   return data as T;
 }
@@ -256,8 +260,22 @@ export const projectsApi = {
     const fd = new FormData();
     fd.append('category', category);
     fd.append('file', file);
-    const res = await fetch(`${API_BASE}/projects/${projectId}/knowledge`, { method: 'POST', body: fd });
+    const token = getStoredAuthToken();
+    const res = await fetch(`${API_BASE}/projects/${projectId}/knowledge`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: fd,
+    });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      setStoredAuthToken(null);
+      const base =
+        typeof import.meta.env.BASE_URL === 'string' ? import.meta.env.BASE_URL.replace(/\/$/, '') : '';
+      window.location.href = `${base}/login`;
+      throw new Error((data as { error?: string }).error ?? 'Sessão expirada. Faça login novamente.');
+    }
     if (!res.ok) throw new Error((data as { error?: string }).error ?? `Erro ${res.status}`);
     return data as KnowledgeFileItem;
   },
