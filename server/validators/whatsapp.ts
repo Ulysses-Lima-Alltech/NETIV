@@ -42,6 +42,11 @@ export const updateClassificationSchema = z.object({
   project_id: z.number().int().positive().nullable().optional(),
   classification_status: z.enum(classificationStatusValues).optional(),
   handoff: z.boolean().optional(),
+  /** frio/morno/quente apenas; null no JSON é ignorado (compatível com clientes antigos). Não é permitido persistir NULL via API. */
+  lead_temperature: z.preprocess(
+    (v) => (v === null ? undefined : v),
+    z.enum(['quente', 'morno', 'frio']).optional()
+  ),
   reserve: reserveSegmentationPatchSchema.optional(),
 });
 export type UpdateClassificationDto = z.infer<typeof updateClassificationSchema>;

@@ -78,7 +78,7 @@ model Conversation {
   customer_name       String?
   enterprise_id       Int?
   classification      String    @default("Novo")
-  lead_temperature    String    @default("frio")
+  lead_temperature    String?
   handoff             Boolean   @default(false)
   meta_phone_number_id String?
   last_message_at     DateTime?

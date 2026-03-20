@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AppNav } from '../components/AppNav';
-import type { Conversation, Message } from '../types';
+import type { Conversation, LeadTemperatura, Message } from '../types';
 import { whatsappApi, projectsApi, type ReserveSegmentationPatchBody } from '../api/client';
 import type { ConversationListItem as ApiConversation, MessageListItem } from '../api/client';
 import { ConversationList } from '../components/ConversationList';
@@ -17,8 +17,15 @@ import {
 function mapApiConversationToConversation(c: ApiConversation): Conversation {
   const leadName = c.contactName?.trim() || c.contactPhone || c.externalContactId || 'Sem nome';
   const leadPhone = c.contactPhone || c.externalContactId || '';
-  const leadStage = (c.leadStage || '').toUpperCase();
-  const temperatura = leadStage === 'HOT' ? 'quente' : leadStage === 'WARM' ? 'morno' : 'frio';
+  const ls = c.leadStage;
+  const temperatura: LeadTemperatura | null =
+    ls == null || ls === ''
+      ? null
+      : ls.toUpperCase() === 'HOT'
+        ? 'quente'
+        : ls.toUpperCase() === 'WARM'
+          ? 'morno'
+          : 'frio';
   const projectName = c.projectName ?? null;
   const empreendimento = projectName;
   const raw = c.classificationStatus || 'Novo';
@@ -240,6 +247,7 @@ export function InboxPage() {
       projectId?: number | null;
       classificationStatus?: string;
       handoff?: boolean;
+      leadTemperature?: 'quente' | 'morno' | 'frio';
       reserve?: ReserveSegmentationPatchBody;
     }) => {
       if (!selectedId) return;
@@ -249,12 +257,22 @@ export function InboxPage() {
       if (updates.projectId !== undefined) body.project_id = updates.projectId;
       if (updates.classificationStatus !== undefined) body.classification_status = updates.classificationStatus;
       if (updates.handoff !== undefined) body.handoff = updates.handoff;
+      if (updates.leadTemperature !== undefined) {
+        body.lead_temperature = updates.leadTemperature;
+      }
       if (updates.reserve !== undefined) body.reserve = updates.reserve;
       try {
         const data = await whatsappApi.updateClassification(id, body);
         setConversations((prev) =>
-          prev.map((c) =>
-            c.id === selectedId
+          prev.map((c) => {
+            let nextTemp: Conversation['temperatura'] = c.temperatura;
+            if (data.leadStage === null || data.leadStage === undefined || data.leadStage === '') {
+              nextTemp = null;
+            } else {
+              const ls = data.leadStage.toUpperCase();
+              nextTemp = ls === 'HOT' ? 'quente' : ls === 'WARM' ? 'morno' : 'frio';
+            }
+            return c.id === selectedId
               ? {
                   ...c,
                   projectId: data.projectId ?? c.projectId,
@@ -262,6 +280,7 @@ export function InboxPage() {
                   classificationStatus: data.classificationStatus ?? c.classificationStatus,
                   status: (data.classificationStatus ?? c.status) as Conversation['status'],
                   empreendimento: data.projectName ?? c.empreendimento,
+                  temperatura: nextTemp,
                   handoff: data.handoff ?? c.handoff,
                   reserveReason: data.reserveReason ?? c.reserveReason,
                   reserveDesiredCity: data.reserveDesiredCity ?? c.reserveDesiredCity,
@@ -273,8 +292,8 @@ export function InboxPage() {
                   reserveFollowUpMoment: data.reserveFollowUpMoment ?? c.reserveFollowUpMoment,
                   reserveCommercialNotes: data.reserveCommercialNotes ?? c.reserveCommercialNotes,
                 }
-              : c
-          )
+              : c;
+          })
         );
       } catch (e) {
         if (updates.reserve !== undefined) throw e;

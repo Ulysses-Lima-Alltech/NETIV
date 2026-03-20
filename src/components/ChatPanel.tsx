@@ -96,6 +96,7 @@ interface ChatPanelProps {
     projectId?: number | null;
     classificationStatus?: string;
     handoff?: boolean;
+    leadTemperature?: 'quente' | 'morno' | 'frio';
     reserve?: ReserveSegmentationPatchBody;
   }) => void | Promise<void>;
   projects?: { id: number; name: string; active: boolean }[];
@@ -195,9 +196,44 @@ export function ChatPanel({
                 {conversation.projectName || conversation.empreendimento}
               </span>
             )}
-            <span title={`Lead ${conversation.temperatura}`} className="inline-flex items-center p-1">
-              <FlameIcon temperatura={conversation.temperatura} size="md" />
-            </span>
+            {onClassificationChange ? (
+              <label className="inline-flex items-center gap-1.5">
+                <span
+                  title={
+                    conversation.temperatura
+                      ? `Temperatura: ${conversation.temperatura}`
+                      : 'Temperatura ainda não definida — escolha Frio, Morno ou Quente (definição é permanente)'
+                  }
+                  className="inline-flex items-center p-0.5"
+                >
+                  <FlameIcon temperatura={conversation.temperatura} size="md" />
+                </span>
+                <select
+                  aria-label="Temperatura do lead"
+                  value={conversation.temperatura ?? ''}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw !== 'frio' && raw !== 'morno' && raw !== 'quente') return;
+                    onClassificationChange({ leadTemperature: raw });
+                  }}
+                  className={selectField}
+                >
+                  <option value="" disabled>
+                    Selecionar temperatura
+                  </option>
+                  <option value="frio">Frio</option>
+                  <option value="morno">Morno</option>
+                  <option value="quente">Quente</option>
+                </select>
+              </label>
+            ) : (
+              <span
+                title={`Lead ${conversation.temperatura ?? 'não definida'}`}
+                className="inline-flex items-center p-1"
+              >
+                <FlameIcon temperatura={conversation.temperatura} size="md" />
+              </span>
+            )}
             <span className="text-[11px] font-medium px-2.5 py-1 rounded-[6px] bg-[#F3F4F6] text-[#6B7280]">
               {formatStatus(conversation.status)}
             </span>
@@ -262,6 +298,12 @@ export function ChatPanel({
                 {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </label>
+            <p className="w-full text-[11px] text-[#9CA3AF] leading-snug">
+              Com <strong className="text-[#6B7280] font-medium">empreendimento</strong> e{' '}
+              <strong className="text-[#6B7280] font-medium">temperatura</strong> escolhida (Frio, Morno ou Quente), o funil deixa de ser
+              &quot;Novo&quot; e passa para &quot;Qualificado&quot;. A primeira temperatura definida não pode ser removida depois. Handoff e Reserva
+              não são alterados automaticamente.
+            </p>
           </div>
         )}
 

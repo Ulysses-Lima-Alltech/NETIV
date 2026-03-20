@@ -318,7 +318,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       structured = {
         reply: 'Oi — manda de novo em uma linha o que você precisa?',
         classification: 'Novo',
-        lead_temperature: 'frio',
+        lead_temperature: null,
         project: ent?.name || '',
         handoff: false,
         customer_name: '',

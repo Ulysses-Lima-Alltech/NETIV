@@ -80,7 +80,10 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
             {projectDisplay}
           </span>
         )}
-        <span title={`Lead ${conversation.temperatura}`} className="inline-flex items-center p-0.5">
+        <span
+          title={`Lead ${conversation.temperatura ?? 'não definida'}`}
+          className="inline-flex items-center p-0.5"
+        >
           <FlameIcon temperatura={conversation.temperatura} size="sm" />
         </span>
         {!conversation.handoff && conversation.status !== 'Handoff' && conversation.classificationStatus !== 'Handoff' &&

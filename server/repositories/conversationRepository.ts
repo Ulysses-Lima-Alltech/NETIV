@@ -10,7 +10,7 @@ export interface ConversationRow {
   enterprise_id: number | null;
   classification: string;
   classification_before_handoff?: string | null;
-  lead_temperature: string;
+  lead_temperature: string | null;
   handoff: boolean;
   meta_phone_number_id: string | null;
   last_message_at: Date | null;
@@ -145,6 +145,36 @@ function toValidClassification(s: string | null | undefined): string {
   return VALID_CLASSIFICATIONS.has(t) ? t : 'Novo';
 }
 
+const DEFINED_LEAD_TEMPS = new Set(['frio', 'morno', 'quente']);
+
+function isLeadTemperatureDefined(raw: string | null | undefined): boolean {
+  return DEFINED_LEAD_TEMPS.has((raw || '').trim().toLowerCase());
+}
+
+function normalizeLeadTemperatureInput(raw: string | null | undefined): 'quente' | 'morno' | 'frio' | null {
+  const t = (raw || '').trim().toLowerCase();
+  if (t === 'quente' || t === 'morno' || t === 'frio') return t;
+  return null;
+}
+
+/**
+ * Funil: Novo → Qualificado quando há empreendimento e temperatura definidos.
+ * Handoff e Reserva não são alterados; com handoff ativo mantém Handoff.
+ */
+function applyFunnelQualificationRule(args: {
+  classification: string;
+  enterpriseId: number | null;
+  leadTemperature: string | null;
+  handoff: boolean;
+}): string {
+  if (args.handoff) return 'Handoff';
+  const c = toValidClassification(args.classification);
+  if (c === 'Handoff' || c === 'Reserva') return c;
+  if (c !== 'Novo') return c;
+  if (args.enterpriseId == null || !isLeadTemperatureDefined(args.leadTemperature)) return c;
+  return 'Qualificado';
+}
+
 export interface ConversationWithPreview extends ConversationRow {
   last_message_preview: string | null;
   enterprise_name: string | null;
@@ -219,6 +249,8 @@ export async function updateClassification(
     classification?: string;
     handoff?: boolean;
     reserve?: ReserveSegmentationPatch;
+    /** Só frio/morno/quente; ausente = não alterar. null no payload é ignorado (temperatura não pode voltar a NULL após definida). */
+    lead_temperature?: 'quente' | 'morno' | 'frio';
   }
 ): Promise<ConversationRow | null> {
   const cur = await getConversationById(conversationId);
@@ -227,6 +259,11 @@ export async function updateClassification(
   if (enterprise_id != null) {
     const ok = await getActiveEnterpriseById(enterprise_id);
     if (!ok) enterprise_id = cur.enterprise_id;
+  }
+  let lead_temperature = cur.lead_temperature;
+  if (u.lead_temperature !== undefined && u.lead_temperature !== null) {
+    const norm = normalizeLeadTemperatureInput(u.lead_temperature);
+    if (norm) lead_temperature = norm;
   }
   let classification = cur.classification;
   if (u.classification !== undefined && u.classification !== null && u.classification !== '') {
@@ -254,13 +291,20 @@ export async function updateClassification(
   if (!handoff && classification === 'Handoff') classification = 'Novo';
   const savedForHandoff = handoff ? (classificationBeforeHandoff ?? null) : null;
   const classFinal = toValidClassification(classification);
+  const classAfterFunnel = applyFunnelQualificationRule({
+    classification: classFinal,
+    enterpriseId: enterprise_id,
+    leadTemperature: lead_temperature,
+    handoff,
+  });
 
   if (u.reserve === undefined) {
     const { rows } = await query<ConversationRow>(
       `UPDATE conversations SET enterprise_id = $1, classification = $2, handoff = $3,
+       lead_temperature = $6,
        classification_before_handoff = CASE WHEN $3 = false THEN NULL ELSE COALESCE($5::text, classification_before_handoff) END,
        updated_at = NOW() WHERE id = $4 RETURNING *`,
-      [enterprise_id, classFinal, handoff, conversationId, savedForHandoff]
+      [enterprise_id, classAfterFunnel, handoff, conversationId, savedForHandoff, lead_temperature]
     );
     return rows[0] ?? null;
   }
@@ -269,6 +313,7 @@ export async function updateClassification(
 
   const { rows } = await query<ConversationRow>(
     `UPDATE conversations SET enterprise_id = $1, classification = $2, handoff = $3,
+     lead_temperature = $15,
      classification_before_handoff = CASE WHEN $3 = false THEN NULL ELSE COALESCE($5::text, classification_before_handoff) END,
      reserve_reason = $6,
      reserve_desired_city = $7,
@@ -282,7 +327,7 @@ export async function updateClassification(
      updated_at = NOW() WHERE id = $4 RETURNING *`,
     [
       enterprise_id,
-      classFinal,
+      classAfterFunnel,
       handoff,
       conversationId,
       savedForHandoff,
@@ -295,6 +340,7 @@ export async function updateClassification(
       mergedReserve.interestType,
       mergedReserve.followUpMoment,
       mergedReserve.commercialNotes,
+      lead_temperature,
     ]
   );
   return rows[0] ?? null;
@@ -312,14 +358,28 @@ export async function setConversationEnterpriseId(
     `UPDATE conversations SET enterprise_id = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
     [enterpriseId, conversationId]
   );
-  return rows[0] ?? null;
+  const row = rows[0];
+  if (!row) return null;
+  const promoted = applyFunnelQualificationRule({
+    classification: row.classification,
+    enterpriseId: row.enterprise_id,
+    leadTemperature: row.lead_temperature,
+    handoff: row.handoff ?? false,
+  });
+  if (promoted === toValidClassification(row.classification)) return row;
+  const { rows: r2 } = await query<ConversationRow>(
+    `UPDATE conversations SET classification = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+    [toValidClassification(promoted), conversationId]
+  );
+  return r2[0] ?? row;
 }
 
 export async function applyAnaConversationUpdate(
   conversationId: number,
   meta: {
     classification?: string;
-    lead_temperature?: string;
+    /** Só atualiza a coluna quando string válida; null/omitido mantém o valor atual. */
+    lead_temperature?: string | null;
     customer_name?: string;
     handoff?: boolean;
   }
@@ -332,12 +392,19 @@ export async function applyAnaConversationUpdate(
     classification = 'Handoff';
   }
   let lead_temperature = conv.lead_temperature;
-  const t = (meta.lead_temperature || '').toLowerCase();
-  if (t === 'quente') lead_temperature = 'quente';
-  else if (t === 'morno') lead_temperature = 'morno';
-  else if (t === 'frio') lead_temperature = 'frio';
+  if (typeof meta.lead_temperature === 'string') {
+    const t = meta.lead_temperature.trim().toLowerCase();
+    if (t === 'quente') lead_temperature = 'quente';
+    else if (t === 'morno') lead_temperature = 'morno';
+    else if (t === 'frio') lead_temperature = 'frio';
+  }
+  classification = applyFunnelQualificationRule({
+    classification,
+    enterpriseId: conv.enterprise_id,
+    leadTemperature: lead_temperature,
+    handoff,
+  });
   const cn = meta.customer_name?.trim();
-  const curRow = conv as ConversationRow & { classification_before_handoff?: string | null };
   const saveBeforeHandoff =
     handoff && conv.classification !== 'Handoff'
       ? toValidClassification(conv.classification)

@@ -16,10 +16,13 @@ import { sendMessageSchema, updateClassificationSchema } from '../validators/wha
 
 const router = Router();
 
-function tempToStage(t: string | null): string {
-  if (t === 'quente') return 'HOT';
-  if (t === 'morno') return 'WARM';
-  return 'COLD';
+function tempToStage(t: string | null | undefined): string | null {
+  if (t == null || String(t).trim() === '') return null;
+  const x = String(t).trim().toLowerCase();
+  if (x === 'quente') return 'HOT';
+  if (x === 'morno') return 'WARM';
+  if (x === 'frio') return 'COLD';
+  return null;
 }
 
 router.post('/send', async (req, res) => {
@@ -126,12 +129,13 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       const msg = parsed.error.issues.map((e: { message: string }) => e.message).join('; ') || 'Dados inválidos.';
       return res.status(400).json({ error: msg });
     }
-    const { project_id, classification_status, handoff, reserve } = parsed.data;
+    const { project_id, classification_status, handoff, reserve, lead_temperature } = parsed.data;
     const convBefore = handoff === false ? await getConversationById(id) : null;
     const conv = await updateClassification(id, {
       enterprise_id: project_id !== undefined ? project_id : undefined,
       classification: classification_status,
       handoff,
+      lead_temperature,
       reserve,
     });
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
@@ -150,6 +154,7 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       enterpriseId: conv.enterprise_id ?? null,
       enterpriseName: projectName,
       classificationStatus: conv.classification ?? 'Novo',
+      leadStage: tempToStage(conv.lead_temperature),
       handoff: conv.handoff ?? false,
       ...conversationReserveToPublic(conv),
     });

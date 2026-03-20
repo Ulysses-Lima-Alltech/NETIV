@@ -7,13 +7,13 @@ const temperaturaColors: Record<LeadTemperatura, string> = {
 };
 
 interface FlameIconProps {
-  temperatura: LeadTemperatura;
+  temperatura: LeadTemperatura | null;
   className?: string;
   size?: 'sm' | 'md';
 }
 
 export function FlameIcon({ temperatura, className = '', size = 'sm' }: FlameIconProps) {
-  const colorClass = temperaturaColors[temperatura];
+  const colorClass = temperatura == null ? 'text-[#D1D5DB]' : temperaturaColors[temperatura];
   const dim = size === 'sm' ? 14 : 18;
 
   return (

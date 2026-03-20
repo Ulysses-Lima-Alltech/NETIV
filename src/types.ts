@@ -11,7 +11,8 @@ export interface Conversation {
   unreadCount: number;
   status: ConversationStatus;
   empreendimento: string | null;
-  temperatura: LeadTemperatura;
+  /** null = temperatura ainda não definida (Modelo B). */
+  temperatura: LeadTemperatura | null;
   /** ID do projeto (backend). */
   projectId?: number | null;
   /** Nome do projeto para exibição (pode ser de projeto inativo). */

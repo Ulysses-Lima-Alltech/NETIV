@@ -4,7 +4,8 @@ import { parseAddons, normalizeFileCategory, type FileCategory } from '../reposi
 export interface AnaStructuredReply {
   reply: string;
   classification: string;
-  lead_temperature: string;
+  /** null = não atualizar temperatura no banco nesta rodada (não inventar "frio"). */
+  lead_temperature: string | null;
   project: string;
   handoff: boolean;
   customer_name: string;
@@ -18,7 +19,7 @@ JSON obrigatório (sem markdown):
 {
   "reply": "texto ao cliente",
   "classification": "Novo" | "Qualificado" | "Reserva" | "Handoff",
-  "lead_temperature": "frio" | "morno" | "quente",
+  "lead_temperature": "frio" | "morno" | "quente"   (opcional; omita se não houver inferência),
   "project": "nome do empreendimento ou vazio",
   "handoff": false,
   "customer_name": "",
@@ -29,7 +30,13 @@ ENVIO DE ARQUIVOS:
 - Quando o cliente pedir book, material, catálogo, PDF, tabela, unidades, plantas ou similar E essa categoria existir na lista abaixo, SEMPRE preencha send_file_category com a categoria exata. O sistema enviará o arquivo automaticamente pelo WhatsApp.
 - Mapeamento: book = material, catálogo, PDF do empreendimento; tabela_comercial = preços, condições; unidades = plantas, quartos.
 - Se o arquivo NÃO existir na lista, deixe send_file_category null e NUNCA diga que vai enviar — seja transparente (ex: "no momento não tenho esse material").
-- Caso contrário null. Nunca use categoria que não exista na lista.`;
+- Caso contrário null. Nunca use categoria que não exista na lista.
+
+TEMPERATURA (lead_temperature):
+- Só use "frio", "morno" ou "quente" quando inferir de forma consciente a intenção do lead.
+- Se não houver inferência nova nesta mensagem, OMITA a chave lead_temperature do JSON (não envie null, string vazia nem placeholder) — o sistema mantém o valor já salvo.
+- NUNCA envie lead_temperature: null para tentar "limpar" a temperatura: após definida uma vez, ela não pode ser apagada.
+- "frio" válido também qualifica o funil quando houver empreendimento no contexto.`;
 
 const COMPORTAMENTO = `
 IDENTIDADE:
@@ -79,9 +86,10 @@ FORMATO:
 - Pode usar emojis de forma leve e natural (sem exagero).
 
 CLASSIFICAÇÃO (campo "classification" no JSON, quando handoff for false):
-- Novo: primeiro contato ou ainda em exploração inicial.
-- Qualificado: interesse claro no empreendimento ou próximo passo definido.
-- Reserva: contato sem avanço no momento, mas com potencial de retomada futura. Use quando não houver interesse ou capacidade agora, mas o contato NÃO for descarte (não é spam, duplicado ou inválido). Pode ser recontactado depois para novo interesse, mudança de contexto ou outro empreendimento.
+- Funil no backend: "Qualificado" exige empreendimento no contexto E temperatura já gravada (frio/morno/quente). Enquanto não houver temperatura no banco, pode permanecer "Novo" mesmo com empreendimento — omita a chave lead_temperature até inferir.
+- Novo: sem qualificação mínima completa (falta empreendimento no contexto OU ainda não inferiu temperatura para gravar — omita lead_temperature).
+- Qualificado: empreendimento claro no contexto E você envia lead_temperature com frio/morno/quente fundamentado; OU interesse muito evidente (ainda assim prefira preencher temperatura quando possível).
+- Reserva: contato sem avanço no momento, mas com potencial de retomada futura. Use quando não houver interesse ou capacidade agora, mas o contato NÃO for descarte (não é spam, duplicado ou inválido). Pode ser recontactado depois para novo interesse, mudança de contexto ou outro empreendimento. Não use Reserva se o cliente claramente se enquadrar em Handoff.
 - Handoff: quando handoff for true (ver abaixo); com handoff false, não use "Handoff" em classification.
 
 HANDOFF (passe para humano): SEMPRE handoff: true quando o cliente pedir atendimento humano (ex.: quero falar com humano, quero atendente, prefiro pessoa, me passa para alguém, atendimento humano). Resposta breve confirmando a transferência. Também handoff para: preço exato, negociação, disponibilidade real, urgência, irritação, sensível. Nunca prometa prazo.
@@ -176,8 +184,11 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
     let classification = typeof o.classification === 'string' ? o.classification.trim() : 'Novo';
     if (classification === 'Interessado' || classification === 'Qualificando') classification = 'Qualificado';
     if (!CLASS_OK.has(classification)) classification = 'Novo';
-    let lead_temperature = typeof o.lead_temperature === 'string' ? o.lead_temperature.trim().toLowerCase() : 'frio';
-    if (!TEMP_OK.has(lead_temperature)) lead_temperature = 'frio';
+    let lead_temperature: string | null = null;
+    if (typeof o.lead_temperature === 'string') {
+      const lt = o.lead_temperature.trim().toLowerCase();
+      lead_temperature = TEMP_OK.has(lt) ? lt : null;
+    }
     let send_file_category: FileCategory | null = null;
     const sc = o.send_file_category;
     if (typeof sc === 'string') {
@@ -203,7 +214,7 @@ export function fallbackReplyFromRaw(_raw: string): AnaStructuredReply {
   return {
     reply: 'Oi — prefiro não chutar. Em uma frase, o que você precisa?',
     classification: 'Novo',
-    lead_temperature: 'frio',
+    lead_temperature: null,
     project: '',
     handoff: false,
     customer_name: '',

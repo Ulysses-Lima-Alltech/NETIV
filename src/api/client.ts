@@ -209,6 +209,7 @@ export const whatsappApi = {
       project_id?: number | null;
       classification_status?: string;
       handoff?: boolean;
+      lead_temperature?: 'quente' | 'morno' | 'frio';
       reserve?: ReserveSegmentationPatchBody;
     }
   ) =>
@@ -217,6 +218,7 @@ export const whatsappApi = {
       projectId: number | null;
       projectName: string | null;
       classificationStatus: string;
+      leadStage?: string | null;
       handoff?: boolean;
       reserveReason?: string | null;
       reserveDesiredCity?: string | null;
