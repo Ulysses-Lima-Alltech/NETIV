@@ -9,7 +9,6 @@ import { sendTextMessage, sendDocumentMessage } from './whatsappMetaService.js';
 import { tryMatchActiveEnterpriseId } from '../repositories/enterpriseMatch.js';
 import {
   getActiveEnterpriseById,
-  getEnterpriseById,
   loadAgentKnowledgeText,
   listEnterpriseFiles,
   getFileForSend,
@@ -21,7 +20,6 @@ import {
 } from '../repositories/enterpriseRepository.js';
 import { generateChatCompletion, type ChatMessage } from './openaiService.js';
 import { buildAnaSystemPrompt, type BuildAnaSystemPromptOpts, parseAnaJson, fallbackReplyFromRaw } from './anaAgentService.js';
-import { validateAnaReply, logAnaReplyBlocked } from './anaReplyGuard.js';
 
 export interface IncomingMessageContext {
   conversationId: number;
@@ -300,8 +298,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       baseUrl: aiConfig.openaiBaseUrl,
       model,
       messages,
-      // Teto baixo para reduzir invenção de fatos (portfólio/endereço); config do painel ainda aplica-se abaixo do teto.
-      temperature: Math.min(Math.max(aiConfig.temperature ?? 0.45, 0), 0.5),
+      temperature: Math.min(aiConfig.temperature ?? 0.5, 0.75),
       maxTokens: Math.max(aiConfig.maxTokens ?? 600, 800),
       responseFormatJson: true,
     });
@@ -327,44 +324,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         customer_name: '',
         summary: result.error || '',
         send_file_category: null,
-      };
-    }
-
-    const allActiveForGuard = activeEnterprisesForContext ?? (await listEnterprises(true));
-    const originEnt = effectiveConv.enterprise_origin_id
-      ? await getEnterpriseById(effectiveConv.enterprise_origin_id)
-      : null;
-    const recentUserTexts = [
-      ...rows
-        .filter((m) => m.role === 'user')
-        .map((m) => (m.content || '').trim())
-        .filter((x) => x.length > 0),
-      trimmed,
-    ].slice(-10);
-
-    const guardResult = validateAnaReply({
-      conversationId,
-      reply: structured.reply,
-      knowledgeText,
-      variablesMap: vars,
-      activeEnterprise: ent,
-      originEnterprise: originEnt,
-      userMessage: trimmed,
-      recentUserMessages: recentUserTexts,
-      allActiveEnterprises: allActiveForGuard,
-    });
-
-    if (!guardResult.ok && guardResult.safeReply) {
-      logAnaReplyBlocked({
-        conversationId,
-        reason: guardResult.reason || 'unknown',
-        suspiciousSnippet: guardResult.suspiciousSnippet,
-      });
-      structured = {
-        ...structured,
-        reply: guardResult.safeReply,
-        send_file_category: null,
-        project: ent?.name?.trim() ? ent.name.trim() : '',
       };
     }
 
