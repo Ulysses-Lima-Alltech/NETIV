@@ -347,11 +347,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     const cat = structured.send_file_category;
     const eid = effectiveConv.enterprise_id;
-    if (cat && eid && ent && eid === ent.id) {
-      const file = await getFileForSend(eid, cat as FileCategory);
+    // Coerção numérica: em alguns drivers/serializações enterprise_id pode não ser === estrito a ent.id.
+    const enterpriseIdForFile =
+      eid != null && ent != null && Number(eid) === Number(ent.id) ? Number(ent.id) : null;
+    if (cat && enterpriseIdForFile != null && ent != null) {
+      const file = await getFileForSend(enterpriseIdForFile, cat as FileCategory);
       if (file) {
         const docRes = await sendDocumentMessage(toPhoneNumber, file.path, file.originalName, file.mime, {
-          enterpriseId: eid,
+          enterpriseId: enterpriseIdForFile,
           enterpriseName: ent.name,
           conversationId,
           fileCategory: cat,
@@ -378,7 +381,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           }
         }
       } else {
-        console.warn('[ConversationEngine] Cliente pediu arquivo categoria', cat, 'mas nenhum arquivo encontrado para empreendimento', eid);
+        console.warn(
+          '[ConversationEngine] Cliente pediu arquivo categoria',
+          cat,
+          'mas nenhum arquivo encontrado para empreendimento',
+          enterpriseIdForFile
+        );
       }
     }
   } finally {

@@ -8,15 +8,40 @@ export type FileCategory = (typeof FILE_CATEGORIES)[number];
 
 const FILE_CATEGORY_SET = new Set<string>(FILE_CATEGORIES);
 
+/** Sinônimos comuns devolvidos pelo modelo (fora do enum exato) → categoria do banco. */
+const FILE_CATEGORY_ALIASES: Record<string, FileCategory> = {
+  material: 'book',
+  materials: 'book',
+  catalogo: 'book',
+  catalog: 'book',
+  pdf: 'book',
+  brochure: 'book',
+  planta: 'unidades',
+  plantas: 'unidades',
+  unidade: 'unidades',
+  tabela: 'tabela_comercial',
+  precos: 'tabela_comercial',
+  preco: 'tabela_comercial',
+  comercial: 'tabela_comercial',
+};
+
 /**
  * Alinha o valor vindo da ANA/JSON com as categorias do banco (`enterprise_files.category`).
- * Corrige espaços, caixa, hífen vs underscore e plural acidental "books".
+ * Corrige espaços, caixa, hífen vs underscore, plural acidental "books" e sinônimos (ex.: material → book).
  */
 export function normalizeFileCategory(input: string | null | undefined): FileCategory | null {
   if (input == null || typeof input !== 'string') return null;
-  let s = input.trim().toLowerCase().replace(/-/g, '_').replace(/\s+/g, '_');
+  let s = input
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/-/g, '_')
+    .replace(/\s+/g, '_');
   if (s === 'books') s = 'book';
   if (FILE_CATEGORY_SET.has(s)) return s as FileCategory;
+  const mapped = FILE_CATEGORY_ALIASES[s];
+  if (mapped) return mapped;
   return null;
 }
 

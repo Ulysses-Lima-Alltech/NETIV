@@ -190,8 +190,9 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
       lead_temperature = TEMP_OK.has(lt) ? lt : null;
     }
     let send_file_category: FileCategory | null = null;
-    const sc = o.send_file_category;
-    if (typeof sc === 'string') {
+    const rawCat = o.send_file_category ?? (o as Record<string, unknown>).sendFileCategory;
+    const sc = typeof rawCat === 'string' ? rawCat : null;
+    if (sc) {
       const norm = normalizeFileCategory(sc);
       if (norm) send_file_category = norm;
     }
