@@ -371,7 +371,7 @@ export async function getFileForSend(
 ): Promise<{ id: number; path: string; originalName: string; mime: string; relativeStoragePath: string } | null> {
   const catNorm = normalizeFileCategory(String(category));
   if (!catNorm) {
-    console.warn('[getFileForSend] categoria inválida após normalização', { enterpriseId, category });
+    console.warn('[DOC_LOOKUP] categoria inválida após normalização', { enterpriseId, category });
     return null;
   }
 
@@ -388,7 +388,7 @@ export async function getFileForSend(
       `SELECT category, COUNT(*)::text AS n FROM enterprise_files WHERE enterprise_id = $1 GROUP BY category ORDER BY category`,
       [enterpriseId]
     );
-    console.warn('[getFileForSend] nenhuma linha ativa para a categoria pedida', {
+    console.warn('[DOC_LOOKUP] nenhuma linha ativa para a categoria pedida', {
       enterpriseId,
       categoryRequested: catNorm,
       categoriesPresentInDb: byEnt.map((x) => `${x.category}(${x.n})`),
@@ -397,7 +397,7 @@ export async function getFileForSend(
   }
   const path = join(enterpriseDir(enterpriseId), r.storage_path);
   if (!existsSync(path)) {
-    console.warn('[getFileForSend] linha no banco mas arquivo ausente no disco', {
+    console.warn('[DOC_LOOKUP] linha no banco mas arquivo ausente no disco', {
       enterpriseId,
       category: catNorm,
       enterprise_file_id: r.id,
@@ -406,6 +406,13 @@ export async function getFileForSend(
     });
     return null;
   }
+  console.log('[DOC_LOOKUP] arquivo resolvido para envio', {
+    enterpriseId,
+    category: catNorm,
+    enterprise_file_id: r.id,
+    storage_path: r.storage_path,
+    original_name: r.original_name,
+  });
   return {
     id: r.id,
     path,
@@ -416,10 +423,20 @@ export async function getFileForSend(
 }
 
 export async function logSentFile(conversationId: number, enterpriseFileId: number): Promise<void> {
-  await query(`INSERT INTO sent_files_log (conversation_id, enterprise_file_id) VALUES ($1, $2)`, [
-    conversationId,
-    enterpriseFileId,
-  ]);
+  try {
+    await query(`INSERT INTO sent_files_log (conversation_id, enterprise_file_id) VALUES ($1, $2)`, [
+      conversationId,
+      enterpriseFileId,
+    ]);
+    console.log('[DOC_FLOW] sent_files_log inserido', { conversationId, enterpriseFileId });
+  } catch (e) {
+    console.error('[DOC_FLOW] falha ao inserir sent_files_log', {
+      conversationId,
+      enterpriseFileId,
+      err: e instanceof Error ? e.message : String(e),
+    });
+    throw e;
+  }
 }
 
 export function enterpriseToPublic(e: EnterpriseRow, vars: Record<string, string>) {

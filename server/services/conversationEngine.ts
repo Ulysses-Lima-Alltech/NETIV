@@ -312,6 +312,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let structured =
       result.success && result.content ? parseAnaJson(result.content) : null;
     if (!structured && result.success && result.content) {
+      console.warn('[DOC_FLOW] parseAnaJson null — fallback genérico (send_file_category será null)', {
+        conversationId,
+        contentPreview: result.content.slice(0, 160),
+      });
       structured = fallbackReplyFromRaw(result.content);
     }
     if (!structured) {
@@ -326,6 +330,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         send_file_category: null,
       };
     }
+
+    console.log('[DOC_FLOW] structured final (pronto para texto + arquivo)', {
+      conversationId,
+      mode,
+      send_file_category: structured.send_file_category,
+      enterprise_id_conv: effectiveConv.enterprise_id,
+      ent_id_loaded: ent?.id ?? null,
+      ent_name: ent?.name ?? null,
+      inactive_linked: inactiveLinked,
+    });
 
     await applyAnaConversationUpdate(conversationId, {
       classification: structured.classification,
@@ -346,13 +360,42 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     const cat = structured.send_file_category;
-    const eid = effectiveConv.enterprise_id;
-    // Coerção numérica: em alguns drivers/serializações enterprise_id pode não ser === estrito a ent.id.
-    const enterpriseIdForFile =
-      eid != null && ent != null && Number(eid) === Number(ent.id) ? Number(ent.id) : null;
-    if (cat && enterpriseIdForFile != null && ent != null) {
+    /** `ent` já vem de `getActiveEnterpriseById(effectiveConv.enterprise_id)` — usar `ent.id` evita falso negativo se `enterprise_id` da conversa e `ent.id` divergirem por tipo/serialização. */
+    const enterpriseIdForFile = ent != null ? Number(ent.id) : null;
+
+    if (!cat) {
+      console.log('[DOC_FLOW] skip arquivo: sem send_file_category na resposta estruturada', { conversationId });
+    } else if (ent == null || enterpriseIdForFile == null || !Number.isFinite(enterpriseIdForFile)) {
+      console.warn('[DOC_FLOW] skip arquivo: empreendimento ativo não resolvido (ANA pediu arquivo)', {
+        conversationId,
+        cat,
+        enterprise_id_conv: effectiveConv.enterprise_id,
+        mode,
+        inactive_linked: inactiveLinked,
+      });
+    } else {
+      console.log('[DOC_LOOKUP] chamando getFileForSend', {
+        conversationId,
+        enterpriseIdForFile,
+        category: cat,
+      });
       const file = await getFileForSend(enterpriseIdForFile, cat as FileCategory);
-      if (file) {
+      if (!file) {
+        console.warn('[DOC_FLOW] skip arquivo: getFileForSend retornou null (ver [DOC_LOOKUP] acima)', {
+          conversationId,
+          enterpriseIdForFile,
+          category: cat,
+        });
+      } else {
+        console.log('[DOC_SEND] enviando documento WhatsApp', {
+          conversationId,
+          enterpriseId: enterpriseIdForFile,
+          enterpriseFileId: file.id,
+          category: cat,
+          path: file.path,
+          originalName: file.originalName,
+          mime: file.mime,
+        });
         const docRes = await sendDocumentMessage(toPhoneNumber, file.path, file.originalName, file.mime, {
           enterpriseId: enterpriseIdForFile,
           enterpriseName: ent.name,
@@ -370,23 +413,33 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             `[Arquivo: ${file.originalName}]`,
             docRes.metaMessageId
           );
-          console.log('[ConversationEngine] Arquivo enviado:', file.originalName, 'conv:', conversationId);
+          console.log('[DOC_SEND] documento enviado com sucesso', {
+            conversationId,
+            metaMessageId: docRes.metaMessageId,
+            file: file.originalName,
+          });
         } else {
-          console.error('[ConversationEngine] Falha ao enviar documento:', docRes.error, 'conv:', conversationId, 'file:', file.originalName);
+          console.error('[DOC_SEND] falha sendDocumentMessage', {
+            conversationId,
+            error: docRes.error,
+            code: docRes.code,
+            file: file.originalName,
+          });
           const fallbackText =
             `Não consegui enviar o arquivo "${file.originalName}" pelo WhatsApp neste momento. Peça o material a um atendente ou tente novamente em instantes.`;
+          console.warn('[DOC_FLOW] fallback textual após falha do documento (coerência: cliente é avisado)', {
+            conversationId,
+          });
           const fixRes = await sendTextMessage(toPhoneNumber, fallbackText);
           if (fixRes.success && fixRes.metaMessageId) {
             await insertMessage(conversationId, 'assistant', fallbackText, fixRes.metaMessageId);
+          } else {
+            console.error('[DOC_FLOW] fallback textual também falhou', {
+              conversationId,
+              error: fixRes.error,
+            });
           }
         }
-      } else {
-        console.warn(
-          '[ConversationEngine] Cliente pediu arquivo categoria',
-          cat,
-          'mas nenhum arquivo encontrado para empreendimento',
-          enterpriseIdForFile
-        );
       }
     }
   } finally {

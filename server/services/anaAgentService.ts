@@ -115,6 +115,38 @@ function formatVars(v: Record<string, string>): string {
 const CLASS_OK = new Set(['Novo', 'Qualificado', 'Reserva', 'Handoff']);
 const TEMP_OK = new Set(['frio', 'morno', 'quente']);
 
+/** Aceita string, array de strings (modelo às vezes devolve ["book"]) e busca em objetos aninhados comuns. */
+function coerceSendFileCategoryRaw(raw: unknown, depth = 3): string | null {
+  if (depth < 0 || raw === undefined || raw === null) return null;
+  if (typeof raw === 'string' && raw.trim()) return raw.trim();
+  if (Array.isArray(raw)) {
+    for (const x of raw) {
+      const s = coerceSendFileCategoryRaw(x, depth - 1);
+      if (s) return s;
+    }
+    return null;
+  }
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>;
+    const direct =
+      o.send_file_category ??
+      o.sendFileCategory ??
+      o.file_category ??
+      o.fileCategory ??
+      o.categoria_arquivo;
+    const fromDirect = coerceSendFileCategoryRaw(direct, depth - 1);
+    if (fromDirect) return fromDirect;
+    for (const nest of ['structured', 'data', 'payload', 'result'] as const) {
+      const inner = o[nest];
+      if (inner && typeof inner === 'object') {
+        const nested = coerceSendFileCategoryRaw(inner, depth - 1);
+        if (nested) return nested;
+      }
+    }
+  }
+  return null;
+}
+
 export interface BuildAnaSystemPromptOpts {
   mode: 'triage' | 'scoped' | 'inactive_linked';
   enterprise: EnterpriseRow | null;
@@ -180,7 +212,12 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
   try {
     const o = JSON.parse(s) as Record<string, unknown>;
     const reply = typeof o.reply === 'string' ? o.reply.trim() : '';
-    if (!reply) return null;
+    if (!reply) {
+      console.warn('[DOC_PARSE] JSON ok mas reply vazio — parse abortado (sem structured)', {
+        preview: s.slice(0, 200),
+      });
+      return null;
+    }
     let classification = typeof o.classification === 'string' ? o.classification.trim() : 'Novo';
     if (classification === 'Interessado' || classification === 'Qualificando') classification = 'Qualificado';
     if (!CLASS_OK.has(classification)) classification = 'Novo';
@@ -190,12 +227,21 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
       lead_temperature = TEMP_OK.has(lt) ? lt : null;
     }
     let send_file_category: FileCategory | null = null;
-    const rawCat = o.send_file_category ?? (o as Record<string, unknown>).sendFileCategory;
-    const sc = typeof rawCat === 'string' ? rawCat : null;
+    const sc = coerceSendFileCategoryRaw(o);
     if (sc) {
       const norm = normalizeFileCategory(sc);
       if (norm) send_file_category = norm;
+      else
+        console.warn('[DOC_PARSE] categoria bruta não normalizável', {
+          raw: sc.slice(0, 80),
+        });
     }
+    console.log('[DOC_PARSE] structured ok', {
+      send_file_category_raw: sc,
+      send_file_category_norm: send_file_category,
+      replyLen: reply.length,
+      handoff: Boolean(o.handoff),
+    });
     return {
       reply,
       classification,
@@ -206,7 +252,11 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
       summary: typeof o.summary === 'string' ? o.summary.trim() : '',
       send_file_category,
     };
-  } catch {
+  } catch (e) {
+    console.warn('[DOC_PARSE] JSON.parse falhou', {
+      preview: s.slice(0, 240),
+      err: e instanceof Error ? e.message : String(e),
+    });
     return null;
   }
 }
