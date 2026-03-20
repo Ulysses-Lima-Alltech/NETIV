@@ -7,6 +7,7 @@ import {
   getConversationById,
   updateClassification,
   deleteConversation,
+  conversationReserveToPublic,
 } from '../repositories/conversationRepository.js';
 import { reprocessLastUserMessage } from '../services/conversationEngine.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
@@ -94,6 +95,7 @@ router.get('/conversations', async (req, res) => {
         leadStage: tempToStage(r.lead_temperature),
         createdAt: r.created_at.toISOString(),
         updatedAt: r.updated_at.toISOString(),
+        ...conversationReserveToPublic(r),
       })),
     });
   } catch (e) {
@@ -124,12 +126,13 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       const msg = parsed.error.issues.map((e: { message: string }) => e.message).join('; ') || 'Dados inválidos.';
       return res.status(400).json({ error: msg });
     }
-    const { project_id, classification_status, handoff } = parsed.data;
+    const { project_id, classification_status, handoff, reserve } = parsed.data;
     const convBefore = handoff === false ? await getConversationById(id) : null;
     const conv = await updateClassification(id, {
       enterprise_id: project_id !== undefined ? project_id : undefined,
       classification: classification_status,
       handoff,
+      reserve,
     });
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
     if (convBefore?.handoff === true && conv.handoff === false) {
@@ -148,6 +151,7 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       enterpriseName: projectName,
       classificationStatus: conv.classification ?? 'Novo',
       handoff: conv.handoff ?? false,
+      ...conversationReserveToPublic(conv),
     });
   } catch (e) {
     console.error('[WhatsApp] PATCH classification:', e);

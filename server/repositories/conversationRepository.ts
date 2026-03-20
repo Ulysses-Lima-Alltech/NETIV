@@ -16,6 +16,93 @@ export interface ConversationRow {
   last_message_at: Date | null;
   created_at: Date;
   updated_at: Date;
+  reserve_reason?: string | null;
+  reserve_desired_city?: string | null;
+  reserve_price_min?: string | number | null;
+  reserve_price_max?: string | number | null;
+  reserve_property_type?: string | null;
+  reserve_bedrooms?: number | null;
+  reserve_interest_type?: string | null;
+  reserve_follow_up_moment?: string | null;
+  reserve_commercial_notes?: string | null;
+}
+
+export interface ReserveSegmentationPatch {
+  reason?: string | null;
+  desiredCity?: string | null;
+  desiredPriceMin?: number | null;
+  desiredPriceMax?: number | null;
+  propertyType?: string | null;
+  bedrooms?: number | null;
+  interestType?: string | null;
+  followUpMoment?: string | null;
+  commercialNotes?: string | null;
+}
+
+function numOrNull(v: unknown): number | null {
+  if (v == null || v === '') return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function intOrNull(v: unknown): number | null {
+  if (v == null || v === '') return null;
+  const n = typeof v === 'number' ? Math.round(v) : Math.round(Number(v));
+  return Number.isFinite(n) ? n : null;
+}
+
+function rowReserveToPatch(row: ConversationRow): Required<ReserveSegmentationPatch> {
+  return {
+    reason: row.reserve_reason ?? null,
+    desiredCity: row.reserve_desired_city ?? null,
+    desiredPriceMin: numOrNull(row.reserve_price_min),
+    desiredPriceMax: numOrNull(row.reserve_price_max),
+    propertyType: row.reserve_property_type ?? null,
+    bedrooms: intOrNull(row.reserve_bedrooms),
+    interestType: row.reserve_interest_type ?? null,
+    followUpMoment: row.reserve_follow_up_moment ?? null,
+    commercialNotes: row.reserve_commercial_notes ?? null,
+  };
+}
+
+function mergeReservePatch(cur: ReturnType<typeof rowReserveToPatch>, patch: ReserveSegmentationPatch): ReturnType<typeof rowReserveToPatch> {
+  return {
+    reason: patch.reason !== undefined ? patch.reason : cur.reason,
+    desiredCity: patch.desiredCity !== undefined ? patch.desiredCity : cur.desiredCity,
+    desiredPriceMin: patch.desiredPriceMin !== undefined ? patch.desiredPriceMin : cur.desiredPriceMin,
+    desiredPriceMax: patch.desiredPriceMax !== undefined ? patch.desiredPriceMax : cur.desiredPriceMax,
+    propertyType: patch.propertyType !== undefined ? patch.propertyType : cur.propertyType,
+    bedrooms: patch.bedrooms !== undefined ? patch.bedrooms : cur.bedrooms,
+    interestType: patch.interestType !== undefined ? patch.interestType : cur.interestType,
+    followUpMoment: patch.followUpMoment !== undefined ? patch.followUpMoment : cur.followUpMoment,
+    commercialNotes: patch.commercialNotes !== undefined ? patch.commercialNotes : cur.commercialNotes,
+  };
+}
+
+/** JSON público (camelCase) para listagens e PATCH — preparado para filtros/campanhas futuras. */
+export function conversationReserveToPublic(row: ConversationRow): {
+  reserveReason: string | null;
+  reserveDesiredCity: string | null;
+  reservePriceMin: number | null;
+  reservePriceMax: number | null;
+  reservePropertyType: string | null;
+  reserveBedrooms: number | null;
+  reserveInterestType: string | null;
+  reserveFollowUpMoment: string | null;
+  reserveCommercialNotes: string | null;
+} {
+  const m = rowReserveToPatch(row);
+  return {
+    reserveReason: m.reason,
+    reserveDesiredCity: m.desiredCity,
+    reservePriceMin: m.desiredPriceMin,
+    reservePriceMax: m.desiredPriceMax,
+    reservePropertyType: m.propertyType,
+    reserveBedrooms: m.bedrooms,
+    reserveInterestType: m.interestType,
+    reserveFollowUpMoment: m.followUpMoment,
+    reserveCommercialNotes: m.commercialNotes,
+  };
 }
 
 export async function findOrCreateConversation(
@@ -127,7 +214,12 @@ export async function listConversationsWithPreview(
 
 export async function updateClassification(
   conversationId: number,
-  u: { enterprise_id?: number | null; classification?: string; handoff?: boolean }
+  u: {
+    enterprise_id?: number | null;
+    classification?: string;
+    handoff?: boolean;
+    reserve?: ReserveSegmentationPatch;
+  }
 ): Promise<ConversationRow | null> {
   const cur = await getConversationById(conversationId);
   if (!cur) return null;
@@ -161,11 +253,49 @@ export async function updateClassification(
   // Garantia final: se handoff=false, classification não pode ser Handoff
   if (!handoff && classification === 'Handoff') classification = 'Novo';
   const savedForHandoff = handoff ? (classificationBeforeHandoff ?? null) : null;
+  const classFinal = toValidClassification(classification);
+
+  if (u.reserve === undefined) {
+    const { rows } = await query<ConversationRow>(
+      `UPDATE conversations SET enterprise_id = $1, classification = $2, handoff = $3,
+       classification_before_handoff = CASE WHEN $3 = false THEN NULL ELSE COALESCE($5::text, classification_before_handoff) END,
+       updated_at = NOW() WHERE id = $4 RETURNING *`,
+      [enterprise_id, classFinal, handoff, conversationId, savedForHandoff]
+    );
+    return rows[0] ?? null;
+  }
+
+  const mergedReserve = mergeReservePatch(rowReserveToPatch(cur), u.reserve);
+
   const { rows } = await query<ConversationRow>(
     `UPDATE conversations SET enterprise_id = $1, classification = $2, handoff = $3,
      classification_before_handoff = CASE WHEN $3 = false THEN NULL ELSE COALESCE($5::text, classification_before_handoff) END,
+     reserve_reason = $6,
+     reserve_desired_city = $7,
+     reserve_price_min = $8,
+     reserve_price_max = $9,
+     reserve_property_type = $10,
+     reserve_bedrooms = $11,
+     reserve_interest_type = $12,
+     reserve_follow_up_moment = $13,
+     reserve_commercial_notes = $14,
      updated_at = NOW() WHERE id = $4 RETURNING *`,
-    [enterprise_id, toValidClassification(classification), handoff, conversationId, savedForHandoff]
+    [
+      enterprise_id,
+      classFinal,
+      handoff,
+      conversationId,
+      savedForHandoff,
+      mergedReserve.reason,
+      mergedReserve.desiredCity,
+      mergedReserve.desiredPriceMin,
+      mergedReserve.desiredPriceMax,
+      mergedReserve.propertyType,
+      mergedReserve.bedrooms,
+      mergedReserve.interestType,
+      mergedReserve.followUpMoment,
+      mergedReserve.commercialNotes,
+    ]
   );
   return rows[0] ?? null;
 }
@@ -184,8 +314,6 @@ export async function setConversationEnterpriseId(
   );
   return rows[0] ?? null;
 }
-
-const CLASSIFICATIONS = new Set(['Novo', 'Qualificado', 'Reserva', 'Handoff']);
 
 export async function applyAnaConversationUpdate(
   conversationId: number,

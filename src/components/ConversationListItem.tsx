@@ -32,9 +32,13 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
           ? isSelected
             ? 'bg-[#FEF2F2] border-l-[3px] border-l-[#DC2626]'
             : 'bg-[#FFFBEB] hover:bg-[#FEF3C7] border-l-[3px] border-l-[#F59E0B]'
-          : isSelected
-            ? 'bg-[#EFF6FF] border-l-[3px] border-l-[#3B82F6]'
-            : 'bg-white hover:bg-[#F9FAFB]'}
+          : (conversation.classificationStatus === 'Reserva' || conversation.status === 'Reserva')
+            ? isSelected
+              ? 'bg-[#F5F3FF] border-l-[3px] border-l-[#7C3AED]'
+              : 'bg-[#FAF5FF] hover:bg-[#F3E8FF] border-l-[3px] border-l-[#A78BFA]'
+            : isSelected
+              ? 'bg-[#EFF6FF] border-l-[3px] border-l-[#3B82F6]'
+              : 'bg-white hover:bg-[#F9FAFB]'}
       `}
     >
       {onDelete && (
@@ -65,6 +69,12 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
             Handoff
           </span>
         )}
+        {!conversation.handoff && conversation.status !== 'Handoff' && conversation.classificationStatus !== 'Handoff' &&
+          (conversation.classificationStatus === 'Reserva' || conversation.status === 'Reserva') && (
+          <span className="inline-flex items-center text-[10px] font-bold uppercase tracking-wide px-2 py-[2px] rounded bg-[#EDE9FE] text-[#5B21B6] border border-[#DDD6FE]">
+            Reserva
+          </span>
+        )}
         {projectDisplay && (
           <span className="inline-flex items-center text-[10px] font-semibold uppercase tracking-wide px-2 py-[2px] rounded bg-[#EFF6FF] text-[#3B82F6]">
             {projectDisplay}
@@ -73,7 +83,8 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
         <span title={`Lead ${conversation.temperatura}`} className="inline-flex items-center p-0.5">
           <FlameIcon temperatura={conversation.temperatura} size="sm" />
         </span>
-        {!conversation.handoff && conversation.status !== 'Handoff' && conversation.classificationStatus !== 'Handoff' && (
+        {!conversation.handoff && conversation.status !== 'Handoff' && conversation.classificationStatus !== 'Handoff' &&
+          conversation.classificationStatus !== 'Reserva' && conversation.status !== 'Reserva' && (
           <span className="text-[10px] font-medium px-2 py-[2px] rounded bg-[#F3F4F6] text-[#6B7280]">
             {formatStatus(conversation.status)}
           </span>

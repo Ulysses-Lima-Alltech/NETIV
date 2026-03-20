@@ -11,6 +11,7 @@ import corretoresRouter from './corretores.js';
 import appointmentsRouter from './appointments.js';
 import openaiTestRouter from './openaiTest.js';
 import aiChatRouter from './aiChat.js';
+import dashboardRouter from './dashboard.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 
 const router = Router();
@@ -23,6 +24,7 @@ router.use('/users', requireRole('ADMIN'), usersRouter);
 router.use('/settings/integrations', requireRole('ADMIN'), settingsRouter);
 router.use('/settings', requireRole('ADMIN'), settingsAiRouter);
 router.use('/whatsapp', whatsappRouter);
+router.use('/dashboard', dashboardRouter);
 router.use('/webhook/whatsapp', webhookRouter);
 router.use('/webhooks/whatsapp', webhookRouter);
 router.use('/lead', leadRouter);

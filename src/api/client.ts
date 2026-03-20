@@ -107,6 +107,28 @@ export interface ConversationListItem {
   handoff?: boolean;
   createdAt: string;
   updatedAt: string;
+  reserveReason?: string | null;
+  reserveDesiredCity?: string | null;
+  reservePriceMin?: number | null;
+  reservePriceMax?: number | null;
+  reservePropertyType?: string | null;
+  reserveBedrooms?: number | null;
+  reserveInterestType?: string | null;
+  reserveFollowUpMoment?: string | null;
+  reserveCommercialNotes?: string | null;
+}
+
+/** Corpo parcial para PATCH de classificação + segmentação Reserva. */
+export interface ReserveSegmentationPatchBody {
+  reason?: string | null;
+  desiredCity?: string | null;
+  desiredPriceMin?: number | null;
+  desiredPriceMax?: number | null;
+  propertyType?: string | null;
+  bedrooms?: number | null;
+  interestType?: string | null;
+  followUpMoment?: string | null;
+  commercialNotes?: string | null;
 }
 
 export interface MessageListItem {
@@ -183,7 +205,12 @@ export const whatsappApi = {
     request<{ conversationId: number; messages: MessageListItem[] }>(`/whatsapp/conversations/${conversationId}/messages`),
   updateClassification: (
     conversationId: number,
-    body: { project_id?: number | null; classification_status?: string; handoff?: boolean }
+    body: {
+      project_id?: number | null;
+      classification_status?: string;
+      handoff?: boolean;
+      reserve?: ReserveSegmentationPatchBody;
+    }
   ) =>
     request<{
       id: number;
@@ -191,6 +218,15 @@ export const whatsappApi = {
       projectName: string | null;
       classificationStatus: string;
       handoff?: boolean;
+      reserveReason?: string | null;
+      reserveDesiredCity?: string | null;
+      reservePriceMin?: number | null;
+      reservePriceMax?: number | null;
+      reservePropertyType?: string | null;
+      reserveBedrooms?: number | null;
+      reserveInterestType?: string | null;
+      reserveFollowUpMoment?: string | null;
+      reserveCommercialNotes?: string | null;
     }>(`/whatsapp/conversations/${conversationId}/classification`, { method: 'PATCH', body }),
   sendToConversation: (conversationId: number, message: string) =>
     request<{ success: boolean; metaMessageId?: string }>(`/whatsapp/conversations/${conversationId}/send`, {
@@ -403,6 +439,52 @@ export interface LeadAnalysisResponse {
 export const leadApi = {
   analyze: (messages: string[]) =>
     request<LeadAnalysisResponse>('/lead/analyze', { method: 'POST', body: { messages } }),
+};
+
+export type DashboardPeriod = 'today' | '7d' | '30d';
+
+export interface DashboardOverview {
+  period: DashboardPeriod;
+  periodStart: string;
+  enterpriseId: number | null;
+  kpis: {
+    newConversationsToday: number;
+    activeConversations: number;
+    qualified: number;
+    handoffs: number;
+    reserva: number;
+    avgFirstResponseSeconds: number | null;
+    noFirstResponse: number;
+  };
+  timeline: { date: string; newConversations: number }[];
+  classification: { label: string; count: number }[];
+  enterprises: {
+    enterpriseId: number | null;
+    name: string;
+    total: number;
+    qualified: number;
+    handoffs: number;
+    reservas: number;
+  }[];
+  attentionItems: {
+    id: number;
+    customerName: string | null;
+    contactPhone: string | null;
+    reason: string;
+    enterpriseName: string | null;
+  }[];
+}
+
+export const dashboardApi = {
+  overview: (params: { period?: DashboardPeriod; enterpriseId?: number | null }) => {
+    const q = new URLSearchParams();
+    if (params.period) q.set('period', params.period);
+    if (params.enterpriseId != null && params.enterpriseId !== undefined) {
+      q.set('enterpriseId', String(params.enterpriseId));
+    }
+    const qs = q.toString();
+    return request<DashboardOverview>(`/dashboard/overview${qs ? `?${qs}` : ''}`);
+  },
 };
 
 export interface UserListItem {

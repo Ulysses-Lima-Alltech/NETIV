@@ -6,6 +6,7 @@ const navBtnActive = 'bg-[#F97316]';
 
 function isActive(pathname: string, to: string): boolean {
   if (to === '/inbox') return pathname === '/inbox' || pathname === '/';
+  if (to === '/dashboard') return pathname === '/dashboard';
   if (to === '/settings/empreendimentos') return pathname.startsWith('/settings/empreendimentos');
   if (to === '/settings/corretores') return pathname.startsWith('/settings/corretores');
   if (to === '/settings/integrations/whatsapp') return pathname.startsWith('/settings/integrations');

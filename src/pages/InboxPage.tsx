@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AppNav } from '../components/AppNav';
 import type { Conversation, Message } from '../types';
-import { whatsappApi, projectsApi } from '../api/client';
+import { whatsappApi, projectsApi, type ReserveSegmentationPatchBody } from '../api/client';
 import type { ConversationListItem as ApiConversation, MessageListItem } from '../api/client';
 import { ConversationList } from '../components/ConversationList';
 import { ChatPanel } from '../components/ChatPanel';
@@ -37,6 +37,15 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     projectName: projectName ?? null,
     classificationStatus: status,
     handoff: c.handoff ?? (status === 'Handoff'),
+    reserveReason: c.reserveReason ?? null,
+    reserveDesiredCity: c.reserveDesiredCity ?? null,
+    reservePriceMin: c.reservePriceMin ?? null,
+    reservePriceMax: c.reservePriceMax ?? null,
+    reservePropertyType: c.reservePropertyType ?? null,
+    reserveBedrooms: c.reserveBedrooms ?? null,
+    reserveInterestType: c.reserveInterestType ?? null,
+    reserveFollowUpMoment: c.reserveFollowUpMoment ?? null,
+    reserveCommercialNotes: c.reserveCommercialNotes ?? null,
   };
 }
 
@@ -227,34 +236,49 @@ export function InboxPage() {
   );
 
   const handleClassificationChange = useCallback(
-    (updates: { projectId?: number | null; classificationStatus?: string; handoff?: boolean }) => {
+    async (updates: {
+      projectId?: number | null;
+      classificationStatus?: string;
+      handoff?: boolean;
+      reserve?: ReserveSegmentationPatchBody;
+    }) => {
       if (!selectedId) return;
       const id = parseInt(selectedId, 10);
       if (Number.isNaN(id)) return;
-      const body: { project_id?: number | null; classification_status?: string; handoff?: boolean } = {};
+      const body: Parameters<typeof whatsappApi.updateClassification>[1] = {};
       if (updates.projectId !== undefined) body.project_id = updates.projectId;
       if (updates.classificationStatus !== undefined) body.classification_status = updates.classificationStatus;
       if (updates.handoff !== undefined) body.handoff = updates.handoff;
-      whatsappApi
-        .updateClassification(id, body)
-        .then((data) => {
-          setConversations((prev) =>
-            prev.map((c) =>
-              c.id === selectedId
-                ? {
-                    ...c,
-                    projectId: data.projectId ?? c.projectId,
-                    projectName: data.projectName ?? c.projectName,
-                    classificationStatus: data.classificationStatus ?? c.classificationStatus,
-                    status: (data.classificationStatus ?? c.status) as Conversation['status'],
-                    empreendimento: data.projectName ?? c.empreendimento,
-                    handoff: data.handoff ?? c.handoff,
-                  }
-                : c
-            )
-          );
-        })
-        .catch(() => {});
+      if (updates.reserve !== undefined) body.reserve = updates.reserve;
+      try {
+        const data = await whatsappApi.updateClassification(id, body);
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === selectedId
+              ? {
+                  ...c,
+                  projectId: data.projectId ?? c.projectId,
+                  projectName: data.projectName ?? c.projectName,
+                  classificationStatus: data.classificationStatus ?? c.classificationStatus,
+                  status: (data.classificationStatus ?? c.status) as Conversation['status'],
+                  empreendimento: data.projectName ?? c.empreendimento,
+                  handoff: data.handoff ?? c.handoff,
+                  reserveReason: data.reserveReason ?? c.reserveReason,
+                  reserveDesiredCity: data.reserveDesiredCity ?? c.reserveDesiredCity,
+                  reservePriceMin: data.reservePriceMin ?? c.reservePriceMin,
+                  reservePriceMax: data.reservePriceMax ?? c.reservePriceMax,
+                  reservePropertyType: data.reservePropertyType ?? c.reservePropertyType,
+                  reserveBedrooms: data.reserveBedrooms ?? c.reserveBedrooms,
+                  reserveInterestType: data.reserveInterestType ?? c.reserveInterestType,
+                  reserveFollowUpMoment: data.reserveFollowUpMoment ?? c.reserveFollowUpMoment,
+                  reserveCommercialNotes: data.reserveCommercialNotes ?? c.reserveCommercialNotes,
+                }
+              : c
+          )
+        );
+      } catch (e) {
+        if (updates.reserve !== undefined) throw e;
+      }
     },
     [selectedId]
   );

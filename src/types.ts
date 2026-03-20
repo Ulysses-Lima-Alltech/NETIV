@@ -19,6 +19,16 @@ export interface Conversation {
   classificationStatus?: string;
   /** true = atendimento humano (ANA não responde), false = ANA responde. */
   handoff?: boolean;
+  /** Segmentação quando em Reserva (API camelCase). */
+  reserveReason?: string | null;
+  reserveDesiredCity?: string | null;
+  reservePriceMin?: number | null;
+  reservePriceMax?: number | null;
+  reservePropertyType?: string | null;
+  reserveBedrooms?: number | null;
+  reserveInterestType?: string | null;
+  reserveFollowUpMoment?: string | null;
+  reserveCommercialNotes?: string | null;
 }
 
 export type MessageSender = 'LEAD' | 'AGENT';

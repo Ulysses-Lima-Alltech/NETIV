@@ -3,6 +3,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { LoginPage } from './pages/LoginPage';
 import { InboxPage } from './pages/InboxPage';
+import { DashboardPage } from './pages/DashboardPage';
 import { SettingsWhatsAppPage } from './pages/SettingsWhatsAppPage';
 import { LeadSimulatorPage } from './pages/LeadSimulatorPage';
 import { EmpreendimentosPage } from './pages/EmpreendimentosPage';
@@ -21,6 +22,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <InboxPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <DashboardPage />
               </ProtectedRoute>
             }
           />

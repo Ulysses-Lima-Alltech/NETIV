@@ -1,9 +1,18 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Conversation, Message } from '../types';
 import { MessageBubble } from './MessageBubble';
 import { ChatComposer } from './ChatComposer';
 import { FlameIcon } from './FlameIcon';
-import { formatDateSeparator, formatStatus } from '../utils/format';
+import { formatBrlRange, formatDateSeparator, formatStatus } from '../utils/format';
+import {
+  RESERVE_INTEREST_LABELS,
+  RESERVE_INTEREST_TYPES,
+  RESERVE_REASON_LABELS,
+  RESERVE_REASONS,
+  type ReserveInterestType,
+  type ReserveReason,
+} from '../constants/reserveSegmentation';
+import type { ReserveSegmentationPatchBody } from '../api/client';
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'Novo', label: 'Novo' },
@@ -15,13 +24,80 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
 const selectField =
   'text-[13px] border border-[#E5E7EB] rounded-[8px] px-2.5 py-[6px] bg-white transition focus:border-[#3B82F6] focus:ring-[3px] focus:ring-[rgba(59,130,246,0.15)] focus:outline-none';
 
+const inputField =
+  'w-full text-[13px] border border-[#E5E7EB] rounded-[8px] px-2.5 py-[6px] bg-white focus:border-[#3B82F6] focus:ring-[3px] focus:ring-[rgba(59,130,246,0.15)] focus:outline-none';
+
+const labelSm = 'block text-[11px] font-medium text-[#6B7280] mb-1';
+
+interface ReserveDraft {
+  reason: string;
+  desiredCity: string;
+  priceMin: string;
+  priceMax: string;
+  propertyType: string;
+  bedrooms: string;
+  interestType: string;
+  followUpMoment: string;
+  commercialNotes: string;
+}
+
+function reserveFingerprint(c: Conversation): string {
+  return [
+    c.reserveReason ?? '',
+    c.reserveDesiredCity ?? '',
+    c.reservePriceMin ?? '',
+    c.reservePriceMax ?? '',
+    c.reservePropertyType ?? '',
+    c.reserveBedrooms ?? '',
+    c.reserveInterestType ?? '',
+    c.reserveFollowUpMoment ?? '',
+    c.reserveCommercialNotes ?? '',
+  ].join('\x1e');
+}
+
+function conversationToDraft(c: Conversation): ReserveDraft {
+  return {
+    reason: (c.reserveReason as string) || '',
+    desiredCity: c.reserveDesiredCity || '',
+    priceMin: c.reservePriceMin != null ? String(c.reservePriceMin) : '',
+    priceMax: c.reservePriceMax != null ? String(c.reservePriceMax) : '',
+    propertyType: c.reservePropertyType || '',
+    bedrooms: c.reserveBedrooms != null ? String(c.reserveBedrooms) : '',
+    interestType: c.reserveInterestType || '',
+    followUpMoment: c.reserveFollowUpMoment || '',
+    commercialNotes: c.reserveCommercialNotes || '',
+  };
+}
+
+function draftToPatch(d: ReserveDraft): ReserveSegmentationPatchBody {
+  const nMin = d.priceMin.trim() === '' ? null : Number(d.priceMin.replace(',', '.'));
+  const nMax = d.priceMax.trim() === '' ? null : Number(d.priceMax.replace(',', '.'));
+  const nBed = d.bedrooms.trim() === '' ? null : Math.round(Number(d.bedrooms));
+  return {
+    reason: d.reason ? (d.reason as ReserveReason) : null,
+    desiredCity: d.desiredCity.trim() || null,
+    desiredPriceMin: nMin != null && Number.isFinite(nMin) ? nMin : null,
+    desiredPriceMax: nMax != null && Number.isFinite(nMax) ? nMax : null,
+    propertyType: d.propertyType.trim() || null,
+    bedrooms: nBed != null && Number.isFinite(nBed) ? nBed : null,
+    interestType: d.interestType ? (d.interestType as ReserveInterestType) : null,
+    followUpMoment: d.followUpMoment.trim() || null,
+    commercialNotes: d.commercialNotes.trim() || null,
+  };
+}
+
 interface ChatPanelProps {
   conversation: Conversation | null;
   messages: Message[];
   isLoadingMessages: boolean;
   loadError: string | null;
   onSendMessage: (text: string) => void;
-  onClassificationChange?: (updates: { projectId?: number | null; classificationStatus?: string; handoff?: boolean }) => void;
+  onClassificationChange?: (updates: {
+    projectId?: number | null;
+    classificationStatus?: string;
+    handoff?: boolean;
+    reserve?: ReserveSegmentationPatchBody;
+  }) => void | Promise<void>;
   projects?: { id: number; name: string; active: boolean }[];
   isSending?: boolean;
   onScrollContainerRef?: (el: HTMLDivElement | null) => void;
@@ -40,6 +116,9 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [reserveDraft, setReserveDraft] = useState<ReserveDraft | null>(null);
+  const [reserveSaving, setReserveSaving] = useState(false);
+  const [reserveErr, setReserveErr] = useState<string | null>(null);
 
   const setRef = useCallback(
     (el: HTMLDivElement | null) => {
@@ -48,6 +127,15 @@ export function ChatPanel({
     },
     [onScrollContainerRef]
   );
+
+  useEffect(() => {
+    if (!conversation) {
+      setReserveDraft(null);
+      return;
+    }
+    setReserveDraft(conversationToDraft(conversation));
+    setReserveErr(null);
+  }, [conversation?.id ?? '', conversation ? reserveFingerprint(conversation) : '']);
 
   if (!conversation) {
     return (
@@ -63,6 +151,33 @@ export function ChatPanel({
 
   const displayName = conversation.leadName.trim() || 'Lead sem nome';
   let lastDate = '';
+  const cls = conversation.classificationStatus ?? conversation.status ?? 'Novo';
+  const showReservaBlock = cls === 'Reserva' && !conversation.handoff;
+  const d = reserveDraft;
+
+  const hasReserveData =
+    !!conversation.reserveReason ||
+    !!conversation.reserveDesiredCity ||
+    conversation.reservePriceMin != null ||
+    conversation.reservePriceMax != null ||
+    !!conversation.reservePropertyType ||
+    conversation.reserveBedrooms != null ||
+    !!conversation.reserveInterestType ||
+    !!conversation.reserveFollowUpMoment ||
+    !!conversation.reserveCommercialNotes;
+
+  const saveReserve = async () => {
+    if (!onClassificationChange || !d) return;
+    setReserveSaving(true);
+    setReserveErr(null);
+    try {
+      await Promise.resolve(onClassificationChange({ reserve: draftToPatch(d) }));
+    } catch (e) {
+      setReserveErr(e instanceof Error ? e.message : 'Erro ao salvar segmentação');
+    } finally {
+      setReserveSaving(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -147,6 +262,183 @@ export function ChatPanel({
                 {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </label>
+          </div>
+        )}
+
+        {showReservaBlock && d && (
+          <div className="mt-4 rounded-[10px] border border-[#EDE9FE] bg-[#FAF5FF]/80 px-4 py-3 space-y-3">
+            <p className="text-[12px] font-semibold text-[#5B21B6] uppercase tracking-wide">Reserva — segmentação comercial</p>
+            <p className="text-[11px] text-[#6B7280] leading-relaxed">
+              Dados para retomada e campanhas futuras. Preenchimento parcial permitido. Salve com o botão abaixo.
+            </p>
+
+            {hasReserveData && (
+              <dl className="grid gap-1.5 text-[12px] text-[#374151] border-t border-[#EDE9FE] pt-3">
+                <div className="flex gap-2">
+                  <dt className="text-[#9CA3AF] shrink-0">Classificação</dt>
+                  <dd className="font-medium">Reserva</dd>
+                </div>
+                {conversation.reserveReason && (
+                  <div className="flex gap-2">
+                    <dt className="text-[#9CA3AF] shrink-0">Motivo</dt>
+                    <dd>{RESERVE_REASON_LABELS[conversation.reserveReason as ReserveReason] ?? conversation.reserveReason}</dd>
+                  </div>
+                )}
+                {conversation.reserveDesiredCity && (
+                  <div className="flex gap-2">
+                    <dt className="text-[#9CA3AF] shrink-0">Cidade</dt>
+                    <dd>{conversation.reserveDesiredCity}</dd>
+                  </div>
+                )}
+                {(conversation.reservePriceMin != null || conversation.reservePriceMax != null) && (
+                  <div className="flex gap-2">
+                    <dt className="text-[#9CA3AF] shrink-0">Faixa</dt>
+                    <dd>{formatBrlRange(conversation.reservePriceMin, conversation.reservePriceMax)}</dd>
+                  </div>
+                )}
+                {conversation.reservePropertyType && (
+                  <div className="flex gap-2">
+                    <dt className="text-[#9CA3AF] shrink-0">Tipo</dt>
+                    <dd>{conversation.reservePropertyType}</dd>
+                  </div>
+                )}
+                {conversation.reserveBedrooms != null && (
+                  <div className="flex gap-2">
+                    <dt className="text-[#9CA3AF] shrink-0">Quartos</dt>
+                    <dd>{conversation.reserveBedrooms}</dd>
+                  </div>
+                )}
+                {conversation.reserveInterestType && (
+                  <div className="flex gap-2">
+                    <dt className="text-[#9CA3AF] shrink-0">Finalidade</dt>
+                    <dd>{RESERVE_INTEREST_LABELS[conversation.reserveInterestType as ReserveInterestType] ?? conversation.reserveInterestType}</dd>
+                  </div>
+                )}
+                {conversation.reserveFollowUpMoment && (
+                  <div className="flex gap-2">
+                    <dt className="text-[#9CA3AF] shrink-0">Retomar</dt>
+                    <dd>{conversation.reserveFollowUpMoment}</dd>
+                  </div>
+                )}
+                {conversation.reserveCommercialNotes && (
+                  <div className="flex flex-col gap-0.5">
+                    <dt className="text-[#9CA3AF]">Observações</dt>
+                    <dd className="text-[#111827] whitespace-pre-wrap">{conversation.reserveCommercialNotes}</dd>
+                  </div>
+                )}
+              </dl>
+            )}
+
+            <div className="grid sm:grid-cols-2 gap-3 border-t border-[#EDE9FE] pt-3">
+              <label className="sm:col-span-2">
+                <span className={labelSm}>Motivo da reserva</span>
+                <select
+                  className={`${selectField} w-full`}
+                  value={d.reason}
+                  onChange={(e) => setReserveDraft({ ...d, reason: e.target.value })}
+                >
+                  <option value="">— Selecionar —</option>
+                  {RESERVE_REASONS.map((r) => (
+                    <option key={r} value={r}>{RESERVE_REASON_LABELS[r]}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className={labelSm}>Cidade desejada</span>
+                <input
+                  className={inputField}
+                  value={d.desiredCity}
+                  onChange={(e) => setReserveDraft({ ...d, desiredCity: e.target.value })}
+                  placeholder="Ex.: Jacareí"
+                />
+              </label>
+              <label>
+                <span className={labelSm}>Finalidade / interesse</span>
+                <select
+                  className={`${selectField} w-full`}
+                  value={d.interestType}
+                  onChange={(e) => setReserveDraft({ ...d, interestType: e.target.value })}
+                >
+                  <option value="">—</option>
+                  {RESERVE_INTEREST_TYPES.map((t) => (
+                    <option key={t} value={t}>{RESERVE_INTEREST_LABELS[t]}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className={labelSm}>Valor mínimo (R$)</span>
+                <input
+                  className={inputField}
+                  inputMode="decimal"
+                  value={d.priceMin}
+                  onChange={(e) => setReserveDraft({ ...d, priceMin: e.target.value })}
+                  placeholder="300000"
+                />
+              </label>
+              <label>
+                <span className={labelSm}>Valor máximo (R$)</span>
+                <input
+                  className={inputField}
+                  inputMode="decimal"
+                  value={d.priceMax}
+                  onChange={(e) => setReserveDraft({ ...d, priceMax: e.target.value })}
+                  placeholder="450000"
+                />
+              </label>
+              <label>
+                <span className={labelSm}>Tipo de imóvel</span>
+                <input
+                  className={inputField}
+                  value={d.propertyType}
+                  onChange={(e) => setReserveDraft({ ...d, propertyType: e.target.value })}
+                  placeholder="Apartamento, casa…"
+                />
+              </label>
+              <label>
+                <span className={labelSm}>Quartos</span>
+                <input
+                  className={inputField}
+                  inputMode="numeric"
+                  value={d.bedrooms}
+                  onChange={(e) => setReserveDraft({ ...d, bedrooms: e.target.value })}
+                  placeholder="2"
+                />
+              </label>
+              <label className="sm:col-span-2">
+                <span className={labelSm}>Melhor momento para retomar</span>
+                <input
+                  className={inputField}
+                  value={d.followUpMoment}
+                  onChange={(e) => setReserveDraft({ ...d, followUpMoment: e.target.value })}
+                  placeholder="Ex.: em 3 meses, após 13º…"
+                />
+              </label>
+              <label className="sm:col-span-2">
+                <span className={labelSm}>Observações comerciais</span>
+                <textarea
+                  className={`${inputField} min-h-[72px] resize-y`}
+                  value={d.commercialNotes}
+                  onChange={(e) => setReserveDraft({ ...d, commercialNotes: e.target.value })}
+                  placeholder="Notas para reativação ou campanhas futuras"
+                />
+              </label>
+            </div>
+            {reserveErr && <p className="text-[12px] text-red-600">{reserveErr}</p>}
+            <button
+              type="button"
+              onClick={() => void saveReserve()}
+              disabled={reserveSaving}
+              className="inline-flex items-center justify-center gap-2 text-[13px] font-semibold bg-[#7C3AED] text-white rounded-[8px] px-4 py-2 hover:bg-[#6D28D9] disabled:opacity-50 transition-colors"
+            >
+              {reserveSaving ? (
+                <>
+                  <span className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                  Salvando…
+                </>
+              ) : (
+                'Salvar segmentação'
+              )}
+            </button>
           </div>
         )}
       </header>

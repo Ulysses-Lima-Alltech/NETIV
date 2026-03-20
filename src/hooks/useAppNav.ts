@@ -12,6 +12,7 @@ export function useAppNav(): NavItem[] {
   return useMemo(() => {
     const items: NavItem[] = [
       { to: '/inbox', label: 'Inbox' },
+      { to: '/dashboard', label: 'Dashboard' },
       { to: '/agenda', label: 'Agenda' },
     ];
     if (isAdmin) {

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import { appointmentsApi, projectsApi, corretoresApi } from '../api/client';
 import type { Appointment, AssignAppointmentResult } from '../api/client';
