@@ -4,6 +4,7 @@ import {
   getConversationById,
   setConversationEnterpriseId,
   applyAnaConversationUpdate,
+  maxLeadTemperature,
 } from '../repositories/conversationRepository.js';
 import { sendTextMessage, sendDocumentMessage } from './whatsappMetaService.js';
 import { tryMatchActiveEnterpriseId } from '../repositories/enterpriseMatch.js';
@@ -19,7 +20,13 @@ import {
   type EnterpriseRow,
 } from '../repositories/enterpriseRepository.js';
 import { generateChatCompletion, type ChatMessage } from './openaiService.js';
-import { buildAnaSystemPrompt, type BuildAnaSystemPromptOpts, parseAnaJson, fallbackReplyFromRaw } from './anaAgentService.js';
+import {
+  buildAnaSystemPrompt,
+  type BuildAnaSystemPromptOpts,
+  parseAnaJson,
+  fallbackReplyFromRaw,
+  detectStrongPurchaseIntentForLeadTemperature,
+} from './anaAgentService.js';
 
 export interface IncomingMessageContext {
   conversationId: number;
@@ -215,9 +222,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     console.log('[ANA DEBUG] handoff check passed');
 
     if (hasExplicitHandoffIntent(trimmed)) {
+      const mergedLeadOnHandoff = maxLeadTemperature(
+        effectiveConv.lead_temperature,
+        detectStrongPurchaseIntentForLeadTemperature(trimmed) ? 'quente' : null
+      );
       await applyAnaConversationUpdate(conversationId, {
         classification: 'Handoff',
-        lead_temperature: effectiveConv.lead_temperature,
+        ...(mergedLeadOnHandoff != null ? { lead_temperature: mergedLeadOnHandoff } : {}),
         handoff: true,
       });
       const confirmMsg = 'Entendido! Um atendente vai entrar em contato em breve. Enquanto isso, sua mensagem já foi registrada.';
@@ -341,9 +352,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       inactive_linked: inactiveLinked,
     });
 
+    const mergedLeadForAna = maxLeadTemperature(
+      effectiveConv.lead_temperature,
+      structured.lead_temperature,
+      detectStrongPurchaseIntentForLeadTemperature(trimmed) ? 'quente' : null
+    );
     await applyAnaConversationUpdate(conversationId, {
       classification: structured.classification,
-      lead_temperature: structured.lead_temperature,
+      ...(mergedLeadForAna != null ? { lead_temperature: mergedLeadForAna } : {}),
       customer_name: structured.customer_name,
       handoff: structured.handoff,
     });

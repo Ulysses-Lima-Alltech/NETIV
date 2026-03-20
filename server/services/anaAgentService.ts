@@ -32,7 +32,11 @@ ENVIO DE ARQUIVOS:
 - Se o arquivo NÃO existir na lista, deixe send_file_category null e NUNCA diga que vai enviar — seja transparente (ex: "no momento não tenho esse material").
 - Caso contrário null. Nunca use categoria que não exista na lista.
 
-TEMPERATURA (lead_temperature):
+TEMPERATURA (lead_temperature) — independente de handoff:
+- lead_temperature = nível de interesse comercial. handoff = transferência operacional para humano. Não confunda: handoff NÃO substitui temperatura.
+- Se o cliente demonstrar intenção clara e imediata de avanço ou compra, use SEMPRE lead_temperature: "quente", mesmo quando handoff: true (ex.: quer humano mas já disse "quero fechar").
+- Sinais típicos de QUENTE (não exaustivo): "quero comprar agora", "quero comprar", "quero fechar", "vamos seguir", "quero avançar", "quero dar andamento", "quero reservar", "quero dar entrada", "quero agendar", "me passa a documentação", "manda a documentação", "como faço para comprar", "como funciona para comprar", "quero formalizar", "fechar o negócio".
+- Em dúvida entre "morno" e "quente" para quem pede próximo passo concreto de compra/contrato/reserva, prefira "quente".
 - Só use "frio", "morno" ou "quente" quando inferir de forma consciente a intenção do lead.
 - Se não houver inferência nova nesta mensagem, OMITA a chave lead_temperature do JSON (não envie null, string vazia nem placeholder) — o sistema mantém o valor já salvo.
 - NUNCA envie lead_temperature: null para tentar "limpar" a temperatura: após definida uma vez, ela não pode ser apagada.
@@ -92,7 +96,8 @@ CLASSIFICAÇÃO (campo "classification" no JSON, quando handoff for false):
 - Reserva: contato sem avanço no momento, mas com potencial de retomada futura. Use quando não houver interesse ou capacidade agora, mas o contato NÃO for descarte (não é spam, duplicado ou inválido). Pode ser recontactado depois para novo interesse, mudança de contexto ou outro empreendimento. Não use Reserva se o cliente claramente se enquadrar em Handoff.
 - Handoff: quando handoff for true (ver abaixo); com handoff false, não use "Handoff" em classification.
 
-HANDOFF (passe para humano): SEMPRE handoff: true quando o cliente pedir atendimento humano (ex.: quero falar com humano, quero atendente, prefiro pessoa, me passa para alguém, atendimento humano). Resposta breve confirmando a transferência. Também handoff para: preço exato, negociação, disponibilidade real, urgência, irritação, sensível. Nunca prometa prazo.
+HANDOFF (passe para humano): SEMPRE handoff: true quando o cliente pedir atendimento humano (ex.: quero falar com humano, quero atendente, prefiro pessoa, me passa para alguém, atendimento humano). Resposta breve confirmando a transferência. Também handoff para: preço exato, negociação, disponibilidade real, urgência operacional, irritação, sensível. Nunca prometa prazo.
+- Mesmo com handoff: true, se a mensagem do cliente indicar compra/fechamento/reserva/documentação imediata, preencha lead_temperature: "quente" (interesse alto não some porque passou para humano).
 Prioridade: variáveis → texto dos arquivos (extracted) → histórico.
 ${JSON_INSTRUCTION}`;
 
@@ -114,6 +119,60 @@ function formatVars(v: Record<string, string>): string {
 
 const CLASS_OK = new Set(['Novo', 'Qualificado', 'Reserva', 'Handoff']);
 const TEMP_OK = new Set(['frio', 'morno', 'quente']);
+
+/** Frases normalizadas (sem acento) para elevar temperatura a quente quando o modelo omitir ou subestimar. */
+const STRONG_PURCHASE_INTENT_PATTERNS: string[] = [
+  'quero comprar agora',
+  'quero comprar',
+  'vou comprar',
+  'comprar agora',
+  'quero fechar',
+  'vamos fechar',
+  'fechar o negocio',
+  'fechar negocio',
+  'fechar hoje',
+  'quero dar andamento',
+  'dar andamento',
+  'quero avancar',
+  'vamos seguir',
+  'vamos avancar',
+  'quero reservar',
+  'fazer reserva',
+  'quero dar entrada',
+  'dar entrada',
+  'quero agendar',
+  'agendar visita',
+  'me passa a documentacao',
+  'me passa documentacao',
+  'passe a documentacao',
+  'passa a documentacao',
+  'manda a documentacao',
+  'envia a documentacao',
+  'documentacao para comprar',
+  'como faco para comprar',
+  'como comprar',
+  'como funciona para comprar',
+  'quero formalizar',
+  'formalizar a compra',
+  'assinatura do contrato',
+  'assinar o contrato',
+];
+
+function normLeadIntentText(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Garantia de backend: intenção explícita de compra/fechamento → pelo menos quente no merge. */
+export function detectStrongPurchaseIntentForLeadTemperature(message: string): boolean {
+  const n = normLeadIntentText(message);
+  if (!n) return false;
+  return STRONG_PURCHASE_INTENT_PATTERNS.some((p) => n.includes(p));
+}
 
 /** Aceita string, array de strings (modelo às vezes devolve ["book"]) e busca em objetos aninhados comuns. */
 function coerceSendFileCategoryRaw(raw: unknown, depth = 3): string | null {
@@ -222,8 +281,9 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
     if (classification === 'Interessado' || classification === 'Qualificando') classification = 'Qualificado';
     if (!CLASS_OK.has(classification)) classification = 'Novo';
     let lead_temperature: string | null = null;
-    if (typeof o.lead_temperature === 'string') {
-      const lt = o.lead_temperature.trim().toLowerCase();
+    const rawLt = o.lead_temperature ?? (o as Record<string, unknown>).leadTemperature;
+    if (typeof rawLt === 'string') {
+      const lt = rawLt.trim().toLowerCase();
       lead_temperature = TEMP_OK.has(lt) ? lt : null;
     }
     let send_file_category: FileCategory | null = null;

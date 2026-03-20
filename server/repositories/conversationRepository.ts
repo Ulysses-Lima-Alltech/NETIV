@@ -189,6 +189,29 @@ function normalizeLeadTemperatureInput(raw: string | null | undefined): 'quente'
   return null;
 }
 
+const LEAD_TEMP_RANK: Record<'frio' | 'morno' | 'quente', number> = { frio: 0, morno: 1, quente: 2 };
+
+/**
+ * Retorna a maior temperatura entre os valores válidos (frio < morno < quente).
+ * Usado na atualização via ANA: nunca rebaixa quente→morno por resposta inconsistente do modelo.
+ */
+export function maxLeadTemperature(
+  ...vals: (string | null | undefined)[]
+): 'quente' | 'morno' | 'frio' | null {
+  let best: 'quente' | 'morno' | 'frio' | null = null;
+  let bestR = -1;
+  for (const v of vals) {
+    const t = normalizeLeadTemperatureInput(v == null ? undefined : String(v));
+    if (!t) continue;
+    const r = LEAD_TEMP_RANK[t];
+    if (r > bestR) {
+      bestR = r;
+      best = t;
+    }
+  }
+  return best;
+}
+
 /**
  * Funil: Novo → Qualificado quando há empreendimento e temperatura definidos.
  * Handoff e Reserva não são alterados; com handoff ativo mantém Handoff.
@@ -425,10 +448,10 @@ export async function applyAnaConversationUpdate(
   }
   let lead_temperature = conv.lead_temperature;
   if (typeof meta.lead_temperature === 'string') {
-    const t = meta.lead_temperature.trim().toLowerCase();
-    if (t === 'quente') lead_temperature = 'quente';
-    else if (t === 'morno') lead_temperature = 'morno';
-    else if (t === 'frio') lead_temperature = 'frio';
+    const incoming = normalizeLeadTemperatureInput(meta.lead_temperature);
+    if (incoming) {
+      lead_temperature = maxLeadTemperature(conv.lead_temperature, incoming) ?? incoming;
+    }
   }
   classification = applyFunnelQualificationRule({
     classification,
