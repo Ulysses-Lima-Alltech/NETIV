@@ -5,6 +5,7 @@ import { insertMessage, findMessageByMetaId } from '../repositories/messageRepos
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { handleIncomingMessage } from './conversationEngine.js';
+import { leadOriginFromMetaWhatsAppMessage } from './leadOriginResolver.js';
 
 export async function verifyWebhook(mode: string, token: string, challenge: string): Promise<string | null> {
   if (mode !== 'subscribe' || !challenge) return null;
@@ -64,12 +65,17 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           console.log('[ANA DEBUG] mensagem já processada (idempotência)', { metaMessageId: msg.id });
           continue;
         }
+        const leadOrigin = leadOriginFromMetaWhatsAppMessage(
+          msg as unknown as Record<string, unknown>,
+          phoneNumberId ?? null
+        );
         const conv = await findOrCreateConversation(
           'whatsapp',
           String(msg.from),
           msg.from,
           contactName,
-          phoneNumberId ?? null
+          phoneNumberId ?? null,
+          leadOrigin
         );
         const bodyText = getMessageBody(msg);
         if (bodyText) {

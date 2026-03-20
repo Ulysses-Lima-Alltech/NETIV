@@ -44,6 +44,8 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     projectName: projectName ?? null,
     classificationStatus: status,
     handoff: c.handoff ?? (status === 'Handoff'),
+    enterpriseOriginId: c.enterpriseOriginId ?? null,
+    enterpriseOriginName: undefined,
     reserveReason: c.reserveReason ?? null,
     reserveDesiredCity: c.reserveDesiredCity ?? null,
     reservePriceMin: c.reservePriceMin ?? null,
@@ -281,6 +283,10 @@ export function InboxPage() {
                   status: (data.classificationStatus ?? c.status) as Conversation['status'],
                   empreendimento: data.projectName ?? c.empreendimento,
                   temperatura: nextTemp,
+                  enterpriseOriginId:
+                    data.enterpriseOriginId !== undefined ? data.enterpriseOriginId : c.enterpriseOriginId,
+                  enterpriseOriginName:
+                    data.enterpriseOriginName !== undefined ? data.enterpriseOriginName : c.enterpriseOriginName,
                   handoff: data.handoff ?? c.handoff,
                   reserveReason: data.reserveReason ?? c.reserveReason,
                   reserveDesiredCity: data.reserveDesiredCity ?? c.reserveDesiredCity,

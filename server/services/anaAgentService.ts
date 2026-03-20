@@ -74,6 +74,13 @@ REGRAS IMPORTANTES:
 - Não encerrar conversa de forma abrupta.
 - Não usar linguagem técnica.
 
+BASE DE CONHECIMENTO — ARQUIVOS (texto extraído):
+- Os arquivos da base costumam trazer nome do empreendimento, endereço, cidade, região ou localização. Isso é informação válida: use-a.
+- Quando o cliente pedir cidade, região, bairro ou tipo de produto (ex.: "loteamento em Atibaia"), LEIA o bloco "Texto extraído dos arquivos" (quando existir no contexto) e ofereça as opções que BATEM com o pedido — mesma cidade, região compatível ou produto descrito ali.
+- É PROIBIDO agir como se faltasse informação quando o texto extraído já trouxer nome e endereço/localização suficientes para responder ou sugerir empreendimentos compatíveis.
+- Não invente endereços que não apareçam no texto; cite o que está escrito e, se faltar só um detalhe pontual, pergunte de forma objetiva — sem negar o que já está no conhecimento.
+- Priorize oferta comercial útil: apresente empreendimentos ou trechos do conhecimento que façam sentido para o pedido de localização do cliente.
+
 ABERTURA (primeira mensagem da conversa):
 - Apresente-se como ANA de forma natural. Exemplo: "Oi! Eu sou a ANA, assistente virtual da equipe 😊 Me conta, você está buscando algum empreendimento específico ou quer conhecer as opções?"
 
@@ -93,7 +100,7 @@ CLASSIFICAÇÃO (campo "classification" no JSON, quando handoff for false):
 - Handoff: quando handoff for true (ver abaixo); com handoff false, não use "Handoff" em classification.
 
 HANDOFF (passe para humano): SEMPRE handoff: true quando o cliente pedir atendimento humano (ex.: quero falar com humano, quero atendente, prefiro pessoa, me passa para alguém, atendimento humano). Resposta breve confirmando a transferência. Também handoff para: preço exato, negociação, disponibilidade real, urgência, irritação, sensível. Nunca prometa prazo.
-Prioridade: variáveis → texto dos arquivos (extracted) → histórico.
+Prioridade: variáveis → texto dos arquivos (extracted, inclui localização quando existir) → histórico.
 ${JSON_INSTRUCTION}`;
 
 const LANGUAGE_HINT: Record<string, string> = {
@@ -131,8 +138,9 @@ export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
     return `${base}
 
 TRIAGEM — sem empreendimento vinculado.
-Descubra qual empreendimento o cliente quer. PROIBIDO nomear/listar/explicar empreendimentos ou portfólio.
-send_file_category sempre null aqui.`;
+Descubra qual empreendimento o cliente quer. PROIBIDO nomear/listar/explicar empreendimentos ou portfólio a partir de arquivos (neste modo o texto extraído dos arquivos ainda não entra no contexto).
+send_file_category sempre null aqui.
+Obs.: quando a conversa for vinculada a um empreendimento, a ANA passará a receber o texto dos arquivos (com endereços/localização) e deverá usá-lo para ofertas por cidade/região conforme as regras da BASE DE CONHECIMENTO.`;
   }
 
   if (opts.mode === 'inactive_linked') {
@@ -169,7 +177,16 @@ Mapeamento: book = material, catálogo, PDF do empreendimento | unidades = plant
 Variáveis:
 ${formatVars(opts.variablesMap)}
 ${addonsBlock}
-${know}`;
+${know}
+${
+  opts.knowledgeText.trim()
+    ? `
+LOCALIZAÇÃO E OFERTA (modo focado — texto dos arquivos acima):
+- O conteúdo extraído pode listar vários empreendimentos, endereços ou cidades. Cruze com o que o cliente pediu (cidade, região, tipo de empreendimento).
+- Se o cliente citar uma localidade que aparece no texto, apresente o(s) empreendimento(s) ou opções compatíveis descritos ali — não diga que não há base para indicar opções se o texto já contém nome e localização.
+- Use nomes e endereços tal como constam nos arquivos; não crie endereços novos.`
+    : ''
+}`;
 }
 
 export function parseAnaJson(raw: string): AnaStructuredReply | null {

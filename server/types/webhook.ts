@@ -22,6 +22,18 @@ export interface WebhookEntry {
   }>;
 }
 
+/** Referral em mensagens vindas de anúncios Click-to-WhatsApp / Meta (campos variam por produto). */
+export interface WebhookReferral {
+  source_url?: string;
+  source_type?: string;
+  source_id?: string;
+  headline?: string;
+  body?: string;
+  ctwa_clid?: string;
+  welcome_message?: { text?: string };
+  [key: string]: unknown;
+}
+
 export interface WebhookMessage {
   id: string;
   from: string;
@@ -32,6 +44,7 @@ export interface WebhookMessage {
   audio?: { id: string };
   video?: { id: string };
   document?: { id: string; filename?: string };
+  referral?: WebhookReferral;
 }
 
 export interface WebhookStatus {

@@ -20,6 +20,9 @@ export interface Conversation {
   classificationStatus?: string;
   /** true = atendimento humano (ANA não responde), false = ANA responde. */
   handoff?: boolean;
+  /** Empreendimento da origem/campanha (imutável); pode diferir do ativo. */
+  enterpriseOriginId?: number | null;
+  enterpriseOriginName?: string | null;
   /** Segmentação quando em Reserva (API camelCase). */
   reserveReason?: string | null;
   reserveDesiredCity?: string | null;

@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { sendTextMessage } from '../services/whatsappMetaService.js';
 import { findOrCreateConversation } from '../repositories/conversationRepository.js';
+import { leadOriginFromMetaWhatsAppMessage } from '../services/leadOriginResolver.js';
 import { insertMessage, findMessageByMetaId } from '../repositories/messageRepository.js';
 import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
@@ -81,7 +82,7 @@ router.post('/', (req: Request, res: Response) => {
         const textBody = type === 'text' && msg.text?.body != null ? String(msg.text.body).trim() : null;
 
         setImmediate(() => {
-          processOneMessage(from, type, textBody, msgId, contactName, phoneNumberId).catch((e) => {
+          processOneMessage(from, type, textBody, msgId, contactName, phoneNumberId, msg as Record<string, unknown>).catch((e) => {
             console.error('[ANA DEBUG] Erro em processOneMessage:', e instanceof Error ? e.message : String(e));
             if (e instanceof Error && e.stack) {
               console.error('[ANA DEBUG] Stack:', e.stack);
@@ -99,7 +100,8 @@ async function processOneMessage(
   textBody: string | null,
   metaMessageId: string | null,
   contactName: string | null,
-  phoneNumberId: string | null
+  phoneNumberId: string | null,
+  rawMessage?: Record<string, unknown> | null
 ): Promise<void> {
   if (!(await canSendWhatsApp())) {
     console.error('[ANA DEBUG] WhatsApp não configurado — mensagem ignorada.');
@@ -111,7 +113,8 @@ async function processOneMessage(
     return;
   }
 
-  const conv = await findOrCreateConversation('whatsapp', from, from, contactName, phoneNumberId);
+  const leadOrigin = leadOriginFromMetaWhatsAppMessage(rawMessage ?? null, phoneNumberId);
+  const conv = await findOrCreateConversation('whatsapp', from, from, contactName, phoneNumberId, leadOrigin);
   console.log('[ANA DEBUG] conversa obtida', { conversationId: conv.id, from });
 
   if (type !== 'text' || !textBody) {

@@ -1,5 +1,9 @@
 import { query } from '../db/pg.js';
 import { getActiveEnterpriseById } from './enterpriseRepository.js';
+import type { LeadOriginInput } from '../services/leadOriginResolver.js';
+import { resolveEnterpriseFromLeadSource } from '../services/leadOriginResolver.js';
+
+export type { LeadOriginInput } from '../services/leadOriginResolver.js';
 
 export interface ConversationRow {
   id: number;
@@ -8,6 +12,10 @@ export interface ConversationRow {
   contact_phone: string | null;
   customer_name: string | null;
   enterprise_id: number | null;
+  /** Empreendimento da campanha/origem (imutável após primeiro preenchimento). */
+  enterprise_origin_id?: number | null;
+  /** Snapshot bruto (ex.: referral Meta) — imutável após primeiro preenchimento. */
+  lead_source_raw?: unknown | null;
   classification: string;
   classification_before_handoff?: string | null;
   lead_temperature: string | null;
@@ -110,18 +118,42 @@ export async function findOrCreateConversation(
   externalId: string,
   contactPhone: string | null,
   contactName: string | null,
-  metaPhoneNumberId: string | null
+  metaPhoneNumberId: string | null,
+  leadOrigin?: LeadOriginInput | null
 ): Promise<ConversationRow> {
+  const { enterpriseId: resolvedEnterpriseId } = await resolveEnterpriseFromLeadSource(leadOrigin ?? null);
+  const rawSnapshot = leadOrigin?.rawSnapshot;
+  const leadSourceJson =
+    rawSnapshot && typeof rawSnapshot === 'object' && !Array.isArray(rawSnapshot) && Object.keys(rawSnapshot).length > 0
+      ? rawSnapshot
+      : null;
+
   const { rows } = await query<ConversationRow>(
-    `INSERT INTO conversations (channel, external_contact_id, contact_phone, customer_name, meta_phone_number_id, last_message_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())
+    `INSERT INTO conversations (
+       channel, external_contact_id, contact_phone, customer_name, meta_phone_number_id, last_message_at,
+       enterprise_id, enterprise_origin_id, lead_source_raw
+     )
+     VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8::jsonb)
      ON CONFLICT (channel, external_contact_id) DO UPDATE SET
        contact_phone = COALESCE(EXCLUDED.contact_phone, conversations.contact_phone),
        customer_name = COALESCE(EXCLUDED.customer_name, conversations.customer_name),
        meta_phone_number_id = COALESCE(EXCLUDED.meta_phone_number_id, conversations.meta_phone_number_id),
-       last_message_at = NOW(), updated_at = NOW()
+       last_message_at = NOW(),
+       updated_at = NOW(),
+       enterprise_origin_id = COALESCE(conversations.enterprise_origin_id, EXCLUDED.enterprise_origin_id),
+       lead_source_raw = COALESCE(conversations.lead_source_raw, EXCLUDED.lead_source_raw),
+       enterprise_id = COALESCE(conversations.enterprise_id, EXCLUDED.enterprise_id)
      RETURNING *`,
-    [channel, externalId, contactPhone, contactName, metaPhoneNumberId]
+    [
+      channel,
+      externalId,
+      contactPhone,
+      contactName,
+      metaPhoneNumberId,
+      resolvedEnterpriseId,
+      resolvedEnterpriseId,
+      leadSourceJson != null ? JSON.stringify(leadSourceJson) : null,
+    ]
   );
   return rows[0];
 }

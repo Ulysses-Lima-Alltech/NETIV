@@ -105,6 +105,10 @@ export interface ConversationListItem {
   classificationStatus: string;
   leadStage: string | null;
   handoff?: boolean;
+  /** Empreendimento da campanha/origem (histórico). */
+  enterpriseOriginId?: number | null;
+  /** Snapshot bruto (ex.: referral Meta) quando existir. */
+  leadSourceRaw?: unknown | null;
   createdAt: string;
   updatedAt: string;
   reserveReason?: string | null;
@@ -217,6 +221,9 @@ export const whatsappApi = {
       id: number;
       projectId: number | null;
       projectName: string | null;
+      enterpriseOriginId?: number | null;
+      enterpriseOriginName?: string | null;
+      leadSourceRaw?: unknown | null;
       classificationStatus: string;
       leadStage?: string | null;
       handoff?: boolean;

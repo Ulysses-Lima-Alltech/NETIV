@@ -71,19 +71,21 @@ model EnterpriseFile {
 }
 
 model Conversation {
-  id                  Int       @id @default(autoincrement())
-  channel             String    @default("whatsapp")
-  external_contact_id String
-  contact_phone       String?
-  customer_name       String?
-  enterprise_id       Int?
-  classification      String    @default("Novo")
-  lead_temperature    String?
-  handoff             Boolean   @default(false)
-  meta_phone_number_id String?
-  last_message_at     DateTime?
-  created_at          DateTime  @default(now())
-  updated_at          DateTime  @updatedAt
+  id                    Int       @id @default(autoincrement())
+  channel               String    @default("whatsapp")
+  external_contact_id   String
+  contact_phone         String?
+  customer_name         String?
+  enterprise_id         Int?
+  enterprise_origin_id  Int?
+  lead_source_raw       Json?
+  classification        String    @default("Novo")
+  lead_temperature      String?
+  handoff               Boolean   @default(false)
+  meta_phone_number_id  String?
+  last_message_at       DateTime?
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
 
   enterprise Enterprise? @relation(fields: [enterprise_id], references: [id], onDelete: SetNull)
   messages   Message[]

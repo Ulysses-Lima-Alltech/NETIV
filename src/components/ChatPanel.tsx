@@ -196,6 +196,15 @@ export function ChatPanel({
                 {conversation.projectName || conversation.empreendimento}
               </span>
             )}
+            {conversation.enterpriseOriginId != null &&
+              conversation.enterpriseOriginId !== (conversation.projectId ?? null) && (
+                <span
+                  className="inline-flex items-center text-[10px] font-medium px-2 py-[3px] rounded-[6px] bg-[#F9FAFB] text-[#6B7280] border border-[#E8ECF1]"
+                  title="Empreendimento da campanha de origem (histórico; o ativo pode ter sido alterado)"
+                >
+                  Origem: {conversation.enterpriseOriginName ?? `empreendimento #${conversation.enterpriseOriginId}`}
+                </span>
+              )}
             {onClassificationChange ? (
               <label className="inline-flex items-center gap-1.5">
                 <span

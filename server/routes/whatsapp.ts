@@ -96,6 +96,8 @@ router.get('/conversations', async (req, res) => {
         classificationStatus: r.classification ?? 'Novo',
         handoff: r.handoff ?? false,
         leadStage: tempToStage(r.lead_temperature),
+        enterpriseOriginId: r.enterprise_origin_id ?? null,
+        leadSourceRaw: r.lead_source_raw ?? null,
         createdAt: r.created_at.toISOString(),
         updatedAt: r.updated_at.toISOString(),
         ...conversationReserveToPublic(r),
@@ -147,12 +149,17 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       }
     }
     const projectName = conv.enterprise_id ? (await getEnterpriseById(conv.enterprise_id))?.name ?? null : null;
+    const originName =
+      conv.enterprise_origin_id != null ? (await getEnterpriseById(conv.enterprise_origin_id))?.name ?? null : null;
     res.json({
       id: conv.id,
       projectId: conv.enterprise_id ?? null,
       projectName,
       enterpriseId: conv.enterprise_id ?? null,
       enterpriseName: projectName,
+      enterpriseOriginId: conv.enterprise_origin_id ?? null,
+      enterpriseOriginName: originName,
+      leadSourceRaw: conv.lead_source_raw ?? null,
       classificationStatus: conv.classification ?? 'Novo',
       leadStage: tempToStage(conv.lead_temperature),
       handoff: conv.handoff ?? false,
