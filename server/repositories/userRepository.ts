@@ -2,6 +2,9 @@ import { randomBytes } from 'crypto';
 import { scrypt, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
 import { query } from '../db/pg.js';
+import { isUserRole, type UserRole } from '../constants/roles.js';
+
+export type { UserRole } from '../constants/roles.js';
 
 const scryptAsync = promisify(scrypt);
 
@@ -10,7 +13,18 @@ const SESSION_DAYS = 30;
 const SALT_LEN = 16;
 const KEY_LEN = 64;
 
-export type UserRole = 'ADMIN' | 'COLLABORATOR';
+/**
+ * Converte role lida do PostgreSQL sem asserção insegura.
+ * Se o valor for inválido (ex.: ambiente sem migração 015), registra aviso e usa COLLABORATOR (menor privilégio).
+ */
+export function parseStoredUserRole(raw: string): UserRole {
+  if (isUserRole(raw)) return raw;
+  console.error(
+    '[userRepository] role desconhecido no banco. Verifique migração 015_app_users_role_managerial.sql. Valor:',
+    raw
+  );
+  return 'COLLABORATOR';
+}
 
 export interface AppUser {
   id: number;
@@ -65,7 +79,7 @@ export async function findByEmail(email: string): Promise<(AppUser & { password_
     [normalized]
   );
   const row = result.rows[0];
-  return row ? { ...row, role: row.role as UserRole } : null;
+  return row ? { ...row, role: parseStoredUserRole(row.role) } : null;
 }
 
 export async function findById(id: number): Promise<AppUser | null> {
@@ -83,7 +97,7 @@ export async function findById(id: number): Promise<AppUser | null> {
     [id]
   );
   const row = result.rows[0];
-  return row ? { ...row, role: row.role as UserRole } : null;
+  return row ? { ...row, role: parseStoredUserRole(row.role) } : null;
 }
 
 export async function findByIdIncludingInactive(id: number): Promise<AppUser | null> {
@@ -101,7 +115,7 @@ export async function findByIdIncludingInactive(id: number): Promise<AppUser | n
     [id]
   );
   const row = result.rows[0];
-  return row ? { ...row, role: row.role as UserRole } : null;
+  return row ? { ...row, role: parseStoredUserRole(row.role) } : null;
 }
 
 export async function listAllUsers(): Promise<AppUser[]> {
@@ -117,7 +131,7 @@ export async function listAllUsers(): Promise<AppUser[]> {
     `SELECT id, name, email, role, active, created_at, updated_at
      FROM app_users ORDER BY name ASC`
   );
-  return result.rows.map((row) => ({ ...row, role: row.role as UserRole }));
+  return result.rows.map((row) => ({ ...row, role: parseStoredUserRole(row.role) }));
 }
 
 export async function findByEmailIncludingInactive(email: string): Promise<(AppUser & { password_hash: string }) | null> {
@@ -137,7 +151,7 @@ export async function findByEmailIncludingInactive(email: string): Promise<(AppU
     [normalized]
   );
   const row = result.rows[0];
-  return row ? { ...row, role: row.role as UserRole } : null;
+  return row ? { ...row, role: parseStoredUserRole(row.role) } : null;
 }
 
 export interface CreateUserInput {
@@ -167,7 +181,7 @@ export async function createUser(input: CreateUserInput): Promise<AppUser> {
   );
   const row = result.rows[0];
   if (!row) throw new Error('Falha ao criar usuário.');
-  return { ...row, role: row.role as UserRole };
+  return { ...row, role: parseStoredUserRole(row.role) };
 }
 
 export interface UpdateUserInput {
@@ -225,7 +239,7 @@ export async function getSessionUser(token: string): Promise<AppUser | null> {
     [token]
   );
   const row = result.rows[0];
-  return row ? { ...row, role: row.role as UserRole } : null;
+  return row ? { ...row, role: parseStoredUserRole(row.role) } : null;
 }
 
 export async function deleteSession(token: string): Promise<void> {

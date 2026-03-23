@@ -11,7 +11,10 @@ interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
+  /** Apenas ADMIN: acesso total, inclusive configurações (integrações/IA). */
   isAdmin: boolean;
+  /** ADMIN ou MANAGERIAL: telas administrativas (exceto configurações sensíveis). */
+  hasElevatedAccess: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -70,6 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     logout,
     clearError,
     isAdmin: user?.role === 'ADMIN',
+    hasElevatedAccess: user?.role === 'ADMIN' || user?.role === 'MANAGERIAL',
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

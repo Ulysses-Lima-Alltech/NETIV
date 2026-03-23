@@ -13,6 +13,7 @@ import openaiTestRouter from './openaiTest.js';
 import aiChatRouter from './aiChat.js';
 import dashboardRouter from './dashboard.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { ROLES_ORG_ADMIN, ROLES_SETTINGS_ADMIN } from '../constants/roles.js';
 
 const router = Router();
 
@@ -20,16 +21,16 @@ router.use('/auth', authRouter);
 
 router.use(requireAuth);
 
-router.use('/users', requireRole('ADMIN'), usersRouter);
-router.use('/settings/integrations', requireRole('ADMIN'), settingsRouter);
-router.use('/settings', requireRole('ADMIN'), settingsAiRouter);
+router.use('/users', requireRole(...ROLES_ORG_ADMIN), usersRouter);
+router.use('/settings/integrations', requireRole(...ROLES_SETTINGS_ADMIN), settingsRouter);
+router.use('/settings', requireRole(...ROLES_SETTINGS_ADMIN), settingsAiRouter);
 router.use('/whatsapp', whatsappRouter);
 router.use('/dashboard', dashboardRouter);
 router.use('/webhook/whatsapp', webhookRouter);
 router.use('/webhooks/whatsapp', webhookRouter);
 router.use('/lead', leadRouter);
-router.use('/projects', requireRole('ADMIN'), projectsRouter);
-router.use('/corretores', requireRole('ADMIN'), corretoresRouter);
+router.use('/projects', requireRole(...ROLES_ORG_ADMIN), projectsRouter);
+router.use('/corretores', requireRole(...ROLES_ORG_ADMIN), corretoresRouter);
 router.use('/appointments', appointmentsRouter);
 router.use('/openai', openaiTestRouter);
 router.use('/ai', aiChatRouter);

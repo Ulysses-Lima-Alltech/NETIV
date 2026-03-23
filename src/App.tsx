@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { ROLES_ORG_ADMIN, ROLES_SETTINGS_ADMIN } from './constants/roles';
 import { LoginPage } from './pages/LoginPage';
 import { InboxPage } from './pages/InboxPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -44,7 +45,7 @@ function App() {
           <Route
             path="/settings/empreendimentos"
             element={
-              <ProtectedRoute roles={['ADMIN']}>
+              <ProtectedRoute roles={[...ROLES_ORG_ADMIN]}>
                 <EmpreendimentosPage />
               </ProtectedRoute>
             }
@@ -52,7 +53,7 @@ function App() {
           <Route
             path="/settings/corretores"
             element={
-              <ProtectedRoute roles={['ADMIN']}>
+              <ProtectedRoute roles={[...ROLES_ORG_ADMIN]}>
                 <CorretoresPage />
               </ProtectedRoute>
             }
@@ -60,7 +61,7 @@ function App() {
           <Route
             path="/settings/integrations/whatsapp"
             element={
-              <ProtectedRoute roles={['ADMIN']}>
+              <ProtectedRoute roles={[...ROLES_SETTINGS_ADMIN]}>
                 <SettingsWhatsAppPage />
               </ProtectedRoute>
             }
@@ -68,7 +69,7 @@ function App() {
           <Route
             path="/users"
             element={
-              <ProtectedRoute roles={['ADMIN']}>
+              <ProtectedRoute roles={[...ROLES_ORG_ADMIN]}>
                 <UsersPage />
               </ProtectedRoute>
             }

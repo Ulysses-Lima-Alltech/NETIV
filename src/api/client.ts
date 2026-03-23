@@ -49,7 +49,23 @@ async function request<T>(
   return data as T;
 }
 
-export type UserRole = 'ADMIN' | 'COLLABORATOR';
+/** Manter alinhado a `ALL_APP_USER_ROLES` em `server/constants/roles.ts`. */
+export type UserRole = 'ADMIN' | 'COLLABORATOR' | 'MANAGERIAL';
+
+export function userRoleLabel(role: UserRole): string {
+  switch (role) {
+    case 'ADMIN':
+      return 'Administrador';
+    case 'MANAGERIAL':
+      return 'Gerencial';
+    case 'COLLABORATOR':
+      return 'Colaborador';
+    default: {
+      const _exhaustive: never = role;
+      return _exhaustive;
+    }
+  }
+}
 
 export interface AuthUser {
   id: number;

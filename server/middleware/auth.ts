@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { getSessionUser, type AppUser } from '../repositories/userRepository.js';
+import { getSessionUser, type AppUser, type UserRole } from '../repositories/userRepository.js';
 
 export type AuthenticatedRequest = Request & { user: AppUser };
 
@@ -24,7 +24,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   next();
 }
 
-export function requireRole(...allowedRoles: Array<'ADMIN' | 'COLLABORATOR'>) {
+export function requireRole(...allowedRoles: UserRole[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const user = (req as AuthenticatedRequest).user;
     if (!user) {

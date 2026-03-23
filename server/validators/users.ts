@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { ALL_APP_USER_ROLES } from '../constants/roles.js';
 
-const roleSchema = z.enum(['ADMIN', 'COLLABORATOR']);
+const roleSchema = z.enum(ALL_APP_USER_ROLES);
 
 export const createUserSchema = z.object({
   name: z.string().min(1, 'Nome é obrigatório').max(255),

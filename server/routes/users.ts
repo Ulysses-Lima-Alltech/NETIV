@@ -5,6 +5,7 @@ import {
   updateUser,
   updatePassword,
   findByEmailIncludingInactive,
+  type AppUser,
   type AppUserPublic,
 } from '../repositories/userRepository.js';
 import { createUserSchema, updateUserSchema, updatePasswordSchema } from '../validators/users.js';
@@ -12,12 +13,12 @@ import type { AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 
-function toPublicWithActive(u: { id: number; name: string; email: string; role: string; active: boolean; created_at: Date; updated_at: Date }): AppUserPublic & { active: boolean; createdAt: string; updatedAt: string } {
+function toPublicWithActive(u: AppUser): AppUserPublic & { active: boolean; createdAt: string; updatedAt: string } {
   return {
     id: u.id,
     name: u.name,
     email: u.email,
-    role: u.role as 'ADMIN' | 'COLLABORATOR',
+    role: u.role,
     active: u.active,
     createdAt: u.created_at.toISOString(),
     updatedAt: u.updated_at.toISOString(),

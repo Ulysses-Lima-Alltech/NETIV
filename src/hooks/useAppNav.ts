@@ -7,7 +7,7 @@ export interface NavItem {
 }
 
 export function useAppNav(): NavItem[] {
-  const { isAdmin } = useAuth();
+  const { hasElevatedAccess, isAdmin } = useAuth();
 
   return useMemo(() => {
     const items: NavItem[] = [
@@ -15,12 +15,14 @@ export function useAppNav(): NavItem[] {
       { to: '/dashboard', label: 'Dashboard' },
       { to: '/agenda', label: 'Agenda' },
     ];
-    if (isAdmin) {
+    if (hasElevatedAccess) {
       items.push({ to: '/settings/empreendimentos', label: 'Empreendimentos' });
       items.push({ to: '/settings/corretores', label: 'Corretores' });
-      items.push({ to: '/settings/integrations/whatsapp', label: 'Configurações' });
       items.push({ to: '/users', label: 'Usuários' });
     }
+    if (isAdmin) {
+      items.push({ to: '/settings/integrations/whatsapp', label: 'Configurações' });
+    }
     return items;
-  }, [isAdmin]);
+  }, [hasElevatedAccess, isAdmin]);
 }

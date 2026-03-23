@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AppNav } from '../components/AppNav';
-import { usersApi, type UserListItem, type UserRole } from '../api/client';
+import { usersApi, userRoleLabel, type UserListItem, type UserRole } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 
 const field =
@@ -11,6 +11,18 @@ const btnPrimary =
   'inline-flex items-center justify-center text-[14px] font-semibold bg-[#F97316] text-white rounded-[10px] px-6 py-[10px] hover:bg-[#EA580C] disabled:opacity-40 transition-colors shadow-sm';
 const btnSecondary =
   'inline-flex items-center justify-center text-[14px] font-medium text-[#374151] bg-white border border-[#E5E7EB] rounded-[10px] px-5 py-[10px] hover:bg-[#F9FAFB] disabled:opacity-40 transition-colors';
+
+const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
+  { value: 'COLLABORATOR', label: 'Colaborador' },
+  { value: 'MANAGERIAL', label: 'Gerencial' },
+  { value: 'ADMIN', label: 'Administrador' },
+];
+
+function profileAccentClass(role: UserRole): string {
+  if (role === 'ADMIN') return 'text-[#F97316] font-medium';
+  if (role === 'MANAGERIAL') return 'text-[#2563EB] font-medium';
+  return 'text-[#6B7280]';
+}
 
 export function UsersPage() {
   const { user: currentUser } = useAuth();
@@ -147,7 +159,9 @@ export function UsersPage() {
       </header>
 
       <div className="max-w-[1000px] mx-auto px-6 py-8">
-        <p className="text-[13px] text-[#6B7280] mb-6">Gerencie usuários e perfis de acesso (ADMIN e COLLABORATOR).</p>
+        <p className="text-[13px] text-[#6B7280] mb-6">
+          Gerencie usuários e perfis de acesso (Administrador, Gerencial e Colaborador).
+        </p>
         <div className="flex justify-end mb-4">
           <button type="button" onClick={openCreate} className={btnPrimary}>
             Novo usuário
@@ -175,9 +189,7 @@ export function UsersPage() {
                       <td className="py-3 pr-4 text-[#111827]">{u.name}</td>
                       <td className="py-3 pr-4 text-[#6B7280]">{u.email}</td>
                       <td className="py-3 pr-4">
-                        <span className={u.role === 'ADMIN' ? 'text-[#F97316] font-medium' : 'text-[#6B7280]'}>
-                          {u.role === 'ADMIN' ? 'ADMIN' : 'COLLABORATOR'}
-                        </span>
+                        <span className={profileAccentClass(u.role)}>{userRoleLabel(u.role)}</span>
                       </td>
                       <td className="py-3 pr-4">{u.active ? 'Sim' : 'Não'}</td>
                       <td className="py-3 flex items-center gap-2">
@@ -230,8 +242,11 @@ export function UsersPage() {
               <div>
                 <label className={label}>Perfil</label>
                 <select value={formRole} onChange={(e) => setFormRole(e.target.value as UserRole)} className={field}>
-                  <option value="COLLABORATOR">COLLABORATOR</option>
-                  <option value="ADMIN">ADMIN</option>
+                  {ROLE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="flex items-center gap-2">
@@ -269,8 +284,11 @@ export function UsersPage() {
                   className={field}
                   disabled={currentUser?.id === editingUser.id}
                 >
-                  <option value="COLLABORATOR">COLLABORATOR</option>
-                  <option value="ADMIN">ADMIN</option>
+                  {ROLE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
                 </select>
                 {currentUser?.id === editingUser.id && <p className="text-[12px] text-[#6B7280] mt-1">Você não pode alterar seu próprio perfil.</p>}
               </div>
