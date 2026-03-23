@@ -43,6 +43,24 @@ export async function getMessagesByConversationId(conversationId: number): Promi
  * Lógica: compara última mensagem do usuário vs última da IA.
  * Retorna a mensagem do usuário se não existe IA ou se o usuário é mais recente.
  */
+/**
+ * Mensagens de usuário consecutivas no fim do histórico (após a última mensagem da assistente).
+ * Usado para consolidar rajadas de texto no WhatsApp antes de gerar uma única resposta.
+ */
+export async function getTrailingUserMessageBurst(conversationId: number): Promise<MessageRow[]> {
+  const rows = await getMessagesByConversationId(conversationId);
+  const burst: MessageRow[] = [];
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    if (r.role === 'user' && (r.content || '').trim()) {
+      burst.unshift(r);
+    } else {
+      break;
+    }
+  }
+  return burst;
+}
+
 export async function getLastUserMessageNeedingReply(conversationId: number): Promise<MessageRow | null> {
   const [userRows, assistantRows] = await Promise.all([
     query<MessageRow>(

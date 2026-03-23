@@ -26,12 +26,15 @@ import {
   parseAnaJson,
   fallbackReplyFromRaw,
   detectStrongPurchaseIntentForLeadTemperature,
+  ANA_FALLBACK_INCOMPREHENSION_REPLY,
 } from './anaAgentService.js';
 
 export interface IncomingMessageContext {
   conversationId: number;
   userMessage: string;
   toPhoneNumber: string;
+  /** Rajada WhatsApp: quantas bolhas de usuário no fim do histórico foram fundidas em userMessage (omitir = 1 mensagem isolada). */
+  trailingUserBubbles?: number;
 }
 
 /** Reprocessa a última mensagem do usuário sem resposta quando handoff muda true→false. */
@@ -71,13 +74,26 @@ const MAX_HISTORY = 14;
 
 function rowsToHistory(
   rows: { role: string; content: string | null }[],
-  excludeLastUserText: string | null
+  excludeLastUserText: string | null,
+  mergeTrailingUserBubbles?: number
 ): { role: 'user' | 'assistant'; content: string }[] {
   let list = rows.map((m) => ({
     role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
     content: (m.content || '').trim(),
   }));
-  if (
+  if (mergeTrailingUserBubbles != null && mergeTrailingUserBubbles > 1) {
+    let n = mergeTrailingUserBubbles;
+    while (n > 0 && list.length > 0 && list[list.length - 1].role === 'user') {
+      list.pop();
+      n--;
+    }
+    if (n > 0) {
+      console.warn('[ConversationEngine] mergeTrailingUserBubbles: menos bolhas de usuário no histórico que o esperado', {
+        mergeTrailingUserBubbles,
+        remaining: n,
+      });
+    }
+  } else if (
     excludeLastUserText &&
     list.length > 0 &&
     list[list.length - 1].role === 'user' &&
@@ -160,7 +176,7 @@ function hasExplicitHandoffIntent(message: string): boolean {
 }
 
 export async function handleIncomingMessage(ctx: IncomingMessageContext): Promise<void> {
-  const { conversationId, userMessage, toPhoneNumber } = ctx;
+  const { conversationId, userMessage, toPhoneNumber, trailingUserBubbles } = ctx;
 
   console.log('[ANA DEBUG] handleIncomingMessage start', { conversationId, toPhoneNumber });
 
@@ -293,7 +309,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const systemPrompt = buildAnaSystemPrompt(promptOpts);
 
     const rows = await getMessagesByConversationId(conversationId);
-    const history = rowsToHistory(rows, trimmed);
+    const history =
+      trailingUserBubbles != null && trailingUserBubbles > 1
+        ? rowsToHistory(rows, null, trailingUserBubbles)
+        : rowsToHistory(rows, trimmed);
 
     const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
     for (const h of history) {
@@ -331,7 +350,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     if (!structured) {
       structured = {
-        reply: 'Oi — manda de novo em uma linha o que você precisa?',
+        reply: ANA_FALLBACK_INCOMPREHENSION_REPLY,
         classification: 'Novo',
         lead_temperature: null,
         project: ent?.name || '',

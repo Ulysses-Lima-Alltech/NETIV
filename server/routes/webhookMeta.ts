@@ -5,7 +5,7 @@ import { leadOriginFromMetaWhatsAppMessage } from '../services/leadOriginResolve
 import { insertMessage, findMessageByMetaId } from '../repositories/messageRepository.js';
 import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
-import { handleIncomingMessage } from '../services/conversationEngine.js';
+import { scheduleWhatsAppAiAfterUserMessage } from '../services/whatsappAiDebounce.js';
 import { config } from '../config.js';
 
 const router = Router();
@@ -156,12 +156,8 @@ async function processOneMessage(
   console.log('[ANA DEBUG] aiEnabled check passed');
 
   try {
-    console.log('[ANA DEBUG] chamando handleIncomingMessage', { conversationId: conv.id });
-    await handleIncomingMessage({
-      conversationId: conv.id,
-      userMessage: textBody,
-      toPhoneNumber: from,
-    });
+    console.log('[ANA DEBUG] agendando IA (janela de consolidação WhatsApp)', { conversationId: conv.id });
+    scheduleWhatsAppAiAfterUserMessage(conv.id, from);
   } catch (e) {
     console.error('[ANA DEBUG] Erro ao processar com IA:', e instanceof Error ? e.message : String(e));
     if (e instanceof Error && e.stack) {

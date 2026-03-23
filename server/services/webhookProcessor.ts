@@ -4,7 +4,7 @@ import { findOrCreateConversation } from '../repositories/conversationRepository
 import { insertMessage, findMessageByMetaId } from '../repositories/messageRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
-import { handleIncomingMessage } from './conversationEngine.js';
+import { scheduleWhatsAppAiAfterUserMessage } from './whatsappAiDebounce.js';
 import { leadOriginFromMetaWhatsAppMessage } from './leadOriginResolver.js';
 
 export async function verifyWebhook(mode: string, token: string, challenge: string): Promise<string | null> {
@@ -84,14 +84,10 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
         }
         if (bodyText) {
           try {
-            console.log('[ANA DEBUG] chamando handleIncomingMessage', { conversationId: conv.id });
-            await handleIncomingMessage({
-              conversationId: conv.id,
-              userMessage: bodyText,
-              toPhoneNumber: String(msg.from),
-            });
+            console.log('[ANA DEBUG] agendando IA (janela de consolidação WhatsApp)', { conversationId: conv.id });
+            scheduleWhatsAppAiAfterUserMessage(conv.id, String(msg.from));
           } catch (e) {
-            console.error('[ANA DEBUG] Erro ao processar com IA:', e instanceof Error ? e.message : String(e));
+            console.error('[ANA DEBUG] Erro ao agendar IA:', e instanceof Error ? e.message : String(e));
             if (e instanceof Error && e.stack) {
               console.error('[ANA DEBUG] Stack:', e.stack);
             }
