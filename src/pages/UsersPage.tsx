@@ -12,10 +12,15 @@ const btnPrimary =
 const btnSecondary =
   'inline-flex items-center justify-center text-[14px] font-medium text-[#374151] bg-white border border-[#E5E7EB] rounded-[10px] px-5 py-[10px] hover:bg-[#F9FAFB] disabled:opacity-40 transition-colors';
 
-const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
+const ROLE_OPTIONS_FULL: { value: UserRole; label: string }[] = [
   { value: 'COLLABORATOR', label: 'Colaborador' },
   { value: 'MANAGERIAL', label: 'Gerencial' },
   { value: 'ADMIN', label: 'Administrador' },
+];
+
+/** Perfil gerencial só cria/edita colaboradores (alinhado ao backend). */
+const ROLE_OPTIONS_MANAGERIAL: { value: UserRole; label: string }[] = [
+  { value: 'COLLABORATOR', label: 'Colaborador' },
 ];
 
 function profileAccentClass(role: UserRole): string {
@@ -26,6 +31,15 @@ function profileAccentClass(role: UserRole): string {
 
 export function UsersPage() {
   const { user: currentUser } = useAuth();
+  const isManagerial = currentUser?.role === 'MANAGERIAL';
+  const createRoleOptions = isManagerial ? ROLE_OPTIONS_MANAGERIAL : ROLE_OPTIONS_FULL;
+  const editRoleOptions = isManagerial ? ROLE_OPTIONS_MANAGERIAL : ROLE_OPTIONS_FULL;
+
+  const canManageUserRow = (u: UserListItem): boolean => {
+    if (!isManagerial) return true;
+    return u.role === 'COLLABORATOR';
+  };
+
   const [users, setUsers] = useState<UserListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -67,6 +81,7 @@ export function UsersPage() {
   };
 
   const openEdit = (u: UserListItem) => {
+    if (!canManageUserRow(u)) return;
     setEditingUser(u);
     setFormName(u.name);
     setFormEmail(u.email);
@@ -77,6 +92,7 @@ export function UsersPage() {
   };
 
   const openPassword = (u: UserListItem) => {
+    if (!canManageUserRow(u)) return;
     setEditingUser(u);
     setNewPassword('');
     setError(null);
@@ -141,6 +157,7 @@ export function UsersPage() {
   };
 
   const toggleActive = async (u: UserListItem) => {
+    if (!canManageUserRow(u)) return;
     try {
       await usersApi.update(u.id, { active: !u.active });
       loadList();
@@ -160,7 +177,9 @@ export function UsersPage() {
 
       <div className="max-w-[1000px] mx-auto px-6 py-8">
         <p className="text-[13px] text-[#6B7280] mb-6">
-          Gerencie usuários e perfis de acesso (Administrador, Gerencial e Colaborador).
+          {isManagerial
+            ? 'Como perfil gerencial, você pode criar e administrar apenas colaboradores. Administradores e perfis gerenciais não podem ser alterados por aqui.'
+            : 'Gerencie usuários e perfis de acesso (Administrador, Gerencial e Colaborador).'}
         </p>
         <div className="flex justify-end mb-4">
           <button type="button" onClick={openCreate} className={btnPrimary}>
@@ -193,20 +212,26 @@ export function UsersPage() {
                       </td>
                       <td className="py-3 pr-4">{u.active ? 'Sim' : 'Não'}</td>
                       <td className="py-3 flex items-center gap-2">
-                        <button type="button" onClick={() => openEdit(u)} className="text-[#3B82F6] hover:underline text-[13px]">
-                          Editar
-                        </button>
-                        <button type="button" onClick={() => openPassword(u)} className="text-[#3B82F6] hover:underline text-[13px]">
-                          Senha
-                        </button>
-                        {currentUser?.id !== u.id && (
-                          <button
-                            type="button"
-                            onClick={() => toggleActive(u)}
-                            className="text-[#6B7280] hover:underline text-[13px]"
-                          >
-                            {u.active ? 'Desativar' : 'Ativar'}
-                          </button>
+                        {canManageUserRow(u) ? (
+                          <>
+                            <button type="button" onClick={() => openEdit(u)} className="text-[#3B82F6] hover:underline text-[13px]">
+                              Editar
+                            </button>
+                            <button type="button" onClick={() => openPassword(u)} className="text-[#3B82F6] hover:underline text-[13px]">
+                              Senha
+                            </button>
+                            {currentUser?.id !== u.id && (
+                              <button
+                                type="button"
+                                onClick={() => toggleActive(u)}
+                                className="text-[#6B7280] hover:underline text-[13px]"
+                              >
+                                {u.active ? 'Desativar' : 'Ativar'}
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-[#9CA3AF]">—</span>
                         )}
                       </td>
                     </tr>
@@ -242,7 +267,7 @@ export function UsersPage() {
               <div>
                 <label className={label}>Perfil</label>
                 <select value={formRole} onChange={(e) => setFormRole(e.target.value as UserRole)} className={field}>
-                  {ROLE_OPTIONS.map((o) => (
+                  {createRoleOptions.map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>
@@ -282,9 +307,9 @@ export function UsersPage() {
                   value={formRole}
                   onChange={(e) => setFormRole(e.target.value as UserRole)}
                   className={field}
-                  disabled={currentUser?.id === editingUser.id}
+                  disabled={currentUser?.id === editingUser.id || isManagerial}
                 >
-                  {ROLE_OPTIONS.map((o) => (
+                  {editRoleOptions.map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>
