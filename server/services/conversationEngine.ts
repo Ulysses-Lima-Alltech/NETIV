@@ -21,6 +21,7 @@ import {
   type EnterpriseRow,
 } from '../repositories/enterpriseRepository.js';
 import { generateChatCompletion, type ChatMessage } from './openaiService.js';
+import { resolveEnterpriseLocationContext } from '../utils/anaEnterpriseLocationContext.js';
 import {
   buildAnaSystemPrompt,
   type BuildAnaSystemPromptOpts,
@@ -350,6 +351,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     const listedForNames = await listEnterprises(true);
     const fullUserUtterances = buildUserUtterancesContext(rows);
+    const locationQueryContext = resolveEnterpriseLocationContext(trimmed, fullUserUtterances, listedForNames);
     const appointmentPreflight = computeAppointmentPreflight(trimmed, fullUserUtterances);
     const textForEnterpriseMatch = fullUserUtterances.trim() || trimmed;
 
@@ -402,10 +404,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     const hasSendableFiles = fileInventory.trim().length > 0;
 
-    const allEnterpriseNames =
+    let allEnterpriseNames =
       mode === 'scoped'
         ? (activeEnterprisesForContext ?? listedForNames).map((e) => e.name)
         : listedForNames.map((e) => e.name);
+    if (mode === 'triage' && locationQueryContext) {
+      allEnterpriseNames = locationQueryContext.availableEnterprises.map((e) => e.name);
+    }
     const promptOpts: BuildAnaSystemPromptOpts = {
       mode,
       enterprise: ent,
@@ -418,6 +423,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       conversationClassification: effectiveConv.classification,
       appointmentPreflight,
       openAppointmentSummary,
+      locationQueryContext: locationQueryContext ?? undefined,
     };
     const systemPrompt = buildAnaSystemPrompt(promptOpts);
 

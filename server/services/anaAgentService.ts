@@ -1,4 +1,5 @@
 import type { EnterpriseRow } from '../repositories/enterpriseRepository.js';
+import type { LocationQueryContext } from '../utils/anaEnterpriseLocationContext.js';
 import { parseAddons, normalizeFileCategory, type FileCategory } from '../repositories/enterpriseRepository.js';
 import { isSimpleOpeningGreeting, pickRandomGreetingReply } from '../utils/anaReplyFinalize.js';
 import type { AppointmentPreflight } from '../utils/anaAppointmentIntent.js';
@@ -248,16 +249,47 @@ export interface BuildAnaSystemPromptOpts {
   appointmentPreflight?: AppointmentPreflight | null;
   /** Resumo do agendamento aberto (mesma conversa + empreendimento), se existir. */
   openAppointmentSummary?: string | null;
+  /**
+   * Consulta por cidade/região: subset real do banco. Em triagem, `allEnterpriseNames` já vem filtrado.
+   * Em modo com empreendimento focado, o JSON ainda obriga a usar só essa lista ao falar da localidade perguntada.
+   */
+  locationQueryContext?: LocationQueryContext | null;
+}
+
+function buildLocationQueryBlock(loc: LocationQueryContext): string {
+  const payload = JSON.stringify({ availableEnterprises: loc.availableEnterprises }, null, 0);
+  const emptyRule = loc.isEmpty
+    ? 'A lista está vazia: diga claramente que não há empreendimentos ativos cadastrados nessa localidade no sistema. Não invente nomes.'
+    : 'Há empreendimentos nesta lista: apresente-os de forma consultiva. Não diga que não há opções na localidade. Não cite empreendimento fora deste JSON para esta localidade.';
+  const criteria =
+    loc.isEmpty
+      ? 'fluxo obrigatório já aplicado no banco: 1) cidade exata no cadastro; 2) se vazio, região IBGE (região imediata/intermediária do município) e região comercial do empreendimento — nenhum resultado'
+      : loc.matchMethod === 'city'
+        ? 'cidade exata no cadastro'
+        : 'região (fallback após cidade: região IBGE / região comercial do empreendimento)';
+  return `
+
+CONSULTA POR LOCALIZAÇÃO — DADOS REAIS DO BANCO (prioridade sobre suposições):
+Local mencionado pelo cliente: "${loc.userMentionLabel}".
+Critério de busca: ${criteria}.
+${payload}
+Regras: use SOMENTE os empreendimentos deste JSON ao responder sobre esta cidade/região/localização/disponibilidade neste contexto. É proibido inventar ou sugerir outro nome que não esteja em availableEnterprises.
+${emptyRule}
+Não contradiga: se a lista tiver itens, não diga que não há nada na região; se estiver vazia, não invente opções.`;
 }
 
 export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
   const base = COMPORTAMENTO;
+  const loc = opts.locationQueryContext ?? null;
+  const locationBlock = loc ? buildLocationQueryBlock(loc) : '';
 
   if (opts.mode === 'triage') {
     const namesList =
-      (opts.allEnterpriseNames?.length ?? 0) > 0
-        ? opts.allEnterpriseNames!.join(', ')
-        : '(nenhum empreendimento ativo cadastrado)';
+      loc?.isEmpty
+        ? '(nenhum empreendimento ativo no banco para esta cidade/região)'
+        : (opts.allEnterpriseNames?.length ?? 0) > 0
+          ? opts.allEnterpriseNames!.join(', ')
+          : '(nenhum empreendimento ativo cadastrado)';
     const cls = (opts.conversationClassification || 'Novo').trim();
     const ap = opts.appointmentPreflight;
     const openCtx = (opts.openAppointmentSummary || '').trim()
@@ -288,6 +320,7 @@ Empreendimentos ativos no portfólio (use apenas estes nomes, não invente outro
 Classificação atual no sistema (referência): "${cls}".
 ${openCtx}
 ${appointmentPriority}
+${locationBlock}
 
 - Descubra interesse e qual empreendimento faz sentido para o cliente.
 - Quando o cliente perguntar de forma ampla sobre opções, portfólio, cidade ou tipo (ex.: "o que vocês têm", "tem em Atibaia", "quero ver terrenos", "me mostra as opções") e ainda não houver empreendimento definido, você pode apresentar opções de forma resumida e consultiva usando a lista acima.
@@ -352,6 +385,7 @@ Foco atual: "${e.name}". Mantenha o foco neste empreendimento em conversas norma
 ${nameHint}
 ${openScoped}
 ${appointmentScoped}
+${locationBlock}
 
 Troca de empreendimento:
 - NÃO apresente outros empreendimentos por conta própria. Não misture empreendimentos sem autorização explícita do cliente.
