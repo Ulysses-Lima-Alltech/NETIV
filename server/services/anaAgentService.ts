@@ -243,6 +243,8 @@ export interface BuildAnaSystemPromptOpts {
   conversationClassification?: string | null;
   /** Pré-detecção na engine: fluxo de agendamento (prioridade sobre triagem genérica). */
   appointmentPreflight?: AppointmentPreflight | null;
+  /** Resumo do agendamento aberto (mesma conversa + empreendimento), se existir. */
+  openAppointmentSummary?: string | null;
 }
 
 export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
@@ -255,6 +257,14 @@ export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
         : '(nenhum empreendimento ativo cadastrado)';
     const cls = (opts.conversationClassification || 'Novo').trim();
     const ap = opts.appointmentPreflight;
+    const openCtx = (opts.openAppointmentSummary || '').trim()
+      ? `
+
+AGENDAMENTO JÁ REGISTRADO (sistema):
+${(opts.openAppointmentSummary || '').trim()}
+Trate a mensagem atual como complemento ou remarcação; não reinicie triagem nem repita empreendimento/data/hora já cobertos acima ou no histórico.`
+      : '';
+
     const appointmentPriority =
       ap?.active === true
         ? `
@@ -273,6 +283,7 @@ ${ap.reschedule ? '- O cliente pediu ALTERAR/REAGENDAR: trate como atualização
 TRIAGEM — ainda sem empreendimento vinculado ao foco da conversa.
 Empreendimentos ativos no portfólio (use apenas estes nomes, não invente outros): ${namesList}
 Classificação atual no sistema (referência): "${cls}".
+${openCtx}
 ${appointmentPriority}
 
 - Descubra interesse e qual empreendimento faz sentido para o cliente.
@@ -313,6 +324,13 @@ Mapeamento: book = material, catálogo, PDF do empreendimento | unidades = plant
       : 'Nome do cliente ainda não identificado — pergunte naturalmente cedo na conversa e use o nome quando souber.';
 
   const ap = opts.appointmentPreflight;
+  const openScoped = (opts.openAppointmentSummary || '').trim()
+    ? `
+
+AGENDAMENTO EM ANDAMENTO (confirmado no sistema — use como base):
+${(opts.openAppointmentSummary || '').trim()}
+- Mensagens novas são alteração ou confirmação pontual; não volte à triagem nem repita perguntas cujo conteúdo já está aqui ou no histórico recente.`
+    : '';
   const appointmentScoped =
     ap?.active === true
       ? `
@@ -329,6 +347,7 @@ ${LANGUAGE_HINT[e.language_style] || LANGUAGE_HINT.natural}
 Foco atual: "${e.name}". Mantenha o foco neste empreendimento em conversas normais.
 
 ${nameHint}
+${openScoped}
 ${appointmentScoped}
 
 Troca de empreendimento:

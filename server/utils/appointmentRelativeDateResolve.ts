@@ -1,6 +1,6 @@
 /**
  * Resolve data/hora de agendamento a partir do texto do cliente + fallback JSON da Ana.
- * Base: instante atual real em America/Sao_Paulo (offset fixo -03:00, alinhado ao restante do módulo).
+ * Base: instante de referência (mensagem do usuário) em America/Sao_Paulo (offset fixo -03:00, alinhado ao restante do módulo).
  */
 
 import {
@@ -18,6 +18,10 @@ function formatYmdInSaoPaulo(d: Date): string {
     month: '2-digit',
     day: '2-digit',
   }).format(d);
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
 }
 
 function addDaysYmd(ymd: string, days: number): string {
@@ -48,26 +52,52 @@ function weekdayTokenToJsDay(token: string): number | null {
   return null;
 }
 
+/**
+ * Coleta todas as menções de horário no texto e devolve a última (correção tipo "não às 14, às 10").
+ */
 function parseTimeHmFromText(text: string): string | null {
   const n = norm(text);
-  let m = n.match(/\b(\d{1,2})h(\d{2})\b/);
-  if (m) {
+  type Hit = { i: number; hm: string };
+  const hits: Hit[] = [];
+
+  const push = (m: RegExpExecArray, hm: string | null) => {
+    if (hm) hits.push({ i: m.index, hm });
+  };
+
+  let re: RegExp;
+  let m: RegExpExecArray | null;
+
+  // "às 10" / "as 10h" / "as 10:30" (pt: às → as após norm)
+  re = /\bas\s+(\d{1,2})(?:h(\d{2})|\s*:\s*(\d{2}))?\b/g;
+  while ((m = re.exec(n)) !== null) {
+    const hh = parseInt(m[1], 10);
+    const mm = m[2] ? parseInt(m[2], 10) : m[3] ? parseInt(m[3], 10) : 0;
+    if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) push(m, `${pad2(hh)}:${pad2(mm)}`);
+  }
+
+  re = /\b(\d{1,2})h(\d{2})\b/g;
+  while ((m = re.exec(n)) !== null) {
     const hh = parseInt(m[1], 10);
     const mm = parseInt(m[2], 10);
-    if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+    if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) push(m, `${pad2(hh)}:${pad2(mm)}`);
   }
-  m = n.match(/\b(\d{1,2})h\b/);
-  if (m) {
+
+  re = /\b(\d{1,2})h\b/g;
+  while ((m = re.exec(n)) !== null) {
     const hh = parseInt(m[1], 10);
-    if (hh >= 0 && hh <= 23) return `${String(hh).padStart(2, '0')}:00`;
+    if (hh >= 0 && hh <= 23) push(m, `${pad2(hh)}:00`);
   }
-  m = n.match(/\b(\d{1,2}):(\d{2})\b/);
-  if (m) {
+
+  re = /\b(\d{1,2}):(\d{2})\b/g;
+  while ((m = re.exec(n)) !== null) {
     const hh = parseInt(m[1], 10);
     const mm = parseInt(m[2], 10);
-    if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+    if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) push(m, `${pad2(hh)}:${pad2(mm)}`);
   }
-  return null;
+
+  if (hits.length === 0) return null;
+  hits.sort((a, b) => a.i - b.i);
+  return hits[hits.length - 1].hm;
 }
 
 function normalizeLlmTimeHm(t: string | null | undefined): string | null {
@@ -79,12 +109,21 @@ function normalizeLlmTimeHm(t: string | null | undefined): string | null {
   const mm = parseInt(m[2], 10);
   if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
   if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
-  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  return `${pad2(hh)}:${pad2(mm)}`;
 }
 
 function firstWeekdayInText(raw: string): number | null {
   const m = norm(raw).match(
     /\b(domingo|segunda(?:-feira)?|terca(?:-feira)?|quarta(?:-feira)?|quinta(?:-feira)?|sexta(?:-feira)?|sabado)\b/
+  );
+  if (!m) return null;
+  return weekdayTokenToJsDay(m[1]);
+}
+
+/** "próxima segunda", "pra próxima terça", etc. (texto já normalizado sem acento). */
+function extractProximaWeekday(nu: string): number | null {
+  const m = nu.match(
+    /\bproxima\s+(segunda(?:-feira)?|terca(?:-feira)?|quarta(?:-feira)?|quinta(?:-feira)?|sexta(?:-feira)?|sabado|domingo)\b/
   );
   if (!m) return null;
   return weekdayTokenToJsDay(m[1]);
@@ -123,6 +162,7 @@ function rollYmdUntilFuture(ymd: string, timeHm: string, refNow: Date): string |
 }
 
 export interface ResolveAppointmentDateTimeArgs {
+  /** Preferir o instante da última mensagem do usuário; fallback `new Date()`. */
   referenceNow: Date;
   /** Últimas falas do usuário + mensagem atual (para "amanhã", "quinta às 15h", etc.). */
   userText: string;
@@ -157,9 +197,15 @@ export function resolveAppointmentDateTimeFromContext(args: ResolveAppointmentDa
   } else if (/\bhoje\b/.test(nu)) {
     dateYmd = todayYmd;
   } else {
-    const wd = firstWeekdayInText(u);
-    if (wd != null) {
-      dateYmd = nextYmdForWeekdayFrom(todayYmd, wd, timeHm, referenceNow);
+    const proximaWd = extractProximaWeekday(nu);
+    if (proximaWd != null) {
+      const anchorTomorrow = addDaysYmd(todayYmd, 1);
+      dateYmd = nextYmdForWeekdayFrom(anchorTomorrow, proximaWd, timeHm, referenceNow);
+    } else {
+      const wd = firstWeekdayInText(u);
+      if (wd != null) {
+        dateYmd = nextYmdForWeekdayFrom(todayYmd, wd, timeHm, referenceNow);
+      }
     }
   }
 
@@ -178,7 +224,9 @@ export function resolveAppointmentDateTimeFromContext(args: ResolveAppointmentDa
   if (wdUser != null) {
     const p = parseAppointmentStartEndInSaoPaulo(rolled, timeHm);
     if (p && p.startAt.getDay() !== wdUser) {
-      const fixed = nextYmdForWeekdayFrom(todayYmd, wdUser, timeHm, referenceNow);
+      const proximaWd = extractProximaWeekday(nu);
+      const startAnchor = proximaWd != null ? addDaysYmd(todayYmd, 1) : todayYmd;
+      const fixed = nextYmdForWeekdayFrom(startAnchor, wdUser, timeHm, referenceNow);
       if (fixed) rolled = fixed;
     }
   }

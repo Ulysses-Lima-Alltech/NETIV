@@ -37,6 +37,9 @@ export interface ConversationRow {
   assigned_broker_id?: number | null;
   /** Quantidade aproximada de menções ao nome do cliente nas respostas da Ana (incremento por mensagem). */
   ana_customer_name_mentions?: number;
+  /** Quando preenchido, handoff será aplicado após esse instante (pós-agendamento). */
+  handoff_deferred_until?: Date | null;
+  handoff_deferred_broker_id?: number | null;
 }
 
 export interface ReserveSegmentationPatch {
@@ -497,7 +500,40 @@ export async function applyAnaConversationUpdate(
 }
 
 /**
- * Após agendamento confirmado no chat: modo handoff real + corretor alinhado ao agendamento (sem redistribuir se já definido).
+ * Após confirmação de agendamento: agenda handoff para 5 minutos (permite reagendar sem ir para humano na hora).
+ */
+export async function scheduleDeferredHandoffAfterAppointment(
+  conversationId: number,
+  brokerId: number | null
+): Promise<void> {
+  await query(
+    `UPDATE conversations SET
+       handoff_deferred_until = NOW() + INTERVAL '5 minutes',
+       handoff_deferred_broker_id = $1,
+       assigned_broker_id = CASE WHEN $1 IS NOT NULL AND $1 > 0 THEN COALESCE(assigned_broker_id, $1) ELSE assigned_broker_id END,
+       updated_at = NOW()
+     WHERE id = $2`,
+    [brokerId, conversationId]
+  );
+}
+
+/** Processa conversas com handoff diferido vencido (chamado periodicamente no servidor). */
+export async function processDueDeferredHandoffs(): Promise<number> {
+  const { rows } = await query<{ id: number; handoff_deferred_broker_id: number | null }>(
+    `SELECT id, handoff_deferred_broker_id FROM conversations
+     WHERE handoff_deferred_until IS NOT NULL
+       AND handoff_deferred_until <= NOW()
+       AND handoff = false`
+  );
+  for (const r of rows) {
+    await applyHandoffAfterAppointmentConfirmation(r.id, r.handoff_deferred_broker_id);
+  }
+  return rows.length;
+}
+
+/**
+ * Modo handoff real + corretor alinhado ao agendamento (sem redistribuir se já definido).
+ * Limpa colunas de handoff diferido.
  */
 export async function applyHandoffAfterAppointmentConfirmation(
   conversationId: number,
@@ -509,6 +545,8 @@ export async function applyHandoffAfterAppointmentConfirmation(
   await query(
     `UPDATE conversations SET classification = 'Handoff', lead_temperature = $1, handoff = true,
      classification_before_handoff = CASE WHEN $2::text IS NOT NULL THEN $2::text ELSE classification_before_handoff END,
+     handoff_deferred_until = NULL,
+     handoff_deferred_broker_id = NULL,
      updated_at = NOW() WHERE id = $3`,
     [conv.lead_temperature, saveBeforeHandoff, conversationId]
   );

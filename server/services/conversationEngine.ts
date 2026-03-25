@@ -44,6 +44,24 @@ import {
 } from '../utils/anaAppointmentIntent.js';
 import { extractLeadDataFromConversation } from './leadWalletExtractionService.js';
 import { registerAnaAppointmentIfConfirmed } from './anaAppointmentFromChatService.js';
+import {
+  findOpenAppointmentForConversationAndEnterprise,
+  type AppointmentRow,
+} from '../repositories/appointmentRepository.js';
+
+function formatOpenAppointmentSummaryForPrompt(row: AppointmentRow, enterpriseName: string): string {
+  const fmt = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    weekday: 'long',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const d = row.start_at instanceof Date ? row.start_at : new Date(row.start_at);
+  return `Empreendimento: ${enterpriseName}. Visita agendada: ${fmt.format(d)}. Status: ${row.status}.`;
+}
 
 export interface IncomingMessageContext {
   conversationId: number;
@@ -276,6 +294,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     const rows = await getMessagesByConversationId(conversationId);
+    let lastUserMessageAt = new Date();
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i].role === 'user') {
+        lastUserMessageAt = new Date(rows[i].created_at);
+        break;
+      }
+    }
     const historyForGreeting =
       trailingUserBubbles != null && trailingUserBubbles > 1
         ? rowsToHistory(rows, null, trailingUserBubbles)
@@ -337,6 +362,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const ent = effectiveConv.enterprise_id ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;
     const inactiveLinked = Boolean(effectiveConv.enterprise_id && !ent);
 
+    let openAppointmentSummary: string | null = null;
+    if (ent?.id) {
+      const openAppt = await findOpenAppointmentForConversationAndEnterprise(conversationId, ent.id);
+      if (openAppt) {
+        openAppointmentSummary = formatOpenAppointmentSummaryForPrompt(openAppt, ent.name);
+      }
+    }
+
     let mode: 'triage' | 'scoped' | 'inactive_linked' = 'triage';
     if (inactiveLinked) mode = 'inactive_linked';
     else if (ent) mode = 'scoped';
@@ -368,6 +401,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       customerNameMentionsSoFar: effectiveConv.ana_customer_name_mentions ?? 0,
       conversationClassification: effectiveConv.classification,
       appointmentPreflight,
+      openAppointmentSummary,
     };
     const systemPrompt = buildAnaSystemPrompt(promptOpts);
 
@@ -523,6 +557,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           notes: structured.appointment_notes,
           brokerId: convForAppt?.assigned_broker_id ?? null,
           userUtteranceText: fullUserUtterances.trim() || trimmed,
+          referenceNow: lastUserMessageAt,
         });
       } catch (e) {
         console.error('[ANA APPT]', e);
