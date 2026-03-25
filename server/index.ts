@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import './express-augmentation.js';
 import express from 'express';
 import cors from 'cors';
 import { config } from './config.js';

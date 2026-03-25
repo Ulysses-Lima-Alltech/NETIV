@@ -1,5 +1,4 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import type { AuthenticatedRequest } from '../middleware/auth.js';
 import multer, { MulterError } from 'multer';
 import { randomBytes } from 'crypto';
 import { mkdirSync } from 'fs';
@@ -148,7 +147,7 @@ router.patch('/:id', async (req, res) => {
       return res.status(400).json({ error: msg });
     }
     const d = parsed.data;
-    const authUser = (req as AuthenticatedRequest).user;
+    const authUser = req.user;
     let status: 'ativo' | 'inativo' | undefined;
     if (d.status === 'ativo' || d.status === 'inativo') status = d.status;
     else if (d.active !== undefined) status = d.active ? 'ativo' : 'inativo';
