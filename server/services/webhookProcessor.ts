@@ -6,6 +6,7 @@ import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { scheduleWhatsAppAiAfterUserMessage } from './whatsappAiDebounce.js';
 import { leadOriginFromMetaWhatsAppMessage } from './leadOriginResolver.js';
+import { notifyDjango } from './djangoWebhook.js';
 
 export async function verifyWebhook(mode: string, token: string, challenge: string): Promise<string | null> {
   if (mode !== 'subscribe' || !challenge) return null;
@@ -77,6 +78,15 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           phoneNumberId ?? null,
           leadOrigin
         );
+
+        // ── Notificar Django sobre o novo contato (fire-and-forget) ──
+        if (conv.contact_phone) {
+          notifyDjango('api/webhook/netiv-lead/', {
+            phone: conv.contact_phone,
+            name: conv.customer_name || '',
+          });
+        }
+
         const bodyText = getMessageBody(msg);
         if (bodyText) {
           await insertMessage(conv.id, 'user', bodyText, msg.id);

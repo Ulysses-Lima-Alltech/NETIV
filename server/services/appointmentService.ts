@@ -1,4 +1,5 @@
 import { query } from '../db/pg.js';
+import { notifyDjango } from './djangoWebhook.js';
 import { getCorretorById, listCorretoresByEnterprise } from '../repositories/corretorRepository.js';
 import { listByBroker } from '../repositories/brokerAvailabilityRepository.js';
 import {
@@ -257,6 +258,18 @@ export async function assignAppointment(data: {
       [brokerId]
     );
   }
+
+  // ── Notificar o Django sobre o agendamento (fire-and-forget) ──
+  notifyDjango('api/webhook/netiv-appointment/', {
+    customer_name: app.customer_name,
+    customer_phone: app.customer_phone,
+    start_at: toIso(app.start_at),
+    end_at: toIso(app.end_at),
+    status: app.status,
+    source: app.source,
+    notes: app.notes,
+  });
+
   const broker = brokerId ? await getCorretorById(brokerId) : null;
   const ent = data.enterpriseId ? await getEnterpriseById(data.enterpriseId) : null;
   return {
