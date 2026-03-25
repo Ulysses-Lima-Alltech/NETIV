@@ -18,6 +18,81 @@ const FALLBACK_CLOSING_QUESTIONS = [
   'Por onde você prefere que a gente continue?',
 ];
 
+function normClosure(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Cliente encerrou a conversa (agradecimento / despedida / “por enquanto é só”) —
+ * a Ana não deve insistir com pergunta final.
+ */
+export function detectClientConversationClosure(userMessage: string): boolean {
+  const n = normClosure(userMessage);
+  if (!n) return false;
+
+  if (/\?\s*$/.test(userMessage.trim())) return false;
+  if (/\b(quanto custa|quanto e|qual o valor|me passa o|me envia|manda o|quero saber mais|gostaria de saber|tenho uma duvida|pode me explicar)\b/.test(n)) {
+    return false;
+  }
+
+  const strongPatterns: RegExp[] = [
+    /^no momento nao,? obrigad/,
+    /^nao,? obrigad/,
+    /^ok,? obrigad/,
+    /^ta bom,? obrigad/,
+    /^tudo bem,? obrigad/,
+    /^perfeito,? obrigad/,
+    /^combinado,? obrigad/,
+    /\bpor enquanto e so\b/,
+    /\bera isso\b/,
+    /\bqualquer coisa eu chamo\b/,
+    /\bdepois eu vejo\b/,
+    /\bnao precisa\b/,
+    /\bso isso\b/,
+    /\bpor hoje e so\b/,
+    /\bvaleu[,!\s]*$/,
+    /^obrigad[oa][,!\s]*$/,
+    /\btchau\b/,
+    /\bate logo\b/,
+    /\bno momento nao\b.*\bobrigad/,
+  ];
+  if (strongPatterns.some((re) => re.test(n))) return true;
+
+  if (n.length <= 160 && (/\bobrigad[oa]\b/.test(n) || /\bvaleu\b/.test(n))) {
+    if (/\b(quero|preciso de|gostaria de ver|me mostra|me manda|pode enviar)\b/.test(n)) return false;
+    return true;
+  }
+
+  return false;
+}
+
+const FAREWELL_NO_QUESTION = [
+  'Obrigada pelo contato e fico à disposição quando precisar.',
+  'Combinado! Obrigada e conte comigo quando precisar.',
+  'Sem problema. Obrigada e um ótimo dia!',
+  'Perfeito, obrigada pelo contato.',
+];
+
+function randomFarewellNoQuestion(): string {
+  return FAREWELL_NO_QUESTION[Math.floor(Math.random() * FAREWELL_NO_QUESTION.length)]!;
+}
+
+/** Remove sufixo igual ao fallback automático, se o modelo repetir o padrão. */
+function stripKnownAppendedClosingQuestion(s: string): string {
+  let t = s.trim();
+  for (const q of FALLBACK_CLOSING_QUESTIONS) {
+    if (t.endsWith(q)) {
+      return t.slice(0, -q.length).trim().replace(/[\s,.;:!…]+$/u, '');
+    }
+  }
+  return t;
+}
+
 function looksInterrogativeSentence(sentence: string): boolean {
   const t = sentence.trim().toLowerCase();
   if (!t) return false;
@@ -31,13 +106,26 @@ function randomFallbackClosing(): string {
   return FALLBACK_CLOSING_QUESTIONS[i]!;
 }
 
+export interface FinalizeAnaReplyOptions {
+  /** Mensagem atual do cliente — usada para detectar encerramento e não forçar pergunta. */
+  userMessage?: string | null;
+}
+
 /**
- * UX: a última ideia da mensagem deve fechar com pergunta e interrogação.
- * Se a última frase for claramente perguntística mas terminou com "." ou "!", promove para "?".
- * Caso contrário, acrescenta pergunta de fechamento variada (não uma única frase fixa).
+ * UX: em conversa aberta, a última ideia deve fechar com pergunta e interrogação.
+ * Exceção: se o cliente encerrou claramente, não acrescenta pergunta nem força "?".
  */
-export function finalizeAnaReplyText(text: string): string {
+export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOptions): string {
+  const closure =
+    opts?.userMessage != null && opts.userMessage.length > 0 && detectClientConversationClosure(opts.userMessage);
+
   let s = (text || '').trim().replace(/\s+/g, ' ');
+
+  if (closure) {
+    if (!s) return randomFarewellNoQuestion();
+    return stripKnownAppendedClosingQuestion(s);
+  }
+
   if (!s) return randomFallbackClosing();
 
   if (s.endsWith('?')) return s;

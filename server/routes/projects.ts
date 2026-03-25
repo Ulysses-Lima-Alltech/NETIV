@@ -16,14 +16,48 @@ import {
   listEnterpriseFiles,
   registerEnterpriseFile,
   deleteEnterpriseFile,
+  updateEnterpriseFilePermissions,
   FILE_CATEGORIES,
   type FileCategory,
   parseAddons,
 } from '../repositories/enterpriseRepository.js';
-import { createProjectSchema, updateProjectSchema } from '../validators/projects.js';
+import { createProjectSchema, updateProjectSchema, patchKnowledgeFileSchema } from '../validators/projects.js';
 import { insertPromptAddonsHistory, listPromptAddonsHistory } from '../repositories/promptAddonsHistoryRepository.js';
 
 const router = Router();
+
+function mapKnowledgeFileRow(f: {
+  id: number;
+  category: string;
+  original_name: string;
+  mime_type: string;
+  size_bytes: number;
+  is_active: boolean;
+  can_be_used_as_knowledge: boolean;
+  can_be_sent_by_ana: boolean;
+  created_at: Date;
+}) {
+  return {
+    id: f.id,
+    category: f.category,
+    originalName: f.original_name,
+    mime: f.mime_type,
+    size: Number(f.size_bytes),
+    isActive: f.is_active,
+    canBeUsedAsKnowledge: f.can_be_used_as_knowledge !== false,
+    canBeSentByAna: f.can_be_sent_by_ana === true,
+    createdAt: f.created_at.toISOString(),
+  };
+}
+
+/** multipart/form: valores opcionais como string */
+function parseUploadBool(v: unknown, defaultVal: boolean): boolean {
+  if (v === undefined || v === null || v === '') return defaultVal;
+  const s = String(v).trim().toLowerCase();
+  if (['true', '1', 'on', 'yes'].includes(s)) return true;
+  if (['false', '0', 'off', 'no'].includes(s)) return false;
+  return defaultVal;
+}
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -98,15 +132,7 @@ router.get('/:id', async (req, res) => {
     const files = await listEnterpriseFiles(id);
     res.json({
       ...enterpriseToPublic(project, vars),
-      knowledgeFiles: files.map((f) => ({
-        id: f.id,
-        category: f.category,
-        originalName: f.original_name,
-        mime: f.mime_type,
-        size: Number(f.size_bytes),
-        isActive: f.is_active,
-        createdAt: f.created_at.toISOString(),
-      })),
+      knowledgeFiles: files.map(mapKnowledgeFileRow),
     });
   } catch (e) {
     console.error('[Projects] GET :id:', e);
@@ -177,7 +203,6 @@ router.patch('/:id', async (req, res) => {
       slug: d.slug,
       languageStyle: d.languageStyle,
       promptAddons: d.promptAddons,
-      allowMaterialSending: d.allowMaterialSending,
       city: d.city,
       stateUf: d.stateUf,
       commercialRegion: d.commercialRegion,
@@ -240,24 +265,20 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
     if (!FILE_CATEGORIES.includes(cat as FileCategory)) {
       return res.status(400).json({ error: 'Categoria inválida: book | unidades | tabela_comercial | outro' });
     }
+    const canBeUsedAsKnowledge = parseUploadBool(req.body?.canBeUsedAsKnowledge, true);
+    const canBeSentByAna = parseUploadBool(req.body?.canBeSentByAna, false);
     const fid = await registerEnterpriseFile(
       id,
       cat as FileCategory,
       req.file.filename,
       req.file.originalname,
       req.file.mimetype || 'application/octet-stream',
-      req.file.size
+      req.file.size,
+      { canBeUsedAsKnowledge, canBeSentByAna }
     );
     const files = await listEnterpriseFiles(id);
     const f = files.find((x) => x.id === fid)!;
-    res.status(201).json({
-      id: f.id,
-      category: f.category,
-      originalName: f.original_name,
-      mime: f.mime_type,
-      size: Number(f.size_bytes),
-      createdAt: f.created_at.toISOString(),
-    });
+    res.status(201).json(mapKnowledgeFileRow(f));
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Erro no upload.';
     if (typeof msg === 'string' && (msg.includes('Tipo inválido') || msg.toLowerCase().includes('file too large'))) {
@@ -265,6 +286,32 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
     }
     console.error('[Projects] knowledge POST:', e);
     res.status(500).json({ error: msg });
+  }
+});
+
+router.patch('/:id/knowledge/:fileId', async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id, 10);
+    const fileId = parseInt(req.params.fileId, 10);
+    if (Number.isNaN(projectId) || Number.isNaN(fileId)) {
+      return res.status(400).json({ error: 'IDs inválidos.' });
+    }
+    const parsed = patchKnowledgeFileSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
+      return res.status(400).json({ error: msg });
+    }
+    const project = await getEnterpriseById(projectId);
+    if (!project) return res.status(404).json({ error: 'Não encontrado.' });
+    const ok = await updateEnterpriseFilePermissions(projectId, fileId, parsed.data);
+    if (!ok) return res.status(404).json({ error: 'Arquivo não encontrado.' });
+    const files = await listEnterpriseFiles(projectId);
+    const f = files.find((x) => x.id === fileId);
+    if (!f) return res.status(404).json({ error: 'Arquivo não encontrado.' });
+    res.json(mapKnowledgeFileRow(f));
+  } catch (e) {
+    console.error('[Projects] knowledge PATCH:', e);
+    res.status(500).json({ error: 'Erro ao atualizar.' });
   }
 });
 

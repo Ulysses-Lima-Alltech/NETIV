@@ -88,7 +88,10 @@ export function EmpreendimentosPage() {
   const [uploadCategory, setUploadCategory] = useState<FileCategory>('book');
   const [showInactiveKnowledge, setShowInactiveKnowledge] = useState(false);
   const [knowledgeNotice, setKnowledgeNotice] = useState<string | null>(null);
-  const [allowMaterialSending, setAllowMaterialSending] = useState(true);
+  /** Novo upload: padrão seguro — base ligada, envio desligado até marcar */
+  const [uploadAsKnowledge, setUploadAsKnowledge] = useState(true);
+  const [uploadAllowSend, setUploadAllowSend] = useState(false);
+  const [filePatchingId, setFilePatchingId] = useState<number | null>(null);
   const [regrasTab, setRegrasTab] = useState<'regras' | 'historico'>('regras');
   const [historyItems, setHistoryItems] = useState<PromptAddonsHistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -126,7 +129,6 @@ export function EmpreendimentosPage() {
         setVariables({ ...emptyVars(), ...(d.variables ?? {}) });
         setAddonsText(Array.isArray(d.promptAddons) ? d.promptAddons.join('\n') : '');
         setFiles(Array.isArray(d.knowledgeFiles) ? d.knowledgeFiles : []);
-        setAllowMaterialSending(d.allowMaterialSending !== false);
         setRegrasTab('regras');
       })
       .catch((e) => { setErr(e instanceof Error ? e.message : 'Erro ao carregar'); setDetail(null); })
@@ -169,7 +171,6 @@ export function EmpreendimentosPage() {
         languageStyle,
         variables,
         promptAddons,
-        allowMaterialSending,
         city: city.trim(),
         stateUf: stateUf.trim(),
         commercialRegion: commercialRegion.trim(),
@@ -198,10 +199,26 @@ export function EmpreendimentosPage() {
     if (!f || selectedId == null) return;
     setUploading(true);
     projectsApi
-      .uploadKnowledge(selectedId, f, uploadCategory)
+      .uploadKnowledge(selectedId, f, uploadCategory, {
+        canBeUsedAsKnowledge: uploadAsKnowledge,
+        canBeSentByAna: uploadAllowSend,
+      })
       .then(() => loadDetail(selectedId))
       .catch((er) => setErr(er instanceof Error ? er.message : 'Upload falhou'))
       .finally(() => setUploading(false));
+  };
+
+  const patchFileFlags = (fileId: number, patch: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean }) => {
+    if (selectedId == null) return;
+    setErr(null);
+    setFilePatchingId(fileId);
+    projectsApi
+      .patchKnowledgeFile(selectedId, fileId, patch)
+      .then((updated) => {
+        setFiles((prev) => prev.map((x) => (x.id === fileId ? { ...x, ...updated } : x)));
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : 'Erro ao atualizar arquivo'))
+      .finally(() => setFilePatchingId(null));
   };
 
   const removeFile = (fileId: number) => {
@@ -540,22 +557,36 @@ export function EmpreendimentosPage() {
               {/* ── Card 4: Arquivos ── */}
               <section className={card}>
                 <h2 className={heading}>Arquivos</h2>
-                <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-5">Arquivos do empreendimento que a Ana pode consultar ou enviar ao cliente.</p>
-
-                <label className="flex items-start gap-3 mb-5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    className="mt-1 rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
-                    checked={allowMaterialSending}
-                    onChange={(e) => setAllowMaterialSending(e.target.checked)}
-                  />
-                  <span className="text-[13px] text-[#374151] leading-snug">
-                    Permitir envio de materiais pela Ana (book, PDF, tabelas pelo WhatsApp). Se desmarcado, a Ana orienta só por texto.
-                  </span>
-                </label>
+                <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-5">
+                  Cada arquivo pode ser usado como base de conhecimento da Ana e/ou liberado para envio ao cliente. O envio
+                  depende da permissão do próprio arquivo, não do empreendimento inteiro.
+                </p>
 
                 {/* Upload row */}
-                <div className="flex flex-wrap items-end gap-3 p-4 rounded-[10px] bg-[#FAFAFB] border border-dashed border-[#D1D5DB] mb-5">
+                <div className="flex flex-col gap-3 p-4 rounded-[10px] bg-[#FAFAFB] border border-dashed border-[#D1D5DB] mb-5">
+                  <div className="flex flex-wrap gap-x-6 gap-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer text-[13px] text-[#374151]">
+                      <input
+                        type="checkbox"
+                        className="rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
+                        checked={uploadAsKnowledge}
+                        onChange={(e) => setUploadAsKnowledge(e.target.checked)}
+                        disabled={uploading}
+                      />
+                      Usar como base da Ana
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-[13px] text-[#374151]">
+                      <input
+                        type="checkbox"
+                        className="rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
+                        checked={uploadAllowSend}
+                        onChange={(e) => setUploadAllowSend(e.target.checked)}
+                        disabled={uploading}
+                      />
+                      Permitir envio ao cliente
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-3">
                   <label className="block">
                     <span className={label}>Categoria</span>
                     <select
@@ -576,6 +607,7 @@ export function EmpreendimentosPage() {
                     <input type="file" accept=".pdf,.txt,.md" onChange={onUpload} disabled={uploading} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                   </label>
                   <span className="text-[11px] text-[#9CA3AF]">PDF, TXT ou MD (até 100 MB)</span>
+                  </div>
                 </div>
 
                 {/* Arquivos desativados ficam ocultos por padrão; API envia isActive alinhado a is_active */}
@@ -616,10 +648,13 @@ export function EmpreendimentosPage() {
                   <ul className="space-y-2">
                     {knowledgeDisplayed.map((f) => {
                       const isInactive = f.isActive === false;
+                      const useKnowledge = f.canBeUsedAsKnowledge !== false;
+                      const allowSend = f.canBeSentByAna === true;
+                      const permBusy = filePatchingId === f.id;
                       return (
                         <li
                           key={f.id}
-                          className={`group flex items-center gap-3 rounded-[10px] border px-4 py-3 transition ${
+                          className={`group flex flex-col sm:flex-row sm:items-start gap-3 rounded-[10px] border px-4 py-3 transition ${
                             isInactive
                               ? 'border-[#E5E7EB] bg-[#F9FAFB] opacity-[0.72]'
                               : 'border-[#E5E7EB] bg-white hover:border-[#D1D5DB]'
@@ -646,17 +681,43 @@ export function EmpreendimentosPage() {
                                 </span>
                               )}
                             </div>
+                            <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-2.5">
+                              <label
+                                className={`flex items-center gap-2 text-[12px] ${isInactive ? 'text-[#9CA3AF] cursor-default' : 'text-[#374151] cursor-pointer'}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
+                                  checked={useKnowledge}
+                                  disabled={isInactive || permBusy || saving}
+                                  onChange={(e) => patchFileFlags(f.id, { canBeUsedAsKnowledge: e.target.checked })}
+                                />
+                                Base da Ana
+                              </label>
+                              <label
+                                className={`flex items-center gap-2 text-[12px] ${isInactive ? 'text-[#9CA3AF] cursor-default' : 'text-[#374151] cursor-pointer'}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
+                                  checked={allowSend}
+                                  disabled={isInactive || permBusy || saving}
+                                  onChange={(e) => patchFileFlags(f.id, { canBeSentByAna: e.target.checked })}
+                                />
+                                Enviar ao cliente
+                              </label>
+                            </div>
                           </div>
                           {!isInactive ? (
                             <button
                               type="button"
                               onClick={() => removeFile(f.id)}
-                              className="shrink-0 text-[12px] font-medium text-[#9CA3AF] hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all"
+                              className="shrink-0 text-[12px] font-medium text-[#9CA3AF] hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all sm:self-center"
                             >
                               Remover
                             </button>
                           ) : (
-                            <span className="shrink-0 text-[11px] text-[#9CA3AF] max-w-[100px] text-right leading-tight" title="Arquivo usado em envios; não pode ser excluído do histórico.">
+                            <span className="shrink-0 text-[11px] text-[#9CA3AF] max-w-[100px] text-right leading-tight sm:self-center" title="Arquivo usado em envios; não pode ser excluído do histórico.">
                               Histórico
                             </span>
                           )}

@@ -22,7 +22,6 @@ export const updateProjectSchema = z.object({
   languageStyle: z.enum(['informal', 'natural', 'formal', 'culta']).optional(),
   variables: projectVariablesSchema.optional(),
   promptAddons: z.array(z.string().max(4000)).max(50).optional(),
-  allowMaterialSending: z.boolean().optional(),
   city: z.string().max(160).optional(),
   stateUf: z.string().max(2).optional(),
   commercialRegion: z.string().max(240).optional(),
@@ -31,3 +30,12 @@ export const updateProjectSchema = z.object({
 
 export type CreateProjectDto = z.infer<typeof createProjectSchema>;
 export type UpdateProjectDto = z.infer<typeof updateProjectSchema>;
+
+export const patchKnowledgeFileSchema = z
+  .object({
+    canBeUsedAsKnowledge: z.boolean().optional(),
+    canBeSentByAna: z.boolean().optional(),
+  })
+  .refine((d) => d.canBeUsedAsKnowledge !== undefined || d.canBeSentByAna !== undefined, {
+    message: 'Informe ao menos um campo.',
+  });

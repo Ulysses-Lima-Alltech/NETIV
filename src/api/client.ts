@@ -282,6 +282,10 @@ export interface KnowledgeFileItem {
   mime: string;
   size: number;
   isActive?: boolean;
+  /** Incluir texto extraído no contexto da Ana */
+  canBeUsedAsKnowledge?: boolean;
+  /** Permitir envio deste arquivo ao cliente via WhatsApp */
+  canBeSentByAna?: boolean;
   createdAt: string;
 }
 
@@ -293,7 +297,6 @@ export interface EmpreendimentoDTO {
   languageStyle: 'informal' | 'natural' | 'formal' | 'culta';
   variables: ProjectVariables;
   promptAddons: string[];
-  allowMaterialSending?: boolean;
   /** Localização cadastral */
   city?: string;
   stateUf?: string;
@@ -331,7 +334,6 @@ export const projectsApi = {
       languageStyle?: EmpreendimentoDTO['languageStyle'];
       variables?: ProjectVariables;
       promptAddons?: string[];
-      allowMaterialSending?: boolean;
       city?: string;
       stateUf?: string;
       commercialRegion?: string;
@@ -341,10 +343,17 @@ export const projectsApi = {
   promptAddonsHistory: (id: number) =>
     request<{ items: PromptAddonsHistoryItem[] }>(`/projects/${id}/prompt-addons-history`),
   delete: (id: number) => request<ProjectListItem>(`/projects/${id}`, { method: 'DELETE' }),
-  uploadKnowledge: async (projectId: number, file: File, category: FileCategory): Promise<KnowledgeFileItem> => {
+  uploadKnowledge: async (
+    projectId: number,
+    file: File,
+    category: FileCategory,
+    opts?: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean }
+  ): Promise<KnowledgeFileItem> => {
     const fd = new FormData();
     fd.append('category', category);
     fd.append('file', file);
+    fd.append('canBeUsedAsKnowledge', opts?.canBeUsedAsKnowledge !== false ? 'true' : 'false');
+    fd.append('canBeSentByAna', opts?.canBeSentByAna === true ? 'true' : 'false');
     const token = getStoredAuthToken();
     const res = await fetch(`${API_BASE}/projects/${projectId}/knowledge`, {
       method: 'POST',
@@ -369,6 +378,11 @@ export const projectsApi = {
       `/projects/${projectId}/knowledge/${fileId}`,
       { method: 'DELETE' }
     ),
+  patchKnowledgeFile: (
+    projectId: number,
+    fileId: number,
+    body: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean }
+  ) => request<KnowledgeFileItem>(`/projects/${projectId}/knowledge/${fileId}`, { method: 'PATCH', body }),
 };
 
 export interface Corretor {

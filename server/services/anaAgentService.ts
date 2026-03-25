@@ -93,7 +93,12 @@ SAUDAÇÕES SIMPLES (oi, olá, bom dia, boa tarde, boa noite):
 MENSAGENS CURTAS OU INCOMPLETAS:
 - Avance com resposta útil e pergunta comercial alinhada ao que deu para inferir.
 
-FINAL DA CADA RESPOSTA (reply):
+ENCERRAMENTO DA CONVERSA (prioridade sobre a pergunta final):
+- Se o cliente agradecer e encerrar claramente (ex.: "obrigado", "não preciso de mais nada", "por enquanto é só", "no momento não, obrigado", "valeu", "depois eu chamo", "qualquer coisa eu chamo", "era isso", "tá bom obrigado"), NÃO faça pergunta no final.
+- Nesse caso: agradeça, seja breve e cordial, diga que ficou à disposição — sem insistir, sem reabrir o assunto e sem "?" no final.
+- Não use frases como "Posso te ajudar com mais alguma coisa?" quando o tom for despedida.
+
+FINAL DA CADA RESPOSTA (reply) — regra geral (conversa ainda aberta):
 - A última frase do texto deve ser sempre uma pergunta real, com "?" no final.
 - A pergunta final deve ser contextual: conecte ao assunto que você acabou de tratar (lazer, localização, metragem, valores, etc.).
 - Só use pergunta genérica de continuidade quando não houver uma pergunta melhor; nesse caso varie a formulação (não use sempre a mesma frase).
@@ -227,10 +232,9 @@ export interface BuildAnaSystemPromptOpts {
   enterprise: EnterpriseRow | null;
   variablesMap: Record<string, string>;
   knowledgeText: string;
+  /** Só arquivos com permissão de envio; se vazio, a Ana não deve pedir send_file_category. */
   fileInventory: string;
   allEnterpriseNames?: string[];
-  /** Quando false, a ANA não deve solicitar envio de arquivos (send_file_category sempre null). */
-  allowMaterialSending?: boolean;
   /** Nome já conhecido do cliente (para contagem de menções). */
   knownCustomerName?: string | null;
   /** Quantas vezes a Ana já mencionou o nome do cliente nas respostas anteriores. */
@@ -290,7 +294,7 @@ Empreendimento inativo. Sem listar outros. send_file_category null.`;
   const know = opts.knowledgeText.trim() ? `\n--- Texto extraído dos arquivos ---\n${opts.knowledgeText.slice(0, 45_000)}` : '';
   const inv = opts.fileInventory.trim() || '(nenhum arquivo cadastrado — send_file_category sempre null)';
   const namesList = (opts.allEnterpriseNames?.length ?? 0) > 0 ? opts.allEnterpriseNames!.join(', ') : '(nenhum outro cadastrado)';
-  const allowMat = opts.allowMaterialSending !== false;
+  const allowMat = (opts.fileInventory?.trim() || '') !== '';
   const matBlock = allowMat
     ? `Arquivos DESTE empreendimento que você pode enviar pelo WhatsApp (por categoria):
 ${inv}

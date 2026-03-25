@@ -347,16 +347,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     if (ent) {
       const files = await listEnterpriseFiles(ent.id);
       fileInventory = files
-        .filter((f) => f.is_active)
+        .filter((f) => f.is_active && f.can_be_sent_by_ana)
         .map((f) => `${f.category}: ${f.original_name}`)
         .join('; ');
     }
+    const hasSendableFiles = fileInventory.trim().length > 0;
 
     const allEnterpriseNames =
       mode === 'scoped'
         ? (activeEnterprisesForContext ?? listedForNames).map((e) => e.name)
         : listedForNames.map((e) => e.name);
-    const allowMaterialSending = ent == null ? true : ent.allow_material_sending !== false;
     const promptOpts: BuildAnaSystemPromptOpts = {
       mode,
       enterprise: ent,
@@ -364,7 +364,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       knowledgeText,
       fileInventory,
       allEnterpriseNames,
-      allowMaterialSending,
       knownCustomerName: effectiveConv.customer_name,
       customerNameMentionsSoFar: effectiveConv.ana_customer_name_mentions ?? 0,
       conversationClassification: effectiveConv.classification,
@@ -442,7 +441,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       };
     }
 
-    if (!allowMaterialSending) {
+    if (!hasSendableFiles) {
       structured = { ...structured, send_file_category: null };
     }
 
@@ -474,7 +473,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     console.log('[ANA DEBUG] delay antes do envio (simulação humana)', { conversationId, delayMs });
     await sleepMs(delayMs);
 
-    let replyText = finalizeAnaReplyText(structured.reply).slice(0, 4000);
+    let replyText = finalizeAnaReplyText(structured.reply, { userMessage: trimmed }).slice(0, 4000);
     const rowsBeforeSend = await getMessagesByConversationId(conversationId);
     const lastAsstDup = [...rowsBeforeSend].reverse().find((m) => m.role === 'assistant');
     if (lastAsstDup && (lastAsstDup.content || '').trim() === replyText.trim()) {
@@ -511,21 +510,26 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     const convForAppt = await getConversationById(conversationId);
     if (ent && structured.appointment_confirmed) {
-      void registerAnaAppointmentIfConfirmed({
-        conversationId,
-        customerName: (convForAppt?.customer_name || structured.customer_name || '').trim() || 'Cliente',
-        customerPhone: (convForAppt?.contact_phone || convForAppt?.external_contact_id || '').replace(/\D/g, ''),
-        enterpriseId: ent.id,
-        city: '',
-        appointmentConfirmed: true,
-        appointmentDateYmd: structured.appointment_date,
-        appointmentTimeHm: structured.appointment_time,
-        notes: structured.appointment_notes,
-        brokerId: convForAppt?.assigned_broker_id ?? null,
-      }).catch((e) => console.error('[ANA APPT]', e));
+      try {
+        await registerAnaAppointmentIfConfirmed({
+          conversationId,
+          customerName: (convForAppt?.customer_name || structured.customer_name || '').trim() || 'Cliente',
+          customerPhone: (convForAppt?.contact_phone || convForAppt?.external_contact_id || '').replace(/\D/g, ''),
+          enterpriseId: ent.id,
+          city: '',
+          appointmentConfirmed: true,
+          appointmentDateYmd: structured.appointment_date,
+          appointmentTimeHm: structured.appointment_time,
+          notes: structured.appointment_notes,
+          brokerId: convForAppt?.assigned_broker_id ?? null,
+          userUtteranceText: fullUserUtterances.trim() || trimmed,
+        });
+      } catch (e) {
+        console.error('[ANA APPT]', e);
+      }
     }
 
-    const cat = allowMaterialSending ? structured.send_file_category : null;
+    const cat = hasSendableFiles ? structured.send_file_category : null;
     /** `ent` já vem de `getActiveEnterpriseById(effectiveConv.enterprise_id)` — usar `ent.id` evita falso negativo se `enterprise_id` da conversa e `ent.id` divergirem por tipo/serialização. */
     const enterpriseIdForFile = ent != null ? Number(ent.id) : null;
 

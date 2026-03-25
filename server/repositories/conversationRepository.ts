@@ -496,6 +496,33 @@ export async function applyAnaConversationUpdate(
   else if (wasHandoff && !handoff) await clearAssignedBroker(conversationId);
 }
 
+/**
+ * Após agendamento confirmado no chat: modo handoff real + corretor alinhado ao agendamento (sem redistribuir se já definido).
+ */
+export async function applyHandoffAfterAppointmentConfirmation(
+  conversationId: number,
+  brokerId: number | null
+): Promise<void> {
+  const conv = await getConversationById(conversationId);
+  if (!conv) return;
+  const saveBeforeHandoff = conv.classification !== 'Handoff' ? toValidClassification(conv.classification) : null;
+  await query(
+    `UPDATE conversations SET classification = 'Handoff', lead_temperature = $1, handoff = true,
+     classification_before_handoff = CASE WHEN $2::text IS NOT NULL THEN $2::text ELSE classification_before_handoff END,
+     updated_at = NOW() WHERE id = $3`,
+    [conv.lead_temperature, saveBeforeHandoff, conversationId]
+  );
+  if (brokerId != null && brokerId > 0) {
+    await query(`UPDATE conversations SET assigned_broker_id = $1, updated_at = NOW() WHERE id = $2`, [
+      brokerId,
+      conversationId,
+    ]);
+    await query(`UPDATE corretores SET last_assigned_at = NOW(), updated_at = NOW() WHERE id = $1`, [brokerId]);
+  } else {
+    await assignBrokerForHandoffConversation(conversationId);
+  }
+}
+
 export async function incrementAnaCustomerNameMentions(conversationId: number, delta: number): Promise<void> {
   if (delta <= 0) return;
   await query(

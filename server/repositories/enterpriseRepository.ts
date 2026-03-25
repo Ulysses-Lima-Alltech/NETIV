@@ -56,7 +56,6 @@ export interface EnterpriseRow {
   status: string;
   language_style: string;
   prompt_addons: string;
-  allow_material_sending?: boolean;
   city?: string | null;
   state_uf?: string | null;
   commercial_region?: string | null;
@@ -154,7 +153,6 @@ export async function updateEnterprise(
     slug?: string;
     languageStyle?: LanguageStyle;
     promptAddons?: string[];
-    allowMaterialSending?: boolean;
     city?: string | null;
     stateUf?: string | null;
     commercialRegion?: string | null;
@@ -172,8 +170,6 @@ export async function updateEnterprise(
   const status = u.status ?? cur.status;
   const language_style = u.languageStyle ?? cur.language_style;
   const prompt_addons = u.promptAddons !== undefined ? JSON.stringify(u.promptAddons) : cur.prompt_addons;
-  const allow_material_sending =
-    u.allowMaterialSending !== undefined ? u.allowMaterialSending : cur.allow_material_sending ?? true;
 
   const city =
     u.city !== undefined ? ((u.city ?? '').trim() || null) : (cur.city ?? null);
@@ -197,23 +193,10 @@ export async function updateEnterprise(
   }
   const { rows } = await query<EnterpriseRow>(
     `UPDATE enterprises SET name = $1, slug = $2, status = $3, language_style = $4, prompt_addons = $5,
-     allow_material_sending = $7,
-     city = $8, state_uf = $9, commercial_region = $10, ibge_code = $11,
+     city = $7, state_uf = $8, commercial_region = $9, ibge_code = $10,
      updated_at = NOW()
      WHERE id = $6 RETURNING *`,
-    [
-      name,
-      slug,
-      status,
-      language_style,
-      prompt_addons,
-      id,
-      allow_material_sending,
-      city,
-      state_uf,
-      commercial_region,
-      ibge_code,
-    ]
+    [name, slug, status, language_style, prompt_addons, id, city, state_uf, commercial_region, ibge_code]
   );
   return rows[0] ?? null;
 }
@@ -296,11 +279,14 @@ export async function listEnterpriseFiles(enterpriseId: number): Promise<
     mime_type: string;
     size_bytes: number;
     is_active: boolean;
+    can_be_used_as_knowledge: boolean;
+    can_be_sent_by_ana: boolean;
     created_at: Date;
   }[]
 > {
   const { rows } = await query(
-    `SELECT id, category, original_name, storage_path, mime_type, size_bytes, is_active, created_at
+    `SELECT id, category, original_name, storage_path, mime_type, size_bytes, is_active,
+            can_be_used_as_knowledge, can_be_sent_by_ana, created_at
      FROM enterprise_files WHERE enterprise_id = $1 ORDER BY created_at`,
     [enterpriseId]
   );
@@ -332,17 +318,58 @@ export async function registerEnterpriseFile(
   storedFilename: string,
   originalName: string,
   mime: string,
-  size: number
+  size: number,
+  opts?: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean }
 ): Promise<number> {
   const fullPath = join(enterpriseDir(enterpriseId), storedFilename);
   const safeOriginal = sanitizeOriginalName(originalName);
   const extracted = await extractText(fullPath, mime, safeOriginal);
+  const canBeUsedAsKnowledge = opts?.canBeUsedAsKnowledge !== false;
+  const canBeSentByAna = opts?.canBeSentByAna === true;
   const { rows } = await query<{ id: number }>(
-    `INSERT INTO enterprise_files (enterprise_id, category, original_name, storage_path, mime_type, size_bytes, extracted_text, is_active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, true) RETURNING id`,
-    [enterpriseId, category, safeOriginal, storedFilename, mime, size, extracted || null]
+    `INSERT INTO enterprise_files (enterprise_id, category, original_name, storage_path, mime_type, size_bytes, extracted_text, is_active,
+      can_be_used_as_knowledge, can_be_sent_by_ana)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9) RETURNING id`,
+    [
+      enterpriseId,
+      category,
+      safeOriginal,
+      storedFilename,
+      mime,
+      size,
+      extracted || null,
+      canBeUsedAsKnowledge,
+      canBeSentByAna,
+    ]
   );
   return rows[0].id;
+}
+
+export async function updateEnterpriseFilePermissions(
+  enterpriseId: number,
+  fileId: number,
+  patch: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean }
+): Promise<boolean> {
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  let i = 1;
+  if (patch.canBeUsedAsKnowledge !== undefined) {
+    sets.push(`can_be_used_as_knowledge = $${i++}`);
+    vals.push(patch.canBeUsedAsKnowledge);
+  }
+  if (patch.canBeSentByAna !== undefined) {
+    sets.push(`can_be_sent_by_ana = $${i++}`);
+    vals.push(patch.canBeSentByAna);
+  }
+  if (sets.length === 0) return true;
+  const idxEnt = i++;
+  const idxFile = i++;
+  vals.push(enterpriseId, fileId);
+  const { rowCount } = await query(
+    `UPDATE enterprise_files SET ${sets.join(', ')} WHERE enterprise_id = $${idxEnt} AND id = $${idxFile}`,
+    vals
+  );
+  return (rowCount ?? 0) > 0;
 }
 
 export type DeleteEnterpriseFileResult =
@@ -391,7 +418,9 @@ const MAX_KNOWLEDGE = 48_000;
 
 export async function loadAgentKnowledgeText(enterpriseId: number): Promise<string> {
   const { rows } = await query<{ original_name: string; extracted_text: string | null }>(
-    `SELECT original_name, extracted_text FROM enterprise_files WHERE enterprise_id = $1 AND is_active = true ORDER BY category, id`,
+    `SELECT original_name, extracted_text FROM enterprise_files
+     WHERE enterprise_id = $1 AND is_active = true AND can_be_used_as_knowledge = true
+     ORDER BY category, id`,
     [enterpriseId]
   );
   const parts: string[] = [];
@@ -420,7 +449,7 @@ export async function getFileForSend(
 
   const { rows } = await query<{ id: number; storage_path: string; original_name: string; mime_type: string }>(
     `SELECT id, storage_path, original_name, mime_type FROM enterprise_files
-     WHERE enterprise_id = $1 AND category = $2 AND is_active = true
+     WHERE enterprise_id = $1 AND category = $2 AND is_active = true AND can_be_sent_by_ana = true
      ORDER BY created_at DESC, id DESC
      LIMIT 1`,
     [enterpriseId, catNorm]
@@ -491,7 +520,6 @@ export function enterpriseToPublic(e: EnterpriseRow, vars: Record<string, string
     languageStyle: e.language_style as LanguageStyle,
     variables: varsToFrontend(vars),
     promptAddons: parseAddons(e.prompt_addons),
-    allowMaterialSending: e.allow_material_sending !== false,
     city: e.city ?? '',
     stateUf: e.state_uf ?? '',
     commercialRegion: e.commercial_region ?? '',

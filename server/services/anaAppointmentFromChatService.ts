@@ -4,8 +4,10 @@ import {
   findOpenAppointmentForConversationAndEnterprise,
   updateAppointmentSchedule,
 } from '../repositories/appointmentRepository.js';
+import { applyHandoffAfterAppointmentConfirmation } from '../repositories/conversationRepository.js';
 import { assignAppointment } from './appointmentService.js';
-import { normalizeAnaAppointmentDateYmd, parseAppointmentStartEndInSaoPaulo } from '../utils/appointmentDateNormalize.js';
+import { parseAppointmentStartEndInSaoPaulo } from '../utils/appointmentDateNormalize.js';
+import { resolveAppointmentDateTimeFromContext } from '../utils/appointmentRelativeDateResolve.js';
 
 async function persistBrokerOnConversationIfUnset(conversationId: number, brokerId: number | null | undefined): Promise<void> {
   if (brokerId == null || brokerId <= 0) return;
@@ -17,8 +19,10 @@ async function persistBrokerOnConversationIfUnset(conversationId: number, broker
 
 /**
  * Registra ou atualiza agendamento quando a ANA confirma data/hora no JSON estruturado.
+ * - Data/hora: `resolveAppointmentDateTimeFromContext` (texto do cliente + fallback JSON) em America/Sao_Paulo.
  * - Reagendamento: atualiza o registro aberto da mesma conversa + empreendimento (mesmo corretor).
  * - Novo: cria um compromisso; corretor = já atribuído à conversa ou distribuição automática.
+ * - Após sucesso: conversa em handoff com o mesmo corretor do agendamento (quando houver).
  */
 export async function registerAnaAppointmentIfConfirmed(args: {
   conversationId: number;
@@ -30,18 +34,27 @@ export async function registerAnaAppointmentIfConfirmed(args: {
   appointmentDateYmd: string | null | undefined;
   appointmentTimeHm: string | null | undefined;
   notes: string | null | undefined;
-  /** Corretor já vinculado à conversa/handoff — tem prioridade sobre distribuição automática. */
+  /** Corretor já vinculado à conversa — prioridade na distribuição do agendamento. */
   brokerId?: number | null;
+  /** Falas do usuário (inclui atual) para resolver "amanhã", "quinta às 15h", etc. */
+  userUtteranceText?: string;
 }): Promise<void> {
   if (!args.appointmentConfirmed) return;
-  const dateRaw = args.appointmentDateYmd?.trim();
-  const time = args.appointmentTimeHm?.trim();
-  if (!dateRaw || !time) return;
 
-  const dateNorm = normalizeAnaAppointmentDateYmd(dateRaw);
-  if (!dateNorm) return;
+  const resolved = resolveAppointmentDateTimeFromContext({
+    referenceNow: new Date(),
+    userText: (args.userUtteranceText ?? '').trim(),
+    llmDateYmd: args.appointmentDateYmd,
+    llmTimeHm: args.appointmentTimeHm,
+  });
+  if (!resolved) {
+    console.warn('[ANA APPT] não foi possível resolver data/hora (contexto + JSON)', {
+      conversationId: args.conversationId,
+    });
+    return;
+  }
 
-  const parsed = parseAppointmentStartEndInSaoPaulo(dateNorm, time);
+  const parsed = parseAppointmentStartEndInSaoPaulo(resolved.dateYmd, resolved.timeHm);
   if (!parsed) return;
 
   const conversationBroker =
@@ -67,6 +80,8 @@ export async function registerAnaAppointmentIfConfirmed(args: {
       });
       await persistBrokerOnConversationIfUnset(args.conversationId, existing.broker_id);
       await persistBrokerOnConversationIfUnset(args.conversationId, conversationBroker);
+      const finalBroker = conversationBroker ?? existing.broker_id ?? null;
+      await applyHandoffAfterAppointmentConfirmation(args.conversationId, finalBroker);
     }
     return;
   }
@@ -81,7 +96,7 @@ export async function registerAnaAppointmentIfConfirmed(args: {
   }
 
   try {
-    await assignAppointment({
+    const result = await assignAppointment({
       customerName: args.customerName || 'Cliente',
       customerPhone: args.customerPhone || '',
       enterpriseId: args.enterpriseId,
@@ -96,7 +111,10 @@ export async function registerAnaAppointmentIfConfirmed(args: {
     console.log('[ANA APPT] registrado (INSERT)', {
       conversationId: args.conversationId,
       startAt: parsed.startAt.toISOString(),
+      brokerId: result.appointment.brokerId,
     });
+    const finalBroker = conversationBroker ?? result.appointment.brokerId ?? null;
+    await applyHandoffAfterAppointmentConfirmation(args.conversationId, finalBroker);
   } catch (e) {
     console.error('[ANA APPT] falha ao registrar', e instanceof Error ? e.message : e);
   }
