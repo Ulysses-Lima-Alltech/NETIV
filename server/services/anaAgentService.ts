@@ -1,6 +1,10 @@
 import type { EnterpriseRow } from '../repositories/enterpriseRepository.js';
 import { parseAddons, normalizeFileCategory, type FileCategory } from '../repositories/enterpriseRepository.js';
 import { isSimpleOpeningGreeting, pickRandomGreetingReply } from '../utils/anaReplyFinalize.js';
+import type { AppointmentPreflight } from '../utils/anaAppointmentIntent.js';
+import { ANA_FALLBACK_APPOINTMENT_FLOW_REPLY } from '../utils/anaAppointmentIntent.js';
+
+export type { AppointmentPreflight } from '../utils/anaAppointmentIntent.js';
 
 export interface AnaStructuredReply {
   reply: string;
@@ -44,6 +48,8 @@ AGENDAMENTO (appointment_*):
 - Só use appointment_confirmed: true quando cliente e você combinarem data e horário com confirmação explícita (ex.: "fechado", "confirmado", "agendado para").
 - Preencha appointment_date (AAAA-MM-DD) e appointment_time (HH:MM) no fuso do cliente/Brasil.
 - Se não houver confirmação clara, mantenha appointment_confirmed false e campos null.
+- Leia o histórico: data/hora/empreendimento podem estar em mensagens anteriores; una tudo antes de responder.
+- Se o cliente pedir mudar/remarcar/alterar horário, trate como atualização do mesmo pedido de visita — preencha appointment_date/appointment_time com a NOVA combinação quando ficar claro, sem ignorar o que já foi dito.
 
 ENVIO DE ARQUIVOS:
 - Quando o cliente pedir book, material, catálogo, PDF, tabela, unidades, plantas ou similar E essa categoria existir na lista abaixo, SEMPRE preencha send_file_category com a categoria exata. O sistema enviará o arquivo automaticamente pelo WhatsApp.
@@ -231,6 +237,8 @@ export interface BuildAnaSystemPromptOpts {
   customerNameMentionsSoFar?: number;
   /** Classificação atual da conversa no banco (referência para triagem). */
   conversationClassification?: string | null;
+  /** Pré-detecção na engine: fluxo de agendamento (prioridade sobre triagem genérica). */
+  appointmentPreflight?: AppointmentPreflight | null;
 }
 
 export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
@@ -242,11 +250,26 @@ export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
         ? opts.allEnterpriseNames!.join(', ')
         : '(nenhum empreendimento ativo cadastrado)';
     const cls = (opts.conversationClassification || 'Novo').trim();
+    const ap = opts.appointmentPreflight;
+    const appointmentPriority =
+      ap?.active === true
+        ? `
+
+PRIORIDADE MÁXIMA — FLUXO DE AGENDAMENTO (detectado pelo sistema antes desta chamada):
+- O cliente está agendando visita, alterando horário/data ou complementando data/hora em mensagens curtas. O histórico acima faz parte do MESMO assunto — não reinicie atendimento como se fosse primeiro contato.
+- NÃO volte para triagem genérica de "qual empreendimento do portfólio" se o nome do empreendimento ou o pedido de visita já apareceu no histórico ou na mensagem atual.
+- NÃO use respostas de incompreensão ou "você busca informações sobre..." quando data, horário ou visita já estiverem claros no contexto.
+- Mensagens só com horário (ex.: "amanhã às 14h") devem ser tratadas como continuação do pedido de visita já feito.
+${ap.reschedule ? '- O cliente pediu ALTERAR/REAGENDAR: trate como atualização do mesmo agendamento em andamento; não peça para reconfirmar tudo do zero se já houver combinação anterior no histórico.\n' : ''}${ap.continuationOnly ? '- Esta mensagem parece só complementar data/hora — una com o que o cliente já disse sobre visita nas mensagens anteriores.\n' : ''}- Preencha appointment_date e appointment_time no JSON quando conseguir inferir data/hora; appointment_confirmed só quando houver confirmação explícita combinada.
+- send_file_category: null neste modo (sem arquivo até haver empreendimento ativo no foco).`
+        : '';
+
     return `${base}
 
 TRIAGEM — ainda sem empreendimento vinculado ao foco da conversa.
 Empreendimentos ativos no portfólio (use apenas estes nomes, não invente outros): ${namesList}
 Classificação atual no sistema (referência): "${cls}".
+${appointmentPriority}
 
 - Descubra interesse e qual empreendimento faz sentido para o cliente.
 - Quando o cliente perguntar de forma ampla sobre opções, portfólio, cidade ou tipo (ex.: "o que vocês têm", "tem em Atibaia", "quero ver terrenos", "me mostra as opções") e ainda não houver empreendimento definido, você pode apresentar opções de forma resumida e consultiva usando a lista acima.
@@ -285,6 +308,16 @@ Mapeamento: book = material, catálogo, PDF do empreendimento | unidades = plant
       ? `Nome do cliente conhecido: "${nm}". Menções do nome nas suas respostas anteriores (aproximado): ${mentions}. Meta: pelo menos 3 menções ao longo da conversa.`
       : 'Nome do cliente ainda não identificado — pergunte naturalmente cedo na conversa e use o nome quando souber.';
 
+  const ap = opts.appointmentPreflight;
+  const appointmentScoped =
+    ap?.active === true
+      ? `
+
+AGENDAMENTO (prioridade do sistema):
+- Leia o histórico: o cliente pode estar em sequência agendando visita ou pedindo alteração de horário/data.
+${ap.reschedule ? '- Pedido de REMARCAÇÃO/ALTERAÇÃO: atualize o entendimento; não trate como primeiro agendamento do zero.\n' : ''}- Não use respostas genéricas de incompreensão se data/hora/visita já estiverem no contexto.`
+      : '';
+
   return `${base}
 
 ${LANGUAGE_HINT[e.language_style] || LANGUAGE_HINT.natural}
@@ -292,6 +325,7 @@ ${LANGUAGE_HINT[e.language_style] || LANGUAGE_HINT.natural}
 Foco atual: "${e.name}". Mantenha o foco neste empreendimento em conversas normais.
 
 ${nameHint}
+${appointmentScoped}
 
 Troca de empreendimento:
 - NÃO apresente outros empreendimentos por conta própria. Não misture empreendimentos sem autorização explícita do cliente.
@@ -393,12 +427,15 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
 export function fallbackReplyFromRaw(
   _raw: string,
   userMessage?: string,
-  knownCustomerName?: string | null
+  knownCustomerName?: string | null,
+  appointmentFlow?: boolean
 ): AnaStructuredReply {
   const reply =
     userMessage && isSimpleOpeningGreeting(userMessage)
       ? pickRandomGreetingReply(knownCustomerName)
-      : ANA_FALLBACK_INCOMPREHENSION_REPLY;
+      : appointmentFlow
+        ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
+        : ANA_FALLBACK_INCOMPREHENSION_REPLY;
   return {
     reply,
     classification: 'Novo',

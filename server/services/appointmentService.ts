@@ -259,6 +259,12 @@ export async function assignAppointment(data: {
       [brokerId]
     );
   }
+  if (data.conversationId != null && brokerId != null && brokerId > 0) {
+    await query(
+      `UPDATE conversations SET assigned_broker_id = COALESCE(assigned_broker_id, $1), updated_at = NOW() WHERE id = $2`,
+      [brokerId, data.conversationId]
+    );
+  }
   const broker = brokerId ? await getCorretorById(brokerId) : null;
   const ent = data.enterpriseId ? await getEnterpriseById(data.enterpriseId) : null;
   return {

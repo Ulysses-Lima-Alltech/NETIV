@@ -23,6 +23,10 @@ export const updateProjectSchema = z.object({
   variables: projectVariablesSchema.optional(),
   promptAddons: z.array(z.string().max(4000)).max(50).optional(),
   allowMaterialSending: z.boolean().optional(),
+  city: z.string().max(160).optional(),
+  stateUf: z.string().max(2).optional(),
+  commercialRegion: z.string().max(240).optional(),
+  ibgeCode: z.string().max(12).optional(),
 });
 
 export type CreateProjectDto = z.infer<typeof createProjectSchema>;

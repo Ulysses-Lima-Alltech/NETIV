@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppNav } from '../components/AppNav';
 import {
   projectsApi,
@@ -8,6 +8,9 @@ import {
   type FileCategory,
   type PromptAddonsHistoryItem,
 } from '../api/client';
+import { SearchableMunicipioCombobox } from '../components/SearchableMunicipioCombobox';
+import { findMunicipioByIbge, loadMunicipiosIbge } from '../data/municipiosIbgeCache';
+import type { MunicipioIbge } from '../types/municipioIbge';
 
 const CAT_LABEL: Record<FileCategory, string> = {
   book: 'Book',
@@ -63,6 +66,13 @@ export function EmpreendimentosPage() {
   const [detail, setDetail] = useState<(EmpreendimentoDTO & { knowledgeFiles: KnowledgeFileItem[] }) | null>(null);
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
+  const [city, setCity] = useState('');
+  const [stateUf, setStateUf] = useState('');
+  /** Região geográfica intermediária (IBGE) — mesmo campo `commercialRegion` na API */
+  const [commercialRegion, setCommercialRegion] = useState('');
+  /** Região geográfica imediata (IBGE), só exibição */
+  const [ibgeRegiaoImediata, setIbgeRegiaoImediata] = useState('');
+  const [ibgeCode, setIbgeCode] = useState('');
   const [status, setStatus] = useState<'ativo' | 'inativo'>('ativo');
   const [languageStyle, setLanguageStyle] = useState<EmpreendimentoDTO['languageStyle']>('natural');
   const [variables, setVariables] = useState<ProjectVariables>(emptyVars());
@@ -106,6 +116,11 @@ export function EmpreendimentosPage() {
         setDetail(d);
         setName(d.name);
         setSlug(d.slug);
+        setCity(d.city ?? '');
+        setStateUf(d.stateUf ?? '');
+        setCommercialRegion((d.commercialRegion ?? '').trim());
+        setIbgeRegiaoImediata('');
+        setIbgeCode(d.ibgeCode ?? '');
         setStatus(d.status);
         setLanguageStyle(d.languageStyle);
         setVariables({ ...emptyVars(), ...(d.variables ?? {}) });
@@ -155,6 +170,10 @@ export function EmpreendimentosPage() {
         variables,
         promptAddons,
         allowMaterialSending,
+        city: city.trim(),
+        stateUf: stateUf.trim(),
+        commercialRegion: commercialRegion.trim(),
+        ibgeCode: ibgeCode.trim(),
       })
       .then(() => { loadList(); loadDetail(selectedId); })
       .catch((e) => setErr(e instanceof Error ? e.message : 'Erro ao salvar'))
@@ -201,6 +220,37 @@ export function EmpreendimentosPage() {
   const knowledgeActive = files.filter((f) => f.isActive !== false);
   const knowledgeInactive = files.filter((f) => f.isActive === false);
   const knowledgeDisplayed = showInactiveKnowledge ? files : knowledgeActive;
+
+  const selectedIbgeForMunicipio = useMemo(() => {
+    const n = parseInt(ibgeCode.replace(/\D/g, ''), 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [ibgeCode]);
+
+  /** Alinha região IBGE ao código do município (base local) */
+  useEffect(() => {
+    if (selectedId == null || detail == null) return;
+    const id = selectedIbgeForMunicipio;
+    if (id == null) {
+      setIbgeRegiaoImediata('');
+      return;
+    }
+    let cancelled = false;
+    loadMunicipiosIbge()
+      .then((rows) => {
+        if (cancelled) return;
+        const m = findMunicipioByIbge(rows, id);
+        if (m) {
+          setCity(m.n);
+          setStateUf(m.u);
+          if (m.rint) setCommercialRegion(m.rint);
+          setIbgeRegiaoImediata(m.ri ?? '');
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, detail?.id, selectedIbgeForMunicipio]);
 
   /* ── Render ── */
 
@@ -355,6 +405,55 @@ export function EmpreendimentosPage() {
                     <span className={label}>Slug</span>
                     <input className={field} value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="evora" />
                   </label>
+                  <div className="block sm:col-span-2">
+                    <span className={label}>Cidade (município IBGE)</span>
+                    <SearchableMunicipioCombobox
+                      valueIbge={selectedIbgeForMunicipio}
+                      onSelect={(m: MunicipioIbge) => {
+                        setCity(m.n);
+                        setStateUf(m.u);
+                        setIbgeCode(String(m.i));
+                        setCommercialRegion(m.rint ?? '');
+                        setIbgeRegiaoImediata(m.ri ?? '');
+                      }}
+                      onClear={() => {
+                        setCity('');
+                        setStateUf('');
+                        setIbgeCode('');
+                        setCommercialRegion('');
+                        setIbgeRegiaoImediata('');
+                      }}
+                      disabled={saving}
+                      placeholder="Digite pelo menos 2 letras (ex.: Atibaia, Jacareí)…"
+                    />
+                    <p className="mt-1.5 text-[12px] text-[#9CA3AF]">
+                      Lista oficial IBGE (arquivo local). A UF e a região geográfica são preenchidas ao escolher o
+                      município.
+                      {stateUf ? (
+                        <span className="ml-1 font-medium text-[#6B7280]"> UF: {stateUf}</span>
+                      ) : null}
+                    </p>
+                  </div>
+                  <div className="block sm:col-span-2">
+                    <span className={label}>Região geográfica intermediária (IBGE)</span>
+                    <div
+                      className={`${field} bg-[#F9FAFB] text-[#374151] cursor-default`}
+                      title="Derivada do município — usada para busca por proximidade (ex.: mesma RGINT)"
+                    >
+                      {commercialRegion || '—'}
+                    </div>
+                    {ibgeRegiaoImediata ? (
+                      <p className="mt-1.5 text-[12px] text-[#9CA3AF]">
+                        Região geográfica imediata (IBGE):{' '}
+                        <span className="font-medium text-[#6B7280]">{ibgeRegiaoImediata}</span>
+                      </p>
+                    ) : (
+                      <p className="mt-1.5 text-[12px] text-[#9CA3AF]">
+                        Preenchida ao selecionar o município. A intermediária agrupa mais cidades e é a mais indicada para
+                        a ANA sugerir alternativas na região quando não houver na cidade exata.
+                      </p>
+                    )}
+                  </div>
                   <label className="block max-w-[220px]">
                     <span className={label}>Status</span>
                     <select className={`${fieldSelect} w-full`} value={status} onChange={(e) => setStatus(e.target.value as 'ativo' | 'inativo')}>
@@ -363,6 +462,37 @@ export function EmpreendimentosPage() {
                     </select>
                   </label>
                 </div>
+                <details className="mt-5 group">
+                  <summary className="text-[13px] font-medium text-[#6B7280] cursor-pointer list-none flex items-center gap-2 [&::-webkit-details-marker]:hidden">
+                    <span className="inline-flex w-4 h-4 items-center justify-center rounded border border-[#E5E7EB] text-[10px] text-[#9CA3AF] group-open:rotate-90 transition-transform">
+                      ›
+                    </span>
+                    Uso interno — código IBGE (opcional)
+                  </summary>
+                  <p className="text-[12px] text-[#9CA3AF] mt-2 mb-2 max-w-xl">
+                    O código IBGE é preenchido automaticamente ao selecionar o município. Você pode editar apenas em caso
+                    de correção pontual.
+                  </p>
+                  <label className="block max-w-[200px]">
+                    <span className={label}>Código IBGE do município</span>
+                    <input
+                      className={field}
+                      inputMode="numeric"
+                      value={ibgeCode}
+                      onChange={(e) => {
+                        const v = e.target.value.replace(/\D/g, '').slice(0, 12);
+                        setIbgeCode(v);
+                        if (!v) {
+                          setCity('');
+                          setStateUf('');
+                          setCommercialRegion('');
+                          setIbgeRegiaoImediata('');
+                        }
+                      }}
+                      placeholder="Ex.: 3504107"
+                    />
+                  </label>
+                </details>
               </section>
 
               {/* ── Card 2: Linguagem ── */}

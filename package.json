@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "fetch-municipios-ibge": "node scripts/fetch-municipios-ibge.mjs",
     "dev": "vite",
     "dev:server": "cd server && npm run dev",
     "dev:all": "concurrently \"npm run dev:server\" \"npm run dev\"",

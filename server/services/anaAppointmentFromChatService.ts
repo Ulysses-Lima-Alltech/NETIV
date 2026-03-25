@@ -1,20 +1,24 @@
-import { findDuplicateAppointmentForConversation } from '../repositories/appointmentRepository.js';
+import { query } from '../db/pg.js';
+import {
+  findDuplicateAppointmentForConversation,
+  findOpenAppointmentForConversationAndEnterprise,
+  updateAppointmentSchedule,
+} from '../repositories/appointmentRepository.js';
 import { assignAppointment } from './appointmentService.js';
+import { normalizeAnaAppointmentDateYmd, parseAppointmentStartEndInSaoPaulo } from '../utils/appointmentDateNormalize.js';
 
-function parseLocalStartEnd(dateYmd: string, timeHm: string): { startAt: Date; endAt: Date } | null {
-  const d = dateYmd.trim();
-  const t = timeHm.trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
-  if (!/^\d{1,2}:\d{2}$/.test(t)) return null;
-  const startAt = new Date(`${d}T${t}:00`);
-  if (Number.isNaN(startAt.getTime())) return null;
-  const endAt = new Date(startAt.getTime() + 60 * 60 * 1000);
-  return { startAt, endAt };
+async function persistBrokerOnConversationIfUnset(conversationId: number, brokerId: number | null | undefined): Promise<void> {
+  if (brokerId == null || brokerId <= 0) return;
+  await query(
+    `UPDATE conversations SET assigned_broker_id = COALESCE(assigned_broker_id, $1), updated_at = NOW() WHERE id = $2`,
+    [brokerId, conversationId]
+  );
 }
 
 /**
- * Registra agendamento na agenda quando a ANA confirma data/hora no JSON estruturado.
- * Ignora duplicatas próximas na mesma conversa.
+ * Registra ou atualiza agendamento quando a ANA confirma data/hora no JSON estruturado.
+ * - Reagendamento: atualiza o registro aberto da mesma conversa + empreendimento (mesmo corretor).
+ * - Novo: cria um compromisso; corretor = já atribuído à conversa ou distribuição automática.
  */
 export async function registerAnaAppointmentIfConfirmed(args: {
   conversationId: number;
@@ -26,19 +30,53 @@ export async function registerAnaAppointmentIfConfirmed(args: {
   appointmentDateYmd: string | null | undefined;
   appointmentTimeHm: string | null | undefined;
   notes: string | null | undefined;
-  /** Corretor já vinculado ao handoff, se houver — senão distribui automaticamente. */
+  /** Corretor já vinculado à conversa/handoff — tem prioridade sobre distribuição automática. */
   brokerId?: number | null;
 }): Promise<void> {
   if (!args.appointmentConfirmed) return;
-  const date = args.appointmentDateYmd?.trim();
+  const dateRaw = args.appointmentDateYmd?.trim();
   const time = args.appointmentTimeHm?.trim();
-  if (!date || !time) return;
-  const parsed = parseLocalStartEnd(date, time);
+  if (!dateRaw || !time) return;
+
+  const dateNorm = normalizeAnaAppointmentDateYmd(dateRaw);
+  if (!dateNorm) return;
+
+  const parsed = parseAppointmentStartEndInSaoPaulo(dateNorm, time);
   if (!parsed) return;
+
+  const conversationBroker =
+    args.brokerId != null && args.brokerId > 0 ? args.brokerId : null;
+
+  const existing = await findOpenAppointmentForConversationAndEnterprise(args.conversationId, args.enterpriseId);
+
+  if (existing) {
+    const notes =
+      args.notes?.trim() ||
+      existing.notes ||
+      'Agendamento atualizado pelo chat pela Ana.';
+    const updated = await updateAppointmentSchedule(existing.id, {
+      startAt: parsed.startAt,
+      endAt: parsed.endAt,
+      notes,
+    });
+    if (updated) {
+      console.log('[ANA APPT] reagendamento (UPDATE)', {
+        conversationId: args.conversationId,
+        appointmentId: existing.id,
+        startAt: parsed.startAt.toISOString(),
+      });
+      await persistBrokerOnConversationIfUnset(args.conversationId, existing.broker_id);
+      await persistBrokerOnConversationIfUnset(args.conversationId, conversationBroker);
+    }
+    return;
+  }
 
   const dup = await findDuplicateAppointmentForConversation(args.conversationId, parsed.startAt);
   if (dup) {
-    console.log('[ANA APPT] ignorado — possível duplicata', { conversationId: args.conversationId });
+    console.log('[ANA APPT] ignorado — duplicata próxima no tempo', {
+      conversationId: args.conversationId,
+      dupId: dup.id,
+    });
     return;
   }
 
@@ -52,10 +90,13 @@ export async function registerAnaAppointmentIfConfirmed(args: {
       endAt: parsed.endAt,
       notes: args.notes?.trim() || 'Agendamento confirmado no chat pela Ana.',
       source: 'ANA',
-      brokerId: args.brokerId != null && args.brokerId > 0 ? args.brokerId : undefined,
+      brokerId: conversationBroker ?? undefined,
       conversationId: args.conversationId,
     });
-    console.log('[ANA APPT] registrado', { conversationId: args.conversationId, startAt: parsed.startAt.toISOString() });
+    console.log('[ANA APPT] registrado (INSERT)', {
+      conversationId: args.conversationId,
+      startAt: parsed.startAt.toISOString(),
+    });
   } catch (e) {
     console.error('[ANA APPT] falha ao registrar', e instanceof Error ? e.message : e);
   }

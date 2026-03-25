@@ -110,6 +110,43 @@ export async function findDuplicateAppointmentForConversation(
   return rows[0] ?? null;
 }
 
+/**
+ * Agendamento ainda editável para a mesma conversa + empreendimento (reagendamento / uma linha ativa).
+ */
+export async function findOpenAppointmentForConversationAndEnterprise(
+  conversationId: number,
+  enterpriseId: number
+): Promise<AppointmentRow | null> {
+  const { rows } = await query<AppointmentRow>(
+    `SELECT * FROM appointments
+     WHERE conversation_id = $1
+       AND enterprise_id = $2
+       AND status IN ('CONFIRMADO', 'PENDENTE_CONFIRMACAO', 'PENDENTE_DISTRIBUICAO')
+     ORDER BY updated_at DESC, start_at DESC
+     LIMIT 1`,
+    [conversationId, enterpriseId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function updateAppointmentSchedule(
+  id: number,
+  data: { startAt: Date; endAt: Date; notes?: string | null }
+): Promise<AppointmentRow | null> {
+  if (data.notes !== undefined && data.notes !== null) {
+    const { rows } = await query<AppointmentRow>(
+      `UPDATE appointments SET start_at = $1, end_at = $2, notes = $3, updated_at = NOW() WHERE id = $4 RETURNING *`,
+      [data.startAt, data.endAt, data.notes, id]
+    );
+    return rows[0] ?? null;
+  }
+  const { rows } = await query<AppointmentRow>(
+    `UPDATE appointments SET start_at = $1, end_at = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
+    [data.startAt, data.endAt, id]
+  );
+  return rows[0] ?? null;
+}
+
 export async function updateAppointmentStatus(id: number, status: string): Promise<AppointmentRow | null> {
   if (!APPOINTMENT_STATUSES.includes(status as AppointmentStatus)) return null;
   const { rows } = await query<AppointmentRow>(

@@ -294,6 +294,12 @@ export interface EmpreendimentoDTO {
   variables: ProjectVariables;
   promptAddons: string[];
   allowMaterialSending?: boolean;
+  /** Localização cadastral */
+  city?: string;
+  stateUf?: string;
+  commercialRegion?: string;
+  /** Opcional; integrações / uso interno */
+  ibgeCode?: string;
   createdAt: string;
   updatedAt: string;
   knowledgeFiles?: KnowledgeFileItem[];
@@ -326,6 +332,10 @@ export const projectsApi = {
       variables?: ProjectVariables;
       promptAddons?: string[];
       allowMaterialSending?: boolean;
+      city?: string;
+      stateUf?: string;
+      commercialRegion?: string;
+      ibgeCode?: string;
     }
   ) => request<ProjectListItem>(`/projects/${id}`, { method: 'PATCH', body }),
   promptAddonsHistory: (id: number) =>

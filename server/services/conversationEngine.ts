@@ -37,6 +37,11 @@ import {
   isSimpleOpeningGreeting,
   pickRandomGreetingReply,
 } from '../utils/anaReplyFinalize.js';
+import {
+  buildUserUtterancesContext,
+  computeAppointmentPreflight,
+  ANA_FALLBACK_APPOINTMENT_FLOW_REPLY,
+} from '../utils/anaAppointmentIntent.js';
 import { extractLeadDataFromConversation } from './leadWalletExtractionService.js';
 import { registerAnaAppointmentIfConfirmed } from './anaAppointmentFromChatService.js';
 
@@ -308,11 +313,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let activeEnterprisesForContext: EnterpriseRow[] | null = null;
 
     const listedForNames = await listEnterprises(true);
+    const fullUserUtterances = buildUserUtterancesContext(rows);
+    const appointmentPreflight = computeAppointmentPreflight(trimmed, fullUserUtterances);
+    const textForEnterpriseMatch = fullUserUtterances.trim() || trimmed;
+
     if (explicitSwitch) {
       activeEnterprisesForContext = listedForNames;
-      matched = tryMatchEnterpriseByLastMention(activeEnterprisesForContext, trimmed);
+      matched = tryMatchEnterpriseByLastMention(activeEnterprisesForContext, textForEnterpriseMatch);
     } else {
-      matched = await tryMatchActiveEnterpriseId(trimmed);
+      matched = await tryMatchActiveEnterpriseId(textForEnterpriseMatch);
     }
 
     if (matched) {
@@ -359,6 +368,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       knownCustomerName: effectiveConv.customer_name,
       customerNameMentionsSoFar: effectiveConv.ana_customer_name_mentions ?? 0,
       conversationClassification: effectiveConv.classification,
+      appointmentPreflight,
     };
     const systemPrompt = buildAnaSystemPrompt(promptOpts);
 
@@ -374,7 +384,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     messages.push({ role: 'user', content: trimmed });
 
     const model = aiConfig.modelColdLead || aiConfig.modelHotLead || 'gpt-4o-mini';
-    console.log('[ANA DEBUG] building AI context', { mode, model });
+    console.log('[ANA DEBUG] building AI context', {
+      mode,
+      model,
+      appointmentPreflight,
+      enterpriseMatchTextLen: textForEnterpriseMatch.length,
+    });
     console.log('[ANA DEBUG] calling AI provider', { model });
     const result = await generateChatCompletion({
       apiKey: aiConfig.openaiApiKey,
@@ -399,13 +414,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationId,
         contentPreview: result.content.slice(0, 160),
       });
-      structured = fallbackReplyFromRaw(result.content, trimmed, effectiveConv.customer_name);
+      structured = fallbackReplyFromRaw(
+        result.content,
+        trimmed,
+        effectiveConv.customer_name,
+        appointmentPreflight.active
+      );
     }
     if (!structured) {
       structured = {
         reply: isSimpleOpeningGreeting(trimmed)
           ? pickRandomGreetingReply(effectiveConv.customer_name)
-          : ANA_FALLBACK_INCOMPREHENSION_REPLY,
+          : appointmentPreflight.active
+            ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
+            : ANA_FALLBACK_INCOMPREHENSION_REPLY,
         classification: 'Novo',
         lead_temperature: null,
         project: ent?.name || '',

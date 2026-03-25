@@ -57,6 +57,10 @@ export interface EnterpriseRow {
   language_style: string;
   prompt_addons: string;
   allow_material_sending?: boolean;
+  city?: string | null;
+  state_uf?: string | null;
+  commercial_region?: string | null;
+  ibge_code?: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -151,6 +155,10 @@ export async function updateEnterprise(
     languageStyle?: LanguageStyle;
     promptAddons?: string[];
     allowMaterialSending?: boolean;
+    city?: string | null;
+    stateUf?: string | null;
+    commercialRegion?: string | null;
+    ibgeCode?: string | null;
   }
 ): Promise<EnterpriseRow | null> {
   const cur = await getEnterpriseById(id);
@@ -166,6 +174,22 @@ export async function updateEnterprise(
   const prompt_addons = u.promptAddons !== undefined ? JSON.stringify(u.promptAddons) : cur.prompt_addons;
   const allow_material_sending =
     u.allowMaterialSending !== undefined ? u.allowMaterialSending : cur.allow_material_sending ?? true;
+
+  const city =
+    u.city !== undefined ? ((u.city ?? '').trim() || null) : (cur.city ?? null);
+  const state_uf =
+    u.stateUf !== undefined
+      ? ((u.stateUf ?? '').trim().toUpperCase().slice(0, 2) || null)
+      : (cur.state_uf ?? null);
+  const commercial_region =
+    u.commercialRegion !== undefined
+      ? ((u.commercialRegion ?? '').trim() || null)
+      : (cur.commercial_region ?? null);
+  const ibge_code =
+    u.ibgeCode !== undefined
+      ? ((u.ibgeCode ?? '').replace(/\D/g, '').slice(0, 12) || null)
+      : (cur.ibge_code ?? null);
+
   if (u.name !== undefined && !name) throw new Error('Nome obrigatório.');
   if (u.name !== undefined && name !== cur.name) {
     const d = await query(`SELECT id FROM enterprises WHERE name = $1 AND id != $2`, [name, id]);
@@ -173,9 +197,23 @@ export async function updateEnterprise(
   }
   const { rows } = await query<EnterpriseRow>(
     `UPDATE enterprises SET name = $1, slug = $2, status = $3, language_style = $4, prompt_addons = $5,
-     allow_material_sending = $7, updated_at = NOW()
+     allow_material_sending = $7,
+     city = $8, state_uf = $9, commercial_region = $10, ibge_code = $11,
+     updated_at = NOW()
      WHERE id = $6 RETURNING *`,
-    [name, slug, status, language_style, prompt_addons, id, allow_material_sending]
+    [
+      name,
+      slug,
+      status,
+      language_style,
+      prompt_addons,
+      id,
+      allow_material_sending,
+      city,
+      state_uf,
+      commercial_region,
+      ibge_code,
+    ]
   );
   return rows[0] ?? null;
 }
@@ -454,6 +492,10 @@ export function enterpriseToPublic(e: EnterpriseRow, vars: Record<string, string
     variables: varsToFrontend(vars),
     promptAddons: parseAddons(e.prompt_addons),
     allowMaterialSending: e.allow_material_sending !== false,
+    city: e.city ?? '',
+    stateUf: e.state_uf ?? '',
+    commercialRegion: e.commercial_region ?? '',
+    ibgeCode: e.ibge_code ?? '',
     createdAt: e.created_at.toISOString(),
     updatedAt: e.updated_at.toISOString(),
   };

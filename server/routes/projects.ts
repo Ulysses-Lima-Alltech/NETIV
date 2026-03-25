@@ -178,6 +178,10 @@ router.patch('/:id', async (req, res) => {
       languageStyle: d.languageStyle,
       promptAddons: d.promptAddons,
       allowMaterialSending: d.allowMaterialSending,
+      city: d.city,
+      stateUf: d.stateUf,
+      commercialRegion: d.commercialRegion,
+      ibgeCode: d.ibgeCode,
     });
     if (!ent) return res.status(404).json({ error: 'Não encontrado.' });
     if (variables) await setVariables(id, variables);
