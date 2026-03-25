@@ -202,10 +202,10 @@ function tryMatchEnterpriseByLastMention(activeEnterprises: EnterpriseRow[], mes
     const slugNorm = normText(p.slug || '');
 
     let lastIndex = -1;
-    if (nameNorm.length >= 2) {
+    if (nameNorm.length >= 3) {
       lastIndex = Math.max(lastIndex, tail.lastIndexOf(nameNorm));
     }
-    if (slugNorm.length >= 2) {
+    if (slugNorm.length >= 3) {
       lastIndex = Math.max(lastIndex, tail.lastIndexOf(slugNorm));
     }
 
@@ -353,13 +353,28 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const fullUserUtterances = buildUserUtterancesContext(rows);
     const locationQueryContext = resolveEnterpriseLocationContext(trimmed, fullUserUtterances, listedForNames);
     const appointmentPreflight = computeAppointmentPreflight(trimmed, fullUserUtterances);
-    const textForEnterpriseMatch = fullUserUtterances.trim() || trimmed;
+    /** Com consulta por localização, o match por nome não usa histórico (evita foco errado, ex.: outro empreendimento citado antes). */
+    const textForEnterpriseMatch = explicitSwitch
+      ? fullUserUtterances.trim() || trimmed
+      : locationQueryContext
+        ? trimmed
+        : fullUserUtterances.trim() || trimmed;
 
     if (explicitSwitch) {
       activeEnterprisesForContext = listedForNames;
       matched = tryMatchEnterpriseByLastMention(activeEnterprisesForContext, textForEnterpriseMatch);
     } else {
       matched = await tryMatchActiveEnterpriseId(textForEnterpriseMatch);
+    }
+
+    if (
+      matched &&
+      locationQueryContext &&
+      !locationQueryContext.isEmpty &&
+      locationQueryContext.filteredEnterpriseIds.length > 0 &&
+      !locationQueryContext.filteredEnterpriseIds.includes(matched)
+    ) {
+      matched = null;
     }
 
     if (matched) {
@@ -408,7 +423,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       mode === 'scoped'
         ? (activeEnterprisesForContext ?? listedForNames).map((e) => e.name)
         : listedForNames.map((e) => e.name);
-    if (mode === 'triage' && locationQueryContext) {
+    if (locationQueryContext) {
       allEnterpriseNames = locationQueryContext.availableEnterprises.map((e) => e.name);
     }
     const promptOpts: BuildAnaSystemPromptOpts = {

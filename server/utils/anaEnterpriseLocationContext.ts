@@ -25,6 +25,8 @@ export interface LocationQueryContext {
   userMentionLabel: string;
   matchMethod: 'city' | 'region';
   availableEnterprises: LocationEnterprisePayload[];
+  /** IDs dos empreendimentos ativos do resultado filtrado (para bloquear match de outro foco). */
+  filteredEnterpriseIds: number[];
   /** Lista vazia no banco para o critério usado. */
   isEmpty: boolean;
 }
@@ -94,35 +96,41 @@ function toPayload(e: EnterpriseRow): LocationEnterprisePayload {
   };
 }
 
+function idsFrom(rows: EnterpriseRow[]): number[] {
+  return rows.map((e) => e.id);
+}
+
+/** "Região Metropolitana de Campinas" ↔ menção "campinas" no texto. */
+function hayMatchesCommercialRegion(hay: string, commercialRegion: string): boolean {
+  const r = normGeoText(commercialRegion);
+  if (r.length < 4) return false;
+  if (hay.includes(r)) return true;
+  const tokens = r.split(/[^a-z0-9]+/).filter((t) => t.length >= 5);
+  return tokens.some((t) => hay.includes(t));
+}
+
+/** Indícios de pergunta por localização (evita ativar só por menção acidental à região). */
+const LOCATION_QUERY_HINT =
+  /\b(em|na|no|pra|regi|lote|cidade|local|onde|qual|quais|o que|tem|tem algo|algum|empreendimentos|oportunidades|dispon|marcar|visita|mostra|sabe|faz|trabalha|atende|vc|vcs|voces|vocês)\b/i;
+
+function enterprisesMatchingCommercialRegionInText(text: string, enterprises: EnterpriseRow[]): EnterpriseRow[] {
+  const hay = normGeoText(text);
+  return enterprises.filter((e) => e.commercial_region && hayMatchesCommercialRegion(hay, e.commercial_region));
+}
+
+function pickDisplayRegionLabel(rows: EnterpriseRow[]): string {
+  const sorted = [...rows].sort(
+    (a, b) => (b.commercial_region || '').length - (a.commercial_region || '').length
+  );
+  return (sorted[0]?.commercial_region || 'região').trim();
+}
+
 function ibgeRegionMatchesEnterprise(m: MunicipioIbge, e: EnterpriseRow): boolean {
   const cr = normGeoText(e.commercial_region || '');
   if (!cr) return false;
   const ri = normGeoText(m.ri);
   const rint = normGeoText(m.rint);
   return cr === ri || cr === rint || cr.includes(ri) || cr.includes(rint) || ri.includes(cr) || rint.includes(cr);
-}
-
-/**
- * Região comercial cadastrada em algum empreendimento ativo cujo nome aparece na mensagem.
- */
-function findCommercialRegionMentionInMessage(text: string, enterprises: EnterpriseRow[]): string | null {
-  const hay = normGeoText(text);
-  const seen = new Map<string, string>();
-  for (const e of enterprises) {
-    const r = (e.commercial_region || '').trim();
-    if (r.length < 4) continue;
-    const k = normGeoText(r);
-    if (!seen.has(k)) seen.set(k, r);
-  }
-  const keys = [...seen.keys()].sort((a, b) => b.length - a.length);
-  for (const k of keys) {
-    if (k.length >= 5) {
-      if (hay.includes(k)) return seen.get(k)!;
-    } else if (isPhraseAtWordEdges(hay, k)) {
-      return seen.get(k)!;
-    }
-  }
-  return null;
 }
 
 /**
@@ -149,6 +157,7 @@ export function resolveEnterpriseLocationContext(
         userMentionLabel: m.n,
         matchMethod: 'city',
         availableEnterprises: byCity.map(toPayload),
+        filteredEnterpriseIds: idsFrom(byCity),
         isEmpty: false,
       };
     }
@@ -158,6 +167,7 @@ export function resolveEnterpriseLocationContext(
         userMentionLabel: m.n,
         matchMethod: 'region',
         availableEnterprises: byRegion.map(toPayload),
+        filteredEnterpriseIds: idsFrom(byRegion),
         isEmpty: false,
       };
     }
@@ -165,21 +175,19 @@ export function resolveEnterpriseLocationContext(
       userMentionLabel: m.n,
       matchMethod: 'city',
       availableEnterprises: [],
+      filteredEnterpriseIds: [],
       isEmpty: true,
     };
   }
 
-  const regionLabel = findCommercialRegionMentionInMessage(text, activeEnterprises);
-  if (regionLabel) {
-    const rn = normGeoText(regionLabel);
-    const byRegion = activeEnterprises.filter(
-      (e) => e.commercial_region && normGeoText(e.commercial_region) === rn
-    );
+  const byCommercialRegion = enterprisesMatchingCommercialRegionInText(text, activeEnterprises);
+  if (byCommercialRegion.length > 0 && LOCATION_QUERY_HINT.test(text)) {
     return {
-      userMentionLabel: regionLabel,
+      userMentionLabel: pickDisplayRegionLabel(byCommercialRegion),
       matchMethod: 'region',
-      availableEnterprises: byRegion.map(toPayload),
-      isEmpty: byRegion.length === 0,
+      availableEnterprises: byCommercialRegion.map(toPayload),
+      filteredEnterpriseIds: idsFrom(byCommercialRegion),
+      isEmpty: false,
     };
   }
 

@@ -269,13 +269,17 @@ function buildLocationQueryBlock(loc: LocationQueryContext): string {
         : 'região (fallback após cidade: região IBGE / região comercial do empreendimento)';
   return `
 
-CONSULTA POR LOCALIZAÇÃO — DADOS REAIS DO BANCO (prioridade sobre suposições):
+!!! PRECEDÊNCIA ABSOLUTA — ESTA SEÇÃO SUBSTITUI QUALQUER LISTA GLOBAL DE PORTFÓLIO, EXEMPLOS OU "OUTROS EMPREENDIMENTOS" !!!
+CONSULTA POR LOCALIZAÇÃO — DADOS REAIS DO BANCO (não supor; não inventar):
 Local mencionado pelo cliente: "${loc.userMentionLabel}".
 Critério de busca: ${criteria}.
 ${payload}
-Regras: use SOMENTE os empreendimentos deste JSON ao responder sobre esta cidade/região/localização/disponibilidade neste contexto. É proibido inventar ou sugerir outro nome que não esteja em availableEnterprises.
+Regras obrigatórias:
+- Responda sobre esta cidade/região/localização/disponibilidade usando SOMENTE os nomes em availableEnterprises. Não cite São Paulo, outra cidade ou projeto que não esteja no JSON.
+- Ignore qualquer outra lista de nomes que apareça no prompt (incluindo "portfólio", "outros cadastrados" ou "foco atual") para esta pergunta de localização.
+- É proibido inventar ou sugerir empreendimento fora de availableEnterprises.
 ${emptyRule}
-Não contradiga: se a lista tiver itens, não diga que não há nada na região; se estiver vazia, não invente opções.`;
+Não contradiga o JSON: se a lista tiver itens, não diga que não há nada na região; se estiver vazia, não invente opções.`;
 }
 
 export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
@@ -300,6 +304,15 @@ ${(opts.openAppointmentSummary || '').trim()}
 Trate a mensagem atual como complemento ou remarcação; não reinicie triagem nem repita empreendimento/data/hora já cobertos acima ou no histórico.`
       : '';
 
+    const portfolioLine = loc
+      ? `Lista autorizada para ESTA consulta de localização (única fonte de nomes — não use outro portfólio nem lista global): ${namesList}`
+      : `Empreendimentos ativos no portfólio (use apenas estes nomes, não invente outros): ${namesList}`;
+
+    const triageLocationBullets = loc
+      ? `- O cliente perguntou sobre uma localidade específica: use APENAS availableEnterprises do bloco "CONSULTA POR LOCALIZAÇÃO" e a lista autorizada acima. Não volte ao portfólio geral.
+- Não sugira empreendimento de outra cidade/região fora do filtro. Não diga que não há opções se availableEnterprises não estiver vazio.`
+      : `- Quando o cliente perguntar de forma ampla sobre opções, portfólio, cidade ou tipo (ex.: "o que vocês têm", "tem em Atibaia", "quero ver terrenos", "me mostra as opções") e ainda não houver empreendimento definido, você pode apresentar opções de forma resumida e consultiva usando a lista acima.`;
+
     const appointmentPriority =
       ap?.active === true
         ? `
@@ -315,15 +328,16 @@ ${ap.reschedule ? '- O cliente pediu ALTERAR/REAGENDAR: trate como atualização
 
     return `${base}
 
-TRIAGEM — ainda sem empreendimento vinculado ao foco da conversa.
-Empreendimentos ativos no portfólio (use apenas estes nomes, não invente outros): ${namesList}
+${locationBlock ? `${locationBlock}
+
+` : ''}TRIAGEM — ainda sem empreendimento vinculado ao foco da conversa.
+${portfolioLine}
 Classificação atual no sistema (referência): "${cls}".
 ${openCtx}
 ${appointmentPriority}
-${locationBlock}
 
 - Descubra interesse e qual empreendimento faz sentido para o cliente.
-- Quando o cliente perguntar de forma ampla sobre opções, portfólio, cidade ou tipo (ex.: "o que vocês têm", "tem em Atibaia", "quero ver terrenos", "me mostra as opções") e ainda não houver empreendimento definido, você pode apresentar opções de forma resumida e consultiva usando a lista acima.
+${triageLocationBullets}
 - Se a classificação estiver como Novo e não houver empreendimento focado, priorize destravar o atendimento com poucas opções claras em vez de respostas vazias.
 - Não despeje informação demais; organize em poucas linhas e feche com pergunta contextual ao tema.
 - send_file_category: null neste modo (sem envio de arquivo até haver empreendimento ativo no foco).`;
@@ -341,6 +355,19 @@ Empreendimento inativo. Sem listar outros. send_file_category null.`;
   const know = opts.knowledgeText.trim() ? `\n--- Texto extraído dos arquivos ---\n${opts.knowledgeText.slice(0, 45_000)}` : '';
   const inv = opts.fileInventory.trim() || '(nenhum arquivo cadastrado — send_file_category sempre null)';
   const namesList = (opts.allEnterpriseNames?.length ?? 0) > 0 ? opts.allEnterpriseNames!.join(', ') : '(nenhum outro cadastrado)';
+  const scopedLocationPrecedence =
+    loc && !loc.isEmpty
+      ? `PRECEDÊNCIA — CONSULTA POR LOCALIZAÇÃO (mensagem atual):
+O cliente perguntou sobre empreendimentos em "${loc.userMentionLabel}". Para isto, use SOMENTE o JSON availableEnterprises no bloco CONSULTA POR LOCALIZAÇÃO abaixo. Não liste projetos de outra cidade (ex.: São Paulo) que não estejam nesse JSON.
+O foco em "${e.name}" vale para detalhes deste empreendimento (valores, material, visita); para a localidade perguntada, não contradiga o JSON nem o substitua pelo portfólio global.
+
+`
+      : loc?.isEmpty
+        ? `PRECEDÊNCIA — LOCALIZAÇÃO SEM RESULTADO NO BANCO:
+O cliente perguntou sobre "${loc.userMentionLabel}". Não há empreendimentos ativos cadastrados para esse filtro — diga isso com clareza. Não invente alternativas em outras cidades nem puxe nomes da lista global.
+
+`
+        : '';
   const allowMat = (opts.fileInventory?.trim() || '') !== '';
   const matBlock = allowMat
     ? `Arquivos DESTE empreendimento que você pode enviar pelo WhatsApp (por categoria):
@@ -380,18 +407,19 @@ ${ap.reschedule ? '- Pedido de REMARCAÇÃO/ALTERAÇÃO: atualize o entendimento
 
 ${LANGUAGE_HINT[e.language_style] || LANGUAGE_HINT.natural}
 
-Foco atual: "${e.name}". Mantenha o foco neste empreendimento em conversas normais.
+${scopedLocationPrecedence}${locationBlock ? `${locationBlock}
+
+` : ''}Foco atual: "${e.name}". Mantenha o foco neste empreendimento em conversas normais.
 
 ${nameHint}
 ${openScoped}
 ${appointmentScoped}
-${locationBlock}
 
 Troca de empreendimento:
-- NÃO apresente outros empreendimentos por conta própria. Não misture empreendimentos sem autorização explícita do cliente.
+- NÃO apresente outros empreendimentos por conta própria. Não misture empreendimentos sem autorização explícita do cliente.${loc ? ' Exceção: se houver bloco CONSULTA POR LOCALIZAÇÃO, liste somente os nomes do JSON para a localidade perguntada.' : ''}
 - PODE abrir outras opções quando o cliente pedir explicitamente: "não gostei", "tem outro?", "quero ver outros", "quero comparar", "quero conhecer outras opções".
 - PODE aceitar a troca quando o cliente indicar outro empreendimento específico (ex: "agora quero o Montaresa"). Preencha "project" com o nome exato e o sistema reclassificará.
-- Empreendimentos disponíveis: ${namesList}
+- ${loc ? `Empreendimentos alinhados ao filtro de localização (mesmo conjunto do JSON; não expandir para outras cidades): ${namesList}` : `Empreendimentos disponíveis: ${namesList}`}
 
 ${matBlock}
 

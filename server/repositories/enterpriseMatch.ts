@@ -14,10 +14,11 @@ export async function tryMatchActiveEnterpriseId(userMessage: string): Promise<n
   for (const p of active) {
     const n = norm(p.name);
     const sl = norm(p.slug || '');
-    if (n.length >= 2 && lower.includes(n)) {
+    // Evita match por substring curta ("em", "oi") que polui consultas por localização.
+    if (n.length >= 3 && lower.includes(n)) {
       const score = n.length;
       if (!best || score > best.score) best = { id: p.id, score };
-    } else if (sl.length >= 2 && lower.includes(sl)) {
+    } else if (sl.length >= 3 && lower.includes(sl)) {
       const score = sl.length;
       if (!best || score > best.score) best = { id: p.id, score };
     }
