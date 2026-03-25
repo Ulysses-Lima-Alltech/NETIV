@@ -10,6 +10,7 @@ import { EmpreendimentosPage } from './pages/EmpreendimentosPage';
 import { CorretoresPage } from './pages/CorretoresPage';
 import { AgendaPage } from './pages/AgendaPage';
 import { UsersPage } from './pages/UsersPage';
+import { LoginPage } from './pages/LoginPage';
 
 function App() {
   return (
@@ -80,6 +81,7 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route path="/login" element={<LoginPage />} />
           <Route path="/" element={<Navigate to="/inbox" replace />} />
           <Route path="*" element={<Navigate to="/inbox" replace />} />
         </Routes>
