@@ -25,6 +25,7 @@ import { resolveEnterpriseLocationContext } from '../utils/anaEnterpriseLocation
 import {
   buildAnaSystemPrompt,
   type BuildAnaSystemPromptOpts,
+  type CommercialSnapshot,
   parseAnaJson,
   fallbackReplyFromRaw,
   detectStrongPurchaseIntentForLeadTemperature,
@@ -221,6 +222,56 @@ function hasExplicitHandoffIntent(message: string): boolean {
   return HANDOFF_INTENT_PATTERNS.some((p) => normText(message).includes(p));
 }
 
+/**
+ * Envio de PDF/arquivo após a mensagem de texto — fora do lock da conversa para não bloquear
+ * a próxima mensagem do cliente (upload Meta pode levar até ~60s).
+ */
+async function sendAnaEnterpriseDocumentWhatsApp(params: {
+  conversationId: number;
+  toPhoneNumber: string;
+  ent: EnterpriseRow;
+  enterpriseIdForFile: number;
+  cat: FileCategory;
+}): Promise<void> {
+  const { conversationId, toPhoneNumber, ent, enterpriseIdForFile, cat } = params;
+  const file = await getFileForSend(enterpriseIdForFile, cat);
+  if (!file) {
+    console.warn('[DOC_FLOW] skip arquivo: getFileForSend retornou null (async)', { conversationId, category: cat });
+    return;
+  }
+  const docRes = await sendDocumentMessage(toPhoneNumber, file.path, file.originalName, file.mime, {
+    enterpriseId: enterpriseIdForFile,
+    enterpriseName: ent.name,
+    conversationId,
+    fileCategory: cat,
+    enterpriseFileId: file.id,
+    relativeStoragePath: file.relativeStoragePath,
+    absolutePath: file.path,
+  });
+  if (docRes.success && docRes.metaMessageId) {
+    await logSentFile(conversationId, file.id);
+    await insertMessage(conversationId, 'assistant', `[Arquivo: ${file.originalName}]`, docRes.metaMessageId);
+    console.log('[DOC_SEND] documento enviado com sucesso (async)', {
+      conversationId,
+      metaMessageId: docRes.metaMessageId,
+      file: file.originalName,
+    });
+  } else {
+    console.error('[DOC_SEND] falha sendDocumentMessage (async)', {
+      conversationId,
+      error: docRes.error,
+      code: docRes.code,
+      file: file.originalName,
+    });
+    const fallbackText =
+      `Não consegui enviar o arquivo "${file.originalName}" pelo WhatsApp neste momento. Peça o material a um atendente ou tente novamente em instantes.`;
+    const fixRes = await sendTextMessage(toPhoneNumber, fallbackText);
+    if (fixRes.success && fixRes.metaMessageId) {
+      await insertMessage(conversationId, 'assistant', fallbackText, fixRes.metaMessageId);
+    }
+  }
+}
+
 export async function handleIncomingMessage(ctx: IncomingMessageContext): Promise<void> {
   const { conversationId, userMessage, toPhoneNumber, trailingUserBubbles } = ctx;
 
@@ -408,6 +459,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     else if (ent) mode = 'scoped';
 
     const vars = ent ? await getVariablesMap(ent.id) : {};
+    let commercialSnapshots: CommercialSnapshot[] = [];
+    if (locationQueryContext && locationQueryContext.filteredEnterpriseIds.length > 0) {
+      const byId = new Map(listedForNames.map((e) => [e.id, e] as const));
+      for (const id of locationQueryContext.filteredEnterpriseIds) {
+        const row = byId.get(id);
+        if (!row) continue;
+        commercialSnapshots.push({ enterpriseName: row.name, variables: await getVariablesMap(id) });
+      }
+    } else if (ent) {
+      commercialSnapshots = [{ enterpriseName: ent.name, variables: vars }];
+    }
     const knowledgeText = ent ? await loadAgentKnowledgeText(ent.id) : '';
     let fileInventory = '';
     if (ent) {
@@ -439,6 +501,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       appointmentPreflight,
       openAppointmentSummary,
       locationQueryContext: locationQueryContext ?? undefined,
+      commercialSnapshots: commercialSnapshots.length > 0 ? commercialSnapshots : undefined,
     };
     const systemPrompt = buildAnaSystemPrompt(promptOpts);
 
@@ -623,73 +686,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         inactive_linked: inactiveLinked,
       });
     } else {
-      console.log('[DOC_LOOKUP] chamando getFileForSend', {
+      console.log('[DOC_LOOKUP] agendando envio de documento (assíncrono, não bloqueia próxima mensagem)', {
         conversationId,
         enterpriseIdForFile,
         category: cat,
       });
-      const file = await getFileForSend(enterpriseIdForFile, cat as FileCategory);
-      if (!file) {
-        console.warn('[DOC_FLOW] skip arquivo: getFileForSend retornou null (ver [DOC_LOOKUP] acima)', {
-          conversationId,
-          enterpriseIdForFile,
-          category: cat,
-        });
-      } else {
-        console.log('[DOC_SEND] enviando documento WhatsApp', {
-          conversationId,
-          enterpriseId: enterpriseIdForFile,
-          enterpriseFileId: file.id,
-          category: cat,
-          path: file.path,
-          originalName: file.originalName,
-          mime: file.mime,
-        });
-        const docRes = await sendDocumentMessage(toPhoneNumber, file.path, file.originalName, file.mime, {
-          enterpriseId: enterpriseIdForFile,
-          enterpriseName: ent.name,
-          conversationId,
-          fileCategory: cat,
-          enterpriseFileId: file.id,
-          relativeStoragePath: file.relativeStoragePath,
-          absolutePath: file.path,
-        });
-        if (docRes.success && docRes.metaMessageId) {
-          await logSentFile(conversationId, file.id);
-          await insertMessage(
-            conversationId,
-            'assistant',
-            `[Arquivo: ${file.originalName}]`,
-            docRes.metaMessageId
-          );
-          console.log('[DOC_SEND] documento enviado com sucesso', {
-            conversationId,
-            metaMessageId: docRes.metaMessageId,
-            file: file.originalName,
-          });
-        } else {
-          console.error('[DOC_SEND] falha sendDocumentMessage', {
-            conversationId,
-            error: docRes.error,
-            code: docRes.code,
-            file: file.originalName,
-          });
-          const fallbackText =
-            `Não consegui enviar o arquivo "${file.originalName}" pelo WhatsApp neste momento. Peça o material a um atendente ou tente novamente em instantes.`;
-          console.warn('[DOC_FLOW] fallback textual após falha do documento (coerência: cliente é avisado)', {
-            conversationId,
-          });
-          const fixRes = await sendTextMessage(toPhoneNumber, fallbackText);
-          if (fixRes.success && fixRes.metaMessageId) {
-            await insertMessage(conversationId, 'assistant', fallbackText, fixRes.metaMessageId);
-          } else {
-            console.error('[DOC_FLOW] fallback textual também falhou', {
-              conversationId,
-              error: fixRes.error,
-            });
-          }
-        }
-      }
+      void sendAnaEnterpriseDocumentWhatsApp({
+        conversationId,
+        toPhoneNumber,
+        ent,
+        enterpriseIdForFile,
+        cat: cat as FileCategory,
+      }).catch((e) => console.error('[DOC_SEND async]', e));
     }
   } finally {
     release();

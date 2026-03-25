@@ -10,6 +10,12 @@ import {
 
 export type { AppointmentPreflight } from '../utils/anaAppointmentIntent.js';
 
+/** Variáveis comerciais por empreendimento (preço, condições, disponibilidade) para o prompt. */
+export interface CommercialSnapshot {
+  enterpriseName: string;
+  variables: Record<string, string>;
+}
+
 export interface AnaStructuredReply {
   reply: string;
   classification: string;
@@ -121,7 +127,8 @@ CLASSIFICAÇÃO (campo "classification" no JSON, quando handoff for false):
 - Carteira: contato sem avanço no momento, mas com potencial de retomada futura (não é descarte/spam). Não use Carteira se o cliente claramente se enquadrar em Handoff.
 - Handoff: quando handoff for true (ver abaixo); com handoff false, não use "Handoff" em classification.
 
-HANDOFF (passe para humano): SEMPRE handoff: true quando o cliente pedir atendimento humano. Resposta breve confirmando a transferência. Também handoff para: preço exato, negociação, disponibilidade real, urgência operacional, irritação, sensível. Nunca prometa prazo.
+HANDOFF (passe para humano): SEMPRE handoff: true quando o cliente pedir atendimento humano. Resposta breve confirmando a transferência. Também handoff para: negociação personalizada além do cadastro, disponibilidade operacional em tempo real não refletida nas variáveis, urgência operacional, irritação, sensível. Nunca prometa prazo.
+- Se existir bloco "DADOS COMERCIAIS CADASTRADOS" com preço/condições preenchidos, use esses dados para responder — não diga que não tem acesso; handoff não substitui essa informação.
 - Mesmo com handoff: true, se a mensagem do cliente indicar compra/fechamento/documentação imediata, preencha lead_temperature: "quente".
 Prioridade: variáveis → texto dos arquivos (extracted) → histórico.
 ${JSON_INSTRUCTION}`;
@@ -140,6 +147,21 @@ function formatVars(v: Record<string, string>): string {
     `• Disponibilidade: ${v.disponibilidade?.trim() || '[não informado]'}`,
     `• Observações: ${v.observacoes?.trim() || '[nenhuma]'}`,
   ].join('\n');
+}
+
+function buildCommercialDataBlock(snapshots: CommercialSnapshot[]): string {
+  if (snapshots.length === 0) return '';
+  const body = snapshots.map((s) => `### ${s.enterpriseName}\n${formatVars(s.variables)}`).join('\n\n');
+  return `
+
+DADOS COMERCIAIS CADASTRADOS NO SISTEMA (fonte primária — use antes de supor ou dizer que não tem acesso):
+${body}
+
+Regras obrigatórias:
+- Para valor, preço, condições, disponibilidade, metragens ou lotes: use literalmente o que consta acima quando não for "[não informado]" ou "[nenhuma]".
+- Não diga que não tem acesso aos valores ou que não pode informar preços quando o campo "Preço" ou equivalente estiver preenchido acima.
+- Com mais de um empreendimento, organize por nome e compare quando fizer sentido; se um tiver dado e outro "[não informado]", seja explícita sobre o que falta.
+- Handoff humano por "preço/negociação" só quando o cliente pedir negociação fora do cadastro ou informação que não está acima — não use handoff só para repetir dados já cadastrados.`;
 }
 
 const CLASS_OK = new Set(['Novo', 'Qualificado', 'Carteira', 'Handoff']);
@@ -254,6 +276,8 @@ export interface BuildAnaSystemPromptOpts {
    * Em modo com empreendimento focado, o JSON ainda obriga a usar só essa lista ao falar da localidade perguntada.
    */
   locationQueryContext?: LocationQueryContext | null;
+  /** Por empreendimento: preço, condições, disponibilidade (triagem com localização ou foco único). */
+  commercialSnapshots?: CommercialSnapshot[] | null;
 }
 
 function buildLocationQueryBlock(loc: LocationQueryContext): string {
@@ -286,6 +310,7 @@ export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
   const base = COMPORTAMENTO;
   const loc = opts.locationQueryContext ?? null;
   const locationBlock = loc ? buildLocationQueryBlock(loc) : '';
+  const commercialBlock = buildCommercialDataBlock(opts.commercialSnapshots ?? []);
 
   if (opts.mode === 'triage') {
     const namesList =
@@ -329,6 +354,8 @@ ${ap.reschedule ? '- O cliente pediu ALTERAR/REAGENDAR: trate como atualização
     return `${base}
 
 ${locationBlock ? `${locationBlock}
+
+` : ''}${commercialBlock ? `${commercialBlock}
 
 ` : ''}TRIAGEM — ainda sem empreendimento vinculado ao foco da conversa.
 ${portfolioLine}
@@ -407,7 +434,9 @@ ${ap.reschedule ? '- Pedido de REMARCAÇÃO/ALTERAÇÃO: atualize o entendimento
 
 ${LANGUAGE_HINT[e.language_style] || LANGUAGE_HINT.natural}
 
-${scopedLocationPrecedence}${locationBlock ? `${locationBlock}
+${commercialBlock ? `${commercialBlock}
+
+` : ''}${scopedLocationPrecedence}${locationBlock ? `${locationBlock}
 
 ` : ''}Foco atual: "${e.name}". Mantenha o foco neste empreendimento em conversas normais.
 
@@ -423,8 +452,7 @@ Troca de empreendimento:
 
 ${matBlock}
 
-Variáveis:
-${formatVars(opts.variablesMap)}
+${commercialBlock || `Variáveis:\n${formatVars(opts.variablesMap)}`}
 ${addonsBlock}
 ${know}`;
 }
