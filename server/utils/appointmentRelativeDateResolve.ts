@@ -7,6 +7,8 @@ import {
   APPOINTMENT_BUSINESS_TZ,
   normalizeAnaAppointmentDateYmd,
   parseAppointmentStartEndInSaoPaulo,
+  getJsWeekdayInSaoPaulo,
+  getJsWeekdayForYmdInSaoPaulo,
 } from './appointmentDateNormalize.js';
 
 const SP_OFFSET = '-03:00';
@@ -139,7 +141,7 @@ function nextYmdForWeekdayFrom(
     const ymd = addDaysYmd(startYmd, add);
     const noon = new Date(`${ymd}T12:00:00${SP_OFFSET}`);
     if (Number.isNaN(noon.getTime())) continue;
-    if (noon.getDay() !== targetJsDay) continue;
+    if (getJsWeekdayForYmdInSaoPaulo(ymd) !== targetJsDay) continue;
     const p = parseAppointmentStartEndInSaoPaulo(ymd, timeHm);
     if (!p) continue;
     if (p.startAt.getTime() > refNow.getTime()) return ymd;
@@ -223,7 +225,7 @@ export function resolveAppointmentDateTimeFromContext(args: ResolveAppointmentDa
   const wdUser = firstWeekdayInText(u);
   if (wdUser != null) {
     const p = parseAppointmentStartEndInSaoPaulo(rolled, timeHm);
-    if (p && p.startAt.getDay() !== wdUser) {
+    if (p && getJsWeekdayInSaoPaulo(p.startAt) !== wdUser) {
       const proximaWd = extractProximaWeekday(nu);
       const startAnchor = proximaWd != null ? addDaysYmd(todayYmd, 1) : todayYmd;
       const fixed = nextYmdForWeekdayFrom(startAnchor, wdUser, timeHm, referenceNow);

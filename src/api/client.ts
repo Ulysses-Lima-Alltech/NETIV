@@ -137,6 +137,7 @@ export interface ConversationListItem {
   reserveFollowUpMoment?: string | null;
   reserveCommercialNotes?: string | null;
   assignedBrokerName?: string | null;
+  assignedBrokerId?: number | null;
 }
 
 /** Corpo parcial para PATCH de classificação + segmentação Carteira. */
@@ -232,6 +233,7 @@ export const whatsappApi = {
       handoff?: boolean;
       lead_temperature?: 'quente' | 'morno' | 'frio';
       reserve?: ReserveSegmentationPatchBody;
+      assigned_broker_id?: number | null;
     }
   ) =>
     request<{
@@ -244,6 +246,7 @@ export const whatsappApi = {
       classificationStatus: string;
       leadStage?: string | null;
       handoff?: boolean;
+      assignedBrokerId?: number | null;
       assignedBrokerName?: string | null;
       reserveReason?: string | null;
       reserveDesiredCity?: string | null;

@@ -1,6 +1,7 @@
 import { query } from '../db/pg.js';
 import { getActiveEnterpriseById } from './enterpriseRepository.js';
-import { assignBrokerForHandoffConversation, clearAssignedBroker } from '../services/handoffQueueService.js';
+import { getCorretorById } from './corretorRepository.js';
+import { assignBrokerForHandoffConversation } from '../services/handoffQueueService.js';
 import type { LeadOriginInput } from '../services/leadOriginResolver.js';
 import { resolveEnterpriseFromLeadSource } from '../services/leadOriginResolver.js';
 
@@ -317,11 +318,22 @@ export async function updateClassification(
     reserve?: ReserveSegmentationPatch;
     /** Só frio/morno/quente; ausente = não alterar. null no payload é ignorado (temperatura não pode voltar a NULL após definida). */
     lead_temperature?: 'quente' | 'morno' | 'frio';
+    /** Corretor fixo da conversa; null limpa. Só aplica se o id existir. */
+    assigned_broker_id?: number | null;
   }
 ): Promise<ConversationRow | null> {
   const cur = await getConversationById(conversationId);
   if (!cur) return null;
   const wasHandoff = cur.handoff === true;
+  let assigned_broker_id = cur.assigned_broker_id ?? null;
+  if (u.assigned_broker_id !== undefined) {
+    if (u.assigned_broker_id === null) {
+      assigned_broker_id = null;
+    } else {
+      const br = await getCorretorById(u.assigned_broker_id);
+      if (br) assigned_broker_id = u.assigned_broker_id;
+    }
+  }
   let enterprise_id = u.enterprise_id !== undefined ? u.enterprise_id : cur.enterprise_id;
   if (enterprise_id != null) {
     const ok = await getActiveEnterpriseById(enterprise_id);
@@ -370,13 +382,13 @@ export async function updateClassification(
       `UPDATE conversations SET enterprise_id = $1, classification = $2, handoff = $3,
        lead_temperature = $6,
        classification_before_handoff = CASE WHEN $3 = false THEN NULL ELSE COALESCE($5::text, classification_before_handoff) END,
+       assigned_broker_id = $7,
        updated_at = NOW() WHERE id = $4 RETURNING *`,
-      [enterprise_id, classAfterFunnel, handoff, conversationId, savedForHandoff, lead_temperature]
+      [enterprise_id, classAfterFunnel, handoff, conversationId, savedForHandoff, lead_temperature, assigned_broker_id]
     );
     const row = rows[0] ?? null;
     if (row) {
       if (handoff) await assignBrokerForHandoffConversation(conversationId);
-      else if (wasHandoff && !handoff) await clearAssignedBroker(conversationId);
     }
     return row;
   }
@@ -396,6 +408,7 @@ export async function updateClassification(
      reserve_interest_type = $12,
      reserve_follow_up_moment = $13,
      reserve_commercial_notes = $14,
+     assigned_broker_id = $16,
      updated_at = NOW() WHERE id = $4 RETURNING *`,
     [
       enterprise_id,
@@ -413,12 +426,12 @@ export async function updateClassification(
       mergedReserve.followUpMoment,
       mergedReserve.commercialNotes,
       lead_temperature,
+      assigned_broker_id,
     ]
   );
   const row = rows[0] ?? null;
   if (row) {
     if (handoff) await assignBrokerForHandoffConversation(conversationId);
-    else if (wasHandoff && !handoff) await clearAssignedBroker(conversationId);
   }
   return row;
 }
@@ -463,7 +476,6 @@ export async function applyAnaConversationUpdate(
 ): Promise<void> {
   const conv = await getConversationById(conversationId);
   if (!conv) return;
-  const wasHandoff = conv.handoff === true;
   let classification = toValidClassification(meta.classification?.trim() || conv.classification);
   const handoff = !!meta.handoff;
   if (handoff) {
@@ -496,7 +508,6 @@ export async function applyAnaConversationUpdate(
     [classification, lead_temperature, handoff, cn ?? null, conversationId, saveBeforeHandoff ?? null]
   );
   if (handoff) await assignBrokerForHandoffConversation(conversationId);
-  else if (wasHandoff && !handoff) await clearAssignedBroker(conversationId);
 }
 
 /**

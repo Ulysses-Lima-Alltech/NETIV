@@ -73,6 +73,36 @@ export function normalizeAnaAppointmentDateYmd(ymd: string, referenceNow: Date =
 /**
  * Combina Y-M-D + HH:MM interpretando o horário em São Paulo (offset fixo -03:00).
  */
+/** Dia da semana em America/Sao_Paulo (0=domingo … 6=sábado), independente do timezone do servidor. */
+export function getJsWeekdayInSaoPaulo(instant: Date): number {
+  const dayName = new Intl.DateTimeFormat('en-US', {
+    timeZone: APPOINTMENT_BUSINESS_TZ,
+    weekday: 'long',
+  }).format(instant);
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const i = days.indexOf(dayName);
+  return i >= 0 ? i : 0;
+}
+
+/** Weekday do calendário em SP para YYYY-MM-DD (meio-dia local, evita virada de dia UTC). */
+export function getJsWeekdayForYmdInSaoPaulo(ymd: string): number {
+  const d = new Date(`${ymd.trim()}T12:00:00${SP_OFFSET}`);
+  return getJsWeekdayInSaoPaulo(d);
+}
+
+/** Uma linha curta alinhada ao que foi persistido (WhatsApp / confirmação). */
+export function formatAppointmentCanonicalPtBr(startAt: Date): string {
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: APPOINTMENT_BUSINESS_TZ,
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(startAt);
+}
+
 export function parseAppointmentStartEndInSaoPaulo(
   dateYmd: string,
   timeHm: string

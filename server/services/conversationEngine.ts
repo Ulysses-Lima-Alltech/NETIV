@@ -41,6 +41,7 @@ import {
   buildUserUtterancesContext,
   computeAppointmentPreflight,
   ANA_FALLBACK_APPOINTMENT_FLOW_REPLY,
+  ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY,
 } from '../utils/anaAppointmentIntent.js';
 import { extractLeadDataFromConversation } from './leadWalletExtractionService.js';
 import { registerAnaAppointmentIfConfirmed } from './anaAppointmentFromChatService.js';
@@ -61,6 +62,16 @@ function formatOpenAppointmentSummaryForPrompt(row: AppointmentRow, enterpriseNa
   });
   const d = row.start_at instanceof Date ? row.start_at : new Date(row.start_at);
   return `Empreendimento: ${enterpriseName}. Visita agendada: ${fmt.format(d)}. Status: ${row.status}.`;
+}
+
+/** Garante que a resposta ao cliente cite o mesmo instante gravado no banco. */
+function appendCanonicalToReply(reply: string, canonicalLine: string): string {
+  const r = (reply || '').trim();
+  const core = canonicalLine.replace(/^Registrado no sistema:\s*/i, '').trim();
+  if (!core) return reply;
+  if (r.toLowerCase().includes(core.slice(0, Math.min(28, core.length)).toLowerCase())) return reply;
+  if (!r) return canonicalLine;
+  return `${r}\n\n${canonicalLine}`.slice(0, 4000);
 }
 
 export interface IncomingMessageContext {
@@ -370,6 +381,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
+    const richAppointmentContext =
+      appointmentPreflight.dateContestation ||
+      appointmentPreflight.reschedule ||
+      Boolean(openAppointmentSummary?.trim());
+
     let mode: 'triage' | 'scoped' | 'inactive_linked' = 'triage';
     if (inactiveLinked) mode = 'inactive_linked';
     else if (ent) mode = 'scoped';
@@ -451,16 +467,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         result.content,
         trimmed,
         effectiveConv.customer_name,
-        appointmentPreflight.active
+        appointmentPreflight.active,
+        richAppointmentContext
       );
     }
     if (!structured) {
       structured = {
         reply: isSimpleOpeningGreeting(trimmed)
           ? pickRandomGreetingReply(effectiveConv.customer_name)
-          : appointmentPreflight.active
-            ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
-            : ANA_FALLBACK_INCOMPREHENSION_REPLY,
+          : appointmentPreflight.active && richAppointmentContext
+            ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
+            : appointmentPreflight.active
+              ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
+              : ANA_FALLBACK_INCOMPREHENSION_REPLY,
         classification: 'Novo',
         lead_temperature: null,
         project: ent?.name || '',
@@ -503,11 +522,37 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       handoff: structured.handoff,
     });
 
+    let replyBody = structured.reply;
+    const convForApptRegister = await getConversationById(conversationId);
+    if (ent && structured.appointment_confirmed) {
+      try {
+        const apptRes = await registerAnaAppointmentIfConfirmed({
+          conversationId,
+          customerName: (convForApptRegister?.customer_name || structured.customer_name || '').trim() || 'Cliente',
+          customerPhone: (convForApptRegister?.contact_phone || convForApptRegister?.external_contact_id || '').replace(/\D/g, ''),
+          enterpriseId: ent.id,
+          city: '',
+          appointmentConfirmed: true,
+          appointmentDateYmd: structured.appointment_date,
+          appointmentTimeHm: structured.appointment_time,
+          notes: structured.appointment_notes,
+          brokerId: convForApptRegister?.assigned_broker_id ?? null,
+          userUtteranceText: fullUserUtterances.trim() || trimmed,
+          referenceNow: lastUserMessageAt,
+        });
+        if (apptRes.persisted && apptRes.canonicalLine) {
+          replyBody = appendCanonicalToReply(structured.reply, apptRes.canonicalLine);
+        }
+      } catch (e) {
+        console.error('[ANA APPT]', e);
+      }
+    }
+
     const delayMs = randomAnaReplyDelayMs();
     console.log('[ANA DEBUG] delay antes do envio (simulação humana)', { conversationId, delayMs });
     await sleepMs(delayMs);
 
-    let replyText = finalizeAnaReplyText(structured.reply, { userMessage: trimmed }).slice(0, 4000);
+    let replyText = finalizeAnaReplyText(replyBody, { userMessage: trimmed }).slice(0, 4000);
     const rowsBeforeSend = await getMessagesByConversationId(conversationId);
     const lastAsstDup = [...rowsBeforeSend].reverse().find((m) => m.role === 'assistant');
     if (lastAsstDup && (lastAsstDup.content || '').trim() === replyText.trim()) {
@@ -540,28 +585,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         convRef?.customer_name ?? structured.customer_name ?? null,
         ent?.name ?? null
       ).catch((e) => console.error('[Carteira extract]', e));
-    }
-
-    const convForAppt = await getConversationById(conversationId);
-    if (ent && structured.appointment_confirmed) {
-      try {
-        await registerAnaAppointmentIfConfirmed({
-          conversationId,
-          customerName: (convForAppt?.customer_name || structured.customer_name || '').trim() || 'Cliente',
-          customerPhone: (convForAppt?.contact_phone || convForAppt?.external_contact_id || '').replace(/\D/g, ''),
-          enterpriseId: ent.id,
-          city: '',
-          appointmentConfirmed: true,
-          appointmentDateYmd: structured.appointment_date,
-          appointmentTimeHm: structured.appointment_time,
-          notes: structured.appointment_notes,
-          brokerId: convForAppt?.assigned_broker_id ?? null,
-          userUtteranceText: fullUserUtterances.trim() || trimmed,
-          referenceNow: lastUserMessageAt,
-        });
-      } catch (e) {
-        console.error('[ANA APPT]', e);
-      }
     }
 
     const cat = hasSendableFiles ? structured.send_file_category : null;

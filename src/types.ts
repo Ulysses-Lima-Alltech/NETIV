@@ -35,6 +35,8 @@ export interface Conversation {
   reserveCommercialNotes?: string | null;
   /** Corretor atribuído no handoff (tag). */
   assignedBrokerName?: string | null;
+  /** ID do corretor fixo da conversa (prioridade sobre distribuição automática). */
+  assignedBrokerId?: number | null;
 }
 
 export type MessageSender = 'LEAD' | 'AGENT';

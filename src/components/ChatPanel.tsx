@@ -13,6 +13,7 @@ import {
   type ReserveReason,
 } from '../constants/reserveSegmentation';
 import type { ReserveSegmentationPatchBody } from '../api/client';
+import { corretoresApi } from '../api/client';
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'Novo', label: 'Novo' },
@@ -98,6 +99,7 @@ interface ChatPanelProps {
     handoff?: boolean;
     leadTemperature?: 'quente' | 'morno' | 'frio';
     reserve?: ReserveSegmentationPatchBody;
+    assignedBrokerId?: number | null;
   }) => void | Promise<void>;
   projects?: { id: number; name: string; active: boolean }[];
   isSending?: boolean;
@@ -120,6 +122,7 @@ export function ChatPanel({
   const [reserveDraft, setReserveDraft] = useState<ReserveDraft | null>(null);
   const [reserveSaving, setReserveSaving] = useState(false);
   const [reserveErr, setReserveErr] = useState<string | null>(null);
+  const [brokersForProject, setBrokersForProject] = useState<{ id: number; fullName: string }[]>([]);
 
   const setRef = useCallback(
     (el: HTMLDivElement | null) => {
@@ -137,6 +140,18 @@ export function ChatPanel({
     setReserveDraft(conversationToDraft(conversation));
     setReserveErr(null);
   }, [conversation?.id ?? '', conversation ? reserveFingerprint(conversation) : '']);
+
+  useEffect(() => {
+    const pid = conversation?.projectId;
+    if (pid == null) {
+      setBrokersForProject([]);
+      return;
+    }
+    corretoresApi
+      .list({ enterpriseId: pid })
+      .then((d) => setBrokersForProject(d.corretores.map((c) => ({ id: c.id, fullName: c.fullName }))))
+      .catch(() => setBrokersForProject([]));
+  }, [conversation?.id, conversation?.projectId]);
 
   if (!conversation) {
     return (
@@ -300,6 +315,33 @@ export function ChatPanel({
               >
                 <option value="">— Empreendimento</option>
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="text-[13px] text-[#6B7280]">Corretor:</span>
+              <select
+                aria-label="Corretor fixo do lead"
+                value={conversation.assignedBrokerId ?? ''}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  onClassificationChange({
+                    assignedBrokerId: v === '' ? null : Number(v),
+                  });
+                }}
+                className={selectField}
+                disabled={!conversation.projectId}
+                title={
+                  conversation.projectId
+                    ? 'Prioridade: manual > já atribuído > automático. Vazio = distribuição automática.'
+                    : 'Defina um empreendimento para listar corretores.'
+                }
+              >
+                <option value="">Automático</option>
+                {brokersForProject.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.fullName}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="flex items-center gap-2">

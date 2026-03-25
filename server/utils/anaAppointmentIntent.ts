@@ -89,6 +89,21 @@ export function looksLikeTimeOrDateFragment(n: string): boolean {
   return TIMEISH.test(n);
 }
 
+/** Cliente contesta ou pede correção de data (continuação do fluxo, não triagem). */
+export function detectDateContestation(n: string): boolean {
+  const x = norm(n);
+  if (/\b(data|dia)\s+(errad|incorret)/.test(x)) return true;
+  if (/\bainda\s+estamos\s+em\s+/.test(x)) return true;
+  if (/\bque\s+dia\s+e\s+(segunda|terca|quarta|quinta|sexta|sabado|domingo)/.test(x)) return true;
+  if (/\bque\s+dia\s+seria\s+/.test(x)) return true;
+  if (/\bnao\s+e\s+esse\s+dia\b/.test(x) || /\bnao\s+e\s+a\s+data\b/.test(x)) return true;
+  if (/\bessa\s+data\s+/.test(x) && /\b(errad|errado)/.test(x)) return true;
+  if (/\bvoce\s+(errou|confundiu)/.test(x)) return true;
+  if (/\bnao\s+quis\s+dizer\s+(terca|segunda|quarta|quinta|sexta|sabado)/.test(x)) return true;
+  if (/\bmes\s+errad/.test(x)) return true;
+  return false;
+}
+
 export interface AppointmentPreflight {
   /** Fluxo de agendamento ativo — não tratar como triagem “fria” nem usar fallback genérico. */
   active: boolean;
@@ -96,6 +111,8 @@ export interface AppointmentPreflight {
   reschedule: boolean;
   /** Só complemento (ex.: “amanhã às 14h”) com contexto anterior de visita. */
   continuationOnly: boolean;
+  /** Cliente questiona/corrige data (“ainda estamos em março?”, “essa data está errada”). */
+  dateContestation: boolean;
 }
 
 /**
@@ -112,6 +129,7 @@ export function computeAppointmentPreflight(
   const schedule = detectScheduleIntent(full);
   const topic = hasAppointmentTopicHint(full);
   const timeFragment = looksLikeTimeOrDateFragment(cur);
+  const dateContestation = detectDateContestation(cur) || detectDateContestation(full);
   const continuationOnly =
     timeFragment &&
     topic &&
@@ -119,15 +137,26 @@ export function computeAppointmentPreflight(
     !detectRescheduleIntent(cur) &&
     full.length > cur.length;
 
-  const active = Boolean(schedule || reschedule || continuationOnly || (topic && !looksLikeTimeOrDateFragment(cur)));
+  const active = Boolean(
+    schedule ||
+      reschedule ||
+      continuationOnly ||
+      dateContestation ||
+      (topic && !looksLikeTimeOrDateFragment(cur))
+  );
 
   return {
     active,
     reschedule,
     continuationOnly,
+    dateContestation,
   };
 }
 
 /** Resposta estável quando o JSON falhou mas o fluxo é claramente de agendamento. */
 export const ANA_FALLBACK_APPOINTMENT_FLOW_REPLY =
   'Pelo histórico, você está organizando uma visita. Para eu registrar certinho: em qual empreendimento e qual dia e horário posso confirmar para você?';
+
+/** Quando já há contexto de visita ou contestação de data — não reiniciar triagem. */
+export const ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY =
+  'Entendi. Me diga qual data e horário você quer para a visita — se algo que eu disse antes estiver errado, pode corrigir que eu ajusto agora.';

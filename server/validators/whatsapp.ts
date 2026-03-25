@@ -50,5 +50,7 @@ export const updateClassificationSchema = z.object({
     z.enum(['quente', 'morno', 'frio']).optional()
   ),
   reserve: reserveSegmentationPatchSchema.optional(),
+  /** Corretor fixo do lead; null remove (volta à distribuição automática nos próximos passos). */
+  assigned_broker_id: z.number().int().positive().nullable().optional(),
 });
 export type UpdateClassificationDto = z.infer<typeof updateClassificationSchema>;

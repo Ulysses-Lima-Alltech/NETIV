@@ -52,6 +52,7 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     enterpriseOriginId: c.enterpriseOriginId ?? null,
     enterpriseOriginName: undefined,
     assignedBrokerName: c.assignedBrokerName ?? null,
+    assignedBrokerId: c.assignedBrokerId ?? null,
     reserveReason: c.reserveReason ?? null,
     reserveDesiredCity: c.reserveDesiredCity ?? null,
     reservePriceMin: c.reservePriceMin ?? null,
@@ -257,6 +258,7 @@ export function InboxPage() {
       handoff?: boolean;
       leadTemperature?: 'quente' | 'morno' | 'frio';
       reserve?: ReserveSegmentationPatchBody;
+      assignedBrokerId?: number | null;
     }) => {
       if (!selectedId) return;
       const id = parseInt(selectedId, 10);
@@ -269,6 +271,7 @@ export function InboxPage() {
         body.lead_temperature = updates.leadTemperature;
       }
       if (updates.reserve !== undefined) body.reserve = updates.reserve;
+      if (updates.assignedBrokerId !== undefined) body.assigned_broker_id = updates.assignedBrokerId;
       try {
         const data = await whatsappApi.updateClassification(id, body);
         setConversations((prev) =>
@@ -296,6 +299,8 @@ export function InboxPage() {
                   handoff: data.handoff ?? c.handoff,
                   assignedBrokerName:
                     data.assignedBrokerName !== undefined ? data.assignedBrokerName : c.assignedBrokerName,
+                  assignedBrokerId:
+                    data.assignedBrokerId !== undefined ? data.assignedBrokerId : c.assignedBrokerId,
                   reserveReason: data.reserveReason ?? c.reserveReason,
                   reserveDesiredCity: data.reserveDesiredCity ?? c.reserveDesiredCity,
                   reservePriceMin: data.reservePriceMin ?? c.reservePriceMin,

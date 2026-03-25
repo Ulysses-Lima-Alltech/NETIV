@@ -2,7 +2,10 @@ import type { EnterpriseRow } from '../repositories/enterpriseRepository.js';
 import { parseAddons, normalizeFileCategory, type FileCategory } from '../repositories/enterpriseRepository.js';
 import { isSimpleOpeningGreeting, pickRandomGreetingReply } from '../utils/anaReplyFinalize.js';
 import type { AppointmentPreflight } from '../utils/anaAppointmentIntent.js';
-import { ANA_FALLBACK_APPOINTMENT_FLOW_REPLY } from '../utils/anaAppointmentIntent.js';
+import {
+  ANA_FALLBACK_APPOINTMENT_FLOW_REPLY,
+  ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY,
+} from '../utils/anaAppointmentIntent.js';
 
 export type { AppointmentPreflight } from '../utils/anaAppointmentIntent.js';
 
@@ -274,7 +277,7 @@ PRIORIDADE MÁXIMA — FLUXO DE AGENDAMENTO (detectado pelo sistema antes desta 
 - NÃO volte para triagem genérica de "qual empreendimento do portfólio" se o nome do empreendimento ou o pedido de visita já apareceu no histórico ou na mensagem atual.
 - NÃO use respostas de incompreensão ou "você busca informações sobre..." quando data, horário ou visita já estiverem claros no contexto.
 - Mensagens só com horário (ex.: "amanhã às 14h") devem ser tratadas como continuação do pedido de visita já feito.
-${ap.reschedule ? '- O cliente pediu ALTERAR/REAGENDAR: trate como atualização do mesmo agendamento em andamento; não peça para reconfirmar tudo do zero se já houver combinação anterior no histórico.\n' : ''}${ap.continuationOnly ? '- Esta mensagem parece só complementar data/hora — una com o que o cliente já disse sobre visita nas mensagens anteriores.\n' : ''}- Preencha appointment_date e appointment_time no JSON quando conseguir inferir data/hora; appointment_confirmed só quando houver confirmação explícita combinada.
+${ap.reschedule ? '- O cliente pediu ALTERAR/REAGENDAR: trate como atualização do mesmo agendamento em andamento; não peça para reconfirmar tudo do zero se já houver combinação anterior no histórico.\n' : ''}${ap?.dateContestation ? '- CONTESTAÇÃO DE DATA: o cliente duvida ou corrige uma data (ex.: mês, dia da semana). Reconheça o erro se houver, recalcule a data correta no calendário atual (Brasil), mantenha empreendimento e horário já combinados quando fizer sentido, e confirme com clareza. NÃO volte à triagem pedindo empreendimento do zero.\n' : ''}${ap.continuationOnly ? '- Esta mensagem parece só complementar data/hora — una com o que o cliente já disse sobre visita nas mensagens anteriores.\n' : ''}- Preencha appointment_date e appointment_time no JSON quando conseguir inferir data/hora; appointment_confirmed só quando houver confirmação explícita combinada.
 - send_file_category: null neste modo (sem arquivo até haver empreendimento ativo no foco).`
         : '';
 
@@ -337,7 +340,7 @@ ${(opts.openAppointmentSummary || '').trim()}
 
 AGENDAMENTO (prioridade do sistema):
 - Leia o histórico: o cliente pode estar em sequência agendando visita ou pedindo alteração de horário/data.
-${ap.reschedule ? '- Pedido de REMARCAÇÃO/ALTERAÇÃO: atualize o entendimento; não trate como primeiro agendamento do zero.\n' : ''}- Não use respostas genéricas de incompreensão se data/hora/visita já estiverem no contexto.`
+${ap.reschedule ? '- Pedido de REMARCAÇÃO/ALTERAÇÃO: atualize o entendimento; não trate como primeiro agendamento do zero.\n' : ''}${ap?.dateContestation ? '- CONTESTAÇÃO DE DATA: corrija o calendário com base na data real (Brasil), preserve empreendimento e horário quando possível.\n' : ''}- Não use respostas genéricas de incompreensão se data/hora/visita já estiverem no contexto.`
       : '';
 
   return `${base}
@@ -451,14 +454,17 @@ export function fallbackReplyFromRaw(
   _raw: string,
   userMessage?: string,
   knownCustomerName?: string | null,
-  appointmentFlow?: boolean
+  appointmentFlow?: boolean,
+  appointmentContinuation?: boolean
 ): AnaStructuredReply {
   const reply =
     userMessage && isSimpleOpeningGreeting(userMessage)
       ? pickRandomGreetingReply(knownCustomerName)
-      : appointmentFlow
-        ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
-        : ANA_FALLBACK_INCOMPREHENSION_REPLY;
+      : appointmentFlow && appointmentContinuation
+        ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
+        : appointmentFlow
+          ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
+          : ANA_FALLBACK_INCOMPREHENSION_REPLY;
   return {
     reply,
     classification: 'Novo',

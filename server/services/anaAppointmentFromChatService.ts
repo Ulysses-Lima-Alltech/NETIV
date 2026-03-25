@@ -6,7 +6,7 @@ import {
 } from '../repositories/appointmentRepository.js';
 import { scheduleDeferredHandoffAfterAppointment } from '../repositories/conversationRepository.js';
 import { assignAppointment } from './appointmentService.js';
-import { parseAppointmentStartEndInSaoPaulo } from '../utils/appointmentDateNormalize.js';
+import { formatAppointmentCanonicalPtBr, parseAppointmentStartEndInSaoPaulo } from '../utils/appointmentDateNormalize.js';
 import { resolveAppointmentDateTimeFromContext } from '../utils/appointmentRelativeDateResolve.js';
 
 async function persistBrokerOnConversationIfUnset(conversationId: number, brokerId: number | null | undefined): Promise<void> {
@@ -15,6 +15,12 @@ async function persistBrokerOnConversationIfUnset(conversationId: number, broker
     `UPDATE conversations SET assigned_broker_id = COALESCE(assigned_broker_id, $1), updated_at = NOW() WHERE id = $2`,
     [brokerId, conversationId]
   );
+}
+
+export interface RegisterAnaAppointmentResult {
+  persisted: boolean;
+  /** Linha alinhada ao horário salvo no banco (America/Sao_Paulo). */
+  canonicalLine?: string;
 }
 
 /**
@@ -40,8 +46,8 @@ export async function registerAnaAppointmentIfConfirmed(args: {
   userUtteranceText?: string;
   /** Instante da mensagem do usuário (America/Sao_Paulo aplicado na resolução de data relativa). */
   referenceNow?: Date;
-}): Promise<void> {
-  if (!args.appointmentConfirmed) return;
+}): Promise<RegisterAnaAppointmentResult> {
+  if (!args.appointmentConfirmed) return { persisted: false };
 
   const ref = args.referenceNow instanceof Date && !Number.isNaN(args.referenceNow.getTime()) ? args.referenceNow : new Date();
 
@@ -55,11 +61,13 @@ export async function registerAnaAppointmentIfConfirmed(args: {
     console.warn('[ANA APPT] não foi possível resolver data/hora (contexto + JSON)', {
       conversationId: args.conversationId,
     });
-    return;
+    return { persisted: false };
   }
 
   const parsed = parseAppointmentStartEndInSaoPaulo(resolved.dateYmd, resolved.timeHm);
-  if (!parsed) return;
+  if (!parsed) return { persisted: false };
+
+  const canonicalLine = `Registrado no sistema: ${formatAppointmentCanonicalPtBr(parsed.startAt)}.`;
 
   const conversationBroker =
     args.brokerId != null && args.brokerId > 0 ? args.brokerId : null;
@@ -86,8 +94,9 @@ export async function registerAnaAppointmentIfConfirmed(args: {
       await persistBrokerOnConversationIfUnset(args.conversationId, conversationBroker);
       const finalBroker = conversationBroker ?? existing.broker_id ?? null;
       await scheduleDeferredHandoffAfterAppointment(args.conversationId, finalBroker);
+      return { persisted: true, canonicalLine };
     }
-    return;
+    return { persisted: false };
   }
 
   const dup = await findDuplicateAppointmentForConversation(args.conversationId, parsed.startAt);
@@ -96,7 +105,7 @@ export async function registerAnaAppointmentIfConfirmed(args: {
       conversationId: args.conversationId,
       dupId: dup.id,
     });
-    return;
+    return { persisted: false };
   }
 
   try {
@@ -119,7 +128,9 @@ export async function registerAnaAppointmentIfConfirmed(args: {
     });
     const finalBroker = conversationBroker ?? result.appointment.brokerId ?? null;
     await scheduleDeferredHandoffAfterAppointment(args.conversationId, finalBroker);
+    return { persisted: true, canonicalLine };
   } catch (e) {
     console.error('[ANA APPT] falha ao registrar', e instanceof Error ? e.message : e);
+    return { persisted: false };
   }
 }
