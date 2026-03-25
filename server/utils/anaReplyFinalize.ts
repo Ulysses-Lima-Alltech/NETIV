@@ -112,6 +112,33 @@ export interface FinalizeAnaReplyOptions {
 }
 
 /**
+ * Remove artefatos comuns de markdown que o modelo às vezes devolve (WhatsApp não renderiza bem).
+ */
+export function stripMarkdownArtifactsForWhatsApp(text: string): string {
+  let t = text;
+  t = t.replace(/\*\*([^*]+)\*\*/g, '$1');
+  t = t.replace(/\*([^*\n]+)\*/g, '$1');
+  t = t.replace(/__([^_]+)__/g, '$1');
+  t = t.replace(/_([^_\n]+)_/g, '$1');
+  t = t.replace(/`([^`]+)`/g, '$1');
+  t = t.replace(/^#{1,6}\s+/gm, '');
+  t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  t = t.replace(/^\s*[*•]\s+/gm, '');
+  return t;
+}
+
+/** Normaliza espaços mantendo quebras de linha (uma mensagem pode ter vários blocos). Colapsa 3+ quebras em no máximo 2 (uma linha em branco entre parágrafos). */
+function normalizeWhitespacePreservingLines(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const out = lines.map((line) => line.replace(/\s+/g, ' ').trim());
+  let joined = out.join('\n');
+  while (/\n{3,}/.test(joined)) {
+    joined = joined.replace(/\n{3,}/g, '\n\n');
+  }
+  return joined.trim();
+}
+
+/**
  * UX: em conversa aberta, a última ideia deve fechar com pergunta e interrogação.
  * Exceção: se o cliente encerrou claramente, não acrescenta pergunta nem força "?".
  */
@@ -119,7 +146,7 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   const closure =
     opts?.userMessage != null && opts.userMessage.length > 0 && detectClientConversationClosure(opts.userMessage);
 
-  let s = (text || '').trim().replace(/\s+/g, ' ');
+  let s = normalizeWhitespacePreservingLines(stripMarkdownArtifactsForWhatsApp((text || '').trim()));
 
   if (closure) {
     if (!s) return randomFarewellNoQuestion();

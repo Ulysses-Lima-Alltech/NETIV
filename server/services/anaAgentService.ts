@@ -39,9 +39,9 @@ export const ANA_FALLBACK_INCOMPREHENSION_REPLY =
   'Para eu te orientar melhor: você busca informações sobre empreendimento, valores, localização ou disponibilidade?';
 
 const JSON_INSTRUCTION = `
-JSON obrigatório (sem markdown):
+JSON obrigatório (sem markdown no JSON):
 {
-  "reply": "texto ao cliente",
+  "reply": "texto ao cliente em texto puro para WhatsApp — sem *, **, _, #; use quebras de linha para organizar; para vários empreendimentos use o padrão 📍 💰 📄 📐 descrito nas regras de formatação",
   "classification": "Novo" | "Qualificado" | "Carteira" | "Handoff",
   "lead_temperature": "frio" | "morno" | "quente"   (opcional; omita se não houver inferência),
   "project": "nome do empreendimento ou vazio",
@@ -96,6 +96,19 @@ CONSOLIDAÇÃO DE MENSAGENS (WhatsApp):
 - Trate rajadas de mensagens curtas como UM único turno. Responda uma vez só, cobrindo tudo.
 - Não responda fragmento por fragmento nem duplique respostas.
 
+FORMATAÇÃO WHATSAPP (obrigatório no texto da resposta ao cliente):
+- O canal é WhatsApp: o cliente vê texto puro. NUNCA use markdown (*, **, _, #, crases, listas com hífen técnico estilo código).
+- Organize com quebras de linha; cada ideia importante pode ficar em linha própria. Evite parágrafo único gigante quando listar preços ou empreendimentos.
+- Quando apresentar mais de um empreendimento com dados comerciais, use padrão visual consistente, por exemplo (adapte os valores):
+  📍 Nome do empreendimento
+  💰 Preço: (valor ou o que constar no cadastro)
+  📄 Condições: (texto)
+  📐 Disponibilidade: (texto)
+  Separe um empreendimento do outro com exatamente uma linha em branco (não empilhe linhas vazias).
+- Se o prompt trouxer a seção "UX — LISTAGEM COMERCIAL", siga a abertura e o fechamento sugeridos para esta rodada (variação humana).
+- Pode usar emojis discretos (📍 💰 📄 📐) para leitura; não exagere. Não use asteriscos para “negrito”.
+- Tom de secretária comercial: cordial e claro, não parecendo relatório técnico nem dump de sistema.
+
 SAUDAÇÕES SIMPLES (oi, olá, bom dia, boa tarde, boa noite):
 - Trate sempre como abertura normal de conversa, nunca como mensagem incompreensível.
 - Responda de forma acolhedora como secretária de vendas; não diga que "não entendeu" só por ser curto.
@@ -140,27 +153,70 @@ const LANGUAGE_HINT: Record<string, string> = {
   culta: 'Tom culto.',
 };
 
+/** Linhas de variáveis no padrão visual WhatsApp (referência para a Ana replicar ao responder). */
 function formatVars(v: Record<string, string>): string {
   return [
-    `• Preço: ${v.preco?.trim() || '[não informado]'}`,
-    `• Condições: ${v.condicoes?.trim() || '[não informado]'}`,
-    `• Disponibilidade: ${v.disponibilidade?.trim() || '[não informado]'}`,
-    `• Observações: ${v.observacoes?.trim() || '[nenhuma]'}`,
+    `💰 Preço: ${v.preco?.trim() || '[não informado]'}`,
+    `📄 Condições: ${v.condicoes?.trim() || '[não informado]'}`,
+    `📐 Disponibilidade: ${v.disponibilidade?.trim() || '[não informado]'}`,
+    `📝 Observações: ${v.observacoes?.trim() || '[nenhuma]'}`,
   ].join('\n');
+}
+
+/** Aberturas variadas (sorteio no servidor quando há 2+ empreendimentos com dados). */
+export const COMMERCIAL_LIST_OPENINGS: string[] = [
+  'Olha só o que encontrei pra você 😊',
+  'Tenho essas opções aqui que podem fazer sentido pra você:',
+  'Encontrei essas opções disponíveis:',
+  'Essas são as opções que temos no momento:',
+  'Separei essas opções pra você dar uma olhada:',
+];
+
+/** Fechamentos consultivos (sorteio independente da abertura). */
+export const COMMERCIAL_LIST_CLOSINGS: string[] = [
+  'Algum desses te chamou mais atenção?',
+  'Quer que eu te explique melhor algum deles?',
+  'Qual deles faz mais sentido pra você?',
+  'Posso te ajudar a comparar melhor esses dois?',
+  'Quer que eu detalhe algum deles pra você?',
+  'Quer que eu te ajude a comparar melhor as opções?',
+];
+
+export function pickCommercialListUx(): { opening: string; closing: string } {
+  const oi = Math.floor(Math.random() * COMMERCIAL_LIST_OPENINGS.length);
+  const ci = Math.floor(Math.random() * COMMERCIAL_LIST_CLOSINGS.length);
+  return {
+    opening: COMMERCIAL_LIST_OPENINGS[oi]!,
+    closing: COMMERCIAL_LIST_CLOSINGS[ci]!,
+  };
+}
+
+function buildCommercialListUxBlock(h: { opening: string; closing: string }): string {
+  return `
+
+UX — LISTAGEM COMERCIAL (mais de um empreendimento nesta rodada — siga para a resposta ao cliente):
+- Abra com tom natural de secretária comercial. Base (pode ajustar levemente uma palavra, sem mudar o sentido): "${h.opening}"
+- Depois da abertura, uma linha em branco e então o primeiro 📍.
+- Entre um bloco e outro: após o último campo de um empreendimento, uma linha em branco e só então o próximo 📍. Não use duas ou mais linhas em branco seguidas.
+- Ao final do último bloco, uma linha em branco e feche com pergunta consultiva; nesta rodada prefira: "${h.closing}"
+- Se houver mais de dois empreendimentos e o fechamento citar "dois", adapte para plural de forma natural (ex.: "comparar essas opções").`;
 }
 
 function buildCommercialDataBlock(snapshots: CommercialSnapshot[]): string {
   if (snapshots.length === 0) return '';
-  const body = snapshots.map((s) => `### ${s.enterpriseName}\n${formatVars(s.variables)}`).join('\n\n');
+  const body = snapshots
+    .map((s) => `📍 ${s.enterpriseName}\n${formatVars(s.variables)}`)
+    .join('\n\n');
   return `
 
 DADOS COMERCIAIS CADASTRADOS NO SISTEMA (fonte primária — use antes de supor ou dizer que não tem acesso):
 ${body}
 
 Regras obrigatórias:
+- Ao repassar esses dados ao cliente, mantenha o mesmo tipo de organização visual (📍 nome, 💰 📄 📐 📝 em linhas separadas), sem markdown e sem asteriscos.
 - Para valor, preço, condições, disponibilidade, metragens ou lotes: use literalmente o que consta acima quando não for "[não informado]" ou "[nenhuma]".
 - Não diga que não tem acesso aos valores ou que não pode informar preços quando o campo "Preço" ou equivalente estiver preenchido acima.
-- Com mais de um empreendimento, organize por nome e compare quando fizer sentido; se um tiver dado e outro "[não informado]", seja explícita sobre o que falta.
+- Com mais de um empreendimento, um bloco 📍 por projeto; entre blocos use apenas uma linha em branco; compare quando fizer sentido; se um tiver dado e outro "[não informado]", seja explícita sobre o que falta.
 - Handoff humano por "preço/negociação" só quando o cliente pedir negociação fora do cadastro ou informação que não está acima — não use handoff só para repetir dados já cadastrados.`;
 }
 
@@ -278,6 +334,8 @@ export interface BuildAnaSystemPromptOpts {
   locationQueryContext?: LocationQueryContext | null;
   /** Por empreendimento: preço, condições, disponibilidade (triagem com localização ou foco único). */
   commercialSnapshots?: CommercialSnapshot[] | null;
+  /** Só quando há 2+ snapshots: abertura e fechamento sorteados no servidor para variar a UX. */
+  commercialListUxHints?: { opening: string; closing: string } | null;
 }
 
 function buildLocationQueryBlock(loc: LocationQueryContext): string {
@@ -310,7 +368,9 @@ export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
   const base = COMPORTAMENTO;
   const loc = opts.locationQueryContext ?? null;
   const locationBlock = loc ? buildLocationQueryBlock(loc) : '';
-  const commercialBlock = buildCommercialDataBlock(opts.commercialSnapshots ?? []);
+  const commercialListUx =
+    opts.commercialListUxHints != null ? buildCommercialListUxBlock(opts.commercialListUxHints) : '';
+  const commercialBlock = buildCommercialDataBlock(opts.commercialSnapshots ?? []) + commercialListUx;
 
   if (opts.mode === 'triage') {
     const namesList =
@@ -452,7 +512,7 @@ Troca de empreendimento:
 
 ${matBlock}
 
-${commercialBlock || `Variáveis:\n${formatVars(opts.variablesMap)}`}
+${commercialBlock || `Dados comerciais cadastrados:\n📍 ${opts.enterprise?.name ?? 'Empreendimento'}\n${formatVars(opts.variablesMap)}`}
 ${addonsBlock}
 ${know}`;
 }

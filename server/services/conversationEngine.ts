@@ -26,6 +26,7 @@ import {
   buildAnaSystemPrompt,
   type BuildAnaSystemPromptOpts,
   type CommercialSnapshot,
+  pickCommercialListUx,
   parseAnaJson,
   fallbackReplyFromRaw,
   detectStrongPurchaseIntentForLeadTemperature,
@@ -502,6 +503,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       openAppointmentSummary,
       locationQueryContext: locationQueryContext ?? undefined,
       commercialSnapshots: commercialSnapshots.length > 0 ? commercialSnapshots : undefined,
+      commercialListUxHints: commercialSnapshots.length > 1 ? pickCommercialListUx() : undefined,
     };
     const systemPrompt = buildAnaSystemPrompt(promptOpts);
 
