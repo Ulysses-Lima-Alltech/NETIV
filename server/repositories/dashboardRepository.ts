@@ -23,7 +23,7 @@ export interface DashboardOverview {
     activeConversations: number;
     qualified: number;
     handoffs: number;
-    reserva: number;
+    carteira: number;
     avgFirstResponseSeconds: number | null;
     noFirstResponse: number;
   };
@@ -36,7 +36,7 @@ export interface DashboardOverview {
     total: number;
     qualified: number;
     handoffs: number;
-    reservas: number;
+    carteiras: number;
   }[];
   attentionItems: {
     id: number;
@@ -88,9 +88,9 @@ export async function getDashboardOverview(
     paramsE
   );
 
-  const { rows: reservaRows } = await query<{ n: string }>(
+  const { rows: carteiraRows } = await query<{ n: string }>(
     `SELECT COUNT(*)::text AS n FROM conversations c
-     WHERE c.classification = 'Reserva'
+     WHERE c.classification = 'Carteira'
      ${ent}`,
     paramsE
   );
@@ -150,7 +150,7 @@ export async function getDashboardOverview(
     paramsE
   );
   const { rows: resC } = await query<{ n: string }>(
-    `SELECT COUNT(*)::text AS n FROM conversations c WHERE c.classification = 'Reserva' ${ent}`,
+    `SELECT COUNT(*)::text AS n FROM conversations c WHERE c.classification = 'Carteira' ${ent}`,
     paramsE
   );
   const { rows: handC } = await query<{ n: string }>(
@@ -164,14 +164,14 @@ export async function getDashboardOverview(
     total: string;
     qualified: string;
     handoffs: string;
-    reservas: string;
+    carteiras: string;
   }>(
     `SELECT c.enterprise_id,
       COALESCE(e.name, '(sem empreendimento)') AS name,
       COUNT(*)::text AS total,
       SUM(CASE WHEN c.classification = 'Qualificado' THEN 1 ELSE 0 END)::text AS qualified,
       SUM(CASE WHEN c.classification = 'Handoff' THEN 1 ELSE 0 END)::text AS handoffs,
-      SUM(CASE WHEN c.classification = 'Reserva' THEN 1 ELSE 0 END)::text AS reservas
+      SUM(CASE WHEN c.classification = 'Carteira' THEN 1 ELSE 0 END)::text AS carteiras
     FROM conversations c
     LEFT JOIN enterprises e ON e.id = c.enterprise_id
     WHERE 1=1 ${ent}
@@ -253,7 +253,7 @@ export async function getDashboardOverview(
       activeConversations: parseInt(activeRows[0]?.n || '0', 10) || 0,
       qualified: parseInt(qualRows[0]?.n || '0', 10) || 0,
       handoffs: parseInt(handRows[0]?.n || '0', 10) || 0,
-      reserva: parseInt(reservaRows[0]?.n || '0', 10) || 0,
+      carteira: parseInt(carteiraRows[0]?.n || '0', 10) || 0,
       avgFirstResponseSeconds: avgFirst,
       noFirstResponse: parseInt(noFirstRows[0]?.n || '0', 10) || 0,
     },
@@ -265,7 +265,7 @@ export async function getDashboardOverview(
       { label: 'Novo', count: parseInt(novoC[0]?.n || '0', 10) || 0 },
       { label: 'Qualificado', count: parseInt(qualC[0]?.n || '0', 10) || 0 },
       { label: 'Handoff', count: parseInt(handC[0]?.n || '0', 10) || 0 },
-      { label: 'Reserva', count: parseInt(resC[0]?.n || '0', 10) || 0 },
+      { label: 'Carteira', count: parseInt(resC[0]?.n || '0', 10) || 0 },
     ],
     enterprises: entRows.map((row) => ({
       enterpriseId: row.enterprise_id,
@@ -273,7 +273,7 @@ export async function getDashboardOverview(
       total: parseInt(row.total, 10) || 0,
       qualified: parseInt(row.qualified, 10) || 0,
       handoffs: parseInt(row.handoffs, 10) || 0,
-      reservas: parseInt(row.reservas, 10) || 0,
+      carteiras: parseInt(row.carteiras, 10) || 0,
     })),
     attentionItems,
   };

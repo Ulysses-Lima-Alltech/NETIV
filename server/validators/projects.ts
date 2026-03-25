@@ -22,6 +22,7 @@ export const updateProjectSchema = z.object({
   languageStyle: z.enum(['informal', 'natural', 'formal', 'culta']).optional(),
   variables: projectVariablesSchema.optional(),
   promptAddons: z.array(z.string().max(4000)).max(50).optional(),
+  allowMaterialSending: z.boolean().optional(),
 });
 
 export type CreateProjectDto = z.infer<typeof createProjectSchema>;

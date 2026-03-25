@@ -1,5 +1,6 @@
 import { query } from '../db/pg.js';
 import { getActiveEnterpriseById } from './enterpriseRepository.js';
+import { assignBrokerForHandoffConversation, clearAssignedBroker } from '../services/handoffQueueService.js';
 import type { LeadOriginInput } from '../services/leadOriginResolver.js';
 import { resolveEnterpriseFromLeadSource } from '../services/leadOriginResolver.js';
 
@@ -33,6 +34,9 @@ export interface ConversationRow {
   reserve_interest_type?: string | null;
   reserve_follow_up_moment?: string | null;
   reserve_commercial_notes?: string | null;
+  assigned_broker_id?: number | null;
+  /** Quantidade aproximada de menções ao nome do cliente nas respostas da Ana (incremento por mensagem). */
+  ana_customer_name_mentions?: number;
 }
 
 export interface ReserveSegmentationPatch {
@@ -169,11 +173,12 @@ export async function deleteConversation(id: number): Promise<boolean> {
   return (result.rowCount ?? 0) > 0;
 }
 
-const VALID_CLASSIFICATIONS = new Set(['Novo', 'Qualificado', 'Reserva', 'Handoff']);
+const VALID_CLASSIFICATIONS = new Set(['Novo', 'Qualificado', 'Carteira', 'Handoff']);
 
 function toValidClassification(s: string | null | undefined): string {
   const t = (s || '').trim();
   if (t === 'Interessado' || t === 'Qualificando') return 'Qualificado';
+  if (t === 'Reserva') return 'Carteira';
   return VALID_CLASSIFICATIONS.has(t) ? t : 'Novo';
 }
 
@@ -214,7 +219,7 @@ export function maxLeadTemperature(
 
 /**
  * Funil: Novo → Qualificado quando há empreendimento e temperatura definidos.
- * Handoff e Reserva não são alterados; com handoff ativo mantém Handoff.
+ * Handoff e Carteira não são alterados; com handoff ativo mantém Handoff.
  */
 function applyFunnelQualificationRule(args: {
   classification: string;
@@ -224,7 +229,7 @@ function applyFunnelQualificationRule(args: {
 }): string {
   if (args.handoff) return 'Handoff';
   const c = toValidClassification(args.classification);
-  if (c === 'Handoff' || c === 'Reserva') return c;
+  if (c === 'Handoff' || c === 'Carteira') return c;
   if (c !== 'Novo') return c;
   if (args.enterpriseId == null || !isLeadTemperatureDefined(args.leadTemperature)) return c;
   return 'Qualificado';
@@ -233,6 +238,7 @@ function applyFunnelQualificationRule(args: {
 export interface ConversationWithPreview extends ConversationRow {
   last_message_preview: string | null;
   enterprise_name: string | null;
+  assigned_broker_name?: string | null;
 }
 
 export interface ListConversationsFilters {
@@ -286,9 +292,11 @@ export async function listConversationsWithPreview(
   const { rows } = await query<ConversationWithPreview>(
     `SELECT c.*,
       (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_preview,
-      e.name AS enterprise_name
+      e.name AS enterprise_name,
+      br.full_name AS assigned_broker_name
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
+     LEFT JOIN corretores br ON br.id = c.assigned_broker_id
      ${whereClause}
      ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC
      LIMIT $${paramIndex}`,
@@ -310,6 +318,7 @@ export async function updateClassification(
 ): Promise<ConversationRow | null> {
   const cur = await getConversationById(conversationId);
   if (!cur) return null;
+  const wasHandoff = cur.handoff === true;
   let enterprise_id = u.enterprise_id !== undefined ? u.enterprise_id : cur.enterprise_id;
   if (enterprise_id != null) {
     const ok = await getActiveEnterpriseById(enterprise_id);
@@ -361,7 +370,12 @@ export async function updateClassification(
        updated_at = NOW() WHERE id = $4 RETURNING *`,
       [enterprise_id, classAfterFunnel, handoff, conversationId, savedForHandoff, lead_temperature]
     );
-    return rows[0] ?? null;
+    const row = rows[0] ?? null;
+    if (row) {
+      if (handoff) await assignBrokerForHandoffConversation(conversationId);
+      else if (wasHandoff && !handoff) await clearAssignedBroker(conversationId);
+    }
+    return row;
   }
 
   const mergedReserve = mergeReservePatch(rowReserveToPatch(cur), u.reserve);
@@ -398,7 +412,12 @@ export async function updateClassification(
       lead_temperature,
     ]
   );
-  return rows[0] ?? null;
+  const row = rows[0] ?? null;
+  if (row) {
+    if (handoff) await assignBrokerForHandoffConversation(conversationId);
+    else if (wasHandoff && !handoff) await clearAssignedBroker(conversationId);
+  }
+  return row;
 }
 
 export async function setConversationEnterpriseId(
@@ -441,6 +460,7 @@ export async function applyAnaConversationUpdate(
 ): Promise<void> {
   const conv = await getConversationById(conversationId);
   if (!conv) return;
+  const wasHandoff = conv.handoff === true;
   let classification = toValidClassification(meta.classification?.trim() || conv.classification);
   const handoff = !!meta.handoff;
   if (handoff) {
@@ -471,5 +491,15 @@ export async function applyAnaConversationUpdate(
        (CASE WHEN $3 = false THEN NULL ELSE classification_before_handoff END) END,
      updated_at = NOW() WHERE id = $5`,
     [classification, lead_temperature, handoff, cn ?? null, conversationId, saveBeforeHandoff ?? null]
+  );
+  if (handoff) await assignBrokerForHandoffConversation(conversationId);
+  else if (wasHandoff && !handoff) await clearAssignedBroker(conversationId);
+}
+
+export async function incrementAnaCustomerNameMentions(conversationId: number, delta: number): Promise<void> {
+  if (delta <= 0) return;
+  await query(
+    `UPDATE conversations SET ana_customer_name_mentions = ana_customer_name_mentions + $1, updated_at = NOW() WHERE id = $2`,
+    [delta, conversationId]
   );
 }

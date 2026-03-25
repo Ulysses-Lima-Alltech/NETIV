@@ -226,6 +226,7 @@ export async function assignAppointment(data: {
   notes?: string;
   source?: string;
   brokerId?: number | null;
+  conversationId?: number | null;
 }): Promise<AssignAppointmentResult> {
   // Se brokerId informado, usa ele; senão distribuição automática
   let brokerId: number | null;
@@ -250,6 +251,7 @@ export async function assignAppointment(data: {
     status,
     source: data.source ?? 'ANA',
     notes: data.notes ?? '',
+    conversationId: data.conversationId ?? null,
   });
   if (brokerId) {
     await query(

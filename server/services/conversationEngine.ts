@@ -5,6 +5,7 @@ import {
   setConversationEnterpriseId,
   applyAnaConversationUpdate,
   maxLeadTemperature,
+  incrementAnaCustomerNameMentions,
 } from '../repositories/conversationRepository.js';
 import { sendTextMessage, sendDocumentMessage } from './whatsappMetaService.js';
 import { tryMatchActiveEnterpriseId } from '../repositories/enterpriseMatch.js';
@@ -28,6 +29,9 @@ import {
   detectStrongPurchaseIntentForLeadTemperature,
   ANA_FALLBACK_INCOMPREHENSION_REPLY,
 } from './anaAgentService.js';
+import { randomAnaReplyDelayMs, sleepMs, finalizeAnaReplyText, countCustomerNameMentionsInText } from '../utils/anaReplyFinalize.js';
+import { extractLeadDataFromConversation } from './leadWalletExtractionService.js';
+import { registerAnaAppointmentIfConfirmed } from './anaAppointmentFromChatService.js';
 
 export interface IncomingMessageContext {
   conversationId: number;
@@ -247,7 +251,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ...(mergedLeadOnHandoff != null ? { lead_temperature: mergedLeadOnHandoff } : {}),
         handoff: true,
       });
-      const confirmMsg = 'Entendido! Um atendente vai entrar em contato em breve. Enquanto isso, sua mensagem já foi registrada.';
+      const delayMs = randomAnaReplyDelayMs();
+      await sleepMs(delayMs);
+      const confirmMsg = finalizeAnaReplyText(
+        'Entendido! Um atendente vai entrar em contato em breve. Enquanto isso, sua mensagem já foi registrada. Posso te ajudar com mais alguma coisa antes da transferência'
+      );
       const sendResult = await sendTextMessage(toPhoneNumber, confirmMsg);
       if (sendResult.success && sendResult.metaMessageId) {
         await insertMessage(conversationId, 'assistant', confirmMsg, sendResult.metaMessageId);
@@ -298,6 +306,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       mode === 'scoped'
         ? (activeEnterprisesForContext ?? (await listEnterprises(true))).map((e) => e.name)
         : [];
+    const allowMaterialSending = ent == null ? true : ent.allow_material_sending !== false;
     const promptOpts: BuildAnaSystemPromptOpts = {
       mode,
       enterprise: ent,
@@ -305,6 +314,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       knowledgeText,
       fileInventory,
       allEnterpriseNames,
+      allowMaterialSending,
+      knownCustomerName: effectiveConv.customer_name,
+      customerNameMentionsSoFar: effectiveConv.ana_customer_name_mentions ?? 0,
     };
     const systemPrompt = buildAnaSystemPrompt(promptOpts);
 
@@ -358,8 +370,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         customer_name: '',
         summary: result.error || '',
         send_file_category: null,
+        appointment_confirmed: false,
+        appointment_date: null,
+        appointment_time: null,
+        appointment_notes: null,
       };
     }
+
+    if (!allowMaterialSending) {
+      structured = { ...structured, send_file_category: null };
+    }
+
+    const prevClassification = effectiveConv.classification;
 
     console.log('[DOC_FLOW] structured final (pronto para texto + arquivo)', {
       conversationId,
@@ -383,18 +405,51 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       handoff: structured.handoff,
     });
 
-    const replyText = structured.reply.slice(0, 4000);
+    const delayMs = randomAnaReplyDelayMs();
+    console.log('[ANA DEBUG] delay antes do envio (simulação humana)', { conversationId, delayMs });
+    await sleepMs(delayMs);
+
+    let replyText = finalizeAnaReplyText(structured.reply).slice(0, 4000);
     console.log('[ANA DEBUG] sending WhatsApp reply', { toPhoneNumber, replyLength: replyText.length });
     const sendResult = await sendTextMessage(toPhoneNumber, replyText);
     if (sendResult.success && sendResult.metaMessageId) {
       await insertMessage(conversationId, 'assistant', replyText, sendResult.metaMessageId);
       console.log('[ANA DEBUG] WhatsApp reply sent', { metaMessageId: sendResult.metaMessageId });
       console.log('[ANA DEBUG] assistant message saved');
+      const convAfterSend = await getConversationById(conversationId);
+      const nameForMention = (structured.customer_name?.trim() || convAfterSend?.customer_name || '').trim();
+      const delta = countCustomerNameMentionsInText(replyText, nameForMention);
+      if (delta > 0) await incrementAnaCustomerNameMentions(conversationId, delta);
     } else {
       console.error('[ANA DEBUG] Falha ao enviar WhatsApp:', sendResult.error, { toPhoneNumber });
     }
 
-    const cat = structured.send_file_category;
+    if (structured.classification === 'Carteira' && prevClassification !== 'Carteira') {
+      const convRef = await getConversationById(conversationId);
+      void extractLeadDataFromConversation(
+        conversationId,
+        convRef?.customer_name ?? structured.customer_name ?? null,
+        ent?.name ?? null
+      ).catch((e) => console.error('[Carteira extract]', e));
+    }
+
+    const convForAppt = await getConversationById(conversationId);
+    if (ent && structured.appointment_confirmed) {
+      void registerAnaAppointmentIfConfirmed({
+        conversationId,
+        customerName: (convForAppt?.customer_name || structured.customer_name || '').trim() || 'Cliente',
+        customerPhone: (convForAppt?.contact_phone || convForAppt?.external_contact_id || '').replace(/\D/g, ''),
+        enterpriseId: ent.id,
+        city: '',
+        appointmentConfirmed: true,
+        appointmentDateYmd: structured.appointment_date,
+        appointmentTimeHm: structured.appointment_time,
+        notes: structured.appointment_notes,
+        brokerId: convForAppt?.assigned_broker_id ?? null,
+      }).catch((e) => console.error('[ANA APPT]', e));
+    }
+
+    const cat = allowMaterialSending ? structured.send_file_category : null;
     /** `ent` já vem de `getActiveEnterpriseById(effectiveConv.enterprise_id)` — usar `ent.id` evita falso negativo se `enterprise_id` da conversa e `ent.id` divergirem por tipo/serialização. */
     const enterpriseIdForFile = ent != null ? Number(ent.id) : null;
 

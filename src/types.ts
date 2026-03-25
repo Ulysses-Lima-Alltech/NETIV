@@ -1,4 +1,4 @@
-export type ConversationStatus = 'NOVO' | 'EM_ANDAMENTO' | 'QUALIFICADO' | 'HANDOFF' | 'Novo' | 'Qualificado' | 'Reserva' | 'Handoff';
+export type ConversationStatus = 'NOVO' | 'EM_ANDAMENTO' | 'QUALIFICADO' | 'HANDOFF' | 'Novo' | 'Qualificado' | 'Carteira' | 'Handoff';
 
 export type LeadTemperatura = 'quente' | 'morno' | 'frio';
 
@@ -23,7 +23,7 @@ export interface Conversation {
   /** Empreendimento da origem/campanha (imutável); pode diferir do ativo. */
   enterpriseOriginId?: number | null;
   enterpriseOriginName?: string | null;
-  /** Segmentação quando em Reserva (API camelCase). */
+  /** Segmentação quando em Carteira (API camelCase). */
   reserveReason?: string | null;
   reserveDesiredCity?: string | null;
   reservePriceMin?: number | null;
@@ -33,6 +33,8 @@ export interface Conversation {
   reserveInterestType?: string | null;
   reserveFollowUpMoment?: string | null;
   reserveCommercialNotes?: string | null;
+  /** Corretor atribuído no handoff (tag). */
+  assignedBrokerName?: string | null;
 }
 
 export type MessageSender = 'LEAD' | 'AGENT';

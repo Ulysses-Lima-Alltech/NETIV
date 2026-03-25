@@ -32,7 +32,7 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
           ? isSelected
             ? 'bg-[#FEF2F2] border-l-[3px] border-l-[#DC2626]'
             : 'bg-[#FFFBEB] hover:bg-[#FEF3C7] border-l-[3px] border-l-[#F59E0B]'
-          : (conversation.classificationStatus === 'Reserva' || conversation.status === 'Reserva')
+          : (conversation.classificationStatus === 'Carteira' || conversation.status === 'Carteira')
             ? isSelected
               ? 'bg-[#F5F3FF] border-l-[3px] border-l-[#7C3AED]'
               : 'bg-[#FAF5FF] hover:bg-[#F3E8FF] border-l-[3px] border-l-[#A78BFA]'
@@ -70,9 +70,15 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
           </span>
         )}
         {!conversation.handoff && conversation.status !== 'Handoff' && conversation.classificationStatus !== 'Handoff' &&
-          (conversation.classificationStatus === 'Reserva' || conversation.status === 'Reserva') && (
+          (conversation.classificationStatus === 'Carteira' || conversation.status === 'Carteira') && (
           <span className="inline-flex items-center text-[10px] font-bold uppercase tracking-wide px-2 py-[2px] rounded bg-[#EDE9FE] text-[#5B21B6] border border-[#DDD6FE]">
-            Reserva
+            Carteira
+          </span>
+        )}
+        {(conversation.handoff === true || conversation.status === 'Handoff' || conversation.classificationStatus === 'Handoff') &&
+          conversation.assignedBrokerName?.trim() && (
+          <span className="inline-flex items-center text-[10px] font-semibold px-2 py-[2px] rounded bg-[#ECFDF5] text-[#047857] border border-[#A7F3D0] max-w-[140px] truncate" title={conversation.assignedBrokerName}>
+            {conversation.assignedBrokerName}
           </span>
         )}
         {projectDisplay && (
@@ -87,7 +93,7 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
           <FlameIcon temperatura={conversation.temperatura} size="sm" />
         </span>
         {!conversation.handoff && conversation.status !== 'Handoff' && conversation.classificationStatus !== 'Handoff' &&
-          conversation.classificationStatus !== 'Reserva' && conversation.status !== 'Reserva' && (
+          conversation.classificationStatus !== 'Carteira' && conversation.status !== 'Carteira' && (
           <span className="text-[10px] font-medium px-2 py-[2px] rounded bg-[#F3F4F6] text-[#6B7280]">
             {formatStatus(conversation.status)}
           </span>

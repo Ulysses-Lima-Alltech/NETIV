@@ -56,6 +56,7 @@ export interface EnterpriseRow {
   status: string;
   language_style: string;
   prompt_addons: string;
+  allow_material_sending?: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -149,6 +150,7 @@ export async function updateEnterprise(
     slug?: string;
     languageStyle?: LanguageStyle;
     promptAddons?: string[];
+    allowMaterialSending?: boolean;
   }
 ): Promise<EnterpriseRow | null> {
   const cur = await getEnterpriseById(id);
@@ -162,15 +164,18 @@ export async function updateEnterprise(
   const status = u.status ?? cur.status;
   const language_style = u.languageStyle ?? cur.language_style;
   const prompt_addons = u.promptAddons !== undefined ? JSON.stringify(u.promptAddons) : cur.prompt_addons;
+  const allow_material_sending =
+    u.allowMaterialSending !== undefined ? u.allowMaterialSending : cur.allow_material_sending ?? true;
   if (u.name !== undefined && !name) throw new Error('Nome obrigatório.');
   if (u.name !== undefined && name !== cur.name) {
     const d = await query(`SELECT id FROM enterprises WHERE name = $1 AND id != $2`, [name, id]);
     if (d.rows.length) throw new Error('Já existe empreendimento com esse nome.');
   }
   const { rows } = await query<EnterpriseRow>(
-    `UPDATE enterprises SET name = $1, slug = $2, status = $3, language_style = $4, prompt_addons = $5, updated_at = NOW()
+    `UPDATE enterprises SET name = $1, slug = $2, status = $3, language_style = $4, prompt_addons = $5,
+     allow_material_sending = $7, updated_at = NOW()
      WHERE id = $6 RETURNING *`,
-    [name, slug, status, language_style, prompt_addons, id]
+    [name, slug, status, language_style, prompt_addons, id, allow_material_sending]
   );
   return rows[0] ?? null;
 }
@@ -448,6 +453,7 @@ export function enterpriseToPublic(e: EnterpriseRow, vars: Record<string, string
     languageStyle: e.language_style as LanguageStyle,
     variables: varsToFrontend(vars),
     promptAddons: parseAddons(e.prompt_addons),
+    allowMaterialSending: e.allow_material_sending !== false,
     createdAt: e.created_at.toISOString(),
     updatedAt: e.updated_at.toISOString(),
   };

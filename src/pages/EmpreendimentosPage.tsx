@@ -6,6 +6,7 @@ import {
   type KnowledgeFileItem,
   type ProjectVariables,
   type FileCategory,
+  type PromptAddonsHistoryItem,
 } from '../api/client';
 
 const CAT_LABEL: Record<FileCategory, string> = {
@@ -77,6 +78,10 @@ export function EmpreendimentosPage() {
   const [uploadCategory, setUploadCategory] = useState<FileCategory>('book');
   const [showInactiveKnowledge, setShowInactiveKnowledge] = useState(false);
   const [knowledgeNotice, setKnowledgeNotice] = useState<string | null>(null);
+  const [allowMaterialSending, setAllowMaterialSending] = useState(true);
+  const [regrasTab, setRegrasTab] = useState<'regras' | 'historico'>('regras');
+  const [historyItems, setHistoryItems] = useState<PromptAddonsHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   /* ── Data loading (unchanged) ── */
 
@@ -106,6 +111,8 @@ export function EmpreendimentosPage() {
         setVariables({ ...emptyVars(), ...(d.variables ?? {}) });
         setAddonsText(Array.isArray(d.promptAddons) ? d.promptAddons.join('\n') : '');
         setFiles(Array.isArray(d.knowledgeFiles) ? d.knowledgeFiles : []);
+        setAllowMaterialSending(d.allowMaterialSending !== false);
+        setRegrasTab('regras');
       })
       .catch((e) => { setErr(e instanceof Error ? e.message : 'Erro ao carregar'); setDetail(null); })
       .finally(() => setDetailLoading(false));
@@ -124,13 +131,31 @@ export function EmpreendimentosPage() {
     }
   }, [selectedId, loadDetail]);
 
+  useEffect(() => {
+    if (selectedId == null || regrasTab !== 'historico') return;
+    setHistoryLoading(true);
+    projectsApi
+      .promptAddonsHistory(selectedId)
+      .then((d) => setHistoryItems(d.items))
+      .catch(() => setHistoryItems([]))
+      .finally(() => setHistoryLoading(false));
+  }, [selectedId, regrasTab]);
+
   const save = () => {
     if (selectedId == null) return;
     setSaving(true);
     setErr(null);
     const promptAddons = addonsText.split('\n').map((s) => s.trim()).filter(Boolean);
     projectsApi
-      .update(selectedId, { name: name.trim(), slug: slug.trim() || undefined, status, languageStyle, variables, promptAddons })
+      .update(selectedId, {
+        name: name.trim(),
+        slug: slug.trim() || undefined,
+        status,
+        languageStyle,
+        variables,
+        promptAddons,
+        allowMaterialSending,
+      })
       .then(() => { loadList(); loadDetail(selectedId); })
       .catch((e) => setErr(e instanceof Error ? e.message : 'Erro ao salvar'))
       .finally(() => setSaving(false));
@@ -503,15 +528,71 @@ export function EmpreendimentosPage() {
               {/* ── Card 5: Regras adicionais ── */}
               <section className={card}>
                 <h2 className={heading}>Regras adicionais</h2>
-                <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-5">
+                <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-4">
                   Instruções extras injetadas no prompt da Ana. Uma por linha.
                 </p>
-                <textarea
-                  className={`${field} min-h-[130px] resize-y font-mono text-[13px]`}
-                  value={addonsText}
-                  onChange={(e) => setAddonsText(e.target.value)}
-                  placeholder={"Priorizar agendamento de visita\nNão mencionar concorrentes\nSempre perguntar se já visitou o decorado"}
-                />
+                <label className="flex items-start gap-3 mb-5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="mt-1 rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
+                    checked={allowMaterialSending}
+                    onChange={(e) => setAllowMaterialSending(e.target.checked)}
+                  />
+                  <span className="text-[13px] text-[#374151] leading-snug">
+                    Permitir envio de materiais pela Ana (book, PDF, tabelas pelo WhatsApp). Se desmarcado, a Ana orienta só por texto.
+                  </span>
+                </label>
+                <div className="flex gap-2 border-b border-[#E5E7EB] mb-4">
+                  <button
+                    type="button"
+                    onClick={() => setRegrasTab('regras')}
+                    className={`text-[13px] font-medium px-3 py-2 -mb-px border-b-2 transition ${
+                      regrasTab === 'regras' ? 'border-[#F97316] text-[#111827]' : 'border-transparent text-[#6B7280] hover:text-[#111827]'
+                    }`}
+                  >
+                    Edição
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRegrasTab('historico')}
+                    className={`text-[13px] font-medium px-3 py-2 -mb-px border-b-2 transition ${
+                      regrasTab === 'historico' ? 'border-[#F97316] text-[#111827]' : 'border-transparent text-[#6B7280] hover:text-[#111827]'
+                    }`}
+                  >
+                    Histórico
+                  </button>
+                </div>
+                {regrasTab === 'regras' ? (
+                  <textarea
+                    className={`${field} min-h-[130px] resize-y font-mono text-[13px]`}
+                    value={addonsText}
+                    onChange={(e) => setAddonsText(e.target.value)}
+                    placeholder={"Priorizar agendamento de visita\nNão mencionar concorrentes\nSempre perguntar se já visitou o decorado"}
+                  />
+                ) : (
+                  <div className="min-h-[130px]">
+                    {historyLoading ? (
+                      <p className="text-[13px] text-[#9CA3AF]">Carregando…</p>
+                    ) : historyItems.length === 0 ? (
+                      <p className="text-[13px] text-[#9CA3AF]">Nenhum histórico de alterações ainda.</p>
+                    ) : (
+                      <ul className="space-y-3 max-h-[280px] overflow-y-auto">
+                        {historyItems.map((h) => (
+                          <li
+                            key={h.id}
+                            className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2.5 text-[13px] text-[#374151] whitespace-pre-wrap"
+                          >
+                            <p className="text-[11px] text-[#9CA3AF] mb-1">
+                              {new Date(h.createdAt).toLocaleString('pt-BR')}
+                              {h.createdByName ? ` · ${h.createdByName}` : ''}
+                            </p>
+                            {h.ruleText}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
               </section>
 
               {/* ── Action bar ── */}

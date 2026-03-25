@@ -1,4 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import type { AuthenticatedRequest } from '../middleware/auth.js';
 import multer, { MulterError } from 'multer';
 import { randomBytes } from 'crypto';
 import { mkdirSync } from 'fs';
@@ -18,8 +19,10 @@ import {
   deleteEnterpriseFile,
   FILE_CATEGORIES,
   type FileCategory,
+  parseAddons,
 } from '../repositories/enterpriseRepository.js';
 import { createProjectSchema, updateProjectSchema } from '../validators/projects.js';
+import { insertPromptAddonsHistory, listPromptAddonsHistory } from '../repositories/promptAddonsHistoryRepository.js';
 
 const router = Router();
 
@@ -61,6 +64,28 @@ router.get('/', async (req, res) => {
   } catch (e) {
     console.error('[Projects] GET:', e);
     res.status(500).json({ error: 'Erro ao listar.' });
+  }
+});
+
+router.get('/:id/prompt-addons-history', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    const project = await getEnterpriseById(id);
+    if (!project) return res.status(404).json({ error: 'Não encontrado.' });
+    const rows = await listPromptAddonsHistory(id);
+    res.json({
+      items: rows.map((r) => ({
+        id: r.id,
+        ruleText: r.rule_text,
+        createdAt: r.created_at.toISOString(),
+        createdByUserId: r.created_by_user_id,
+        createdByName: r.creator_name ?? null,
+      })),
+    });
+  } catch (e) {
+    console.error('[Projects] GET prompt-addons-history:', e);
+    res.status(500).json({ error: 'Erro ao listar histórico.' });
   }
 });
 
@@ -123,6 +148,7 @@ router.patch('/:id', async (req, res) => {
       return res.status(400).json({ error: msg });
     }
     const d = parsed.data;
+    const authUser = (req as AuthenticatedRequest).user;
     let status: 'ativo' | 'inativo' | undefined;
     if (d.status === 'ativo' || d.status === 'inativo') status = d.status;
     else if (d.active !== undefined) status = d.active ? 'ativo' : 'inativo';
@@ -136,12 +162,23 @@ router.patch('/:id', async (req, res) => {
         }
       : undefined;
 
+    const before = await getEnterpriseById(id);
+    if (d.promptAddons !== undefined && before) {
+      const oldLines = parseAddons(before.prompt_addons);
+      const same = JSON.stringify(oldLines) === JSON.stringify(d.promptAddons);
+      if (!same) {
+        const prevText = oldLines.length ? oldLines.join('\n') : '(nenhuma regra anterior)';
+        await insertPromptAddonsHistory(id, prevText, authUser?.id ?? null);
+      }
+    }
+
     const ent = await updateEnterprise(id, {
       name: d.name,
       status,
       slug: d.slug,
       languageStyle: d.languageStyle,
       promptAddons: d.promptAddons,
+      allowMaterialSending: d.allowMaterialSending,
     });
     if (!ent) return res.status(404).json({ error: 'Não encontrado.' });
     if (variables) await setVariables(id, variables);

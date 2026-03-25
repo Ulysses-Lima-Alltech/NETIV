@@ -29,7 +29,12 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
   const projectName = c.projectName ?? null;
   const empreendimento = projectName;
   const raw = c.classificationStatus || 'Novo';
-  const status = (raw === 'Interessado' || raw === 'Qualificando' ? 'Qualificado' : ['Handoff', 'Qualificado', 'Reserva', 'Novo'].includes(raw) ? raw : 'Novo') as Conversation['status'];
+  const normalized = raw === 'Reserva' ? 'Carteira' : raw;
+  const status = (normalized === 'Interessado' || normalized === 'Qualificando'
+    ? 'Qualificado'
+    : ['Handoff', 'Qualificado', 'Carteira', 'Novo'].includes(normalized)
+      ? normalized
+      : 'Novo') as Conversation['status'];
   return {
     id: c.id,
     leadName,
@@ -46,6 +51,7 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     handoff: c.handoff ?? (status === 'Handoff'),
     enterpriseOriginId: c.enterpriseOriginId ?? null,
     enterpriseOriginName: undefined,
+    assignedBrokerName: c.assignedBrokerName ?? null,
     reserveReason: c.reserveReason ?? null,
     reserveDesiredCity: c.reserveDesiredCity ?? null,
     reservePriceMin: c.reservePriceMin ?? null,
@@ -288,6 +294,8 @@ export function InboxPage() {
                   enterpriseOriginName:
                     data.enterpriseOriginName !== undefined ? data.enterpriseOriginName : c.enterpriseOriginName,
                   handoff: data.handoff ?? c.handoff,
+                  assignedBrokerName:
+                    data.assignedBrokerName !== undefined ? data.assignedBrokerName : c.assignedBrokerName,
                   reserveReason: data.reserveReason ?? c.reserveReason,
                   reserveDesiredCity: data.reserveDesiredCity ?? c.reserveDesiredCity,
                   reservePriceMin: data.reservePriceMin ?? c.reservePriceMin,

@@ -211,7 +211,7 @@ export function SettingsWhatsAppPage() {
           <h2 className={sectionH}>Projetos</h2>
           <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-5">
             Empreendimentos usados na classificação das conversas na Inbox. Classificações: Novo, Qualificado,{' '}
-            <strong className="text-[#6B7280] font-medium">Reserva</strong> (sem avanço no momento, com potencial de retomada — não é descarte/spam) e Handoff.
+            <strong className="text-[#6B7280] font-medium">Carteira</strong> (sem avanço no momento, com potencial de retomada — não é descarte/spam) e Handoff.
           </p>
           {projectMessage && <div className="mb-4"><Alert type={projectMessage.type} text={projectMessage.text} /></div>}
           <div className="flex gap-2 mb-5">

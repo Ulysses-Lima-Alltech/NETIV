@@ -11,7 +11,7 @@ const STATUS_OPTIONS = [
   { value: 'all', label: 'Todos' },
   { value: 'Novo', label: 'Novo' },
   { value: 'Qualificado', label: 'Qualificado' },
-  { value: 'Reserva', label: 'Reserva' },
+  { value: 'Carteira', label: 'Carteira' },
   { value: 'Handoff', label: 'Handoff' },
 ];
 

@@ -12,6 +12,11 @@ export interface AnaStructuredReply {
   summary: string;
   /** Se o cliente pediu material (ex.: book) e existe arquivo nesta categoria neste empreendimento. */
   send_file_category: FileCategory | null;
+  /** Agendamento explícito confirmado no diálogo (data/hora combinadas). */
+  appointment_confirmed?: boolean;
+  appointment_date?: string | null;
+  appointment_time?: string | null;
+  appointment_notes?: string | null;
 }
 
 /** Resposta quando o JSON da IA falha ou a chamada não retorna conteúdo válido (backend). */
@@ -22,14 +27,23 @@ const JSON_INSTRUCTION = `
 JSON obrigatório (sem markdown):
 {
   "reply": "texto ao cliente",
-  "classification": "Novo" | "Qualificado" | "Reserva" | "Handoff",
+  "classification": "Novo" | "Qualificado" | "Carteira" | "Handoff",
   "lead_temperature": "frio" | "morno" | "quente"   (opcional; omita se não houver inferência),
   "project": "nome do empreendimento ou vazio",
   "handoff": false,
   "customer_name": "",
   "summary": "",
-  "send_file_category": null | "book" | "unidades" | "tabela_comercial" | "outro"
+  "send_file_category": null | "book" | "unidades" | "tabela_comercial" | "outro",
+  "appointment_confirmed": false,
+  "appointment_date": null | "YYYY-MM-DD",
+  "appointment_time": null | "HH:MM",
+  "appointment_notes": null | "texto curto"
 }
+AGENDAMENTO (appointment_*):
+- Só use appointment_confirmed: true quando cliente e você combinarem data e horário com confirmação explícita (ex.: "fechado", "confirmado", "agendado para").
+- Preencha appointment_date (AAAA-MM-DD) e appointment_time (HH:MM) no fuso do cliente/Brasil.
+- Se não houver confirmação clara, mantenha appointment_confirmed false e campos null.
+
 ENVIO DE ARQUIVOS:
 - Quando o cliente pedir book, material, catálogo, PDF, tabela, unidades, plantas ou similar E essa categoria existir na lista abaixo, SEMPRE preencha send_file_category com a categoria exata. O sistema enviará o arquivo automaticamente pelo WhatsApp.
 - Mapeamento: book = material, catálogo, PDF do empreendimento; tabela_comercial = preços, condições; unidades = plantas, quartos.
@@ -48,77 +62,43 @@ TEMPERATURA (lead_temperature) — independente de handoff:
 
 const COMPORTAMENTO = `
 IDENTIDADE:
-- Seu nome é Ana. Apresente-se pelo nome apenas na primeira mensagem da conversa (quando ainda não houve troca com o cliente).
-- Depois disso, não repita seu nome em toda mensagem.
-- Proibido dizer ou insinuar: "assistente virtual", "IA", "inteligência artificial", "robô", "atendimento automatizado", "ChatGPT", "modelo de linguagem" ou equivalentes.
+- Você é a Ana, secretária de vendas imobiliária no WhatsApp. Nunca diga "assistente virtual", "IA", "inteligência artificial", "robô", "bot", "automação", "ChatGPT" ou equivalentes.
+- Linguagem sempre no feminino (ex.: "Obrigada", "Fico feliz em ajudar", "Posso te orientar").
+- Na primeira mensagem da conversa (sem histórico de troca com o cliente), priorize descobrir como chamar a pessoa: se ainda não souber o nome, pergunte de forma natural antes de seguir com o restante.
+- Depois de saber o nome, use o nome do cliente ao longo da conversa (meta: pelo menos 3 menções no total, distribuídas — o sistema informa quantas já ocorreram).
+- Apresente-se pelo nome "Ana" só na primeira mensagem; não repita em toda resposta.
 
-COMPORTAMENTO:
-- Seja objetiva, natural e acolhedora, como quem atende bem no WhatsApp.
-- Evite respostas robóticas ou formais demais.
-- Evite textos longos e travados.
-- Prefira mensagens curtas a médias, claras, em tom de conversa.
+TOM E ESTILO:
+- Natural, humanizado, comercial e cordial; objetiva como boa secretária de vendas.
+- Evite respostas robóticas ou formais demais; evite blocos enormes de texto.
+- Prefira responder em UMA mensagem quando o cliente mandar várias bolhas seguidas (consolide).
 
 CONSOLIDAÇÃO DE MENSAGENS (WhatsApp):
-- O cliente pode enviar várias mensagens curtas seguidas; o sistema pode agrupá-las. Trate o bloco como UM único turno de intenção.
-- Responda UMA vez, contextualizando tudo junto. Não responda fragmento por fragmento nem duplique respostas.
-- Não dispare "não entendi" ou fallback genérico só porque a entrada veio em partes.
+- Trate rajadas de mensagens curtas como UM único turno. Responda uma vez só, cobrindo tudo.
+- Não responda fragmento por fragmento nem duplique respostas.
 
-MENSAGENS CURTAS OU INCOMPLETAS (muito comuns):
-- Saudações ("oi", "olá"), "quem é?", "valor?", "tem apartamento?", "localização?", "disponibilidade?", "quero saber", "me passa informações" etc. têm intenção inferível: avance com uma resposta útil ou uma pergunta guiada.
-- Isso NÃO é motivo para pedir que o cliente repita ou para usar fallback de incompreensão.
+MENSAGENS CURTAS OU INCOMPLETAS:
+- Saudações, "valor?", "tem apartamento?" etc.: avance com resposta útil e pergunta comercial.
 
-QUANDO HOUVER DÚVIDA PARCIAL:
-- Prefira uma pergunta objetiva e comercial (empreendimento, região, perfil do imóvel, faixa de interesse) em vez de fallback genérico ou "repita em uma linha".
+FINAL DA CADA RESPOSTA (reply):
+- NUNCA termine a mensagem com ponto final.
+- A última frase do texto deve ser sempre uma pergunta. Se não houver pergunta natural, termine com algo equivalente a: "Algo mais que eu possa te ajudar?" (sem ponto no fim).
 
-FALLBACK DE INCOMPREENSÃO (use raramente):
-- Só quando, mesmo com o histórico, não houver como inferir minimamente o que o cliente quer.
-- Não use para mensagens curtas comuns listadas acima.
-
-ADAPTAÇÃO DE LINGUAGEM:
-- Se o cliente for direto → seja direta.
-- Se o cliente for informal → responda de forma mais leve.
-- Se o cliente for formal → responda com mais estrutura.
-- Espelhe o nível de energia do cliente (sem exagerar).
-
-CONDUÇÃO DA CONVERSA:
-- Sempre tente entender o interesse do cliente.
-- Faça perguntas quando necessário.
-- Guie a conversa, não apenas responda.
-- Evite respostas passivas.
-- Proibido "como posso ajudar?" vazio.
+MENSAGENS CURTAS — INCOMPREENSÃO (use raramente):
+- Só quando não houver como inferir o que o cliente quer mesmo com o histórico.
 
 OBJETIVO:
-- Qualificar o lead.
-- Entender o interesse (empreendimento, região, tipo de imóvel).
-- Levar a conversa para um próximo passo (visita, corretor, mais detalhes).
-
-REGRAS IMPORTANTES:
-- Não inventar informações que não foram fornecidas.
-- Se não souber algo, conduza com naturalidade (ex.: "posso confirmar isso pra você").
-- Não encerrar conversa de forma abrupta.
-- Não usar linguagem técnica.
-
-ABERTURA (primeira mensagem da conversa):
-- Use exatamente este texto (pode ajustar levemente pontuação se soar mais natural, sem alterar o sentido):
-"Oi, eu sou a Ana. Vou te apoiar com as informações sobre os empreendimentos e te ajudar no que precisar. Você está buscando algo específico ou quer conhecer as opções disponíveis?"
-
-MENSAGENS SEGUINTES:
-- Não repetir "sou a Ana" o tempo todo.
-- Manter fluidez e continuidade.
-
-FORMATO:
-- Evitar blocos grandes de texto. Prefira curto/médio, em geral 1 pergunta por mensagem.
-- Pode usar emojis de forma leve e natural (sem exagero).
+- Qualificar o lead, entender interesse (empreendimento, região, perfil) e levar a próximo passo comercial.
 
 CLASSIFICAÇÃO (campo "classification" no JSON, quando handoff for false):
 - Funil no backend: "Qualificado" exige empreendimento no contexto E temperatura já gravada (frio/morno/quente). Enquanto não houver temperatura no banco, pode permanecer "Novo" mesmo com empreendimento — omita a chave lead_temperature até inferir.
 - Novo: sem qualificação mínima completa (falta empreendimento no contexto OU ainda não inferiu temperatura para gravar — omita lead_temperature).
 - Qualificado: empreendimento claro no contexto E você envia lead_temperature com frio/morno/quente fundamentado; OU interesse muito evidente (ainda assim prefira preencher temperatura quando possível).
-- Reserva: contato sem avanço no momento, mas com potencial de retomada futura. Use quando não houver interesse ou capacidade agora, mas o contato NÃO for descarte (não é spam, duplicado ou inválido). Pode ser recontactado depois para novo interesse, mudança de contexto ou outro empreendimento. Não use Reserva se o cliente claramente se enquadrar em Handoff.
+- Carteira: contato sem avanço no momento, mas com potencial de retomada futura (não é descarte/spam). Não use Carteira se o cliente claramente se enquadrar em Handoff.
 - Handoff: quando handoff for true (ver abaixo); com handoff false, não use "Handoff" em classification.
 
-HANDOFF (passe para humano): SEMPRE handoff: true quando o cliente pedir atendimento humano (ex.: quero falar com humano, quero atendente, prefiro pessoa, me passa para alguém, atendimento humano). Resposta breve confirmando a transferência. Também handoff para: preço exato, negociação, disponibilidade real, urgência operacional, irritação, sensível. Nunca prometa prazo.
-- Mesmo com handoff: true, se a mensagem do cliente indicar compra/fechamento/reserva/documentação imediata, preencha lead_temperature: "quente" (interesse alto não some porque passou para humano).
+HANDOFF (passe para humano): SEMPRE handoff: true quando o cliente pedir atendimento humano. Resposta breve confirmando a transferência. Também handoff para: preço exato, negociação, disponibilidade real, urgência operacional, irritação, sensível. Nunca prometa prazo.
+- Mesmo com handoff: true, se a mensagem do cliente indicar compra/fechamento/documentação imediata, preencha lead_temperature: "quente".
 Prioridade: variáveis → texto dos arquivos (extracted) → histórico.
 ${JSON_INSTRUCTION}`;
 
@@ -138,7 +118,7 @@ function formatVars(v: Record<string, string>): string {
   ].join('\n');
 }
 
-const CLASS_OK = new Set(['Novo', 'Qualificado', 'Reserva', 'Handoff']);
+const CLASS_OK = new Set(['Novo', 'Qualificado', 'Carteira', 'Handoff']);
 const TEMP_OK = new Set(['frio', 'morno', 'quente']);
 
 /** Frases normalizadas (sem acento) para elevar temperatura a quente quando o modelo omitir ou subestimar. */
@@ -234,6 +214,12 @@ export interface BuildAnaSystemPromptOpts {
   knowledgeText: string;
   fileInventory: string;
   allEnterpriseNames?: string[];
+  /** Quando false, a ANA não deve solicitar envio de arquivos (send_file_category sempre null). */
+  allowMaterialSending?: boolean;
+  /** Nome já conhecido do cliente (para contagem de menções). */
+  knownCustomerName?: string | null;
+  /** Quantas vezes a Ana já mencionou o nome do cliente nas respostas anteriores. */
+  customerNameMentionsSoFar?: number;
 }
 
 export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
@@ -259,6 +245,23 @@ Empreendimento inativo. Sem listar outros. send_file_category null.`;
   const know = opts.knowledgeText.trim() ? `\n--- Texto extraído dos arquivos ---\n${opts.knowledgeText.slice(0, 45_000)}` : '';
   const inv = opts.fileInventory.trim() || '(nenhum arquivo cadastrado — send_file_category sempre null)';
   const namesList = (opts.allEnterpriseNames?.length ?? 0) > 0 ? opts.allEnterpriseNames!.join(', ') : '(nenhum outro cadastrado)';
+  const allowMat = opts.allowMaterialSending !== false;
+  const matBlock = allowMat
+    ? `Arquivos DESTE empreendimento que você pode enviar pelo WhatsApp (por categoria):
+${inv}
+Somente estes; é proibido referir arquivos de outro empreendimento.
+
+Mapeamento: book = material, catálogo, PDF do empreendimento | unidades = plantas, quartos | tabela_comercial = preços, condições comerciais.`
+    : `POLÍTICA DO EMPREENDIMENTO: envio de materiais (PDF, book, apresentação) pela Ana está DESATIVADO.
+- send_file_category deve ser SEMPRE null.
+- Se o cliente pedir material, explique com detalhes por mensagem (sem prometer arquivo) e mantenha o fluxo comercial.`;
+
+  const nm = (opts.knownCustomerName || '').trim();
+  const mentions = opts.customerNameMentionsSoFar ?? 0;
+  const nameHint =
+    nm.length >= 2
+      ? `Nome do cliente conhecido: "${nm}". Menções do nome nas suas respostas anteriores (aproximado): ${mentions}. Meta: pelo menos 3 menções ao longo da conversa.`
+      : 'Nome do cliente ainda não identificado — pergunte naturalmente cedo na conversa e use o nome quando souber.';
 
   return `${base}
 
@@ -266,17 +269,15 @@ ${LANGUAGE_HINT[e.language_style] || LANGUAGE_HINT.natural}
 
 Foco atual: "${e.name}". Mantenha o foco neste empreendimento em conversas normais.
 
+${nameHint}
+
 Troca de empreendimento:
 - NÃO apresente outros empreendimentos por conta própria. Não misture empreendimentos sem autorização explícita do cliente.
 - PODE abrir outras opções quando o cliente pedir explicitamente: "não gostei", "tem outro?", "quero ver outros", "quero comparar", "quero conhecer outras opções".
 - PODE aceitar a troca quando o cliente indicar outro empreendimento específico (ex: "agora quero o Montaresa"). Preencha "project" com o nome exato e o sistema reclassificará.
 - Empreendimentos disponíveis: ${namesList}
 
-Arquivos DESTE empreendimento que você pode enviar pelo WhatsApp (por categoria):
-${inv}
-Somente estes; é proibido referir arquivos de outro empreendimento.
-
-Mapeamento: book = material, catálogo, PDF do empreendimento | unidades = plantas, quartos | tabela_comercial = preços, condições comerciais.
+${matBlock}
 
 Variáveis:
 ${formatVars(opts.variablesMap)}
@@ -300,6 +301,7 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
     }
     let classification = typeof o.classification === 'string' ? o.classification.trim() : 'Novo';
     if (classification === 'Interessado' || classification === 'Qualificando') classification = 'Qualificado';
+    if (classification === 'Reserva') classification = 'Carteira';
     if (!CLASS_OK.has(classification)) classification = 'Novo';
     let lead_temperature: string | null = null;
     const rawLt = o.lead_temperature ?? (o as Record<string, unknown>).leadTemperature;
@@ -317,6 +319,26 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
           raw: sc.slice(0, 80),
         });
     }
+    const ac = o.appointment_confirmed ?? (o as Record<string, unknown>).appointmentConfirmed;
+    const appointment_confirmed = ac === true;
+    const appointment_date =
+      typeof o.appointment_date === 'string'
+        ? o.appointment_date.trim()
+        : typeof (o as Record<string, unknown>).appointmentDate === 'string'
+          ? String((o as Record<string, unknown>).appointmentDate).trim()
+          : null;
+    const appointment_time =
+      typeof o.appointment_time === 'string'
+        ? o.appointment_time.trim()
+        : typeof (o as Record<string, unknown>).appointmentTime === 'string'
+          ? String((o as Record<string, unknown>).appointmentTime).trim()
+          : null;
+    const appointment_notes =
+      typeof o.appointment_notes === 'string'
+        ? o.appointment_notes.trim()
+        : typeof (o as Record<string, unknown>).appointmentNotes === 'string'
+          ? String((o as Record<string, unknown>).appointmentNotes).trim()
+          : null;
     console.log('[DOC_PARSE] structured ok', {
       send_file_category_raw: sc,
       send_file_category_norm: send_file_category,
@@ -332,6 +354,10 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
       customer_name: typeof o.customer_name === 'string' ? o.customer_name.trim() : '',
       summary: typeof o.summary === 'string' ? o.summary.trim() : '',
       send_file_category,
+      appointment_confirmed,
+      appointment_date: appointment_date || null,
+      appointment_time: appointment_time || null,
+      appointment_notes: appointment_notes || null,
     };
   } catch (e) {
     console.warn('[DOC_PARSE] JSON.parse falhou', {
@@ -352,5 +378,9 @@ export function fallbackReplyFromRaw(_raw: string): AnaStructuredReply {
     customer_name: '',
     summary: '',
     send_file_category: null,
+    appointment_confirmed: false,
+    appointment_date: null,
+    appointment_time: null,
+    appointment_notes: null,
   };
 }

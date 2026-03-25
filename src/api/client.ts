@@ -136,9 +136,10 @@ export interface ConversationListItem {
   reserveInterestType?: string | null;
   reserveFollowUpMoment?: string | null;
   reserveCommercialNotes?: string | null;
+  assignedBrokerName?: string | null;
 }
 
-/** Corpo parcial para PATCH de classificação + segmentação Reserva. */
+/** Corpo parcial para PATCH de classificação + segmentação Carteira. */
 export interface ReserveSegmentationPatchBody {
   reason?: string | null;
   desiredCity?: string | null;
@@ -243,6 +244,7 @@ export const whatsappApi = {
       classificationStatus: string;
       leadStage?: string | null;
       handoff?: boolean;
+      assignedBrokerName?: string | null;
       reserveReason?: string | null;
       reserveDesiredCity?: string | null;
       reservePriceMin?: number | null;
@@ -291,9 +293,18 @@ export interface EmpreendimentoDTO {
   languageStyle: 'informal' | 'natural' | 'formal' | 'culta';
   variables: ProjectVariables;
   promptAddons: string[];
+  allowMaterialSending?: boolean;
   createdAt: string;
   updatedAt: string;
   knowledgeFiles?: KnowledgeFileItem[];
+}
+
+export interface PromptAddonsHistoryItem {
+  id: number;
+  ruleText: string;
+  createdAt: string;
+  createdByUserId: number | null;
+  createdByName: string | null;
 }
 
 export type ProjectListItem = Omit<EmpreendimentoDTO, 'knowledgeFiles'>;
@@ -314,8 +325,11 @@ export const projectsApi = {
       languageStyle?: EmpreendimentoDTO['languageStyle'];
       variables?: ProjectVariables;
       promptAddons?: string[];
+      allowMaterialSending?: boolean;
     }
   ) => request<ProjectListItem>(`/projects/${id}`, { method: 'PATCH', body }),
+  promptAddonsHistory: (id: number) =>
+    request<{ items: PromptAddonsHistoryItem[] }>(`/projects/${id}/prompt-addons-history`),
   delete: (id: number) => request<ProjectListItem>(`/projects/${id}`, { method: 'DELETE' }),
   uploadKnowledge: async (projectId: number, file: File, category: FileCategory): Promise<KnowledgeFileItem> => {
     const fd = new FormData();
@@ -477,7 +491,7 @@ export interface DashboardOverview {
     activeConversations: number;
     qualified: number;
     handoffs: number;
-    reserva: number;
+    carteira: number;
     avgFirstResponseSeconds: number | null;
     noFirstResponse: number;
   };
@@ -489,7 +503,7 @@ export interface DashboardOverview {
     total: number;
     qualified: number;
     handoffs: number;
-    reservas: number;
+    carteiras: number;
   }[];
   attentionItems: {
     id: number;
