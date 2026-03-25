@@ -227,6 +227,7 @@ export async function assignAppointment(data: {
   notes?: string;
   source?: string;
   brokerId?: number | null;
+  conversationId?: number | null;
 }): Promise<AssignAppointmentResult> {
   // Se brokerId informado, usa ele; senão distribuição automática
   let brokerId: number | null;
@@ -251,6 +252,7 @@ export async function assignAppointment(data: {
     status,
     source: data.source ?? 'ANA',
     notes: data.notes ?? '',
+    conversationId: data.conversationId ?? null,
   });
   if (brokerId) {
     await query(
@@ -270,6 +272,12 @@ export async function assignAppointment(data: {
     notes: app.notes,
   });
 
+  if (data.conversationId != null && brokerId != null && brokerId > 0) {
+    await query(
+      `UPDATE conversations SET assigned_broker_id = COALESCE(assigned_broker_id, $1), updated_at = NOW() WHERE id = $2`,
+      [brokerId, data.conversationId]
+    );
+  }
   const broker = brokerId ? await getCorretorById(brokerId) : null;
   const ent = data.enterpriseId ? await getEnterpriseById(data.enterpriseId) : null;
   return {

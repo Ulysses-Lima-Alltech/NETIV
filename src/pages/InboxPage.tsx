@@ -29,7 +29,12 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
   const projectName = c.projectName ?? null;
   const empreendimento = projectName;
   const raw = c.classificationStatus || 'Novo';
-  const status = (raw === 'Interessado' || raw === 'Qualificando' ? 'Qualificado' : ['Handoff', 'Qualificado', 'Reserva', 'Novo'].includes(raw) ? raw : 'Novo') as Conversation['status'];
+  const normalized = raw === 'Reserva' ? 'Carteira' : raw;
+  const status = (normalized === 'Interessado' || normalized === 'Qualificando'
+    ? 'Qualificado'
+    : ['Handoff', 'Qualificado', 'Carteira', 'Novo'].includes(normalized)
+      ? normalized
+      : 'Novo') as Conversation['status'];
   return {
     id: c.id,
     leadName,
@@ -46,6 +51,8 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     handoff: c.handoff ?? (status === 'Handoff'),
     enterpriseOriginId: c.enterpriseOriginId ?? null,
     enterpriseOriginName: undefined,
+    assignedBrokerName: c.assignedBrokerName ?? null,
+    assignedBrokerId: c.assignedBrokerId ?? null,
     reserveReason: c.reserveReason ?? null,
     reserveDesiredCity: c.reserveDesiredCity ?? null,
     reservePriceMin: c.reservePriceMin ?? null,
@@ -251,6 +258,7 @@ export function InboxPage() {
       handoff?: boolean;
       leadTemperature?: 'quente' | 'morno' | 'frio';
       reserve?: ReserveSegmentationPatchBody;
+      assignedBrokerId?: number | null;
     }) => {
       if (!selectedId) return;
       const id = parseInt(selectedId, 10);
@@ -263,6 +271,7 @@ export function InboxPage() {
         body.lead_temperature = updates.leadTemperature;
       }
       if (updates.reserve !== undefined) body.reserve = updates.reserve;
+      if (updates.assignedBrokerId !== undefined) body.assigned_broker_id = updates.assignedBrokerId;
       try {
         const data = await whatsappApi.updateClassification(id, body);
         setConversations((prev) =>
@@ -288,6 +297,10 @@ export function InboxPage() {
                   enterpriseOriginName:
                     data.enterpriseOriginName !== undefined ? data.enterpriseOriginName : c.enterpriseOriginName,
                   handoff: data.handoff ?? c.handoff,
+                  assignedBrokerName:
+                    data.assignedBrokerName !== undefined ? data.assignedBrokerName : c.assignedBrokerName,
+                  assignedBrokerId:
+                    data.assignedBrokerId !== undefined ? data.assignedBrokerId : c.assignedBrokerId,
                   reserveReason: data.reserveReason ?? c.reserveReason,
                   reserveDesiredCity: data.reserveDesiredCity ?? c.reserveDesiredCity,
                   reservePriceMin: data.reservePriceMin ?? c.reservePriceMin,

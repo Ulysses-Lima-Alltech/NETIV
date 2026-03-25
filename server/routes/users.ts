@@ -10,7 +10,6 @@ import {
   type AppUserPublic,
 } from '../repositories/userRepository.js';
 import { createUserSchema, updateUserSchema, updatePasswordSchema } from '../validators/users.js';
-import type { AuthenticatedRequest } from '../middleware/auth.js';
 import {
   assertManagerialCanChangePassword,
   assertManagerialCanCreateUser,
@@ -46,7 +45,8 @@ router.get('/', async (_req, res: Response) => {
 
 router.post('/', async (req, res: Response) => {
   try {
-    const currentUser = (req as unknown as AuthenticatedRequest).user;
+    const currentUser = req.user;
+    if (!currentUser) return res.status(401).json({ error: 'Não autenticado.' });
     const parsed = createUserSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
@@ -82,7 +82,8 @@ router.patch('/:id', async (req, res: Response) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
-    const currentUser = (req as unknown as AuthenticatedRequest).user;
+    const currentUser = req.user;
+    if (!currentUser) return res.status(401).json({ error: 'Não autenticado.' });
     const parsed = updateUserSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
@@ -122,7 +123,8 @@ router.patch('/:id/password', async (req, res: Response) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
-    const currentUser = (req as unknown as AuthenticatedRequest).user;
+    const currentUser = req.user;
+    if (!currentUser) return res.status(401).json({ error: 'Não autenticado.' });
     const targetUser = await findByIdIncludingInactive(id);
     if (!targetUser) return res.status(404).json({ error: 'Usuário não encontrado.' });
     assertManagerialCanChangePassword(currentUser.role, targetUser);

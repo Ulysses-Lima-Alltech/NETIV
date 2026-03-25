@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import './express-augmentation.js';
 import express from 'express';
 import cors from 'cors';
 import { config } from './config.js';
@@ -8,6 +9,7 @@ import { initPostgres } from './db/pg.js';
 import { getWhatsAppConfig } from './repositories/whatsappConfigRepository.js';
 import { getOpenAIConfig } from './repositories/openaiConfigRepository.js';
 import { bootstrapFirstAdmin } from './bootstrap/adminBootstrap.js';
+import { processDueDeferredHandoffs } from './repositories/conversationRepository.js';
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -54,6 +56,9 @@ initPostgres()
     app.listen(config.port, () => {
       console.log(`Server http://localhost:${config.port}`);
     });
+    setInterval(() => {
+      void processDueDeferredHandoffs().catch((err) => console.error('[handoff defer]', err));
+    }, 15_000);
   })
   .catch((e) => {
     console.error('[startup]', e);

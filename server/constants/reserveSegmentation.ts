@@ -1,4 +1,4 @@
-/** Motivos padronizados quando classification = Reserva (segmentação / campanhas futuras). */
+/** Motivos padronizados quando classification = Carteira (segmentação / campanhas futuras). */
 export const RESERVE_REASONS = [
   'SEM_INTERESSE_NO_MOMENTO',
   'SEM_ORCAMENTO',

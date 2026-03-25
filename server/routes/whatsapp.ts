@@ -12,6 +12,7 @@ import {
 import { reprocessLastUserMessage } from '../services/conversationEngine.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
 import { insertMessage, getMessagesByConversationId } from '../repositories/messageRepository.js';
+import { getCorretorById } from '../repositories/corretorRepository.js';
 import { sendMessageSchema, updateClassificationSchema } from '../validators/whatsapp.js';
 
 const router = Router();
@@ -100,6 +101,8 @@ router.get('/conversations', async (req, res) => {
         leadSourceRaw: r.lead_source_raw ?? null,
         createdAt: r.created_at.toISOString(),
         updatedAt: r.updated_at.toISOString(),
+        assignedBrokerName: (r as { assigned_broker_name?: string | null }).assigned_broker_name ?? null,
+        assignedBrokerId: (r as { assigned_broker_id?: number | null }).assigned_broker_id ?? null,
         ...conversationReserveToPublic(r),
       })),
     });
@@ -131,7 +134,7 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       const msg = parsed.error.issues.map((e: { message: string }) => e.message).join('; ') || 'Dados inválidos.';
       return res.status(400).json({ error: msg });
     }
-    const { project_id, classification_status, handoff, reserve, lead_temperature } = parsed.data;
+    const { project_id, classification_status, handoff, reserve, lead_temperature, assigned_broker_id } = parsed.data;
     const convBefore = handoff === false ? await getConversationById(id) : null;
     const conv = await updateClassification(id, {
       enterprise_id: project_id !== undefined ? project_id : undefined,
@@ -139,6 +142,7 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       handoff,
       lead_temperature,
       reserve,
+      assigned_broker_id,
     });
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
     if (convBefore?.handoff === true && conv.handoff === false) {
@@ -151,6 +155,8 @@ router.patch('/conversations/:id/classification', async (req, res) => {
     const projectName = conv.enterprise_id ? (await getEnterpriseById(conv.enterprise_id))?.name ?? null : null;
     const originName =
       conv.enterprise_origin_id != null ? (await getEnterpriseById(conv.enterprise_origin_id))?.name ?? null : null;
+    const bid = conv.assigned_broker_id;
+    const brokerRow = bid != null ? await getCorretorById(bid) : null;
     res.json({
       id: conv.id,
       projectId: conv.enterprise_id ?? null,
@@ -163,6 +169,8 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       classificationStatus: conv.classification ?? 'Novo',
       leadStage: tempToStage(conv.lead_temperature),
       handoff: conv.handoff ?? false,
+      assignedBrokerId: conv.assigned_broker_id ?? null,
+      assignedBrokerName: brokerRow?.full_name ?? null,
       ...conversationReserveToPublic(conv),
     });
   } catch (e) {

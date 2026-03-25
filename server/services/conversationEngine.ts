@@ -5,6 +5,7 @@ import {
   setConversationEnterpriseId,
   applyAnaConversationUpdate,
   maxLeadTemperature,
+  incrementAnaCustomerNameMentions,
 } from '../repositories/conversationRepository.js';
 import { sendTextMessage, sendDocumentMessage } from './whatsappMetaService.js';
 import { tryMatchActiveEnterpriseId } from '../repositories/enterpriseMatch.js';
@@ -20,6 +21,7 @@ import {
   type EnterpriseRow,
 } from '../repositories/enterpriseRepository.js';
 import { generateChatCompletion, type ChatMessage } from './openaiService.js';
+import { resolveEnterpriseLocationContext } from '../utils/anaEnterpriseLocationContext.js';
 import {
   buildAnaSystemPrompt,
   type BuildAnaSystemPromptOpts,
@@ -28,6 +30,50 @@ import {
   detectStrongPurchaseIntentForLeadTemperature,
   ANA_FALLBACK_INCOMPREHENSION_REPLY,
 } from './anaAgentService.js';
+import {
+  randomAnaReplyDelayMs,
+  sleepMs,
+  finalizeAnaReplyText,
+  countCustomerNameMentionsInText,
+  isSimpleOpeningGreeting,
+  pickRandomGreetingReply,
+} from '../utils/anaReplyFinalize.js';
+import {
+  buildUserUtterancesContext,
+  computeAppointmentPreflight,
+  ANA_FALLBACK_APPOINTMENT_FLOW_REPLY,
+  ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY,
+} from '../utils/anaAppointmentIntent.js';
+import { extractLeadDataFromConversation } from './leadWalletExtractionService.js';
+import { registerAnaAppointmentIfConfirmed } from './anaAppointmentFromChatService.js';
+import {
+  findOpenAppointmentForConversationAndEnterprise,
+  type AppointmentRow,
+} from '../repositories/appointmentRepository.js';
+
+function formatOpenAppointmentSummaryForPrompt(row: AppointmentRow, enterpriseName: string): string {
+  const fmt = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    weekday: 'long',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const d = row.start_at instanceof Date ? row.start_at : new Date(row.start_at);
+  return `Empreendimento: ${enterpriseName}. Visita agendada: ${fmt.format(d)}. Status: ${row.status}.`;
+}
+
+/** Garante que a resposta ao cliente cite o mesmo instante gravado no banco. */
+function appendCanonicalToReply(reply: string, canonicalLine: string): string {
+  const r = (reply || '').trim();
+  const core = canonicalLine.replace(/^Registrado no sistema:\s*/i, '').trim();
+  if (!core) return reply;
+  if (r.toLowerCase().includes(core.slice(0, Math.min(28, core.length)).toLowerCase())) return reply;
+  if (!r) return canonicalLine;
+  return `${r}\n\n${canonicalLine}`.slice(0, 4000);
+}
 
 export interface IncomingMessageContext {
   conversationId: number;
@@ -247,10 +293,54 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ...(mergedLeadOnHandoff != null ? { lead_temperature: mergedLeadOnHandoff } : {}),
         handoff: true,
       });
-      const confirmMsg = 'Entendido! Um atendente vai entrar em contato em breve. Enquanto isso, sua mensagem já foi registrada.';
+      const delayMs = randomAnaReplyDelayMs();
+      await sleepMs(delayMs);
+      const confirmMsg = finalizeAnaReplyText(
+        'Entendido! Um atendente vai entrar em contato em breve. Enquanto isso, sua mensagem já foi registrada. Posso te ajudar com mais alguma coisa antes da transferência?'
+      );
       const sendResult = await sendTextMessage(toPhoneNumber, confirmMsg);
       if (sendResult.success && sendResult.metaMessageId) {
         await insertMessage(conversationId, 'assistant', confirmMsg, sendResult.metaMessageId);
+      }
+      return;
+    }
+
+    const rows = await getMessagesByConversationId(conversationId);
+    let lastUserMessageAt = new Date();
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i].role === 'user') {
+        lastUserMessageAt = new Date(rows[i].created_at);
+        break;
+      }
+    }
+    const historyForGreeting =
+      trailingUserBubbles != null && trailingUserBubbles > 1
+        ? rowsToHistory(rows, null, trailingUserBubbles)
+        : rowsToHistory(rows, trimmed);
+
+    if (isSimpleOpeningGreeting(trimmed) && historyForGreeting.length === 0) {
+      const nm = (effectiveConv.customer_name || '').trim();
+      const nameKnown = nm.length >= 2;
+      let replyTextGreeting = pickRandomGreetingReply(nameKnown ? nm : null);
+      replyTextGreeting = finalizeAnaReplyText(replyTextGreeting).slice(0, 4000);
+      const delayGreetingMs = randomAnaReplyDelayMs();
+      await sleepMs(delayGreetingMs);
+      const freshRows = await getMessagesByConversationId(conversationId);
+      const lastAsstG = [...freshRows].reverse().find((m) => m.role === 'assistant');
+      if (lastAsstG && (lastAsstG.content || '').trim() === replyTextGreeting.trim()) {
+        const ageG = Date.now() - new Date(lastAsstG.created_at).getTime();
+        if (ageG < 120_000) {
+          console.warn('[ANA DEDupe] ignorando resposta idêntica à anterior (saudação)', { conversationId });
+          return;
+        }
+      }
+      const sendGreeting = await sendTextMessage(toPhoneNumber, replyTextGreeting);
+      if (sendGreeting.success && sendGreeting.metaMessageId) {
+        await insertMessage(conversationId, 'assistant', replyTextGreeting, sendGreeting.metaMessageId);
+        const convAfterG = await getConversationById(conversationId);
+        const nameForG = (convAfterG?.customer_name || '').trim();
+        const deltaG = countCustomerNameMentionsInText(replyTextGreeting, nameForG);
+        if (deltaG > 0) await incrementAnaCustomerNameMentions(conversationId, deltaG);
       }
       return;
     }
@@ -259,11 +349,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let matched: number | null = null;
     let activeEnterprisesForContext: EnterpriseRow[] | null = null;
 
+    const listedForNames = await listEnterprises(true);
+    const fullUserUtterances = buildUserUtterancesContext(rows);
+    const locationQueryContext = resolveEnterpriseLocationContext(trimmed, fullUserUtterances, listedForNames);
+    const appointmentPreflight = computeAppointmentPreflight(trimmed, fullUserUtterances);
+    const textForEnterpriseMatch = fullUserUtterances.trim() || trimmed;
+
     if (explicitSwitch) {
-      activeEnterprisesForContext = await listEnterprises(true);
-      matched = tryMatchEnterpriseByLastMention(activeEnterprisesForContext, trimmed);
+      activeEnterprisesForContext = listedForNames;
+      matched = tryMatchEnterpriseByLastMention(activeEnterprisesForContext, textForEnterpriseMatch);
     } else {
-      matched = await tryMatchActiveEnterpriseId(trimmed);
+      matched = await tryMatchActiveEnterpriseId(textForEnterpriseMatch);
     }
 
     if (matched) {
@@ -279,6 +375,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const ent = effectiveConv.enterprise_id ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;
     const inactiveLinked = Boolean(effectiveConv.enterprise_id && !ent);
 
+    let openAppointmentSummary: string | null = null;
+    if (ent?.id) {
+      const openAppt = await findOpenAppointmentForConversationAndEnterprise(conversationId, ent.id);
+      if (openAppt) {
+        openAppointmentSummary = formatOpenAppointmentSummaryForPrompt(openAppt, ent.name);
+      }
+    }
+
+    const richAppointmentContext =
+      appointmentPreflight.dateContestation ||
+      appointmentPreflight.reschedule ||
+      Boolean(openAppointmentSummary?.trim());
+
     let mode: 'triage' | 'scoped' | 'inactive_linked' = 'triage';
     if (inactiveLinked) mode = 'inactive_linked';
     else if (ent) mode = 'scoped';
@@ -289,15 +398,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     if (ent) {
       const files = await listEnterpriseFiles(ent.id);
       fileInventory = files
-        .filter((f) => f.is_active)
+        .filter((f) => f.is_active && f.can_be_sent_by_ana)
         .map((f) => `${f.category}: ${f.original_name}`)
         .join('; ');
     }
+    const hasSendableFiles = fileInventory.trim().length > 0;
 
-    const allEnterpriseNames =
+    let allEnterpriseNames =
       mode === 'scoped'
-        ? (activeEnterprisesForContext ?? (await listEnterprises(true))).map((e) => e.name)
-        : [];
+        ? (activeEnterprisesForContext ?? listedForNames).map((e) => e.name)
+        : listedForNames.map((e) => e.name);
+    if (mode === 'triage' && locationQueryContext) {
+      allEnterpriseNames = locationQueryContext.availableEnterprises.map((e) => e.name);
+    }
     const promptOpts: BuildAnaSystemPromptOpts = {
       mode,
       enterprise: ent,
@@ -305,10 +418,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       knowledgeText,
       fileInventory,
       allEnterpriseNames,
+      knownCustomerName: effectiveConv.customer_name,
+      customerNameMentionsSoFar: effectiveConv.ana_customer_name_mentions ?? 0,
+      conversationClassification: effectiveConv.classification,
+      appointmentPreflight,
+      openAppointmentSummary,
+      locationQueryContext: locationQueryContext ?? undefined,
     };
     const systemPrompt = buildAnaSystemPrompt(promptOpts);
 
-    const rows = await getMessagesByConversationId(conversationId);
     const history =
       trailingUserBubbles != null && trailingUserBubbles > 1
         ? rowsToHistory(rows, null, trailingUserBubbles)
@@ -321,7 +439,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     messages.push({ role: 'user', content: trimmed });
 
     const model = aiConfig.modelColdLead || aiConfig.modelHotLead || 'gpt-4o-mini';
-    console.log('[ANA DEBUG] building AI context', { mode, model });
+    console.log('[ANA DEBUG] building AI context', {
+      mode,
+      model,
+      appointmentPreflight,
+      enterpriseMatchTextLen: textForEnterpriseMatch.length,
+    });
     console.log('[ANA DEBUG] calling AI provider', { model });
     const result = await generateChatCompletion({
       apiKey: aiConfig.openaiApiKey,
@@ -346,11 +469,23 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationId,
         contentPreview: result.content.slice(0, 160),
       });
-      structured = fallbackReplyFromRaw(result.content);
+      structured = fallbackReplyFromRaw(
+        result.content,
+        trimmed,
+        effectiveConv.customer_name,
+        appointmentPreflight.active,
+        richAppointmentContext
+      );
     }
     if (!structured) {
       structured = {
-        reply: ANA_FALLBACK_INCOMPREHENSION_REPLY,
+        reply: isSimpleOpeningGreeting(trimmed)
+          ? pickRandomGreetingReply(effectiveConv.customer_name)
+          : appointmentPreflight.active && richAppointmentContext
+            ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
+            : appointmentPreflight.active
+              ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
+              : ANA_FALLBACK_INCOMPREHENSION_REPLY,
         classification: 'Novo',
         lead_temperature: null,
         project: ent?.name || '',
@@ -358,8 +493,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         customer_name: '',
         summary: result.error || '',
         send_file_category: null,
+        appointment_confirmed: false,
+        appointment_date: null,
+        appointment_time: null,
+        appointment_notes: null,
       };
     }
+
+    if (!hasSendableFiles) {
+      structured = { ...structured, send_file_category: null };
+    }
+
+    const prevClassification = effectiveConv.classification;
 
     console.log('[DOC_FLOW] structured final (pronto para texto + arquivo)', {
       conversationId,
@@ -383,18 +528,72 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       handoff: structured.handoff,
     });
 
-    const replyText = structured.reply.slice(0, 4000);
+    let replyBody = structured.reply;
+    const convForApptRegister = await getConversationById(conversationId);
+    if (ent && structured.appointment_confirmed) {
+      try {
+        const apptRes = await registerAnaAppointmentIfConfirmed({
+          conversationId,
+          customerName: (convForApptRegister?.customer_name || structured.customer_name || '').trim() || 'Cliente',
+          customerPhone: (convForApptRegister?.contact_phone || convForApptRegister?.external_contact_id || '').replace(/\D/g, ''),
+          enterpriseId: ent.id,
+          city: '',
+          appointmentConfirmed: true,
+          appointmentDateYmd: structured.appointment_date,
+          appointmentTimeHm: structured.appointment_time,
+          notes: structured.appointment_notes,
+          brokerId: convForApptRegister?.assigned_broker_id ?? null,
+          userUtteranceText: fullUserUtterances.trim() || trimmed,
+          referenceNow: lastUserMessageAt,
+        });
+        if (apptRes.persisted && apptRes.canonicalLine) {
+          replyBody = appendCanonicalToReply(structured.reply, apptRes.canonicalLine);
+        }
+      } catch (e) {
+        console.error('[ANA APPT]', e);
+      }
+    }
+
+    const delayMs = randomAnaReplyDelayMs();
+    console.log('[ANA DEBUG] delay antes do envio (simulação humana)', { conversationId, delayMs });
+    await sleepMs(delayMs);
+
+    let replyText = finalizeAnaReplyText(replyBody, { userMessage: trimmed }).slice(0, 4000);
+    const rowsBeforeSend = await getMessagesByConversationId(conversationId);
+    const lastAsstDup = [...rowsBeforeSend].reverse().find((m) => m.role === 'assistant');
+    if (lastAsstDup && (lastAsstDup.content || '').trim() === replyText.trim()) {
+      const ageDup = Date.now() - new Date(lastAsstDup.created_at).getTime();
+      if (ageDup < 120_000) {
+        console.warn('[ANA DEDupe] bloqueando envio duplicado (mesmo texto que última resposta)', {
+          conversationId,
+        });
+        return;
+      }
+    }
     console.log('[ANA DEBUG] sending WhatsApp reply', { toPhoneNumber, replyLength: replyText.length });
     const sendResult = await sendTextMessage(toPhoneNumber, replyText);
     if (sendResult.success && sendResult.metaMessageId) {
       await insertMessage(conversationId, 'assistant', replyText, sendResult.metaMessageId);
       console.log('[ANA DEBUG] WhatsApp reply sent', { metaMessageId: sendResult.metaMessageId });
       console.log('[ANA DEBUG] assistant message saved');
+      const convAfterSend = await getConversationById(conversationId);
+      const nameForMention = (structured.customer_name?.trim() || convAfterSend?.customer_name || '').trim();
+      const delta = countCustomerNameMentionsInText(replyText, nameForMention);
+      if (delta > 0) await incrementAnaCustomerNameMentions(conversationId, delta);
     } else {
       console.error('[ANA DEBUG] Falha ao enviar WhatsApp:', sendResult.error, { toPhoneNumber });
     }
 
-    const cat = structured.send_file_category;
+    if (structured.classification === 'Carteira' && prevClassification !== 'Carteira') {
+      const convRef = await getConversationById(conversationId);
+      void extractLeadDataFromConversation(
+        conversationId,
+        convRef?.customer_name ?? structured.customer_name ?? null,
+        ent?.name ?? null
+      ).catch((e) => console.error('[Carteira extract]', e));
+    }
+
+    const cat = hasSendableFiles ? structured.send_file_category : null;
     /** `ent` já vem de `getActiveEnterpriseById(effectiveConv.enterprise_id)` — usar `ent.id` evita falso negativo se `enterprise_id` da conversa e `ent.id` divergirem por tipo/serialização. */
     const enterpriseIdForFile = ent != null ? Number(ent.id) : null;
 

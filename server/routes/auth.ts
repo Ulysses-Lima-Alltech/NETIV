@@ -8,7 +8,7 @@ import {
   deleteSession,
   toPublic,
 } from '../repositories/userRepository.js';
-import { requireAuth, type AuthenticatedRequest } from '../middleware/auth.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -63,7 +63,11 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
 
 router.get('/me', requireAuth, async (req: Request, res: Response): Promise<void> => {
   try {
-    const user = (req as AuthenticatedRequest).user;
+    const user = req.user;
+    if (!user) {
+      res.status(401).json({ error: 'Não autenticado.' });
+      return;
+    }
     res.json({ user: toPublic(user) });
   } catch (e) {
     console.error('[Auth] GET me:', e);

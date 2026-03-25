@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppNav } from '../components/AppNav';
 import {
   projectsApi,
@@ -6,7 +6,11 @@ import {
   type KnowledgeFileItem,
   type ProjectVariables,
   type FileCategory,
+  type PromptAddonsHistoryItem,
 } from '../api/client';
+import { SearchableMunicipioCombobox } from '../components/SearchableMunicipioCombobox';
+import { findMunicipioByIbge, loadMunicipiosIbge } from '../data/municipiosIbgeCache';
+import type { MunicipioIbge } from '../types/municipioIbge';
 
 const CAT_LABEL: Record<FileCategory, string> = {
   book: 'Book',
@@ -62,6 +66,13 @@ export function EmpreendimentosPage() {
   const [detail, setDetail] = useState<(EmpreendimentoDTO & { knowledgeFiles: KnowledgeFileItem[] }) | null>(null);
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
+  const [city, setCity] = useState('');
+  const [stateUf, setStateUf] = useState('');
+  /** Região geográfica intermediária (IBGE) — mesmo campo `commercialRegion` na API */
+  const [commercialRegion, setCommercialRegion] = useState('');
+  /** Região geográfica imediata (IBGE), só exibição */
+  const [ibgeRegiaoImediata, setIbgeRegiaoImediata] = useState('');
+  const [ibgeCode, setIbgeCode] = useState('');
   const [status, setStatus] = useState<'ativo' | 'inativo'>('ativo');
   const [languageStyle, setLanguageStyle] = useState<EmpreendimentoDTO['languageStyle']>('natural');
   const [variables, setVariables] = useState<ProjectVariables>(emptyVars());
@@ -77,6 +88,13 @@ export function EmpreendimentosPage() {
   const [uploadCategory, setUploadCategory] = useState<FileCategory>('book');
   const [showInactiveKnowledge, setShowInactiveKnowledge] = useState(false);
   const [knowledgeNotice, setKnowledgeNotice] = useState<string | null>(null);
+  /** Novo upload: padrão seguro — base ligada, envio desligado até marcar */
+  const [uploadAsKnowledge, setUploadAsKnowledge] = useState(true);
+  const [uploadAllowSend, setUploadAllowSend] = useState(false);
+  const [filePatchingId, setFilePatchingId] = useState<number | null>(null);
+  const [regrasTab, setRegrasTab] = useState<'regras' | 'historico'>('regras');
+  const [historyItems, setHistoryItems] = useState<PromptAddonsHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   /* ── Data loading (unchanged) ── */
 
@@ -101,11 +119,17 @@ export function EmpreendimentosPage() {
         setDetail(d);
         setName(d.name);
         setSlug(d.slug);
+        setCity(d.city ?? '');
+        setStateUf(d.stateUf ?? '');
+        setCommercialRegion((d.commercialRegion ?? '').trim());
+        setIbgeRegiaoImediata('');
+        setIbgeCode(d.ibgeCode ?? '');
         setStatus(d.status);
         setLanguageStyle(d.languageStyle);
         setVariables({ ...emptyVars(), ...(d.variables ?? {}) });
         setAddonsText(Array.isArray(d.promptAddons) ? d.promptAddons.join('\n') : '');
         setFiles(Array.isArray(d.knowledgeFiles) ? d.knowledgeFiles : []);
+        setRegrasTab('regras');
       })
       .catch((e) => { setErr(e instanceof Error ? e.message : 'Erro ao carregar'); setDetail(null); })
       .finally(() => setDetailLoading(false));
@@ -124,13 +148,34 @@ export function EmpreendimentosPage() {
     }
   }, [selectedId, loadDetail]);
 
+  useEffect(() => {
+    if (selectedId == null || regrasTab !== 'historico') return;
+    setHistoryLoading(true);
+    projectsApi
+      .promptAddonsHistory(selectedId)
+      .then((d) => setHistoryItems(d.items))
+      .catch(() => setHistoryItems([]))
+      .finally(() => setHistoryLoading(false));
+  }, [selectedId, regrasTab]);
+
   const save = () => {
     if (selectedId == null) return;
     setSaving(true);
     setErr(null);
     const promptAddons = addonsText.split('\n').map((s) => s.trim()).filter(Boolean);
     projectsApi
-      .update(selectedId, { name: name.trim(), slug: slug.trim() || undefined, status, languageStyle, variables, promptAddons })
+      .update(selectedId, {
+        name: name.trim(),
+        slug: slug.trim() || undefined,
+        status,
+        languageStyle,
+        variables,
+        promptAddons,
+        city: city.trim(),
+        stateUf: stateUf.trim(),
+        commercialRegion: commercialRegion.trim(),
+        ibgeCode: ibgeCode.trim(),
+      })
       .then(() => { loadList(); loadDetail(selectedId); })
       .catch((e) => setErr(e instanceof Error ? e.message : 'Erro ao salvar'))
       .finally(() => setSaving(false));
@@ -154,10 +199,26 @@ export function EmpreendimentosPage() {
     if (!f || selectedId == null) return;
     setUploading(true);
     projectsApi
-      .uploadKnowledge(selectedId, f, uploadCategory)
+      .uploadKnowledge(selectedId, f, uploadCategory, {
+        canBeUsedAsKnowledge: uploadAsKnowledge,
+        canBeSentByAna: uploadAllowSend,
+      })
       .then(() => loadDetail(selectedId))
       .catch((er) => setErr(er instanceof Error ? er.message : 'Upload falhou'))
       .finally(() => setUploading(false));
+  };
+
+  const patchFileFlags = (fileId: number, patch: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean }) => {
+    if (selectedId == null) return;
+    setErr(null);
+    setFilePatchingId(fileId);
+    projectsApi
+      .patchKnowledgeFile(selectedId, fileId, patch)
+      .then((updated) => {
+        setFiles((prev) => prev.map((x) => (x.id === fileId ? { ...x, ...updated } : x)));
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : 'Erro ao atualizar arquivo'))
+      .finally(() => setFilePatchingId(null));
   };
 
   const removeFile = (fileId: number) => {
@@ -176,6 +237,37 @@ export function EmpreendimentosPage() {
   const knowledgeActive = files.filter((f) => f.isActive !== false);
   const knowledgeInactive = files.filter((f) => f.isActive === false);
   const knowledgeDisplayed = showInactiveKnowledge ? files : knowledgeActive;
+
+  const selectedIbgeForMunicipio = useMemo(() => {
+    const n = parseInt(ibgeCode.replace(/\D/g, ''), 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [ibgeCode]);
+
+  /** Alinha região IBGE ao código do município (base local) */
+  useEffect(() => {
+    if (selectedId == null || detail == null) return;
+    const id = selectedIbgeForMunicipio;
+    if (id == null) {
+      setIbgeRegiaoImediata('');
+      return;
+    }
+    let cancelled = false;
+    loadMunicipiosIbge()
+      .then((rows) => {
+        if (cancelled) return;
+        const m = findMunicipioByIbge(rows, id);
+        if (m) {
+          setCity(m.n);
+          setStateUf(m.u);
+          if (m.rint) setCommercialRegion(m.rint);
+          setIbgeRegiaoImediata(m.ri ?? '');
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, detail?.id, selectedIbgeForMunicipio]);
 
   /* ── Render ── */
 
@@ -330,6 +422,55 @@ export function EmpreendimentosPage() {
                     <span className={label}>Slug</span>
                     <input className={field} value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="evora" />
                   </label>
+                  <div className="block sm:col-span-2">
+                    <span className={label}>Cidade (município IBGE)</span>
+                    <SearchableMunicipioCombobox
+                      valueIbge={selectedIbgeForMunicipio}
+                      onSelect={(m: MunicipioIbge) => {
+                        setCity(m.n);
+                        setStateUf(m.u);
+                        setIbgeCode(String(m.i));
+                        setCommercialRegion(m.rint ?? '');
+                        setIbgeRegiaoImediata(m.ri ?? '');
+                      }}
+                      onClear={() => {
+                        setCity('');
+                        setStateUf('');
+                        setIbgeCode('');
+                        setCommercialRegion('');
+                        setIbgeRegiaoImediata('');
+                      }}
+                      disabled={saving}
+                      placeholder="Digite pelo menos 2 letras (ex.: Atibaia, Jacareí)…"
+                    />
+                    <p className="mt-1.5 text-[12px] text-[#9CA3AF]">
+                      Lista oficial IBGE (arquivo local). A UF e a região geográfica são preenchidas ao escolher o
+                      município.
+                      {stateUf ? (
+                        <span className="ml-1 font-medium text-[#6B7280]"> UF: {stateUf}</span>
+                      ) : null}
+                    </p>
+                  </div>
+                  <div className="block sm:col-span-2">
+                    <span className={label}>Região geográfica intermediária (IBGE)</span>
+                    <div
+                      className={`${field} bg-[#F9FAFB] text-[#374151] cursor-default`}
+                      title="Derivada do município — usada para busca por proximidade (ex.: mesma RGINT)"
+                    >
+                      {commercialRegion || '—'}
+                    </div>
+                    {ibgeRegiaoImediata ? (
+                      <p className="mt-1.5 text-[12px] text-[#9CA3AF]">
+                        Região geográfica imediata (IBGE):{' '}
+                        <span className="font-medium text-[#6B7280]">{ibgeRegiaoImediata}</span>
+                      </p>
+                    ) : (
+                      <p className="mt-1.5 text-[12px] text-[#9CA3AF]">
+                        Preenchida ao selecionar o município. A intermediária agrupa mais cidades e é a mais indicada para
+                        a ANA sugerir alternativas na região quando não houver na cidade exata.
+                      </p>
+                    )}
+                  </div>
                   <label className="block max-w-[220px]">
                     <span className={label}>Status</span>
                     <select className={`${fieldSelect} w-full`} value={status} onChange={(e) => setStatus(e.target.value as 'ativo' | 'inativo')}>
@@ -338,6 +479,37 @@ export function EmpreendimentosPage() {
                     </select>
                   </label>
                 </div>
+                <details className="mt-5 group">
+                  <summary className="text-[13px] font-medium text-[#6B7280] cursor-pointer list-none flex items-center gap-2 [&::-webkit-details-marker]:hidden">
+                    <span className="inline-flex w-4 h-4 items-center justify-center rounded border border-[#E5E7EB] text-[10px] text-[#9CA3AF] group-open:rotate-90 transition-transform">
+                      ›
+                    </span>
+                    Uso interno — código IBGE (opcional)
+                  </summary>
+                  <p className="text-[12px] text-[#9CA3AF] mt-2 mb-2 max-w-xl">
+                    O código IBGE é preenchido automaticamente ao selecionar o município. Você pode editar apenas em caso
+                    de correção pontual.
+                  </p>
+                  <label className="block max-w-[200px]">
+                    <span className={label}>Código IBGE do município</span>
+                    <input
+                      className={field}
+                      inputMode="numeric"
+                      value={ibgeCode}
+                      onChange={(e) => {
+                        const v = e.target.value.replace(/\D/g, '').slice(0, 12);
+                        setIbgeCode(v);
+                        if (!v) {
+                          setCity('');
+                          setStateUf('');
+                          setCommercialRegion('');
+                          setIbgeRegiaoImediata('');
+                        }
+                      }}
+                      placeholder="Ex.: 3504107"
+                    />
+                  </label>
+                </details>
               </section>
 
               {/* ── Card 2: Linguagem ── */}
@@ -385,10 +557,36 @@ export function EmpreendimentosPage() {
               {/* ── Card 4: Arquivos ── */}
               <section className={card}>
                 <h2 className={heading}>Arquivos</h2>
-                <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-5">Arquivos do empreendimento que a Ana pode consultar ou enviar ao cliente.</p>
+                <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-5">
+                  Cada arquivo pode ser usado como base de conhecimento da Ana e/ou liberado para envio ao cliente. O envio
+                  depende da permissão do próprio arquivo, não do empreendimento inteiro.
+                </p>
 
                 {/* Upload row */}
-                <div className="flex flex-wrap items-end gap-3 p-4 rounded-[10px] bg-[#FAFAFB] border border-dashed border-[#D1D5DB] mb-5">
+                <div className="flex flex-col gap-3 p-4 rounded-[10px] bg-[#FAFAFB] border border-dashed border-[#D1D5DB] mb-5">
+                  <div className="flex flex-wrap gap-x-6 gap-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer text-[13px] text-[#374151]">
+                      <input
+                        type="checkbox"
+                        className="rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
+                        checked={uploadAsKnowledge}
+                        onChange={(e) => setUploadAsKnowledge(e.target.checked)}
+                        disabled={uploading}
+                      />
+                      Usar como base da Ana
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-[13px] text-[#374151]">
+                      <input
+                        type="checkbox"
+                        className="rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
+                        checked={uploadAllowSend}
+                        onChange={(e) => setUploadAllowSend(e.target.checked)}
+                        disabled={uploading}
+                      />
+                      Permitir envio ao cliente
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-3">
                   <label className="block">
                     <span className={label}>Categoria</span>
                     <select
@@ -409,6 +607,7 @@ export function EmpreendimentosPage() {
                     <input type="file" accept=".pdf,.txt,.md" onChange={onUpload} disabled={uploading} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                   </label>
                   <span className="text-[11px] text-[#9CA3AF]">PDF, TXT ou MD (até 100 MB)</span>
+                  </div>
                 </div>
 
                 {/* Arquivos desativados ficam ocultos por padrão; API envia isActive alinhado a is_active */}
@@ -449,10 +648,13 @@ export function EmpreendimentosPage() {
                   <ul className="space-y-2">
                     {knowledgeDisplayed.map((f) => {
                       const isInactive = f.isActive === false;
+                      const useKnowledge = f.canBeUsedAsKnowledge !== false;
+                      const allowSend = f.canBeSentByAna === true;
+                      const permBusy = filePatchingId === f.id;
                       return (
                         <li
                           key={f.id}
-                          className={`group flex items-center gap-3 rounded-[10px] border px-4 py-3 transition ${
+                          className={`group flex flex-col sm:flex-row sm:items-start gap-3 rounded-[10px] border px-4 py-3 transition ${
                             isInactive
                               ? 'border-[#E5E7EB] bg-[#F9FAFB] opacity-[0.72]'
                               : 'border-[#E5E7EB] bg-white hover:border-[#D1D5DB]'
@@ -479,17 +681,43 @@ export function EmpreendimentosPage() {
                                 </span>
                               )}
                             </div>
+                            <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-2.5">
+                              <label
+                                className={`flex items-center gap-2 text-[12px] ${isInactive ? 'text-[#9CA3AF] cursor-default' : 'text-[#374151] cursor-pointer'}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
+                                  checked={useKnowledge}
+                                  disabled={isInactive || permBusy || saving}
+                                  onChange={(e) => patchFileFlags(f.id, { canBeUsedAsKnowledge: e.target.checked })}
+                                />
+                                Base da Ana
+                              </label>
+                              <label
+                                className={`flex items-center gap-2 text-[12px] ${isInactive ? 'text-[#9CA3AF] cursor-default' : 'text-[#374151] cursor-pointer'}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
+                                  checked={allowSend}
+                                  disabled={isInactive || permBusy || saving}
+                                  onChange={(e) => patchFileFlags(f.id, { canBeSentByAna: e.target.checked })}
+                                />
+                                Enviar ao cliente
+                              </label>
+                            </div>
                           </div>
                           {!isInactive ? (
                             <button
                               type="button"
                               onClick={() => removeFile(f.id)}
-                              className="shrink-0 text-[12px] font-medium text-[#9CA3AF] hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all"
+                              className="shrink-0 text-[12px] font-medium text-[#9CA3AF] hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all sm:self-center"
                             >
                               Remover
                             </button>
                           ) : (
-                            <span className="shrink-0 text-[11px] text-[#9CA3AF] max-w-[100px] text-right leading-tight" title="Arquivo usado em envios; não pode ser excluído do histórico.">
+                            <span className="shrink-0 text-[11px] text-[#9CA3AF] max-w-[100px] text-right leading-tight sm:self-center" title="Arquivo usado em envios; não pode ser excluído do histórico.">
                               Histórico
                             </span>
                           )}
@@ -503,15 +731,60 @@ export function EmpreendimentosPage() {
               {/* ── Card 5: Regras adicionais ── */}
               <section className={card}>
                 <h2 className={heading}>Regras adicionais</h2>
-                <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-5">
+                <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-4">
                   Instruções extras injetadas no prompt da Ana. Uma por linha.
                 </p>
-                <textarea
-                  className={`${field} min-h-[130px] resize-y font-mono text-[13px]`}
-                  value={addonsText}
-                  onChange={(e) => setAddonsText(e.target.value)}
-                  placeholder={"Priorizar agendamento de visita\nNão mencionar concorrentes\nSempre perguntar se já visitou o decorado"}
-                />
+                <div className="flex gap-2 border-b border-[#E5E7EB] mb-4">
+                  <button
+                    type="button"
+                    onClick={() => setRegrasTab('regras')}
+                    className={`text-[13px] font-medium px-3 py-2 -mb-px border-b-2 transition ${
+                      regrasTab === 'regras' ? 'border-[#F97316] text-[#111827]' : 'border-transparent text-[#6B7280] hover:text-[#111827]'
+                    }`}
+                  >
+                    Edição
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRegrasTab('historico')}
+                    className={`text-[13px] font-medium px-3 py-2 -mb-px border-b-2 transition ${
+                      regrasTab === 'historico' ? 'border-[#F97316] text-[#111827]' : 'border-transparent text-[#6B7280] hover:text-[#111827]'
+                    }`}
+                  >
+                    Histórico
+                  </button>
+                </div>
+                {regrasTab === 'regras' ? (
+                  <textarea
+                    className={`${field} min-h-[130px] resize-y font-mono text-[13px]`}
+                    value={addonsText}
+                    onChange={(e) => setAddonsText(e.target.value)}
+                    placeholder={"Priorizar agendamento de visita\nNão mencionar concorrentes\nSempre perguntar se já visitou o decorado"}
+                  />
+                ) : (
+                  <div className="min-h-[130px]">
+                    {historyLoading ? (
+                      <p className="text-[13px] text-[#9CA3AF]">Carregando…</p>
+                    ) : historyItems.length === 0 ? (
+                      <p className="text-[13px] text-[#9CA3AF]">Nenhum histórico de alterações ainda.</p>
+                    ) : (
+                      <ul className="space-y-3 max-h-[280px] overflow-y-auto">
+                        {historyItems.map((h) => (
+                          <li
+                            key={h.id}
+                            className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2.5 text-[13px] text-[#374151] whitespace-pre-wrap"
+                          >
+                            <p className="text-[11px] text-[#9CA3AF] mb-1">
+                              {new Date(h.createdAt).toLocaleString('pt-BR')}
+                              {h.createdByName ? ` · ${h.createdByName}` : ''}
+                            </p>
+                            {h.ruleText}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
               </section>
 
               {/* ── Action bar ── */}

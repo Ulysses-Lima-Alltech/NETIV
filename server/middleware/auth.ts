@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { getSessionUser, type AppUser, type UserRole } from '../repositories/userRepository.js';
 
+/** Requisição já autenticada (`user` garantido pelos middlewares `requireAuth` + `requireRole`). */
 export type AuthenticatedRequest = Request & { user: AppUser };
 
 function getToken(req: Request): string | null {
@@ -20,13 +21,13 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     res.status(401).json({ error: 'Sessão inválida ou expirada.' });
     return;
   }
-  (req as AuthenticatedRequest).user = user;
+  req.user = user;
   next();
 }
 
 export function requireRole(...allowedRoles: UserRole[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const user = (req as AuthenticatedRequest).user;
+    const user = req.user;
     if (!user) {
       res.status(401).json({ error: 'Não autenticado.' });
       return;

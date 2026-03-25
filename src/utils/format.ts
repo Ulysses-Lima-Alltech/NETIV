@@ -3,7 +3,7 @@ import type { ConversationStatus } from '../types';
 const STATUS_LABELS: Partial<Record<string, string>> = {
   Novo: 'Novo',
   Qualificado: 'Qualificado',
-  Reserva: 'Reserva',
+  Carteira: 'Carteira',
   Handoff: 'Handoff',
   NOVO: 'Novo',
   EM_ANDAMENTO: 'Em andamento',

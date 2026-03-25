@@ -17,12 +17,12 @@ const PERIOD_OPTIONS: { value: DashboardPeriod; label: string }[] = [
   { value: '30d', label: 'Últimos 30 dias' },
 ];
 
-/** Parte 9: azul volume, verde qualificado, laranja (handoff/transição), roxo reserva */
+/** Parte 9: azul volume, verde qualificado, laranja (handoff/transição), roxo carteira */
 const CLASS_COLORS: Record<string, string> = {
   Novo: 'bg-[#60A5FA]',
   Qualificado: 'bg-[#34D399]',
   Handoff: 'bg-[#FB923C]',
-  Reserva: 'bg-[#A78BFA]',
+  Carteira: 'bg-[#A78BFA]',
 };
 
 function KpiCard({
@@ -176,7 +176,7 @@ export function DashboardPage() {
             </label>
           </div>
           <p className="text-[12px] text-[#9CA3AF] mt-3 leading-relaxed">
-            <strong className="text-[#6B7280] font-medium">Reserva:</strong> contato sem avanço no momento, mas com potencial de retomada
+            <strong className="text-[#6B7280] font-medium">Carteira:</strong> contato sem avanço no momento, mas com potencial de retomada
             futura — não indica descarte ou spam.
           </p>
         </div>
@@ -204,11 +204,11 @@ export function DashboardPage() {
                 <KpiCard
                   title="Conversas ativas agora"
                   value={data.kpis.activeConversations}
-                  hint="Classificação Novo ou Qualificado (exclui Reserva e Handoff)"
+                  hint="Classificação Novo ou Qualificado (exclui Carteira e Handoff)"
                 />
                 <KpiCard title="Qualificados atuais" value={data.kpis.qualified} />
                 <KpiCard title="Handoffs atuais" value={data.kpis.handoffs} />
-                <KpiCard title="Reserva atual" value={data.kpis.reserva} />
+                <KpiCard title="Carteira atual" value={data.kpis.carteira} />
                 <KpiCard
                   title="Tempo médio de primeira resposta"
                   value={formatDurationSeconds(data.kpis.avgFirstResponseSeconds)}
@@ -269,7 +269,7 @@ export function DashboardPage() {
                       <th className="py-3 pr-4 font-semibold text-right">Total</th>
                       <th className="py-3 pr-4 font-semibold text-right">Qualif.</th>
                       <th className="py-3 pr-4 font-semibold text-right">Handoff</th>
-                      <th className="py-3 font-semibold text-right">Reserva</th>
+                      <th className="py-3 font-semibold text-right">Carteira</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -286,7 +286,7 @@ export function DashboardPage() {
                           <td className="py-3 pr-4 text-right tabular-nums">{row.total}</td>
                           <td className="py-3 pr-4 text-right tabular-nums">{row.qualified}</td>
                           <td className="py-3 pr-4 text-right tabular-nums">{row.handoffs}</td>
-                          <td className="py-3 text-right tabular-nums">{row.reservas}</td>
+                          <td className="py-3 text-right tabular-nums">{row.carteiras}</td>
                         </tr>
                       ))
                     )}

@@ -10,7 +10,7 @@ export const sendMessageSchema = z.object({
 
 export type SendMessageDto = z.infer<typeof sendMessageSchema>;
 
-const classificationStatusValues = ['Novo', 'Qualificado', 'Reserva', 'Handoff'] as const;
+const classificationStatusValues = ['Novo', 'Qualificado', 'Carteira', 'Handoff'] as const;
 
 export const reserveSegmentationPatchSchema = z
   .object({
@@ -40,7 +40,9 @@ export type ReserveSegmentationPatchDto = z.infer<typeof reserveSegmentationPatc
 
 export const updateClassificationSchema = z.object({
   project_id: z.number().int().positive().nullable().optional(),
-  classification_status: z.enum(classificationStatusValues).optional(),
+  classification_status: z
+    .preprocess((v) => (v === 'Reserva' ? 'Carteira' : v), z.enum(classificationStatusValues))
+    .optional(),
   handoff: z.boolean().optional(),
   /** frio/morno/quente apenas; null no JSON é ignorado (compatível com clientes antigos). Não é permitido persistir NULL via API. */
   lead_temperature: z.preprocess(
@@ -48,5 +50,7 @@ export const updateClassificationSchema = z.object({
     z.enum(['quente', 'morno', 'frio']).optional()
   ),
   reserve: reserveSegmentationPatchSchema.optional(),
+  /** Corretor fixo do lead; null remove (volta à distribuição automática nos próximos passos). */
+  assigned_broker_id: z.number().int().positive().nullable().optional(),
 });
 export type UpdateClassificationDto = z.infer<typeof updateClassificationSchema>;

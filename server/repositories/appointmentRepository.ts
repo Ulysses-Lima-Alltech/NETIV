@@ -15,6 +15,7 @@ export interface AppointmentRow {
   status: string;
   source: string;
   notes: string;
+  conversation_id?: number | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -70,10 +71,11 @@ export async function createAppointment(data: {
   status?: string;
   source?: string;
   notes?: string;
+  conversationId?: number | null;
 }): Promise<AppointmentRow> {
   const { rows } = await query<AppointmentRow>(
-    `INSERT INTO appointments (customer_name, customer_phone, enterprise_id, broker_id, city, start_at, end_at, status, source, notes, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW()) RETURNING *`,
+    `INSERT INTO appointments (customer_name, customer_phone, enterprise_id, broker_id, city, start_at, end_at, status, source, notes, conversation_id, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW()) RETURNING *`,
     [
       data.customerName.trim(),
       (data.customerPhone || '').trim(),
@@ -85,9 +87,64 @@ export async function createAppointment(data: {
       data.status ?? 'CONFIRMADO',
       data.source ?? 'ANA',
       data.notes ?? '',
+      data.conversationId ?? null,
     ]
   );
   return rows[0];
+}
+
+/** Evita duplicar o mesmo compromisso (mesma conversa + início próximo). */
+export async function findDuplicateAppointmentForConversation(
+  conversationId: number,
+  startAt: Date,
+  windowSeconds = 480
+): Promise<AppointmentRow | null> {
+  const { rows } = await query<AppointmentRow>(
+    `SELECT * FROM appointments
+     WHERE conversation_id = $1
+       AND status NOT IN ('CANCELADO')
+       AND ABS(EXTRACT(EPOCH FROM (start_at - $2::timestamptz))) < $3
+     LIMIT 1`,
+    [conversationId, startAt, windowSeconds]
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Agendamento ainda editável para a mesma conversa + empreendimento (reagendamento / uma linha ativa).
+ */
+export async function findOpenAppointmentForConversationAndEnterprise(
+  conversationId: number,
+  enterpriseId: number
+): Promise<AppointmentRow | null> {
+  const { rows } = await query<AppointmentRow>(
+    `SELECT * FROM appointments
+     WHERE conversation_id = $1
+       AND enterprise_id = $2
+       AND status IN ('CONFIRMADO', 'PENDENTE_CONFIRMACAO', 'PENDENTE_DISTRIBUICAO')
+     ORDER BY updated_at DESC, start_at DESC
+     LIMIT 1`,
+    [conversationId, enterpriseId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function updateAppointmentSchedule(
+  id: number,
+  data: { startAt: Date; endAt: Date; notes?: string | null }
+): Promise<AppointmentRow | null> {
+  if (data.notes !== undefined && data.notes !== null) {
+    const { rows } = await query<AppointmentRow>(
+      `UPDATE appointments SET start_at = $1, end_at = $2, notes = $3, updated_at = NOW() WHERE id = $4 RETURNING *`,
+      [data.startAt, data.endAt, data.notes, id]
+    );
+    return rows[0] ?? null;
+  }
+  const { rows } = await query<AppointmentRow>(
+    `UPDATE appointments SET start_at = $1, end_at = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
+    [data.startAt, data.endAt, id]
+  );
+  return rows[0] ?? null;
 }
 
 export async function updateAppointmentStatus(id: number, status: string): Promise<AppointmentRow | null> {

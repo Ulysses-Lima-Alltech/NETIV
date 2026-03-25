@@ -13,11 +13,12 @@ import {
   type ReserveReason,
 } from '../constants/reserveSegmentation';
 import type { ReserveSegmentationPatchBody } from '../api/client';
+import { corretoresApi } from '../api/client';
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'Novo', label: 'Novo' },
   { value: 'Qualificado', label: 'Qualificado' },
-  { value: 'Reserva', label: 'Reserva' },
+  { value: 'Carteira', label: 'Carteira' },
   { value: 'Handoff', label: 'Handoff' },
 ];
 
@@ -98,6 +99,7 @@ interface ChatPanelProps {
     handoff?: boolean;
     leadTemperature?: 'quente' | 'morno' | 'frio';
     reserve?: ReserveSegmentationPatchBody;
+    assignedBrokerId?: number | null;
   }) => void | Promise<void>;
   projects?: { id: number; name: string; active: boolean }[];
   isSending?: boolean;
@@ -120,6 +122,7 @@ export function ChatPanel({
   const [reserveDraft, setReserveDraft] = useState<ReserveDraft | null>(null);
   const [reserveSaving, setReserveSaving] = useState(false);
   const [reserveErr, setReserveErr] = useState<string | null>(null);
+  const [brokersForProject, setBrokersForProject] = useState<{ id: number; fullName: string }[]>([]);
 
   const setRef = useCallback(
     (el: HTMLDivElement | null) => {
@@ -138,6 +141,18 @@ export function ChatPanel({
     setReserveErr(null);
   }, [conversation?.id ?? '', conversation ? reserveFingerprint(conversation) : '']);
 
+  useEffect(() => {
+    const pid = conversation?.projectId;
+    if (pid == null) {
+      setBrokersForProject([]);
+      return;
+    }
+    corretoresApi
+      .list({ enterpriseId: pid })
+      .then((d) => setBrokersForProject(d.corretores.map((c) => ({ id: c.id, fullName: c.fullName }))))
+      .catch(() => setBrokersForProject([]));
+  }, [conversation?.id, conversation?.projectId]);
+
   if (!conversation) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-[#F9FAFB] text-[#6B7280] p-8">
@@ -153,7 +168,7 @@ export function ChatPanel({
   const displayName = conversation.leadName.trim() || 'Lead sem nome';
   let lastDate = '';
   const cls = conversation.classificationStatus ?? conversation.status ?? 'Novo';
-  const showReservaBlock = cls === 'Reserva' && !conversation.handoff;
+  const showCarteiraBlock = cls === 'Carteira' && !conversation.handoff;
   const d = reserveDraft;
 
   const hasReserveData =
@@ -205,6 +220,11 @@ export function ChatPanel({
                   Origem: {conversation.enterpriseOriginName ?? `empreendimento #${conversation.enterpriseOriginId}`}
                 </span>
               )}
+            {conversation.handoff && conversation.assignedBrokerName?.trim() && (
+              <span className="inline-flex items-center text-[11px] font-semibold px-2.5 py-1 rounded-[6px] bg-[#ECFDF5] text-[#047857] border border-[#A7F3D0] max-w-[180px] truncate">
+                {conversation.assignedBrokerName}
+              </span>
+            )}
             {onClassificationChange ? (
               <label className="inline-flex items-center gap-1.5">
                 <span
@@ -298,6 +318,33 @@ export function ChatPanel({
               </select>
             </label>
             <label className="flex items-center gap-2">
+              <span className="text-[13px] text-[#6B7280]">Corretor:</span>
+              <select
+                aria-label="Corretor fixo do lead"
+                value={conversation.assignedBrokerId ?? ''}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  onClassificationChange({
+                    assignedBrokerId: v === '' ? null : Number(v),
+                  });
+                }}
+                className={selectField}
+                disabled={!conversation.projectId}
+                title={
+                  conversation.projectId
+                    ? 'Prioridade: manual > já atribuído > automático. Vazio = distribuição automática.'
+                    : 'Defina um empreendimento para listar corretores.'
+                }
+              >
+                <option value="">Automático</option>
+                {brokersForProject.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.fullName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-2">
               <span className="text-[13px] text-[#6B7280]">Status:</span>
               <select
                 value={conversation.classificationStatus ?? conversation.status ?? 'Novo'}
@@ -310,15 +357,15 @@ export function ChatPanel({
             <p className="w-full text-[11px] text-[#9CA3AF] leading-snug">
               Com <strong className="text-[#6B7280] font-medium">empreendimento</strong> e{' '}
               <strong className="text-[#6B7280] font-medium">temperatura</strong> escolhida (Frio, Morno ou Quente), o funil deixa de ser
-              &quot;Novo&quot; e passa para &quot;Qualificado&quot;. A primeira temperatura definida não pode ser removida depois. Handoff e Reserva
+              &quot;Novo&quot; e passa para &quot;Qualificado&quot;. A primeira temperatura definida não pode ser removida depois. Handoff e Carteira
               não são alterados automaticamente.
             </p>
           </div>
         )}
 
-        {showReservaBlock && d && (
+        {showCarteiraBlock && d && (
           <div className="mt-4 rounded-[10px] border border-[#EDE9FE] bg-[#FAF5FF]/80 px-4 py-3 space-y-3">
-            <p className="text-[12px] font-semibold text-[#5B21B6] uppercase tracking-wide">Reserva — segmentação comercial</p>
+            <p className="text-[12px] font-semibold text-[#5B21B6] uppercase tracking-wide">Carteira — segmentação comercial</p>
             <p className="text-[11px] text-[#6B7280] leading-relaxed">
               Dados para retomada e campanhas futuras. Preenchimento parcial permitido. Salve com o botão abaixo.
             </p>
@@ -327,7 +374,7 @@ export function ChatPanel({
               <dl className="grid gap-1.5 text-[12px] text-[#374151] border-t border-[#EDE9FE] pt-3">
                 <div className="flex gap-2">
                   <dt className="text-[#9CA3AF] shrink-0">Classificação</dt>
-                  <dd className="font-medium">Reserva</dd>
+                  <dd className="font-medium">Carteira</dd>
                 </div>
                 {conversation.reserveReason && (
                   <div className="flex gap-2">
@@ -382,7 +429,7 @@ export function ChatPanel({
 
             <div className="grid sm:grid-cols-2 gap-3 border-t border-[#EDE9FE] pt-3">
               <label className="sm:col-span-2">
-                <span className={labelSm}>Motivo da reserva</span>
+                <span className={labelSm}>Motivo (Carteira)</span>
                 <select
                   className={`${selectField} w-full`}
                   value={d.reason}

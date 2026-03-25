@@ -136,9 +136,11 @@ export interface ConversationListItem {
   reserveInterestType?: string | null;
   reserveFollowUpMoment?: string | null;
   reserveCommercialNotes?: string | null;
+  assignedBrokerName?: string | null;
+  assignedBrokerId?: number | null;
 }
 
-/** Corpo parcial para PATCH de classificação + segmentação Reserva. */
+/** Corpo parcial para PATCH de classificação + segmentação Carteira. */
 export interface ReserveSegmentationPatchBody {
   reason?: string | null;
   desiredCity?: string | null;
@@ -231,6 +233,7 @@ export const whatsappApi = {
       handoff?: boolean;
       lead_temperature?: 'quente' | 'morno' | 'frio';
       reserve?: ReserveSegmentationPatchBody;
+      assigned_broker_id?: number | null;
     }
   ) =>
     request<{
@@ -243,6 +246,8 @@ export const whatsappApi = {
       classificationStatus: string;
       leadStage?: string | null;
       handoff?: boolean;
+      assignedBrokerId?: number | null;
+      assignedBrokerName?: string | null;
       reserveReason?: string | null;
       reserveDesiredCity?: string | null;
       reservePriceMin?: number | null;
@@ -280,6 +285,10 @@ export interface KnowledgeFileItem {
   mime: string;
   size: number;
   isActive?: boolean;
+  /** Incluir texto extraído no contexto da Ana */
+  canBeUsedAsKnowledge?: boolean;
+  /** Permitir envio deste arquivo ao cliente via WhatsApp */
+  canBeSentByAna?: boolean;
   createdAt: string;
 }
 
@@ -291,9 +300,23 @@ export interface EmpreendimentoDTO {
   languageStyle: 'informal' | 'natural' | 'formal' | 'culta';
   variables: ProjectVariables;
   promptAddons: string[];
+  /** Localização cadastral */
+  city?: string;
+  stateUf?: string;
+  commercialRegion?: string;
+  /** Opcional; integrações / uso interno */
+  ibgeCode?: string;
   createdAt: string;
   updatedAt: string;
   knowledgeFiles?: KnowledgeFileItem[];
+}
+
+export interface PromptAddonsHistoryItem {
+  id: number;
+  ruleText: string;
+  createdAt: string;
+  createdByUserId: number | null;
+  createdByName: string | null;
 }
 
 export type ProjectListItem = Omit<EmpreendimentoDTO, 'knowledgeFiles'>;
@@ -314,13 +337,26 @@ export const projectsApi = {
       languageStyle?: EmpreendimentoDTO['languageStyle'];
       variables?: ProjectVariables;
       promptAddons?: string[];
+      city?: string;
+      stateUf?: string;
+      commercialRegion?: string;
+      ibgeCode?: string;
     }
   ) => request<ProjectListItem>(`/projects/${id}`, { method: 'PATCH', body }),
+  promptAddonsHistory: (id: number) =>
+    request<{ items: PromptAddonsHistoryItem[] }>(`/projects/${id}/prompt-addons-history`),
   delete: (id: number) => request<ProjectListItem>(`/projects/${id}`, { method: 'DELETE' }),
-  uploadKnowledge: async (projectId: number, file: File, category: FileCategory): Promise<KnowledgeFileItem> => {
+  uploadKnowledge: async (
+    projectId: number,
+    file: File,
+    category: FileCategory,
+    opts?: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean }
+  ): Promise<KnowledgeFileItem> => {
     const fd = new FormData();
     fd.append('category', category);
     fd.append('file', file);
+    fd.append('canBeUsedAsKnowledge', opts?.canBeUsedAsKnowledge !== false ? 'true' : 'false');
+    fd.append('canBeSentByAna', opts?.canBeSentByAna === true ? 'true' : 'false');
     const token = getStoredAuthToken();
     const res = await fetch(`${API_BASE}/projects/${projectId}/knowledge`, {
       method: 'POST',
@@ -345,6 +381,11 @@ export const projectsApi = {
       `/projects/${projectId}/knowledge/${fileId}`,
       { method: 'DELETE' }
     ),
+  patchKnowledgeFile: (
+    projectId: number,
+    fileId: number,
+    body: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean }
+  ) => request<KnowledgeFileItem>(`/projects/${projectId}/knowledge/${fileId}`, { method: 'PATCH', body }),
 };
 
 export interface Corretor {
@@ -477,7 +518,7 @@ export interface DashboardOverview {
     activeConversations: number;
     qualified: number;
     handoffs: number;
-    reserva: number;
+    carteira: number;
     avgFirstResponseSeconds: number | null;
     noFirstResponse: number;
   };
@@ -489,7 +530,7 @@ export interface DashboardOverview {
     total: number;
     qualified: number;
     handoffs: number;
-    reservas: number;
+    carteiras: number;
   }[];
   attentionItems: {
     id: number;
