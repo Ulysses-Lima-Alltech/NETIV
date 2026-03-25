@@ -412,6 +412,18 @@ export function EmpreendimentosPage() {
                 <h2 className={heading}>Arquivos</h2>
                 <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-5">Arquivos do empreendimento que a Ana pode consultar ou enviar ao cliente.</p>
 
+                <label className="flex items-start gap-3 mb-5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="mt-1 rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
+                    checked={allowMaterialSending}
+                    onChange={(e) => setAllowMaterialSending(e.target.checked)}
+                  />
+                  <span className="text-[13px] text-[#374151] leading-snug">
+                    Permitir envio de materiais pela Ana (book, PDF, tabelas pelo WhatsApp). Se desmarcado, a Ana orienta só por texto.
+                  </span>
+                </label>
+
                 {/* Upload row */}
                 <div className="flex flex-wrap items-end gap-3 p-4 rounded-[10px] bg-[#FAFAFB] border border-dashed border-[#D1D5DB] mb-5">
                   <label className="block">
@@ -531,17 +543,6 @@ export function EmpreendimentosPage() {
                 <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-4">
                   Instruções extras injetadas no prompt da Ana. Uma por linha.
                 </p>
-                <label className="flex items-start gap-3 mb-5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    className="mt-1 rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
-                    checked={allowMaterialSending}
-                    onChange={(e) => setAllowMaterialSending(e.target.checked)}
-                  />
-                  <span className="text-[13px] text-[#374151] leading-snug">
-                    Permitir envio de materiais pela Ana (book, PDF, tabelas pelo WhatsApp). Se desmarcado, a Ana orienta só por texto.
-                  </span>
-                </label>
                 <div className="flex gap-2 border-b border-[#E5E7EB] mb-4">
                   <button
                     type="button"

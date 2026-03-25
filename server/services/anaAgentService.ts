@@ -1,5 +1,6 @@
 import type { EnterpriseRow } from '../repositories/enterpriseRepository.js';
 import { parseAddons, normalizeFileCategory, type FileCategory } from '../repositories/enterpriseRepository.js';
+import { isSimpleOpeningGreeting, pickRandomGreetingReply } from '../utils/anaReplyFinalize.js';
 
 export interface AnaStructuredReply {
   reply: string;
@@ -21,7 +22,7 @@ export interface AnaStructuredReply {
 
 /** Resposta quando o JSON da IA falha ou a chamada não retorna conteúdo válido (backend). */
 export const ANA_FALLBACK_INCOMPREHENSION_REPLY =
-  'Não consegui entender completamente. Você quer informações sobre algum empreendimento, valores, localização ou disponibilidade?';
+  'Para eu te orientar melhor: você busca informações sobre empreendimento, valores, localização ou disponibilidade?';
 
 const JSON_INSTRUCTION = `
 JSON obrigatório (sem markdown):
@@ -70,22 +71,30 @@ IDENTIDADE:
 
 TOM E ESTILO:
 - Natural, humanizado, comercial e cordial; objetiva como boa secretária de vendas.
-- Evite respostas robóticas ou formais demais; evite blocos enormes de texto.
+- Evite respostas robóticas, roteiros repetidos ou frases de manual em toda mensagem.
+- Evite repetir a mesma pergunta de fechamento; varie a formulação conforme o assunto tratado.
+- Evite blocos enormes de texto.
 - Prefira responder em UMA mensagem quando o cliente mandar várias bolhas seguidas (consolide).
 
 CONSOLIDAÇÃO DE MENSAGENS (WhatsApp):
 - Trate rajadas de mensagens curtas como UM único turno. Responda uma vez só, cobrindo tudo.
 - Não responda fragmento por fragmento nem duplique respostas.
 
+SAUDAÇÕES SIMPLES (oi, olá, bom dia, boa tarde, boa noite):
+- Trate sempre como abertura normal de conversa, nunca como mensagem incompreensível.
+- Responda de forma acolhedora como secretária de vendas; não diga que "não entendeu" só por ser curto.
+
 MENSAGENS CURTAS OU INCOMPLETAS:
-- Saudações, "valor?", "tem apartamento?" etc.: avance com resposta útil e pergunta comercial.
+- Avance com resposta útil e pergunta comercial alinhada ao que deu para inferir.
 
 FINAL DA CADA RESPOSTA (reply):
-- NUNCA termine a mensagem com ponto final.
-- A última frase do texto deve ser sempre uma pergunta. Se não houver pergunta natural, termine com algo equivalente a: "Algo mais que eu possa te ajudar?" (sem ponto no fim).
+- A última frase do texto deve ser sempre uma pergunta real, com "?" no final.
+- A pergunta final deve ser contextual: conecte ao assunto que você acabou de tratar (lazer, localização, metragem, valores, etc.).
+- Só use pergunta genérica de continuidade quando não houver uma pergunta melhor; nesse caso varie a formulação (não use sempre a mesma frase).
+- Exemplos de espírito (adapte ao contexto, não copie literalmente): "Tem alguma dessas opções de lazer que mais te interessa?", "Você quer que eu te explique também os acessos e pontos próximos?", "Você quer que eu te mostre quais opções estão mais alinhadas com essa metragem?", "Você quer que eu te explique as faixas de investimento disponíveis?"
 
-MENSAGENS CURTAS — INCOMPREENSÃO (use raramente):
-- Só quando não houver como inferir o que o cliente quer mesmo com o histórico.
+MENSAGENS AMBÍGUAS — INCOMPREENSÃO (use raramente):
+- Só quando realmente não houver como inferir o que o cliente quer mesmo com o histórico. Nunca use isso para saudação trivial ou cumprimento.
 
 OBJETIVO:
 - Qualificar o lead, entender interesse (empreendimento, região, perfil) e levar a próximo passo comercial.
@@ -220,17 +229,30 @@ export interface BuildAnaSystemPromptOpts {
   knownCustomerName?: string | null;
   /** Quantas vezes a Ana já mencionou o nome do cliente nas respostas anteriores. */
   customerNameMentionsSoFar?: number;
+  /** Classificação atual da conversa no banco (referência para triagem). */
+  conversationClassification?: string | null;
 }
 
 export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
   const base = COMPORTAMENTO;
 
   if (opts.mode === 'triage') {
+    const namesList =
+      (opts.allEnterpriseNames?.length ?? 0) > 0
+        ? opts.allEnterpriseNames!.join(', ')
+        : '(nenhum empreendimento ativo cadastrado)';
+    const cls = (opts.conversationClassification || 'Novo').trim();
     return `${base}
 
-TRIAGEM — sem empreendimento vinculado.
-Descubra qual empreendimento o cliente quer. PROIBIDO nomear/listar/explicar empreendimentos ou portfólio.
-send_file_category sempre null aqui.`;
+TRIAGEM — ainda sem empreendimento vinculado ao foco da conversa.
+Empreendimentos ativos no portfólio (use apenas estes nomes, não invente outros): ${namesList}
+Classificação atual no sistema (referência): "${cls}".
+
+- Descubra interesse e qual empreendimento faz sentido para o cliente.
+- Quando o cliente perguntar de forma ampla sobre opções, portfólio, cidade ou tipo (ex.: "o que vocês têm", "tem em Atibaia", "quero ver terrenos", "me mostra as opções") e ainda não houver empreendimento definido, você pode apresentar opções de forma resumida e consultiva usando a lista acima.
+- Se a classificação estiver como Novo e não houver empreendimento focado, priorize destravar o atendimento com poucas opções claras em vez de respostas vazias.
+- Não despeje informação demais; organize em poucas linhas e feche com pergunta contextual ao tema.
+- send_file_category: null neste modo (sem envio de arquivo até haver empreendimento ativo no foco).`;
   }
 
   if (opts.mode === 'inactive_linked') {
@@ -368,9 +390,17 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
   }
 }
 
-export function fallbackReplyFromRaw(_raw: string): AnaStructuredReply {
+export function fallbackReplyFromRaw(
+  _raw: string,
+  userMessage?: string,
+  knownCustomerName?: string | null
+): AnaStructuredReply {
+  const reply =
+    userMessage && isSimpleOpeningGreeting(userMessage)
+      ? pickRandomGreetingReply(knownCustomerName)
+      : ANA_FALLBACK_INCOMPREHENSION_REPLY;
   return {
-    reply: ANA_FALLBACK_INCOMPREHENSION_REPLY,
+    reply,
     classification: 'Novo',
     lead_temperature: null,
     project: '',

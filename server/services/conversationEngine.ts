@@ -29,7 +29,14 @@ import {
   detectStrongPurchaseIntentForLeadTemperature,
   ANA_FALLBACK_INCOMPREHENSION_REPLY,
 } from './anaAgentService.js';
-import { randomAnaReplyDelayMs, sleepMs, finalizeAnaReplyText, countCustomerNameMentionsInText } from '../utils/anaReplyFinalize.js';
+import {
+  randomAnaReplyDelayMs,
+  sleepMs,
+  finalizeAnaReplyText,
+  countCustomerNameMentionsInText,
+  isSimpleOpeningGreeting,
+  pickRandomGreetingReply,
+} from '../utils/anaReplyFinalize.js';
 import { extractLeadDataFromConversation } from './leadWalletExtractionService.js';
 import { registerAnaAppointmentIfConfirmed } from './anaAppointmentFromChatService.js';
 
@@ -254,7 +261,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const delayMs = randomAnaReplyDelayMs();
       await sleepMs(delayMs);
       const confirmMsg = finalizeAnaReplyText(
-        'Entendido! Um atendente vai entrar em contato em breve. Enquanto isso, sua mensagem já foi registrada. Posso te ajudar com mais alguma coisa antes da transferência'
+        'Entendido! Um atendente vai entrar em contato em breve. Enquanto isso, sua mensagem já foi registrada. Posso te ajudar com mais alguma coisa antes da transferência?'
       );
       const sendResult = await sendTextMessage(toPhoneNumber, confirmMsg);
       if (sendResult.success && sendResult.metaMessageId) {
@@ -263,12 +270,46 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    const rows = await getMessagesByConversationId(conversationId);
+    const historyForGreeting =
+      trailingUserBubbles != null && trailingUserBubbles > 1
+        ? rowsToHistory(rows, null, trailingUserBubbles)
+        : rowsToHistory(rows, trimmed);
+
+    if (isSimpleOpeningGreeting(trimmed) && historyForGreeting.length === 0) {
+      const nm = (effectiveConv.customer_name || '').trim();
+      const nameKnown = nm.length >= 2;
+      let replyTextGreeting = pickRandomGreetingReply(nameKnown ? nm : null);
+      replyTextGreeting = finalizeAnaReplyText(replyTextGreeting).slice(0, 4000);
+      const delayGreetingMs = randomAnaReplyDelayMs();
+      await sleepMs(delayGreetingMs);
+      const freshRows = await getMessagesByConversationId(conversationId);
+      const lastAsstG = [...freshRows].reverse().find((m) => m.role === 'assistant');
+      if (lastAsstG && (lastAsstG.content || '').trim() === replyTextGreeting.trim()) {
+        const ageG = Date.now() - new Date(lastAsstG.created_at).getTime();
+        if (ageG < 120_000) {
+          console.warn('[ANA DEDupe] ignorando resposta idêntica à anterior (saudação)', { conversationId });
+          return;
+        }
+      }
+      const sendGreeting = await sendTextMessage(toPhoneNumber, replyTextGreeting);
+      if (sendGreeting.success && sendGreeting.metaMessageId) {
+        await insertMessage(conversationId, 'assistant', replyTextGreeting, sendGreeting.metaMessageId);
+        const convAfterG = await getConversationById(conversationId);
+        const nameForG = (convAfterG?.customer_name || '').trim();
+        const deltaG = countCustomerNameMentionsInText(replyTextGreeting, nameForG);
+        if (deltaG > 0) await incrementAnaCustomerNameMentions(conversationId, deltaG);
+      }
+      return;
+    }
+
     const explicitSwitch = hasExplicitSwitchIntent(trimmed);
     let matched: number | null = null;
     let activeEnterprisesForContext: EnterpriseRow[] | null = null;
 
+    const listedForNames = await listEnterprises(true);
     if (explicitSwitch) {
-      activeEnterprisesForContext = await listEnterprises(true);
+      activeEnterprisesForContext = listedForNames;
       matched = tryMatchEnterpriseByLastMention(activeEnterprisesForContext, trimmed);
     } else {
       matched = await tryMatchActiveEnterpriseId(trimmed);
@@ -304,8 +345,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     const allEnterpriseNames =
       mode === 'scoped'
-        ? (activeEnterprisesForContext ?? (await listEnterprises(true))).map((e) => e.name)
-        : [];
+        ? (activeEnterprisesForContext ?? listedForNames).map((e) => e.name)
+        : listedForNames.map((e) => e.name);
     const allowMaterialSending = ent == null ? true : ent.allow_material_sending !== false;
     const promptOpts: BuildAnaSystemPromptOpts = {
       mode,
@@ -317,10 +358,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       allowMaterialSending,
       knownCustomerName: effectiveConv.customer_name,
       customerNameMentionsSoFar: effectiveConv.ana_customer_name_mentions ?? 0,
+      conversationClassification: effectiveConv.classification,
     };
     const systemPrompt = buildAnaSystemPrompt(promptOpts);
 
-    const rows = await getMessagesByConversationId(conversationId);
     const history =
       trailingUserBubbles != null && trailingUserBubbles > 1
         ? rowsToHistory(rows, null, trailingUserBubbles)
@@ -358,11 +399,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationId,
         contentPreview: result.content.slice(0, 160),
       });
-      structured = fallbackReplyFromRaw(result.content);
+      structured = fallbackReplyFromRaw(result.content, trimmed, effectiveConv.customer_name);
     }
     if (!structured) {
       structured = {
-        reply: ANA_FALLBACK_INCOMPREHENSION_REPLY,
+        reply: isSimpleOpeningGreeting(trimmed)
+          ? pickRandomGreetingReply(effectiveConv.customer_name)
+          : ANA_FALLBACK_INCOMPREHENSION_REPLY,
         classification: 'Novo',
         lead_temperature: null,
         project: ent?.name || '',
@@ -410,6 +453,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     await sleepMs(delayMs);
 
     let replyText = finalizeAnaReplyText(structured.reply).slice(0, 4000);
+    const rowsBeforeSend = await getMessagesByConversationId(conversationId);
+    const lastAsstDup = [...rowsBeforeSend].reverse().find((m) => m.role === 'assistant');
+    if (lastAsstDup && (lastAsstDup.content || '').trim() === replyText.trim()) {
+      const ageDup = Date.now() - new Date(lastAsstDup.created_at).getTime();
+      if (ageDup < 120_000) {
+        console.warn('[ANA DEDupe] bloqueando envio duplicado (mesmo texto que última resposta)', {
+          conversationId,
+        });
+        return;
+      }
+    }
     console.log('[ANA DEBUG] sending WhatsApp reply', { toPhoneNumber, replyLength: replyText.length });
     const sendResult = await sendTextMessage(toPhoneNumber, replyText);
     if (sendResult.success && sendResult.metaMessageId) {
