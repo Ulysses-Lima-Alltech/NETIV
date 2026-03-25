@@ -28,9 +28,11 @@ import {
   type CommercialSnapshot,
   pickCommercialListUx,
   parseAnaJson,
+  trySalvageStructuredReplyFromRawModelContent,
   fallbackReplyFromRaw,
   detectStrongPurchaseIntentForLeadTemperature,
   ANA_FALLBACK_INCOMPREHENSION_REPLY,
+  ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY,
 } from './anaAgentService.js';
 import {
   randomAnaReplyDelayMs,
@@ -39,6 +41,7 @@ import {
   countCustomerNameMentionsInText,
   isSimpleOpeningGreeting,
   pickRandomGreetingReply,
+  userUtteranceHasSearchRefinementSignals,
 } from '../utils/anaReplyFinalize.js';
 import {
   buildUserUtterancesContext,
@@ -512,6 +515,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? rowsToHistory(rows, null, trailingUserBubbles)
         : rowsToHistory(rows, trimmed);
 
+    const recentUserContextForFallback = [...history.filter((h) => h.role === 'user').map((h) => h.content), trimmed]
+      .join('\n')
+      .slice(-2500);
+
     const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
     for (const h of history) {
       messages.push({ role: h.role, content: h.content });
@@ -545,7 +552,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let structured =
       result.success && result.content ? parseAnaJson(result.content) : null;
     if (!structured && result.success && result.content) {
-      console.warn('[DOC_FLOW] parseAnaJson null — fallback genérico (send_file_category será null)', {
+      structured = trySalvageStructuredReplyFromRawModelContent(result.content);
+    }
+    if (!structured && result.success && result.content) {
+      console.warn('[DOC_FLOW] parseAnaJson null e sem texto bruto aproveitável — fallbackReplyFromRaw', {
         conversationId,
         contentPreview: result.content.slice(0, 160),
       });
@@ -554,7 +564,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         trimmed,
         effectiveConv.customer_name,
         appointmentPreflight.active,
-        richAppointmentContext
+        richAppointmentContext,
+        recentUserContextForFallback
       );
     }
     if (!structured) {
@@ -565,7 +576,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
             : appointmentPreflight.active
               ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
-              : ANA_FALLBACK_INCOMPREHENSION_REPLY,
+              : userUtteranceHasSearchRefinementSignals(recentUserContextForFallback)
+                ? ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY
+                : ANA_FALLBACK_INCOMPREHENSION_REPLY,
         classification: 'Novo',
         lead_temperature: null,
         project: ent?.name || '',

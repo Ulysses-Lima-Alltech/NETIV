@@ -1,7 +1,7 @@
 /** Delay aleatório entre respostas da ANA (ms), não bloqueia outras conversas (uso com await dentro do handler da conversa). */
 export function randomAnaReplyDelayMs(): number {
-  const min = 5000;
-  const max = 40000;
+  const min = 6000;
+  const max = 14000;
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
@@ -181,6 +181,52 @@ function normGreeting(s: string): string {
     .replace(/\p{M}/gu, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Heurística leve: sinais de busca/refinamento imobiliário no texto (mensagem atual + histórico recente fundido).
+ * Usada para não aplicar o fallback genérico de incompreensão quando já há contexto aproveitável.
+ */
+export function userUtteranceHasSearchRefinementSignals(text: string): boolean {
+  const raw = (text || '').trim();
+  if (raw.length < 2) return false;
+  const t = raw
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (/\b\d{2,5}\s*m[2²]\b/i.test(raw) || /\b\d{2,5}\s*m2\b/i.test(t)) return true;
+  if (/\bm[2²]\b/i.test(raw) || /\bmetros(\s+quadrados)?\b/.test(t)) return true;
+  if (/\b(uns|com|cerca\s+de)\s+\d{2,5}\b/.test(t) && (/\d+\s*m/i.test(raw) || /\bmetros\b/.test(t))) return true;
+
+  if (
+    /\b(em\s+conta|mais\s+em\s+conta|mais\s+barato|barato|economico|preco|precos|valor|valores|faixa|orcamento|investimento|milhao|milhoes|r\$)\b/.test(
+      t
+    )
+  )
+    return true;
+
+  if (
+    /\b(sao paulo|rio de janeiro|belo horizonte|brasilia|curitiba|porto alegre|salvador|recife|fortaleza|manaus|goiania|vitoria|florianopolis)\b/.test(
+      t
+    )
+  )
+    return true;
+  if (/\b(sp|rj|bh|df)\b/.test(t)) return true;
+  if (/\b(zona\s+(sul|norte|leste|oeste|central)|centro|bairro|cidade|regiao|localizacao)\b/.test(t)) return true;
+
+  if (/\b(quero|queria|preciso|busco|procuro|tem|teria|mostra|mostrar)\b[\s\S]{0,56}\b(em|no|na|pra|para)\b/.test(t))
+    return true;
+  if (/\b(quais|qual|onde)\b[\s\S]{0,72}\b(empreendimento|empreendimentos|opcao|opcoes|unidades|lancamento)\b/.test(t))
+    return true;
+  if (/\b(empreendimentos?|lancamentos?|unidades)\b[\s\S]{0,40}\b(em|no|na)\b/.test(t)) return true;
+  if (/\b(em|no|na)\s+(sp|sao paulo|rio|bh|rj)\b/.test(t)) return true;
+
+  if (/\b(apartamento|casa|studio|cobertura|dormitorio|dormitorios|quarto|quartos|planta)\b/.test(t)) return true;
+
+  return false;
 }
 
 /**

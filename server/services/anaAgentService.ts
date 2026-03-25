@@ -1,7 +1,11 @@
 import type { EnterpriseRow } from '../repositories/enterpriseRepository.js';
 import type { LocationQueryContext } from '../utils/anaEnterpriseLocationContext.js';
 import { parseAddons, normalizeFileCategory, type FileCategory } from '../repositories/enterpriseRepository.js';
-import { isSimpleOpeningGreeting, pickRandomGreetingReply } from '../utils/anaReplyFinalize.js';
+import {
+  isSimpleOpeningGreeting,
+  pickRandomGreetingReply,
+  userUtteranceHasSearchRefinementSignals,
+} from '../utils/anaReplyFinalize.js';
 import type { AppointmentPreflight } from '../utils/anaAppointmentIntent.js';
 import {
   ANA_FALLBACK_APPOINTMENT_FLOW_REPLY,
@@ -38,8 +42,16 @@ export interface AnaStructuredReply {
 export const ANA_FALLBACK_INCOMPREHENSION_REPLY =
   'Para eu te orientar melhor: você busca informações sobre empreendimento, valores, localização ou disponibilidade?';
 
+/** Quando o parse JSON falha mas há sinais de busca no histórico/mensagem — evita repetir a pergunta genérica acima. */
+export const ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY =
+  'Pelo que você comentou, já dá para seguir na linha comercial sem recomeçar do zero. Me diz só o que ainda falta para eu cruzar com o portfólio: você prefere que eu priorize faixa de investimento, metragem ou dormitórios (por exemplo 2 ou 3 quartos)?';
+
 const JSON_INSTRUCTION = `
 JSON obrigatório (sem markdown no JSON):
+REGRA CRÍTICA (campo "reply"):
+- Se o cliente mencionar localização (cidade, bairro, estado), metragem (m²), preço ou intenção de economia, ou pedir empreendimentos/opções, o "reply" DEVE ser sugestão ou direcionamento comercial (portfólio, dados do prompt, próximo passo útil).
+- NUNCA trate isso como incompreensão. NUNCA use no "reply" a pergunta genérica sobre "empreendimento, valores, localização ou disponibilidade" nesses casos, nem a repita se já houver contexto no histórico.
+
 {
   "reply": "texto ao cliente em texto puro para WhatsApp — sem *, **, _, #; use quebras de linha para organizar; para vários empreendimentos use o padrão 📍 💰 📄 📐 descrito nas regras de formatação",
   "classification": "Novo" | "Qualificado" | "Carteira" | "Handoff",
@@ -116,6 +128,16 @@ SAUDAÇÕES SIMPLES (oi, olá, bom dia, boa tarde, boa noite):
 MENSAGENS CURTAS OU INCOMPLETAS:
 - Avance com resposta útil e pergunta comercial alinhada ao que deu para inferir.
 
+REGRA CRÍTICA (obrigatória — tem prioridade sobre "incompreensão" e sobre qualquer roteiro genérico):
+- Se o cliente mencionar QUALQUER um destes: localização (cidade, bairro, estado), metragem (m²), preço ou intenção de economia ("em conta", "barato", faixa), ou pedido de empreendimentos/opções/lançamentos — você DEVE responder com sugestão ou direcionamento comercial (o que couber do cadastro/portfólio no prompt, ou como avançar na qualificação sem resetar o diálogo).
+- NUNCA trate isso como incompreensão. NUNCA diga que "não entendeu" ou que a mensagem foi ambígua só por ser curta.
+- NUNCA repita a pergunta genérica pedindo para escolher entre "empreendimento, valores, localização ou disponibilidade" quando já houver esse tipo de contexto no histórico ou na mensagem atual — e evite essa frase fixa em geral; prefira pergunta específica sobre o que ainda falta (ex.: só orçamento, só região dentro da cidade).
+
+BUSCA / REFINAMENTO (mensagens curtas em sequência — prioridade):
+- Trate expressões como "quero em São Paulo", "algo mais em conta", "com uns 300m²", "tem em SP?", "quais empreendimentos em..." como continuação da mesma intenção: una tudo com o histórico recente antes de responder.
+- Se o cliente já citou cidade/região, metragem, faixa/orçamento ("em conta"), tipo de imóvel ou pedido de opções na região, NÃO resete a conversa com pergunta genérica pedindo para escolher entre "empreendimento, valores, localização ou disponibilidade" e NÃO repita essa mesma formulação se ela já tiver aparecido no histórico.
+- Responda com base no que já foi dito; se faltar apenas um dado, pergunte só esse dado, de forma específica.
+
 ENCERRAMENTO DA CONVERSA (prioridade sobre a pergunta final):
 - Se o cliente agradecer e encerrar claramente (ex.: "obrigado", "não preciso de mais nada", "por enquanto é só", "no momento não, obrigado", "valeu", "depois eu chamo", "qualquer coisa eu chamo", "era isso", "tá bom obrigado"), NÃO faça pergunta no final.
 - Nesse caso: agradeça, seja breve e cordial, diga que ficou à disposição — sem insistir, sem reabrir o assunto e sem "?" no final.
@@ -129,6 +151,7 @@ FINAL DA CADA RESPOSTA (reply) — regra geral (conversa ainda aberta):
 
 MENSAGENS AMBÍGUAS — INCOMPREENSÃO (use raramente):
 - Só quando realmente não houver como inferir o que o cliente quer mesmo com o histórico. Nunca use isso para saudação trivial ou cumprimento.
+- PROIBIDO tratar como incompreensível quando houver menção a: localização (cidade, bairro, estado), metragem (m²), preço ou economia, ou pedido de empreendimentos — nesses casos sempre resposta comercial (regra crítica acima).
 
 OBJETIVO:
 - Qualificar o lead, entender interesse (empreendimento, região, perfil) e levar a próximo passo comercial.
@@ -517,6 +540,109 @@ ${addonsBlock}
 ${know}`;
 }
 
+const MIN_SALVAGED_REPLY_CHARS = 20;
+
+function stripModelMarkdownFence(raw: string): string {
+  let s = raw.trim();
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) s = fence[1].trim();
+  return s;
+}
+
+function naturalLanguageLetterRatio(s: string): number {
+  const letters = (s.match(/\p{L}/gu) ?? []).length;
+  return s.length ? letters / s.length : 0;
+}
+
+/** Evita tratar fragmento JSON técnico ou lixo como resposta ao cliente. */
+function rawTextLooksLikeTechnicalJunk(s: string): boolean {
+  const t = s.trim();
+  if (t.length < 12) return true;
+  if (t.length >= 24 && naturalLanguageLetterRatio(t) < 0.08) return true;
+  if (/^[\s\n\r"{}\[\],:0-9.+\-truefalsnull_|]+$/i.test(t)) return true;
+  return false;
+}
+
+function decodeJsonStringContent(s: string): string {
+  try {
+    return JSON.parse(`"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`) as string;
+  } catch {
+    return s
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '\t')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+  }
+}
+
+/** Tenta obter o valor de "reply" mesmo com JSON incompleto ou truncado. */
+function extractReplyFieldFromBrokenJsonObject(t: string): string | null {
+  const strict = t.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (strict?.[1]) {
+    const v = decodeJsonStringContent(strict[1]).trim();
+    if (v.length >= MIN_SALVAGED_REPLY_CHARS && !rawTextLooksLikeTechnicalJunk(v)) return v;
+  }
+  const loose = t.match(/"reply"\s*:\s*"([\s\S]*)$/);
+  if (loose?.[1]) {
+    let inner = loose[1].replace(/"\s*[,}]?\s*$/,'').trim();
+    inner = decodeJsonStringContent(inner).trim();
+    if (inner.length >= MIN_SALVAGED_REPLY_CHARS && !rawTextLooksLikeTechnicalJunk(inner)) return inner;
+  }
+  return null;
+}
+
+function looksLikePlainNaturalLanguageReply(t: string): boolean {
+  if (t.trim().length < MIN_SALVAGED_REPLY_CHARS) return false;
+  if (rawTextLooksLikeTechnicalJunk(t)) return false;
+  if (naturalLanguageLetterRatio(t) < 0.15) return false;
+  return true;
+}
+
+/**
+ * Extrai texto útil da saída bruta do modelo quando o JSON estruturado não pôde ser parseado.
+ * Ordem: valor de "reply" em JSON quebrado → texto puro que pareça linguagem natural.
+ */
+function extractUsableReplyTextFromRawModelOutput(raw: string): string | null {
+  const stripped = stripModelMarkdownFence(raw);
+  const fromJson = extractReplyFieldFromBrokenJsonObject(stripped);
+  if (fromJson) return fromJson;
+
+  const t = stripped.trim();
+  if (!t.startsWith('{') && !t.startsWith('[') && looksLikePlainNaturalLanguageReply(t)) return t;
+
+  return null;
+}
+
+/**
+ * Quando `parseAnaJson` falha, tenta reaproveitar texto natural ou o campo `"reply"` em JSON parcial.
+ * Retorna null se não houver nada minimamente utilizável.
+ * O texto segue para `finalizeAnaReplyText` no `conversationEngine` (uma única finalização).
+ */
+export function trySalvageStructuredReplyFromRawModelContent(
+  raw: string | null | undefined
+): AnaStructuredReply | null {
+  if (raw == null || typeof raw !== 'string') return null;
+  const extracted = extractUsableReplyTextFromRawModelOutput(raw);
+  if (!extracted) return null;
+  const reply = extracted.trim().slice(0, 4000);
+  console.log('[DOC_PARSE] reply recuperado do texto bruto do modelo', { replyLen: reply.length });
+  return {
+    reply,
+    classification: 'Novo',
+    lead_temperature: null,
+    project: '',
+    handoff: false,
+    customer_name: '',
+    summary: '',
+    send_file_category: null,
+    appointment_confirmed: false,
+    appointment_date: null,
+    appointment_time: null,
+    appointment_notes: null,
+  };
+}
+
 export function parseAnaJson(raw: string): AnaStructuredReply | null {
   if (!raw || typeof raw !== 'string') return null;
   let s = raw.trim();
@@ -605,8 +731,10 @@ export function fallbackReplyFromRaw(
   userMessage?: string,
   knownCustomerName?: string | null,
   appointmentFlow?: boolean,
-  appointmentContinuation?: boolean
+  appointmentContinuation?: boolean,
+  recentContextForHeuristic?: string
 ): AnaStructuredReply {
+  const blob = [recentContextForHeuristic, userMessage].filter(Boolean).join('\n');
   const reply =
     userMessage && isSimpleOpeningGreeting(userMessage)
       ? pickRandomGreetingReply(knownCustomerName)
@@ -614,7 +742,9 @@ export function fallbackReplyFromRaw(
         ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
         : appointmentFlow
           ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
-          : ANA_FALLBACK_INCOMPREHENSION_REPLY;
+          : userUtteranceHasSearchRefinementSignals(blob)
+            ? ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY
+            : ANA_FALLBACK_INCOMPREHENSION_REPLY;
   return {
     reply,
     classification: 'Novo',
