@@ -28,4 +28,14 @@ export const config = {
     phoneNumberId: env.META_PHONE_NUMBER_ID ?? '',
     apiVersion: env.META_API_VERSION ?? defaultMetaApiVersion,
   },
+  /**
+   * Quando a ANA está embutida na plataforma principal (sem login local), requisições sem Bearer
+   * usam este usuário como contexto. Se não definido, usa o primeiro usuário ativo (prioridade ADMIN).
+   */
+  embeddedDefaultUserId: (() => {
+    const raw = env.ANA_EMBEDDED_USER_ID;
+    if (raw == null || String(raw).trim() === '') return null;
+    const n = parseInt(String(raw), 10);
+    return Number.isFinite(n) ? n : null;
+  })(),
 } as const;

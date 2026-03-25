@@ -2,7 +2,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { ROLES_ORG_ADMIN, ROLES_SETTINGS_ADMIN } from './constants/roles';
-import { LoginPage } from './pages/LoginPage';
 import { InboxPage } from './pages/InboxPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { SettingsWhatsAppPage } from './pages/SettingsWhatsAppPage';
@@ -17,7 +16,6 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
-          <Route path="/login" element={<LoginPage />} />
           <Route
             path="/inbox"
             element={

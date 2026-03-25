@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto';
 import { scrypt, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
 import { query } from '../db/pg.js';
+import { config } from '../config.js';
 import { isUserRole, type UserRole } from '../constants/roles.js';
 
 export type { UserRole } from '../constants/roles.js';
@@ -77,6 +78,34 @@ export async function findByEmail(email: string): Promise<(AppUser & { password_
     `SELECT id, name, email, password_hash, role, active, created_at, updated_at
      FROM app_users WHERE LOWER(email) = $1 AND active = true`,
     [normalized]
+  );
+  const row = result.rows[0];
+  return row ? { ...row, role: parseStoredUserRole(row.role) } : null;
+}
+
+/**
+ * Usuário usado quando a API é chamada sem Bearer (modo embutido / sem login local na ANA).
+ */
+export async function findEmbeddedDefaultUser(): Promise<AppUser | null> {
+  const fixedId = config.embeddedDefaultUserId;
+  if (fixedId != null) {
+    const u = await findById(fixedId);
+    if (u) return u;
+  }
+  const result = await query<{
+    id: number;
+    name: string;
+    email: string;
+    role: string;
+    active: boolean;
+    created_at: Date;
+    updated_at: Date;
+  }>(
+    `SELECT id, name, email, role, active, created_at, updated_at
+     FROM app_users
+     WHERE active = true
+     ORDER BY CASE role WHEN 'ADMIN' THEN 0 WHEN 'MANAGERIAL' THEN 1 ELSE 2 END, id ASC
+     LIMIT 1`
   );
   const row = result.rows[0];
   return row ? { ...row, role: parseStoredUserRole(row.role) } : null;

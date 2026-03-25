@@ -1,16 +1,20 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import { authApi, getStoredAuthToken, setStoredAuthToken, type AuthUser } from '../api/client';
+import { authApi, setStoredAuthToken, type AuthUser } from '../api/client';
+
+/** Fallback só para não quebrar a UI se `/auth/me` falhar (rede/indisponível). Alinhado ao papel ADMIN para menus. */
+const EMBEDDED_UI_USER: AuthUser = {
+  id: 0,
+  name: 'ANA',
+  email: 'embedded@local',
+  role: 'ADMIN',
+};
 
 interface AuthState {
   user: AuthUser | null;
   loading: boolean;
-  error: string | null;
 }
 
 interface AuthContextValue extends AuthState {
-  login: (email: string, password: string) => Promise<void>;
-  logout: () => Promise<void>;
-  clearError: () => void;
   /** Apenas ADMIN: acesso total, inclusive configurações (integrações/IA). */
   isAdmin: boolean;
   /** ADMIN ou MANAGERIAL: telas administrativas (exceto configurações sensíveis). */
@@ -22,56 +26,26 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   const loadUser = useCallback(async () => {
-    const token = getStoredAuthToken();
-    if (!token) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
     try {
       const data = await authApi.me();
       setUser(data.user);
     } catch {
       setStoredAuthToken(null);
-      setUser(null);
+      setUser(EMBEDDED_UI_USER);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    loadUser();
+    void loadUser();
   }, [loadUser]);
-
-  const login = useCallback(async (email: string, password: string) => {
-    setError(null);
-    const data = await authApi.login(email, password);
-    setStoredAuthToken(data.token);
-    setUser(data.user);
-  }, []);
-
-  const logout = useCallback(async () => {
-    try {
-      await authApi.logout();
-    } catch {
-      // ignora erro de rede
-    }
-    setStoredAuthToken(null);
-    setUser(null);
-  }, []);
-
-  const clearError = useCallback(() => setError(null), []);
 
   const value: AuthContextValue = {
     user,
     loading,
-    error,
-    login,
-    logout,
-    clearError,
     isAdmin: user?.role === 'ADMIN',
     hasElevatedAccess: user?.role === 'ADMIN' || user?.role === 'MANAGERIAL',
   };

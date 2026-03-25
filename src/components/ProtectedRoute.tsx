@@ -21,7 +21,7 @@ export function ProtectedRoute({
   }
 
   if (!user) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    return <Navigate to="/inbox" state={{ from: location }} replace />;
   }
 
   if (roles != null && roles.length > 0 && !roles.includes(user.role)) {

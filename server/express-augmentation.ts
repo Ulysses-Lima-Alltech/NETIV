@@ -7,7 +7,7 @@ import type { AppUser } from './repositories/userRepository.js';
 declare global {
   namespace Express {
     interface Request {
-      /** Definido por `requireAuth` após validação do token Bearer. */
+      /** Definido por `requireAuth` (sessão Bearer ou usuário embutido sem token). */
       user?: AppUser;
     }
   }
