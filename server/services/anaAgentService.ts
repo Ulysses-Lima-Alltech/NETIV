@@ -112,9 +112,9 @@ export function buildRefinementContextReply(
 }
 
 const JSON_INSTRUCTION = `
-JSON: um único objeto JSON válido (RFC 8259), sem markdown, sem texto antes ou depois, sem comentários e sem vírgula sobrando.
+JSON: um único objeto JSON (preferencialmente sem markdown nem texto extra fora do objeto). O servidor aceita shape parcial.
 
-Schema:
+Schema (referência — apenas "reply" é obrigatório no backend):
 {
   "intent": "qualificar | agendar | pedir_material | comparar | duvida",
   "productType": null | "LOTEAMENTO" | "APARTAMENTO" | "MCMV" | "INDEFINIDO",
@@ -141,7 +141,7 @@ Schema:
   "appointment_notes": null
 }
 
-Obrigatório no objeto: "reply" (string não vazia), "classification" (string), "handoff" (boolean). Demais chaves: tipos conforme schema; booleanos como true/false JSON, nunca string.
+Obrigatório: "reply" (texto ao cliente, string não vazia). Todos os outros campos são opcionais; o backend aplica defaults quando faltarem ou quando vierem inválidos (sem descartar a reply).
 
 reply — regras curtas:
 - Localização, m², preço, pedido de opções → resposta comercial útil, nunca "não entendi".
@@ -158,77 +158,23 @@ lead_temperature: separado de handoff; compra/fechamento explícito → "quente"
 const COMPORTAMENTO = `
 Você é Ana.
 
-Seu papel é conduzir conversas comerciais de forma natural, objetiva, cordial e humana, ajudando o cliente a avançar na decisão sem parecer menu automático.
+Seu papel é conduzir conversas de forma natural, contextual, objetiva e humana.
 
-IDENTIDADE E TOM
-- Apresente-se apenas como Ana.
-- Não diga que é assistente virtual, IA, robô ou sistema, a menos que isso seja exigido explicitamente.
-- Fale como um atendimento comercial humano, com linguagem simples, clara e direta.
-- Seja prestativa, natural e segura, sem soar engessada.
-- Evite textos longos demais.
-- Evite repetir frases e estruturas.
-
-COMO CONDUZIR A CONVERSA
-- Sempre considere o contexto recente antes de responder.
-- Trate mensagens curtas como continuação do assunto atual sempre que houver contexto suficiente.
-- Se o cliente já escolheu um empreendimento, mantenha o foco nele até surgir motivo real para ampliar a conversa.
-- Você só pode listar opções de empreendimentos se o cliente pedir explicitamente para ver opções, comparar opções ou conhecer o portfólio. Se já existir um empreendimento em foco, aprofunde esse foco e não reabra a lista por iniciativa própria.
-- Não apresente novamente a lista de empreendimentos a menos que o cliente peça opções, comparação entre opções ou portfólio.
-- Não volte a listar opções se o cliente já demonstrou foco em um empreendimento.
-- Priorize aprofundar o que o cliente pediu, em vez de abrir várias frentes ao mesmo tempo.
-- Depois de responder, conduza o próximo passo com uma pergunta curta e útil.
-
-SOBRE EMPREENDIMENTOS E INFORMAÇÕES
-- Você só pode listar opções de empreendimentos se o cliente pedir explicitamente para ver opções, comparar opções ou conhecer o portfólio; caso contrário, não despeje lista por conta própria.
-- Se já existir um empreendimento em foco (no histórico ou nos dados do contexto), aprofunde esse foco e não reabra a lista por iniciativa própria.
-- Você pode comparar empreendimentos quando o cliente pedir explicitamente.
-- Você pode aprofundar temas como lazer, localização, valor, metragem, infraestrutura, segurança, perfil de uso e condição comercial, quando houver base para isso.
-- Nunca invente dados.
-- Nunca afirme preço, disponibilidade, prazo, metragem, documentação, aprovação ou benefício sem base nas informações fornecidas.
-- Se faltar informação, diga isso de forma elegante e leve a conversa para o próximo passo útil.
-
-QUANDO O CLIENTE MANDA MENSAGENS CURTAS
-Exemplos: "lazer", "valor", "localização", "metragem", "gostei", "esse", "sim", "quero".
-- Se o cliente disser apenas isso (ou variações curtas no mesmo sentido), trate como continuidade do foco atual no histórico.
-- Interprete como continuação do contexto atual, se houver.
-- Não reinicie a conversa.
-- Não volte ao catálogo.
-- Não responda como menu.
-
-QUANDO FALTAR CONTEXTO
-- Se realmente não der para identificar o foco, faça uma pergunta curta de esclarecimento.
-- Pergunte de forma natural.
-- Não use tom burocrático.
-- Não peça para o cliente repetir tudo.
-- Não faça múltiplas perguntas de uma vez.
-
-QUANDO O CLIENTE ESTIVER INDECISO
-- Ajude a comparar de forma simples.
-- Destaque diferenças práticas.
-- Direcione a conversa para entender perfil, prioridade e objetivo de compra.
-- Não despeje informação demais de uma vez.
-
-QUANDO HOUVER OBJEÇÃO
-- Responda com empatia e objetividade.
-- Não pressione.
-- Não discuta.
-- Tente manter a conversa avançando com suavidade.
-
-O QUE EVITAR
-- Não soar como chatbot de menu.
-- Não repetir lista de opções sem necessidade.
-- Não responder ignorando o contexto.
-- Não inventar fatos.
-- Não usar linguagem excessivamente promocional.
-- Não ser agressiva.
-- Não escrever respostas excessivamente longas.
-- Não mudar de assunto sem motivo.
-
-FORMATO DE RESPOSTA
-- Respostas curtas ou médias.
-- Um foco por vez.
-- Clareza primeiro.
-- Quando fizer sentido, termine com uma pergunta útil para continuar o atendimento.
+INSTRUÇÕES GERAIS
+- Apresente-se apenas como Ana. Não diga que é assistente virtual, IA, robô ou sistema, a menos que isso seja exigido explicitamente.
+- Responda de forma natural ao que o cliente disser, sem depender de respostas prontas.
+- Considere o contexto recente antes de responder.
+- Trate mensagens curtas como continuidade do assunto atual quando houver contexto suficiente.
+- Se houver um empreendimento em foco, mantenha o foco nele até surgir motivo real para ampliar a conversa.
+- Não reinicie a conversa sem necessidade.
+- Não reabra lista de opções por iniciativa própria quando já houver foco definido.
+- Não invente informações.
+- Não use linguagem de menu automático.
+- Não aja como FAQ roteirizada.
+- Não dependa de scripts fixos por palavra-chave.
+- Quando faltar contexto, faça uma pergunta curta e natural para seguir a conversa.
+- Priorize clareza, continuidade e utilidade.
+- Responda com linguagem humana e comercial, sem soar robótica.
 
 DESPEDIDA
 Se o cliente encerrar, agradeça sem forçar pergunta final.
@@ -585,50 +531,85 @@ function extractFirstJsonObjectSlice(raw: string): string | null {
   return null;
 }
 
-function tryParseStrictJsonObject(raw: string): Record<string, unknown> | null {
+function normalizeLooseJsonCandidate(s: string): string {
+  return s
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/,\s*([}\]])/g, '$1')
+    .trim();
+}
+
+/** JSON.parse estrito; em seguida tenta correção mínima de aspas/vírgula (sem extrair texto bruto). */
+function tryParseJsonObject(raw: string): Record<string, unknown> | null {
   if (!raw || typeof raw !== 'string') return null;
   const s = stripModelMarkdownFence(raw).trim();
   const candidates: string[] = [s];
   const sliced = extractFirstJsonObjectSlice(s);
   if (sliced && sliced !== s) candidates.push(sliced);
   for (const c of candidates) {
-    try {
-      const v = JSON.parse(c) as unknown;
-      if (v !== null && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>;
-    } catch {
-      // apenas JSON estrito (sem correção heurística)
+    const variants = [c];
+    const loose = normalizeLooseJsonCandidate(c);
+    if (loose !== c) variants.push(loose);
+    for (const v of variants) {
+      try {
+        const parsed = JSON.parse(v) as unknown;
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        // próxima variante
+      }
     }
   }
   return null;
 }
 
-function strictOptionalBoolean(o: Record<string, unknown>, key: string): boolean {
-  if (!(key in o)) return true;
-  return typeof o[key] === 'boolean';
+export interface ParseAnaJsonContext {
+  conversationId?: number;
+  messageId?: string | null;
 }
 
-/** Validação de schema esperado; retorna código de erro ou null se ok. */
-function validateStrictAnaShape(o: Record<string, unknown>): string | null {
-  if (typeof o.reply !== 'string' || !o.reply.trim()) return 'reply';
-  if (typeof o.handoff !== 'boolean') return 'handoff';
-  if (typeof o.classification !== 'string' || !o.classification.trim()) return 'classification';
-  if (!strictOptionalBoolean(o, 'appointment_confirmed')) return 'appointment_confirmed_type';
-  if (!strictOptionalBoolean(o, 'wantsCatalog')) return 'wantsCatalog_type';
-  if (!strictOptionalBoolean(o, 'shouldShowPortfolio')) return 'shouldShowPortfolio_type';
-  if (o.project != null && typeof o.project !== 'string') return 'project_type';
-  if (o.customer_name != null && typeof o.customer_name !== 'string') return 'customer_name_type';
-  if (o.summary != null && typeof o.summary !== 'string') return 'summary_type';
-  if (o.intent != null && typeof o.intent !== 'string') return 'intent_type';
-  const rawLt = o.lead_temperature ?? (o as Record<string, unknown>).leadTemperature;
-  if (rawLt != null && typeof rawLt !== 'string') return 'lead_temperature_type';
-  const ptRaw = o.productType;
-  if (ptRaw != null && ptRaw !== '' && coerceProductTypeRaw(ptRaw) === null) return 'productType_enum';
-  const sc = coerceSendFileCategoryRaw(o);
-  if (sc) {
-    const norm = normalizeFileCategory(sc);
-    if (!norm) return 'send_file_category_invalid';
+function logParseReject(
+  ctx: ParseAnaJsonContext | undefined,
+  payload: {
+    reason: string;
+    rawPreview: string;
+    missingFields: string[];
+    invalidFields: string[];
+  }
+): void {
+  console.warn('[ANA_PARSE_REJECT]', {
+    conversationId: ctx?.conversationId ?? null,
+    messageId: ctx?.messageId ?? null,
+    ...payload,
+  });
+}
+
+/** Aceita reply string; números viram texto (tolerância leve). */
+function extractReplyTolerant(o: Record<string, unknown>): string | null {
+  const r = o.reply;
+  if (r == null) return null;
+  if (typeof r === 'string') {
+    const t = r.trim();
+    return t.length > 0 ? t.slice(0, 4000) : null;
+  }
+  if (typeof r === 'number' && Number.isFinite(r)) {
+    const t = String(r).trim();
+    return t.length > 0 ? t.slice(0, 4000) : null;
   }
   return null;
+}
+
+function normalizeClassification(raw: unknown, invalidFields: string[]): string {
+  if (typeof raw !== 'string' || !raw.trim()) return 'Novo';
+  let c = raw.trim();
+  if (c === 'Interessado' || c === 'Qualificando') c = 'Qualificado';
+  if (c === 'Reserva') c = 'Carteira';
+  if (!CLASS_OK.has(c)) {
+    invalidFields.push('classification');
+    return 'Novo';
+  }
+  return c;
 }
 
 function coerceProductTypeRaw(v: unknown): string | null {
@@ -639,42 +620,62 @@ function coerceProductTypeRaw(v: unknown): string | null {
 }
 
 /**
- * Parse estrito: JSON válido (sem correção heurística) + tipos obrigatórios e enum permitido.
- * Qualquer falha → null (o engine usa fallback técnico neutro).
+ * Contrato mínimo: objeto JSON com `reply` (string não vazia). Demais campos opcionais com defaults.
+ * Falha só em JSON inválido ou reply ausente/inútil — fallback técnico neutro fica no engine.
  */
-export function parseAnaJson(raw: string): AnaStructuredReply | null {
+export function parseAnaJson(raw: string, ctx?: ParseAnaJsonContext): AnaStructuredReply | null {
   if (!raw || typeof raw !== 'string') return null;
-  const preview = raw.trim().slice(0, 200);
-  const o = tryParseStrictJsonObject(raw);
+  const rawPreview = raw.trim().slice(0, 500);
+  const o = tryParseJsonObject(raw);
   if (!o) {
-    console.warn('[DOC_PARSE] parse_failed_strict', { reason: 'json_parse', preview });
+    logParseReject(ctx, {
+      reason: 'json_parse',
+      rawPreview,
+      missingFields: [],
+      invalidFields: [],
+    });
     return null;
   }
-  const shapeErr = validateStrictAnaShape(o);
-  if (shapeErr) {
-    console.warn('[DOC_PARSE] parse_failed_strict', { reason: 'schema', field: shapeErr, preview });
+  const invalidFields: string[] = [];
+  const reply = extractReplyTolerant(o);
+  if (reply == null) {
+    const invalidFields: string[] = [];
+    if (Object.prototype.hasOwnProperty.call(o, 'reply') && o.reply != null && o.reply !== '') {
+      invalidFields.push('reply');
+    }
+    logParseReject(ctx, {
+      reason: 'reply_missing_or_empty',
+      rawPreview,
+      missingFields: ['reply'],
+      invalidFields,
+    });
     return null;
   }
-  const reply = (o.reply as string).trim().slice(0, 4000);
-  let classification = (o.classification as string).trim();
-  if (classification === 'Interessado' || classification === 'Qualificando') classification = 'Qualificado';
-  if (classification === 'Reserva') classification = 'Carteira';
-  if (!CLASS_OK.has(classification)) {
-    console.warn('[DOC_PARSE] parse_failed_strict', { reason: 'classification_enum', value: classification, preview });
-    return null;
-  }
+
+  const classification = normalizeClassification(o.classification, invalidFields);
   let lead_temperature: string | null = null;
   const rawLt = o.lead_temperature ?? (o as Record<string, unknown>).leadTemperature;
   if (typeof rawLt === 'string') {
     const lt = rawLt.trim().toLowerCase();
     lead_temperature = TEMP_OK.has(lt) ? lt : null;
+    if (!TEMP_OK.has(lt) && rawLt.trim() !== '') invalidFields.push('lead_temperature');
   }
+
   let send_file_category: FileCategory | null = null;
   const sc = coerceSendFileCategoryRaw(o);
   if (sc) {
     const norm = normalizeFileCategory(sc);
     if (norm) send_file_category = norm;
+    else invalidFields.push('send_file_category');
   }
+
+  let productType: string | null = null;
+  if (o.productType != null && o.productType !== '') {
+    const pt = coerceProductTypeRaw(o.productType);
+    if (pt !== null) productType = pt;
+    else invalidFields.push('productType');
+  }
+
   const ac = o.appointment_confirmed ?? (o as Record<string, unknown>).appointmentConfirmed;
   const appointment_confirmed = ac === true;
   const appointment_date =
@@ -695,8 +696,7 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
       : typeof (o as Record<string, unknown>).appointmentNotes === 'string'
         ? String((o as Record<string, unknown>).appointmentNotes).trim()
         : null;
-  const intent = typeof o.intent === 'string' ? o.intent.trim() : 'geral';
-  const productType = coerceProductTypeRaw(o.productType);
+  const intent = typeof o.intent === 'string' && o.intent.trim() ? o.intent.trim() : 'geral';
   const wantsCatalog = o.wantsCatalog === true;
   const locationPreference =
     typeof o.locationPreference === 'string' ? o.locationPreference.trim() || null : null;
@@ -713,13 +713,18 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
   const lotSizePreference =
     typeof o.lotSizePreference === 'string' ? o.lotSizePreference.trim() || null : null;
   const shouldShowPortfolio = o.shouldShowPortfolio === true;
-  console.log('[DOC_PARSE] structured ok (strict)', {
-    send_file_category_raw: sc,
-    send_file_category_norm: send_file_category,
+  const handoff = o.handoff === true;
+  let project = '';
+  if (typeof o.project === 'string') project = o.project;
+  else if (typeof o.project === 'number' && Number.isFinite(o.project)) project = String(o.project);
+
+  console.log('[DOC_PARSE] structured ok (relaxed)', {
     replyLen: reply.length,
-    handoff: o.handoff,
+    handoff,
     intent,
     productType,
+    classification,
+    invalidFieldsNormalized: invalidFields.length > 0 ? invalidFields : undefined,
   });
   return {
     reply,
@@ -736,8 +741,8 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
     shouldShowPortfolio,
     classification,
     lead_temperature,
-    project: typeof o.project === 'string' ? o.project : '',
-    handoff: o.handoff as boolean,
+    project,
+    handoff,
     customer_name: typeof o.customer_name === 'string' ? o.customer_name.trim() : '',
     summary: typeof o.summary === 'string' ? o.summary.trim() : '',
     send_file_category,

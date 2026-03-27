@@ -547,7 +547,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let replySource: 'openai' | 'technical_fallback' = 'openai';
     let fallbackReason: string | null = null;
     let structured: AnaStructuredReply | null =
-      result.success && result.content ? parseAnaJson(result.content) : null;
+      result.success && result.content
+        ? parseAnaJson(result.content, { conversationId, messageId: inboundMetaMessageId })
+        : null;
     console.log('[ANA_PARSE_FLOW]', {
       conversationId,
       parseAnaJson_success: Boolean(structured),
@@ -558,7 +560,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? 'api_error'
         : !result.content?.trim()
           ? 'empty_content'
-          : 'parse_failed_strict';
+          : 'parse_rejected';
       replySource = 'technical_fallback';
       console.log('[ANA_PIPELINE] technical_fallback_neutral', { conversationId, reason: fallbackReason });
       console.log('[ANA_PARSE_FLOW]', {
