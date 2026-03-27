@@ -6,6 +6,7 @@ import {
   createUser,
   updateUser,
   createSession,
+  type AppUser,
 } from '../repositories/userRepository.js';
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { isUserRole, type UserRole } from '../constants/roles.js';
@@ -121,7 +122,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     const safeRole: UserRole = isUserRole(role) ? role : 'COLLABORATOR';
 
     // ── PASSO 4: Buscar ou criar o usuário ──
-    let user = await findByEmail(email);
+    let user: AppUser | null = await findByEmail(email);
 
     if (user) {
       // Usuário já existe → atualizar nome e role (caso tenha mudado no Django)
@@ -150,7 +151,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
           password: randomPassword,
           role: safeRole,
           active: true,
-        }) as typeof user;
+        });
       }
     }
 

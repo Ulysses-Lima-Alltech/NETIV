@@ -1,14 +1,10 @@
 import { query } from '../db/pg.js';
 import { splitTextIntoChunks } from '../utils/textChunker.js';
 
-<<<<<<< fix/compatibilidade-crm
-const MAX_CONTEXT_CHARS = 42_000;
-=======
 const MAX_CONTEXT_CHARS = 48_000;
 /** Garante contexto mínimo no modo focado mesmo quando o overlap lexical com a mensagem é fraco. */
 const MIN_CHUNKS_IN_PROMPT = 5;
 const MAX_CHUNKS_IN_PROMPT = 16;
->>>>>>> main
 
 function normWords(s: string): Set<string> {
   const n = s
@@ -71,40 +67,16 @@ export async function loadRankedKnowledgeChunksForPrompt(
   );
   if (rows.length === 0) return '';
 
-<<<<<<< fix/compatibilidade-crm
-  const scored =
-    hintWords.size === 0
-      ? rows.map((r) => ({ ...r, score: 0 }))
-      : rows.map((r) => ({
-          ...r,
-          score: scoreChunk(hintWords, r.content),
-        }));
-  if (hintWords.size > 0) scored.sort((a, b) => b.score - a.score);
-=======
   const scored = rows.map((r, i) => ({
     ...r,
     score: hintWords.size === 0 ? 0 : scoreChunk(hintWords, r.content),
     dbOrder: i,
   }));
   if (hintWords.size > 0) scored.sort((a, b) => b.score - a.score || a.dbOrder - b.dbOrder);
->>>>>>> main
 
   const used = new Set<string>();
   const parts: string[] = [];
   let n = 0;
-<<<<<<< fix/compatibilidade-crm
-  for (const r of scored) {
-    const key = `${r.original_name}#${r.chunk_index}`;
-    if (used.has(key)) continue;
-    used.add(key);
-    const header = `\n--- ${r.original_name} (trecho) ---\n`;
-    const piece = header + r.content;
-    if (n + piece.length > MAX_CONTEXT_CHARS) break;
-    parts.push(piece);
-    n += piece.length;
-  }
-=======
-
   const pushRow = (r: (typeof scored)[0]) => {
     const key = `${r.original_name}#${r.chunk_index}`;
     if (used.has(key)) return false;
@@ -134,8 +106,6 @@ export async function loadRankedKnowledgeChunksForPrompt(
       if (pushRow(r)) added++;
     }
   }
-
->>>>>>> main
   return parts.join('\n').trim();
 }
 

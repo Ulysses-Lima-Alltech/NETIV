@@ -7,10 +7,6 @@ import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { scheduleWhatsAppAiAfterUserMessage } from './whatsappAiDebounce.js';
 import { leadOriginFromMetaWhatsAppMessage } from './leadOriginResolver.js';
 import { sendTextMessage } from './whatsappMetaService.js';
-<<<<<<< fix/compatibilidade-crm
-import { notifyDjango } from './djangoWebhook.js';
-=======
->>>>>>> main
 
 const NON_TEXT_MESSAGE = 'No momento só consigo responder a mensagens de texto.';
 
@@ -73,17 +69,6 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           leadOrigin
         );
 
-<<<<<<< fix/compatibilidade-crm
-        // ── Notificar Django sobre o novo contato (fire-and-forget) ──
-        if (conv.contact_phone) {
-          notifyDjango('api/webhook/netiv-lead/', {
-            phone: conv.contact_phone,
-            name: conv.customer_name || '',
-          });
-        }
-
-=======
->>>>>>> main
         const type = msg.type ?? 'unknown';
         const bodyText = getMessageBody(msg);
 
@@ -104,7 +89,6 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
             console.log('[ANA_PIPELINE] non_text_reply_skipped', { reason: 'whatsapp_nao_configurado' });
           }
           continue;
-<<<<<<< fix/compatibilidade-crm
         }
 
         const text = bodyText.trim();
@@ -122,27 +106,6 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           });
           continue;
         }
-
-=======
-        }
-
-        const text = bodyText.trim();
-        await insertMessage(conv.id, 'user', text, mid);
-        console.log('[ANA_PIPELINE] message_persisted', {
-          conversationId: conv.id,
-          metaMessageId: mid,
-          textLen: text.length,
-        });
-
-        if (!aiReady) {
-          console.log('[ANA_PIPELINE] ai_schedule_skipped', {
-            conversationId: conv.id,
-            reason: !aiConfig ? 'sem_config_integracao' : !aiConfig.openaiApiKey?.trim() ? 'sem_api_key' : 'ai_disabled',
-          });
-          continue;
-        }
-
->>>>>>> main
         scheduleWhatsAppAiAfterUserMessage(conv.id, String(msg.from));
       }
     }
