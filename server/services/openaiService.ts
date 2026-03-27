@@ -20,6 +20,8 @@ export interface GenerateCompletionResult {
   success: boolean;
   content?: string;
   error?: string;
+  /** Status HTTP quando a API retornou corpo de erro (diagnóstico). */
+  httpStatus?: number;
 }
 
 export async function generateChatCompletion(params: GenerateCompletionParams): Promise<GenerateCompletionResult> {
@@ -59,18 +61,25 @@ export async function generateChatCompletion(params: GenerateCompletionParams): 
     clearTimeout(timeout);
     const data = (await res.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
-      error?: { message?: string };
+      error?: { message?: string; code?: string; type?: string; param?: string };
     };
 
     if (!res.ok) {
-      const msg = data.error?.message ?? `Erro HTTP ${res.status}`;
-      console.error('[OpenAI] API error:', msg);
-      return { success: false, error: msg };
+      const e = data.error;
+      const parts = [e?.message, e?.code && `code=${e.code}`, e?.type && `type=${e.type}`].filter(Boolean);
+      const msg = parts.length > 0 ? parts.join(' | ') : `Erro HTTP ${res.status}`;
+      console.error('[OpenAI] API error', { status: res.status, message: msg, model });
+      return { success: false, error: msg, httpStatus: res.status };
     }
 
     const content = data.choices?.[0]?.message?.content?.trim();
     if (!content) {
-      return { success: false, error: 'Resposta vazia da API.' };
+      const preview = JSON.stringify(data).slice(0, 600);
+      console.error('[OpenAI] resposta sem content (choices vazio ou null)', { model, preview });
+      return {
+        success: false,
+        error: `Resposta vazia da API. preview=${preview.slice(0, 280)}`,
+      };
     }
     return { success: true, content };
   } catch (e) {

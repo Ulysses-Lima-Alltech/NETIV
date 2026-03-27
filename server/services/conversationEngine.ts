@@ -547,6 +547,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       responseFormatJson: true,
     });
 
+    const openAiApiError =
+      !result.success && result.error ? result.error.slice(0, 800) : null;
+    const openAiHttpStatus = result.httpStatus;
+
     if (result.success) {
       console.log('[ANA MODEL] resposta_recebida', { conversationId, model, hasContent: !!result.content?.trim() });
       console.log('[ANA_MODEL_OUTPUT]', {
@@ -554,7 +558,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         raw_model_output_preview: (result.content || '').slice(0, 260),
       });
     } else {
-      console.error('[ANA MODEL] chamada_falhou', { conversationId, model, error: result.error });
+      console.error('[ANA MODEL] chamada_falhou', {
+        conversationId,
+        model,
+        error: result.error,
+        httpStatus: openAiHttpStatus,
+      });
     }
 
     const openAiCalled = true;
@@ -576,7 +585,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           ? 'empty_content'
           : 'parse_rejected';
       replySource = 'technical_fallback';
-      console.log('[ANA_PIPELINE] technical_fallback_neutral', { conversationId, reason: fallbackReason });
+      console.log('[ANA_PIPELINE] technical_fallback_neutral', {
+        conversationId,
+        messageId: inboundMetaMessageId,
+        reason: fallbackReason,
+        ...(openAiApiError && { openAiApiError, openAiHttpStatus }),
+      });
       console.log('[ANA_PARSE_FLOW]', {
         conversationId,
         technical_fallback_used: true,
@@ -717,6 +731,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         openAiReplyPreview: replyText.slice(0, 260),
         fallbackUsed: replySource === 'technical_fallback',
         fallbackReason,
+        ...(openAiApiError && { openAiApiError, openAiHttpStatus }),
         replySource,
         stateAfter,
       });
