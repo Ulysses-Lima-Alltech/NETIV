@@ -61,12 +61,43 @@ export const ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY =
 const ANA_FALLBACK_REFINEMENT_LOTEAMENTO_REPLY =
   'Me diz a região e a faixa de investimento que eu te mostro os lotes.';
 
+/** Detecta pedido explícito de catálogo/portfólio no texto do usuário. */
+function hasCatalogIntent(ctx: string): boolean {
+  return /\b(me\s+mostr|quero\s+ver|quais\s+opcoes|quais\s+empreendimentos|o\s+que\s+voces?\s+te[mn]|o\s+que\s+voces?\s+trabalha|me\s+mostra\s+tudo|quero\s+conhecer|quero\s+saber\s+quais|mostra\s+as\s+opcoes|me\s+passa\s+as\s+opcoes|lista|catalogo|portfolio)\b/.test(ctx);
+}
+
+/**
+ * Fallback com lista real de nomes do portfólio — usado quando o cliente pede explicitamente catálogo
+ * e a reply da LLM falhou no parse ou caiu em fallback genérico.
+ */
+export function buildCatalogFallbackReply(
+  allEnterpriseNames: string[],
+  recentContext?: string
+): string {
+  const ctx = (recentContext || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+  const isLot = /\b(lote|lotes|loteamento|terreno|terrenos)\b/.test(ctx);
+  const names = allEnterpriseNames.slice(0, 5);
+  if (names.length === 0) {
+    return 'No momento não tenho empreendimentos ativos no sistema. Quer que eu te avise quando tivermos novidades?';
+  }
+  const listText = names.map((n) => `📍 ${n}`).join('\n');
+  const tipoLabel = isLot ? ' de loteamento' : '';
+  const moreText = allEnterpriseNames.length > 5 ? '\n\nTenho mais opções também.' : '';
+  return `Hoje eu trabalho com essas opções${tipoLabel}:\n\n${listText}${moreText}\n\nQual deles te interessa mais ou quer que eu filtre por região?`;
+}
+
 /** Fallback de refinamento sensível ao tipo de produto inferido no contexto recente. */
-export function buildRefinementContextReply(recentContext?: string): string {
+export function buildRefinementContextReply(
+  recentContext?: string,
+  allEnterpriseNames?: string[]
+): string {
   const ctx = (recentContext || '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/\p{M}/gu, '');
+  if (hasCatalogIntent(ctx) && allEnterpriseNames && allEnterpriseNames.length > 0) {
+    return buildCatalogFallbackReply(allEnterpriseNames, recentContext);
+  }
   if (/\b(lote|lotes|loteamento|terreno|terrenos|loteamentos)\b/.test(ctx)) {
     return ANA_FALLBACK_REFINEMENT_LOTEAMENTO_REPLY;
   }
@@ -79,7 +110,7 @@ REGRA CRÍTICA (campo "reply"):
 - Se o cliente mencionar localização (cidade, bairro, estado), metragem (m²), preço ou intenção de economia, ou pedir empreendimentos/opções, o "reply" DEVE ser sugestão ou direcionamento comercial (portfólio, dados do prompt, próximo passo útil).
 - NUNCA trate isso como incompreensão. NUNCA use no "reply" a pergunta genérica sobre "empreendimento, valores, localização ou disponibilidade" nesses casos, nem a repita se já houver contexto no histórico.
 - Evite repetir a mesma pergunta genérica que já consta na última resposta sua no histórico; use "nextBestQuestion" para planejar UMA pergunta objetiva diferente quando precisar qualificar.
-- Se o cliente disser "o que você tem?", "o que vocês têm?", "me mostra opções" depois de já ter citado tipo ou interesse, interprete como wantsCatalog: true e dê panorama do portfólio condizente com o que já foi entendido (sem recomeçar do zero).
+- Se o cliente disser "o que você tem?", "o que vocês têm?", "me mostra opções", "quero ver os empreendimentos", "quais opções vocês têm", "me mostra tudo", ou qualquer pedido explícito de ver lista/catálogo/portfólio, interprete como wantsCatalog: true e shouldShowPortfolio: true. O "reply" DEVE conter os nomes reais dos empreendimentos ativos (📍 nome, até 5, sem inventar detalhes), seguido de pergunta curta para refinar.
 - Frases como "quero loteamento", "quero comprar um lote", "lote", "terreno em condomínio" → productType: "LOTEAMENTO" e não conduza como fluxo de apartamento.
 - O campo "reply" NUNCA pode conter dados comerciais inventados. Se um campo não existir nos dados fornecidos, não mencione. Não preencha lacunas com texto genérico ou suposição.
 
@@ -180,7 +211,8 @@ REGRA CRÍTICA (obrigatória — tem prioridade sobre "incompreensão" e sobre q
 - Se o cliente mencionar QUALQUER um destes: localização (cidade, bairro, estado), metragem (m²), preço ou intenção de economia ("em conta", "barato", faixa), ou pedido de empreendimentos/opções/lançamentos — você DEVE responder com sugestão ou direcionamento comercial (o que couber do cadastro/portfólio no prompt, ou como avançar na qualificação sem resetar o diálogo).
 - NUNCA trate isso como incompreensão. NUNCA diga que "não entendeu" ou que a mensagem foi ambígua só por ser curta.
 - NUNCA repita a pergunta genérica pedindo para escolher entre "empreendimento, valores, localização ou disponibilidade" quando já houver esse tipo de contexto no histórico ou na mensagem atual — e evite essa frase fixa em geral; prefira pergunta específica sobre o que ainda falta (ex.: só orçamento, só região dentro da cidade).
-- Se o cliente pediu opções/empreendimentos/portfólio mas AINDA NÃO informou localização, a próxima ação preferencial é perguntar a localização de forma natural (ex.: "Tenho sim. Você procura em qual região?"). Não despeje lista antes de saber onde o cliente quer.
+- Se o cliente fez pedido vago ("quero saber mais", "me ajuda") sem localização, a próxima ação preferencial é perguntar a localização.
+- MAS se o cliente pediu EXPLICITAMENTE para VER opções/lista/portfólio/catálogo (ex.: "me mostra o que vocês têm", "quero ver os empreendimentos", "quais opções vocês têm", "me mostra tudo", "o que vocês trabalham"), você DEVE listar os nomes reais dos empreendimentos ativos do portfólio (até 5 nomes, só 📍 nome, sem inventar detalhes) e DEPOIS perguntar qual região ou opção interessa mais. Neste caso, listar ANTES de perguntar localização.
 
 BUSCA / REFINAMENTO (mensagens curtas em sequência — prioridade):
 - Trate expressões como "quero em São Paulo", "algo mais em conta", "com uns 300m²", "tem em SP?", "quais empreendimentos em..." como continuação da mesma intenção: una tudo com o histórico recente antes de responder.
@@ -504,9 +536,9 @@ Trate a mensagem atual como complemento ou remarcação; não reinicie triagem n
     const triageLocationBullets = loc
       ? `- O cliente perguntou sobre uma localidade específica: use APENAS availableEnterprises do bloco "CONSULTA POR LOCALIZAÇÃO" e a lista autorizada acima. Não volte ao portfólio geral.
 - Não sugira empreendimento de outra cidade/região fora do filtro. Não diga que não há opções se availableEnterprises não estiver vazio.`
-      : `- Quando o cliente pedir opções de forma ampla (ex.: "o que vocês têm", "quero ver opções", "me mostra loteamentos") e AINDA NÃO tiver informado localização (cidade, região, bairro), a prioridade é perguntar a localização ANTES de listar empreendimentos. Exemplo: "Tenho sim. Você procura em qual região ou cidade?" — não despeje portfólio genérico sem saber onde o cliente quer.
-- Exceção: se TODOS os empreendimentos ativos estiverem na mesma cidade/região, pode citar isso de forma natural (ex.: "Nossas opções são em Jacareí. Quer que eu te mostre?").
-- Quando a localização já for conhecida ou o cliente pedir lista mesmo sem dizer a cidade, apresente opções usando APENAS dados reais do cadastro (nome + campos preenchidos). Não invente descrição nem diferenciais para completar a lista.`;
+      : `- Quando o cliente pedir EXPLICITAMENTE para VER opções/portfólio/lista (ex.: "o que vocês têm", "me mostra", "quero ver os empreendimentos", "quais opções vocês têm", "me mostra tudo"), LISTE os nomes reais dos empreendimentos ativos (📍 nome, até 5, sem inventar detalhes) e depois pergunte o que interessa mais ou qual região priorizar. LISTAR PRIMEIRO, refinar depois.
+- Quando o pedido for vago ("quero saber mais", "me ajuda com imóvel") sem menção explícita de ver opções, pode perguntar localização antes de listar.
+- Apresente opções usando APENAS dados reais do cadastro (nome + campos preenchidos). Não invente descrição nem diferenciais.`;
 
     const appointmentPriority =
       ap?.active === true
@@ -879,7 +911,8 @@ export function fallbackReplyFromRaw(
   knownCustomerName?: string | null,
   appointmentFlow?: boolean,
   appointmentContinuation?: boolean,
-  recentContextForHeuristic?: string
+  recentContextForHeuristic?: string,
+  allEnterpriseNames?: string[]
 ): AnaStructuredReply {
   const blob = [recentContextForHeuristic, userMessage].filter(Boolean).join('\n');
   const reply =
@@ -890,7 +923,7 @@ export function fallbackReplyFromRaw(
         : appointmentFlow
           ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
           : userUtteranceHasSearchRefinementSignals(blob)
-            ? buildRefinementContextReply(blob)
+            ? buildRefinementContextReply(blob, allEnterpriseNames)
             : ANA_FALLBACK_INCOMPREHENSION_REPLY;
   return {
     reply,

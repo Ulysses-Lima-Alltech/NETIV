@@ -36,6 +36,7 @@ import {
   ANA_FALLBACK_INCOMPREHENSION_REPLY,
   ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY,
   buildRefinementContextReply,
+  buildCatalogFallbackReply,
 } from './anaAgentService.js';
 import {
   finalizeAnaReplyText,
@@ -580,7 +581,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         effectiveConv.customer_name,
         appointmentPreflight.active,
         richAppointmentContext,
-        recentUserContextForFallback
+        recentUserContextForFallback,
+        allEnterpriseNames
       );
     }
     if (!structured) {
@@ -594,7 +596,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             : appointmentPreflight.active
               ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
               : userUtteranceHasSearchRefinementSignals(recentUserContextForFallback)
-                ? buildRefinementContextReply(recentUserContextForFallback)
+                ? buildRefinementContextReply(recentUserContextForFallback, allEnterpriseNames)
                 : ANA_FALLBACK_INCOMPREHENSION_REPLY,
         intent: 'fallback',
         productType: null,
@@ -623,6 +625,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     if (!hasSendableFiles) {
       structured = { ...structured, send_file_category: null };
+    }
+
+    if (
+      (structured.wantsCatalog || structured.shouldShowPortfolio) &&
+      allEnterpriseNames.length > 0 &&
+      !allEnterpriseNames.some((n) => structured.reply.includes(n))
+    ) {
+      const catalogReply = buildCatalogFallbackReply(allEnterpriseNames, recentUserContextForFallback);
+      console.log('[ANA_PIPELINE] catalog_injected', { conversationId, namesCount: allEnterpriseNames.length });
+      structured = { ...structured, reply: catalogReply };
     }
 
     const prevClassification = effectiveConv.classification;
