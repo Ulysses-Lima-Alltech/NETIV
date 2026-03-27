@@ -7,6 +7,7 @@ import {
   getConversationById,
   updateClassification,
   deleteConversation,
+  deleteAllConversationsByPhone,
   conversationReserveToPublic,
 } from '../repositories/conversationRepository.js';
 import { reprocessLastUserMessage } from '../services/conversationEngine.js';
@@ -109,6 +110,21 @@ router.get('/conversations', async (req, res) => {
   } catch (e) {
     console.error('[WhatsApp] GET conversations:', e);
     res.status(500).json({ error: 'Erro ao listar.' });
+  }
+});
+
+router.delete('/conversations/by-phone/:phone', async (req, res) => {
+  try {
+    const phone = (req.params.phone || '').trim();
+    if (!phone || phone.replace(/\D/g, '').length < 8) {
+      return res.status(400).json({ error: 'Número de telefone inválido.' });
+    }
+    const count = await deleteAllConversationsByPhone(phone);
+    console.log('[WhatsApp] DELETE by-phone:', { phone: phone.slice(-4), deletedCount: count });
+    res.json({ success: true, deletedCount: count });
+  } catch (e) {
+    console.error('[WhatsApp] DELETE by-phone:', e);
+    res.status(500).json({ error: 'Erro ao excluir histórico.' });
   }
 });
 

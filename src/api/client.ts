@@ -263,6 +263,11 @@ export const whatsappApi = {
     }),
   deleteConversation: (conversationId: number) =>
     request<{ success: boolean }>(`/whatsapp/conversations/${conversationId}`, { method: 'DELETE' }),
+  deleteAllByPhone: (phone: string) =>
+    request<{ success: boolean; deletedCount: number }>(
+      `/whatsapp/conversations/by-phone/${encodeURIComponent(phone)}`,
+      { method: 'DELETE' }
+    ),
 };
 
 export type FileCategory = 'book' | 'unidades' | 'tabela_comercial' | 'outro';
@@ -290,12 +295,16 @@ export interface KnowledgeFileItem {
   createdAt: string;
 }
 
+export type EnterpriseTipo = 'LOTEAMENTO' | 'APARTAMENTO' | 'MCMV';
+
 export interface EmpreendimentoDTO {
   id: number;
   slug: string;
   name: string;
   status: 'ativo' | 'inativo';
   languageStyle: 'informal' | 'natural' | 'formal' | 'culta';
+  tipo: EnterpriseTipo;
+  exclusivo: boolean;
   variables: ProjectVariables;
   promptAddons: string[];
   /** Localização cadastral */
@@ -319,13 +328,26 @@ export interface PromptAddonsHistoryItem {
 
 export type ProjectListItem = Omit<EmpreendimentoDTO, 'knowledgeFiles'>;
 
+export type ProjectListFilters = { tipo?: EnterpriseTipo; exclusivo?: boolean };
+
 export const projectsApi = {
-  list: (activeOnly = true) =>
-    request<{ projects: ProjectListItem[] }>(`/projects${activeOnly ? '?active=1' : ''}`),
+  list: (activeOnly = true, filters?: ProjectListFilters) => {
+    const q = new URLSearchParams();
+    if (activeOnly) q.set('active', '1');
+    if (filters?.tipo) q.set('tipo', filters.tipo);
+    if (filters?.exclusivo !== undefined) q.set('exclusivo', filters.exclusivo ? '1' : '0');
+    const qs = q.toString();
+    return request<{ projects: ProjectListItem[] }>(`/projects${qs ? `?${qs}` : ''}`);
+  },
   get: (id: number) =>
     request<EmpreendimentoDTO & { knowledgeFiles: KnowledgeFileItem[] }>(`/projects/${id}`),
-  create: (body: { name: string; slug?: string; languageStyle?: EmpreendimentoDTO['languageStyle'] }) =>
-    request<ProjectListItem>('/projects', { method: 'POST', body }),
+  create: (body: {
+    name: string;
+    slug?: string;
+    languageStyle?: EmpreendimentoDTO['languageStyle'];
+    tipo?: EnterpriseTipo;
+    exclusivo?: boolean;
+  }) => request<ProjectListItem>('/projects', { method: 'POST', body }),
   update: (
     id: number,
     body: {
@@ -333,6 +355,8 @@ export const projectsApi = {
       status?: 'ativo' | 'inativo';
       slug?: string;
       languageStyle?: EmpreendimentoDTO['languageStyle'];
+      tipo?: EnterpriseTipo;
+      exclusivo?: boolean;
       variables?: ProjectVariables;
       promptAddons?: string[];
       city?: string;
@@ -348,10 +372,11 @@ export const projectsApi = {
     projectId: number,
     file: File,
     category: FileCategory,
-    opts?: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean }
+    opts?: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean; tipoDocumento?: 'BOOK' }
   ): Promise<KnowledgeFileItem> => {
     const fd = new FormData();
     fd.append('category', category);
+    if (opts?.tipoDocumento === 'BOOK') fd.append('tipoDocumento', 'BOOK');
     fd.append('file', file);
     fd.append('canBeUsedAsKnowledge', opts?.canBeUsedAsKnowledge !== false ? 'true' : 'false');
     fd.append('canBeSentByAna', opts?.canBeSentByAna === true ? 'true' : 'false');

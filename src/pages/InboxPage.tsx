@@ -251,6 +251,29 @@ export function InboxPage() {
     [selectedId]
   );
 
+  const handleClearPhoneHistory = useCallback(
+    async (phone: string) => {
+      const digits = phone.replace(/\D/g, '');
+      if (!digits || digits.length < 8) return;
+      if (!confirm(`Excluir TODO o histórico do número ${phone}? Esta ação é irreversível.`)) return;
+      try {
+        const res = await whatsappApi.deleteAllByPhone(digits);
+        if (res.deletedCount > 0) {
+          setConversations((prev) => prev.filter((c) => {
+            const cp = (c.leadPhone || '').replace(/\D/g, '');
+            return cp !== digits;
+          }));
+          setSelectedId(null);
+          setMessages([]);
+          setMessagesError(null);
+        }
+      } catch (e) {
+        console.error('[InboxPage] clearPhoneHistory:', e);
+      }
+    },
+    []
+  );
+
   const handleClassificationChange = useCallback(
     async (updates: {
       projectId?: number | null;
@@ -370,6 +393,7 @@ export function InboxPage() {
             onSendMessage={handleSendMessage}
             isSending={sending}
             onClassificationChange={handleClassificationChange}
+            onClearPhoneHistory={handleClearPhoneHistory}
             projects={projects}
             onScrollContainerRef={(el) => { chatScrollRef.current = el; }}
           />

@@ -26,7 +26,7 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
       aria-label={`Conversa com ${displayName}${conversation.unreadCount > 0 ? `, ${conversation.unreadCount} não lidas` : ''}`}
       className={`
-        group relative w-full text-left px-4 py-3.5 border-b border-[#F3F4F6] transition-all cursor-pointer
+        group w-full text-left px-4 py-3.5 border-b border-[#F3F4F6] transition-all cursor-pointer
         focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6] focus-visible:ring-inset
         ${(conversation.handoff === true || conversation.status === 'Handoff' || conversation.classificationStatus === 'Handoff')
           ? isSelected
@@ -41,23 +41,23 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
               : 'bg-white hover:bg-[#F9FAFB]'}
       `}
     >
-      {onDelete && (
-        <button
-          type="button"
-          onClick={handleDelete}
-          aria-label="Excluir conversa"
-          className="absolute top-2.5 right-2 opacity-0 group-hover:opacity-100 p-1.5 rounded-[6px] text-[#9CA3AF] hover:text-red-600 hover:bg-red-50 transition-all"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
-        </button>
-      )}
-      <div className="flex justify-between items-center gap-2 min-h-6">
+      <div className="flex items-center gap-2 min-h-6">
         <span className={`font-medium truncate flex-1 text-[14px] leading-tight ${isSelected ? 'text-[#1D4ED8]' : 'text-[#111827]'}`}>
           {displayName}
         </span>
         <span className="text-[11px] text-[#9CA3AF] shrink-0 tabular-nums">
           {formatConversationTime(conversation.updatedAt)}
         </span>
+        {onDelete && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            aria-label="Excluir conversa"
+            className="shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded-[6px] text-[#9CA3AF] hover:text-red-600 hover:bg-red-50 transition-all"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+          </button>
+        )}
       </div>
       <p className="text-[13px] text-[#6B7280] truncate mt-1 leading-snug">
         {conversation.lastMessage || 'Sem mensagens'}
