@@ -18,8 +18,8 @@ function rowToConfig(row: Row): OpenAIConfig {
   return {
     openaiApiKey: row.openai_api_key ?? '',
     openaiBaseUrl: row.openai_base_url,
-    modelColdLead: row.model_cold_lead ?? 'gpt-4o-mini',
-    modelHotLead: row.model_hot_lead ?? 'gpt-4o',
+    modelColdLead: row.model_cold_lead ?? 'gpt-4.1-mini',
+    modelHotLead: row.model_hot_lead ?? 'gpt-4.1',
     temperature: Number(row.temperature) ?? 0.5,
     maxTokens: row.max_tokens ?? 700,
     leadScoreThreshold: Number(row.lead_score_threshold) ?? 0.75,
@@ -56,6 +56,21 @@ export async function updateOpenAIConfig(update: OpenAIConfigUpdate): Promise<Op
     [openaiApiKey, openaiBaseUrl, modelColdLead, modelHotLead, temperature, maxTokens, leadScoreThreshold, aiEnabled]
   );
   return (await getOpenAIConfig())!;
+}
+
+/** Valores crus das colunas (sem defaults de rowToConfig) para precedência Ana: DB → env → default. */
+export async function getIntegrationModelStringsRaw(): Promise<{
+  modelColdLead: string | null;
+  modelHotLead: string | null;
+}> {
+  const { rows } = await query<{ model_cold_lead: string | null; model_hot_lead: string | null }>(
+    `SELECT model_cold_lead, model_hot_lead FROM integration_settings WHERE id = 1`
+  );
+  const r = rows[0];
+  if (!r) return { modelColdLead: null, modelHotLead: null };
+  const trim = (v: string | null) =>
+    v != null && String(v).trim() !== '' ? String(v).trim() : null;
+  return { modelColdLead: trim(r.model_cold_lead), modelHotLead: trim(r.model_hot_lead) };
 }
 
 export async function getOpenAIConfigPublic(): Promise<OpenAIConfigPublic | null> {

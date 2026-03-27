@@ -1,5 +1,5 @@
 import { getMessagesByConversationId, getLastUserMessageNeedingReply, insertMessage } from '../repositories/messageRepository.js';
-import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
+import { getOpenAIConfig, getIntegrationModelStringsRaw } from '../repositories/openaiConfigRepository.js';
 import {
   getConversationById,
   setConversationEnterpriseId,
@@ -51,9 +51,7 @@ import {
   computeNextCommercialFlowState,
   type CommercialFlowState,
 } from '../utils/commercialFlowState.js';
-
-/** Modelo principal da Ana (WhatsApp) — saída JSON estruturada. */
-const ANA_CHAT_MODEL = 'gpt-5';
+import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
 
 function anaTechnicalFallbackStructured(classificationHint: string | null): AnaStructuredReply {
   return {
@@ -494,6 +492,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       persistedContextBlock,
     };
 
+    const rawModels = await getIntegrationModelStringsRaw();
+    const anaModelResolution = resolveAnaOpenAIModel({
+      modelHotLeadFromDb: rawModels.modelHotLead,
+      modelColdLeadFromDb: rawModels.modelColdLead,
+    });
+    const model = anaModelResolution.finalModel;
+
+    console.log('[ANA_MODEL_RESOLVE]', {
+      conversationId,
+      messageId: inboundMetaMessageId,
+      configuredModelFromDb: anaModelResolution.configuredModelFromDb,
+      configuredModelFromEnv: anaModelResolution.configuredModelFromEnv,
+      finalModel: anaModelResolution.finalModel,
+      sourceOfFinalModel: anaModelResolution.sourceOfFinalModel,
+    });
+
     console.log('[ANA_CHAT_AUDIT]', {
       conversationId,
       messageId: inboundMetaMessageId,
@@ -502,7 +516,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       stateBefore,
       phase: 'pre_openai',
       openAiCalled: false,
-      openAiModel: ANA_CHAT_MODEL,
+      openAiModel: model,
       pipelineStale: isPipelineStale(conversationId, replyPipelineToken),
     });
 
@@ -514,11 +528,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     messages.push({ role: 'user', content: trimmed });
 
-    const model = ANA_CHAT_MODEL;
     console.log('[ANA MODEL] modelo_final_selecionado', {
       conversationId,
       model,
       model_used: model,
+      sourceOfFinalModel: anaModelResolution.sourceOfFinalModel,
       mode,
       enterprise: ent?.name ?? null,
       appointmentPreflight: appointmentPreflight.active,
@@ -699,7 +713,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         stateBefore,
         phase: 'post_send',
         openAiCalled,
-        openAiModel: ANA_CHAT_MODEL,
+        openAiModel: model,
         openAiReplyPreview: replyText.slice(0, 260),
         fallbackUsed: replySource === 'technical_fallback',
         fallbackReason,

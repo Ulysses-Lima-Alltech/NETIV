@@ -42,7 +42,7 @@ router.post('/ai/test', async (_req, res) => {
     }
 
     const baseUrl = (cfg.openaiBaseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
-    const model = cfg.modelColdLead || cfg.modelHotLead || 'gpt-4o-mini';
+    const model = cfg.modelColdLead || cfg.modelHotLead || 'gpt-4.1';
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);

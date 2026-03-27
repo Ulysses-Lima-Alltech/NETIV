@@ -24,13 +24,14 @@ export async function routeAndGenerate(
 
   let model: string;
   if (leadStage === 'HOT') {
-    model = config.modelHotLead ?? 'gpt-4o';
+    model = config.modelHotLead ?? 'gpt-4.1';
   } else if (leadStage === 'WARM' || leadStage === 'COLD') {
-    model = config.modelColdLead ?? 'gpt-4';
+    model = config.modelColdLead ?? 'gpt-4.1-mini';
   } else {
     const leadScore = detectLeadScore(userMessage);
     const threshold = config.leadScoreThreshold ?? 0.75;
-    model = (leadScore >= threshold ? config.modelHotLead : config.modelColdLead) ?? config.modelColdLead ?? 'gpt-4';
+    model =
+      (leadScore >= threshold ? config.modelHotLead : config.modelColdLead) ?? config.modelColdLead ?? 'gpt-4.1';
   }
 
   const result = await generateChatCompletion({

@@ -6,7 +6,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
 
 const defaultOpenAIBaseUrl = 'https://api.openai.com/v1';
-const defaultOpenAIModel = 'gpt-4.1-mini';
+const defaultOpenAIModel = 'gpt-4.1';
 const defaultMetaApiVersion = 'v23.0';
 
 export const config = {

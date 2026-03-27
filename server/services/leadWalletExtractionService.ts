@@ -64,7 +64,7 @@ export async function extractLeadDataFromConversation(
     .join('\n');
   if (transcript.length < 20) return;
 
-  const model = aiConfig.modelColdLead || 'gpt-4o-mini';
+  const model = aiConfig.modelColdLead || 'gpt-4.1-mini';
   const messages: ChatMessage[] = [
     {
       role: 'system',

@@ -12,7 +12,7 @@ export interface GenerateCompletionParams {
   messages: ChatMessage[];
   temperature: number;
   maxTokens: number;
-  /** Força saída JSON (gpt-4o-mini+). */
+  /** Força saída JSON (modelos com suporte a `response_format`). */
   responseFormatJson?: boolean;
 }
 
@@ -29,7 +29,8 @@ export async function generateChatCompletion(params: GenerateCompletionParams): 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  const gpt5Family = /^gpt-5/i.test(model) || /^o3/i.test(model);
+  /** Modelos que usam `max_completion_tokens` em vez de `max_tokens` + `temperature`. */
+  const usesMaxCompletionTokensOnly = /^gpt-5/i.test(model) || /^o3/i.test(model);
   const body: Record<string, unknown> = {
     model,
     messages,
@@ -37,7 +38,7 @@ export async function generateChatCompletion(params: GenerateCompletionParams): 
   if (responseFormatJson) {
     body.response_format = { type: 'json_object' };
   }
-  if (gpt5Family) {
+  if (usesMaxCompletionTokensOnly) {
     body.max_completion_tokens = maxTokens;
   } else {
     body.temperature = temperature;
