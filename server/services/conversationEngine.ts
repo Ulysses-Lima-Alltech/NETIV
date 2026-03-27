@@ -38,14 +38,13 @@ import {
   buildRefinementContextReply,
 } from './anaAgentService.js';
 import {
-  randomAnaReplyDelayMs,
-  sleepMs,
   finalizeAnaReplyText,
   countCustomerNameMentionsInText,
   isSimpleOpeningGreeting,
   pickRandomGreetingReply,
   userUtteranceHasSearchRefinementSignals,
   repliesSemanticallySimilar,
+  pickDuplicateFallbackReply,
 } from '../utils/anaReplyFinalize.js';
 import {
   buildUserUtterancesContext,
@@ -358,13 +357,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         handoff: true,
       });
       if (isPipelineStale(conversationId, replyPipelineToken)) {
-        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'handoff_before_delay' });
-        return;
-      }
-      const delayMs = randomAnaReplyDelayMs();
-      await sleepMs(delayMs);
-      if (isPipelineStale(conversationId, replyPipelineToken)) {
-        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'handoff_after_delay' });
+        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'handoff_before_send' });
         return;
       }
       const confirmMsg = finalizeAnaReplyText(
@@ -396,13 +389,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       let replyTextGreeting = pickRandomGreetingReply(nameKnown ? nm : null);
       replyTextGreeting = finalizeAnaReplyText(replyTextGreeting).slice(0, 4000);
       if (isPipelineStale(conversationId, replyPipelineToken)) {
-        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'greeting_before_delay' });
-        return;
-      }
-      const delayGreetingMs = randomAnaReplyDelayMs();
-      await sleepMs(delayGreetingMs);
-      if (isPipelineStale(conversationId, replyPipelineToken)) {
-        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'greeting_after_delay' });
+        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'greeting_before_send' });
         return;
       }
       const freshRows = await getMessagesByConversationId(conversationId);
@@ -410,8 +397,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (lastAsstG && (lastAsstG.content || '').trim() === replyTextGreeting.trim()) {
         const ageG = Date.now() - new Date(lastAsstG.created_at).getTime();
         if (ageG < 55_000) {
-          console.warn('[ANA_PIPELINE] duplicate_blocked_greeting_identical', { conversationId, ageMs: ageG });
-          return;
+          replyTextGreeting = 'Como posso te ajudar?';
+          console.log('[ANA_PIPELINE] duplicate_greeting_fallback', { conversationId, ageMs: ageG });
         }
       }
       const sendGreeting = await sendTextMessage(toPhoneNumber, replyTextGreeting);
@@ -689,17 +676,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     if (isPipelineStale(conversationId, replyPipelineToken)) {
-      console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'after_ai_before_human_delay' });
-      return;
-    }
-    const delayMs = randomAnaReplyDelayMs({
-      burstCount: trailingUserBubbles,
-      replyLength: replyBody.length,
-    });
-    console.log('[ANA_PIPELINE] human_delay_before_send', { conversationId, delayMs });
-    await sleepMs(delayMs);
-    if (isPipelineStale(conversationId, replyPipelineToken)) {
-      console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'after_human_delay' });
+      console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'before_send' });
       return;
     }
 
@@ -709,37 +686,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const lastContent = (lastAsstDup?.content || '').trim();
     const ageDup = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
     if (lastContent && lastContent === replyText.trim() && ageDup < 55_000) {
-      console.warn('[ANA_PIPELINE] duplicate_blocked_identical_short_window', { conversationId, ageMs: ageDup });
-      return;
-    }
-    if (lastContent && repliesSemanticallySimilar(lastContent, replyText)) {
-      console.log('[ANA_PIPELINE] duplicate_regeneration_attempt', { conversationId });
-      const regenMessages: ChatMessage[] = [
-        ...messages,
-        {
-          role: 'user',
-          content:
-            'O sistema detectou que o campo "reply" ficou muito parecido com a última mensagem já enviada ao cliente. Gere de novo o MESMO JSON completo (todos os campos obrigatórios), alterando claramente o texto de "reply" sem repetir frases nem a estrutura da resposta anterior.',
-        },
-      ];
-      const regen = await generateChatCompletion({
-        apiKey: aiConfig.openaiApiKey,
-        baseUrl: aiConfig.openaiBaseUrl,
-        model: ANA_CHAT_MODEL,
-        messages: regenMessages,
-        temperature: Math.min(aiConfig.temperature ?? 0.5, 0.75),
-        maxTokens: Math.max(aiConfig.maxTokens ?? 600, 800),
-        responseFormatJson: true,
-      });
-      const parsedRegen = regen.success && regen.content ? parseAnaJson(regen.content) : null;
-      if (parsedRegen?.reply?.trim()) {
-        replyBody = parsedRegen.reply;
-        replyText = finalizeAnaReplyText(replyBody, { userMessage: trimmed }).slice(0, 4000);
-      }
-      if (lastContent && repliesSemanticallySimilar(lastContent, replyText)) {
-        console.warn('[ANA_PIPELINE] duplicate_blocked_after_regen', { conversationId });
-        return;
-      }
+      console.warn('[ANA_PIPELINE] duplicate_detected_identical', { conversationId, ageMs: ageDup });
+      replyText = pickDuplicateFallbackReply(recentUserContextForFallback);
+      console.log('[ANA_PIPELINE] duplicate_fallback_sent', { conversationId, fallbackLen: replyText.length });
+    } else if (lastContent && repliesSemanticallySimilar(lastContent, replyText)) {
+      console.warn('[ANA_PIPELINE] duplicate_detected_semantic', { conversationId });
+      replyText = pickDuplicateFallbackReply(recentUserContextForFallback);
+      console.log('[ANA_PIPELINE] duplicate_fallback_sent', { conversationId, fallbackLen: replyText.length });
     }
     console.log('[ANA_PIPELINE] send_final', { conversationId, toPhoneNumber, replyLength: replyText.length });
     const sendResult = await sendTextMessage(toPhoneNumber, replyText);

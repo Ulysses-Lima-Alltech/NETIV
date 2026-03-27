@@ -7,7 +7,35 @@ export function randomAnaReplyDelayMs(_opts?: {
 }
 
 export function sleepMs(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
   return new Promise((r) => setTimeout(r, ms));
+}
+
+const DUPLICATE_FALLBACKS_LOTEAMENTO = [
+  'Me confirma a região e a faixa de investimento que eu sigo com você.',
+  'Me diz a região que você quer priorizar que eu te mostro os lotes.',
+  'Qual região e faixa de valor você procura?',
+];
+
+const DUPLICATE_FALLBACKS_GENERIC = [
+  'Me conta o que você quer priorizar que eu sigo com você.',
+  'Qual região ou tipo de imóvel você procura?',
+  'Me diz o que falta pra eu te direcionar.',
+];
+
+function normForDupFallback(s: string): string {
+  return s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+}
+
+/**
+ * Fallback enviado quando a reply da IA ficou duplicada/similar à anterior.
+ * Nunca deixa o cliente sem resposta.
+ */
+export function pickDuplicateFallbackReply(recentContext?: string): string {
+  const ctx = normForDupFallback(recentContext || '');
+  const isLot = /\b(lote|lotes|loteamento|terreno|terrenos)\b/.test(ctx);
+  const pool = isLot ? DUPLICATE_FALLBACKS_LOTEAMENTO : DUPLICATE_FALLBACKS_GENERIC;
+  return pool[Math.floor(Math.random() * pool.length)]!;
 }
 
 function fingerprintReply(s: string): string {
