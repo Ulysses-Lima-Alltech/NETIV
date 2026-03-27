@@ -1,12 +1,66 @@
-/** Delay aleatório entre respostas da ANA (ms), não bloqueia outras conversas (uso com await dentro do handler da conversa). */
-export function randomAnaReplyDelayMs(): number {
-  const min = 6000;
-  const max = 14000;
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+/**
+ * Delay adaptativo entre respostas da ANA (ms).
+ * Rajada de mensagens → delay curto (cliente em troca rápida).
+ * Resposta curta → delay menor (simula digitação proporcional).
+ * Resposta longa → delay moderado.
+ */
+export function randomAnaReplyDelayMs(opts?: {
+  burstCount?: number;
+  replyLength?: number;
+}): number {
+  const burst = opts?.burstCount ?? 1;
+  const len = opts?.replyLength ?? 200;
+
+  if (burst >= 3) {
+    return Math.floor(Math.random() * 800) + 600;
+  }
+  if (burst >= 2) {
+    return Math.floor(Math.random() * 1000) + 800;
+  }
+  if (len < 80) {
+    return Math.floor(Math.random() * 1000) + 800;
+  }
+  if (len < 200) {
+    return Math.floor(Math.random() * 1500) + 1200;
+  }
+  if (len > 500) {
+    return Math.floor(Math.random() * 2000) + 2000;
+  }
+  return Math.floor(Math.random() * 1500) + 1500;
 }
 
 export function sleepMs(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function fingerprintReply(s: string): string {
+  return normClosure(s).replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function significantWordSet(s: string): Set<string> {
+  const set = new Set<string>();
+  for (const w of fingerprintReply(s).split(' ')) {
+    if (w.length > 2) set.add(w);
+  }
+  return set;
+}
+
+/**
+ * Evita reenviar resposta quase idêntica (similaridade lexical; sem embeddings).
+ */
+export function repliesSemanticallySimilar(a: string, b: string): boolean {
+  const fa = fingerprintReply(a);
+  const fb = fingerprintReply(b);
+  if (!fa || !fb) return false;
+  if (fa === fb) return true;
+  const A = significantWordSet(a);
+  const B = significantWordSet(b);
+  if (A.size === 0 || B.size === 0) return false;
+  let inter = 0;
+  for (const w of A) if (B.has(w)) inter++;
+  const union = A.size + B.size - inter;
+  const j = union > 0 ? inter / union : 0;
+  return j >= 0.88;
 }
 
 /** Perguntas curtas só quando o modelo não fechou com interrogação — variadas, não uma frase fixa. */
@@ -16,6 +70,9 @@ const FALLBACK_CLOSING_QUESTIONS = [
   'Quer que eu te mostre outras opções também?',
   'O que você gostaria de saber em seguida?',
   'Por onde você prefere que a gente continue?',
+  'Quer que eu explique melhor alguma parte?',
+  'Tem alguma dúvida sobre o que conversamos?',
+  'Faz sentido pra você ou prefere que eu detalhe?',
 ];
 
 function normClosure(s: string): string {
@@ -171,7 +228,15 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
     }
   }
 
-  return `${s} ${randomFallbackClosing()}`;
+  const sentences = s.split(/(?<=[.!?])\s+/);
+  if (sentences.length >= 4) {
+    const last = sentences[sentences.length - 1] ?? '';
+    if (looksInterrogativeSentence(last)) {
+      return s.replace(/[.!…]$/, '?');
+    }
+  }
+
+  return `${s}\n\n${randomFallbackClosing()}`;
 }
 
 function normGreeting(s: string): string {
@@ -225,6 +290,9 @@ export function userUtteranceHasSearchRefinementSignals(text: string): boolean {
   if (/\b(em|no|na)\s+(sp|sao paulo|rio|bh|rj)\b/.test(t)) return true;
 
   if (/\b(apartamento|casa|studio|cobertura|dormitorio|dormitorios|quarto|quartos|planta)\b/.test(t)) return true;
+
+  if (/\b(lote|lotes|loteamento|loteamentos|terreno|terrenos|condominio\s+fechado|lote\s+para\s+investir|lote\s+para\s+construir)\b/.test(t)) return true;
+  if (/\b(infraestrutura|area\s+de\s+lazer|area\s+verde|metragem\s+do\s+lote)\b/.test(t)) return true;
 
   return false;
 }

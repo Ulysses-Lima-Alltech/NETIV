@@ -3,6 +3,7 @@ import { AppNav } from '../components/AppNav';
 import {
   projectsApi,
   type EmpreendimentoDTO,
+  type EnterpriseTipo,
   type KnowledgeFileItem,
   type ProjectVariables,
   type FileCategory,
@@ -31,6 +32,12 @@ const LANG_DESC: Record<string, string> = {
   natural: 'Tom equilibrado, amigável e profissional.',
   formal: 'Linguagem respeitosa e institucional.',
   culta: 'Comunicação sofisticada e cerimonial.',
+};
+
+const TIPO_LABEL: Record<EnterpriseTipo, string> = {
+  LOTEAMENTO: 'Loteamento',
+  APARTAMENTO: 'Apartamento',
+  MCMV: 'MCMV',
 };
 
 const emptyVars = (): ProjectVariables => ({
@@ -75,6 +82,10 @@ export function EmpreendimentosPage() {
   const [ibgeCode, setIbgeCode] = useState('');
   const [status, setStatus] = useState<'ativo' | 'inativo'>('ativo');
   const [languageStyle, setLanguageStyle] = useState<EmpreendimentoDTO['languageStyle']>('natural');
+  const [tipo, setTipo] = useState<EnterpriseTipo>('APARTAMENTO');
+  const [exclusivo, setExclusivo] = useState(false);
+  const [filterTipo, setFilterTipo] = useState<EnterpriseTipo | ''>('');
+  const [filterExclusivo, setFilterExclusivo] = useState<'all' | 'yes' | 'no'>('all');
   const [variables, setVariables] = useState<ProjectVariables>(emptyVars());
   const [addonsText, setAddonsText] = useState('');
   const [files, setFiles] = useState<KnowledgeFileItem[]>([]);
@@ -84,6 +95,8 @@ export function EmpreendimentosPage() {
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
+  const [newTipo, setNewTipo] = useState<EnterpriseTipo>('APARTAMENTO');
+  const [newExclusivo, setNewExclusivo] = useState(false);
   const [creating, setCreating] = useState(false);
   const [uploadCategory, setUploadCategory] = useState<FileCategory>('book');
   const [showInactiveKnowledge, setShowInactiveKnowledge] = useState(false);
@@ -100,12 +113,19 @@ export function EmpreendimentosPage() {
 
   const loadList = useCallback(() => {
     setLoading(true);
+    const f =
+      filterTipo || filterExclusivo !== 'all'
+        ? {
+            ...(filterTipo ? { tipo: filterTipo } : {}),
+            ...(filterExclusivo !== 'all' ? { exclusivo: filterExclusivo === 'yes' } : {}),
+          }
+        : undefined;
     projectsApi
-      .list(false)
+      .list(false, f)
       .then((d) => setList(d.projects as EmpreendimentoDTO[]))
       .catch(() => setList([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [filterTipo, filterExclusivo]);
 
   useEffect(() => { loadList(); }, [loadList]);
 
@@ -116,6 +136,7 @@ export function EmpreendimentosPage() {
     projectsApi
       .get(id)
       .then((d) => {
+        console.log('[TIPO_DEBUG] frontend loadDetail response.tipo:', d.tipo, '| id:', id);
         setDetail(d);
         setName(d.name);
         setSlug(d.slug);
@@ -126,6 +147,8 @@ export function EmpreendimentosPage() {
         setIbgeCode(d.ibgeCode ?? '');
         setStatus(d.status);
         setLanguageStyle(d.languageStyle);
+        setTipo(d.tipo ?? 'APARTAMENTO');
+        setExclusivo(d.exclusivo ?? false);
         setVariables({ ...emptyVars(), ...(d.variables ?? {}) });
         setAddonsText(Array.isArray(d.promptAddons) ? d.promptAddons.join('\n') : '');
         setFiles(Array.isArray(d.knowledgeFiles) ? d.knowledgeFiles : []);
@@ -163,20 +186,28 @@ export function EmpreendimentosPage() {
     setSaving(true);
     setErr(null);
     const promptAddons = addonsText.split('\n').map((s) => s.trim()).filter(Boolean);
+    const payload = {
+      name: name.trim(),
+      slug: slug.trim() || undefined,
+      status,
+      languageStyle,
+      tipo,
+      exclusivo,
+      variables,
+      promptAddons,
+      city: city.trim(),
+      stateUf: stateUf.trim(),
+      commercialRegion: commercialRegion.trim(),
+      ibgeCode: ibgeCode.trim(),
+    };
+    console.log('[TIPO_DEBUG] frontend save payload.tipo:', payload.tipo, '| id:', selectedId);
     projectsApi
-      .update(selectedId, {
-        name: name.trim(),
-        slug: slug.trim() || undefined,
-        status,
-        languageStyle,
-        variables,
-        promptAddons,
-        city: city.trim(),
-        stateUf: stateUf.trim(),
-        commercialRegion: commercialRegion.trim(),
-        ibgeCode: ibgeCode.trim(),
+      .update(selectedId, payload)
+      .then((res) => {
+        console.log('[TIPO_DEBUG] frontend update response.tipo:', res.tipo, '| id:', selectedId);
+        loadList();
+        loadDetail(selectedId);
       })
-      .then(() => { loadList(); loadDetail(selectedId); })
       .catch((e) => setErr(e instanceof Error ? e.message : 'Erro ao salvar'))
       .finally(() => setSaving(false));
   };
@@ -187,7 +218,7 @@ export function EmpreendimentosPage() {
     setCreating(true);
     setErr(null);
     projectsApi
-      .create({ name: n })
+      .create({ name: n, tipo: newTipo, exclusivo: newExclusivo })
       .then((p) => { setNewName(''); loadList(); setSelectedId(p.id); })
       .catch((e) => setErr(e instanceof Error ? e.message : 'Erro ao criar'))
       .finally(() => setCreating(false));
@@ -202,6 +233,7 @@ export function EmpreendimentosPage() {
       .uploadKnowledge(selectedId, f, uploadCategory, {
         canBeUsedAsKnowledge: uploadAsKnowledge,
         canBeSentByAna: uploadAllowSend,
+        ...(uploadCategory === 'book' ? { tipoDocumento: 'BOOK' as const } : {}),
       })
       .then(() => loadDetail(selectedId))
       .catch((er) => setErr(er instanceof Error ? er.message : 'Upload falhou'))
@@ -290,6 +322,36 @@ export function EmpreendimentosPage() {
           {/* List */}
           <div className={card}>
             <p className="text-[11px] font-bold text-[#9CA3AF] uppercase tracking-[0.08em] mb-3">
+              Filtros
+            </p>
+            <div className="space-y-2 mb-4">
+              <label className="block">
+                <span className={label}>Tipo</span>
+                <select
+                  className={`${fieldSelect} w-full text-[13px]`}
+                  value={filterTipo}
+                  onChange={(e) => setFilterTipo((e.target.value || '') as EnterpriseTipo | '')}
+                >
+                  <option value="">Todos</option>
+                  <option value="LOTEAMENTO">Loteamento</option>
+                  <option value="APARTAMENTO">Apartamento</option>
+                  <option value="MCMV">MCMV</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className={label}>Exclusivo</span>
+                <select
+                  className={`${fieldSelect} w-full text-[13px]`}
+                  value={filterExclusivo}
+                  onChange={(e) => setFilterExclusivo(e.target.value as 'all' | 'yes' | 'no')}
+                >
+                  <option value="all">Todos</option>
+                  <option value="yes">Sim</option>
+                  <option value="no">Não</option>
+                </select>
+              </label>
+            </div>
+            <p className="text-[11px] font-bold text-[#9CA3AF] uppercase tracking-[0.08em] mb-3">
               Seus empreendimentos
             </p>
             {loading ? (
@@ -314,12 +376,22 @@ export function EmpreendimentosPage() {
                           : 'text-[#374151] hover:bg-[#F3F4F6] hover:text-[#111827]'
                       }`}
                     >
-                      {p.name}
-                      {p.status === 'inativo' && (
-                        <span className="ml-1.5 text-[10px] font-medium text-[#9CA3AF] bg-[#F3F4F6] rounded px-1 py-px align-middle">
-                          inativo
+                      <span className="block truncate font-medium">{p.name}</span>
+                      <span className="mt-0.5 flex flex-wrap items-center gap-1">
+                        <span className="text-[10px] font-medium text-[#6B7280] bg-[#F3F4F6] rounded px-1 py-px">
+                          {TIPO_LABEL[(p.tipo ?? 'APARTAMENTO') as EnterpriseTipo]}
                         </span>
-                      )}
+                        {(p.exclusivo ?? false) && (
+                          <span className="text-[10px] font-medium text-amber-800 bg-amber-50 rounded px-1 py-px">
+                            Exclusivo
+                          </span>
+                        )}
+                        {p.status === 'inativo' && (
+                          <span className="text-[10px] font-medium text-[#9CA3AF] bg-[#F3F4F6] rounded px-1 py-px">
+                            inativo
+                          </span>
+                        )}
+                      </span>
                     </button>
                   );
                 })}
@@ -339,6 +411,31 @@ export function EmpreendimentosPage() {
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && create()}
             />
+            <label className="block mt-3">
+              <span className={label}>Tipo do produto</span>
+              <select
+                className={`${fieldSelect} w-full text-[13px]`}
+                value={newTipo}
+                onChange={(e) => setNewTipo(e.target.value as EnterpriseTipo)}
+              >
+                <option value="LOTEAMENTO">Loteamento</option>
+                <option value="APARTAMENTO">Apartamento</option>
+                <option value="MCMV">MCMV</option>
+              </select>
+            </label>
+            <div className="mt-3">
+              <span className={label}>Exclusivo</span>
+              <div className="flex gap-4 mt-1.5 text-[13px] text-[#374151]">
+                <label className="inline-flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="new-exclusivo" checked={!newExclusivo} onChange={() => setNewExclusivo(false)} />
+                  Não
+                </label>
+                <label className="inline-flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="new-exclusivo" checked={newExclusivo} onChange={() => setNewExclusivo(true)} />
+                  Sim
+                </label>
+              </div>
+            </div>
             <button
               type="button"
               onClick={create}
@@ -422,6 +519,31 @@ export function EmpreendimentosPage() {
                     <span className={label}>Slug</span>
                     <input className={field} value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="evora" />
                   </label>
+                  <label className="block">
+                    <span className={label}>Tipo do produto</span>
+                    <select
+                      className={`${fieldSelect} w-full`}
+                      value={tipo}
+                      onChange={(e) => setTipo(e.target.value as EnterpriseTipo)}
+                    >
+                      <option value="LOTEAMENTO">Loteamento</option>
+                      <option value="APARTAMENTO">Apartamento</option>
+                      <option value="MCMV">MCMV</option>
+                    </select>
+                  </label>
+                  <div className="block">
+                    <span className={label}>Exclusivo</span>
+                    <div className="flex gap-4 mt-1.5 text-[13px] text-[#374151]">
+                      <label className="inline-flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="edit-exclusivo" checked={!exclusivo} onChange={() => setExclusivo(false)} />
+                        Não
+                      </label>
+                      <label className="inline-flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="edit-exclusivo" checked={exclusivo} onChange={() => setExclusivo(true)} />
+                        Sim
+                      </label>
+                    </div>
+                  </div>
                   <div className="block sm:col-span-2">
                     <span className={label}>Cidade (município IBGE)</span>
                     <SearchableMunicipioCombobox

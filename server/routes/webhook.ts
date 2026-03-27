@@ -17,16 +17,13 @@ router.get('/', async (req: Request<object, string, unknown, WebhookVerification
   res.type('text/plain').send(result);
 });
 
-router.post('/', async (req: Request, res: Response) => {
-  if (req.body?.object !== 'whatsapp_business_account') {
-    return res.status(200).send('OK');
-  }
-  try {
-    await processIncomingWebhook(req.body as WebhookPayload);
-  } catch (e) {
-    console.error('[Webhook] Process error:', e);
-  }
+router.post('/', (req: Request, res: Response) => {
   res.status(200).send('OK');
+  if (req.body?.object !== 'whatsapp_business_account') return;
+  const payload = req.body as WebhookPayload;
+  setImmediate(() => {
+    processIncomingWebhook(payload).catch((e) => console.error('[Webhook] Process error:', e));
+  });
 });
 
 export default router;

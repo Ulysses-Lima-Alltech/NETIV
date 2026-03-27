@@ -1,33 +1,18 @@
 import { Router, type Request, type Response } from 'express';
-import { sendTextMessage } from '../services/whatsappMetaService.js';
-import { findOrCreateConversation } from '../repositories/conversationRepository.js';
-import { leadOriginFromMetaWhatsAppMessage } from '../services/leadOriginResolver.js';
-import { insertMessage, findMessageByMetaId } from '../repositories/messageRepository.js';
-import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
-import { scheduleWhatsAppAiAfterUserMessage } from '../services/whatsappAiDebounce.js';
 import { config } from '../config.js';
+import { processIncomingWebhook } from '../services/webhookProcessor.js';
+import type { WebhookPayload } from '../types/webhook.js';
 
 const router = Router();
-
-const NON_TEXT_MESSAGE = 'No momento só consigo responder a mensagens de texto.';
-
-async function canSendWhatsApp(): Promise<boolean> {
-  const c = await getWhatsAppConfig();
-  return !!(c?.metaAccessToken?.trim() && c?.whatsappPhoneNumberId?.trim());
-}
-
-async function sendReply(to: string, text: string): Promise<void> {
-  const r = await sendTextMessage(to, text);
-  if (r.success) return;
-  throw new Error(r.error || 'Falha ao enviar WhatsApp.');
-}
 
 async function getVerifyToken(): Promise<string> {
   try {
     const dbCfg = await getWhatsAppConfig();
     if (dbCfg?.webhookVerifyToken?.trim()) return dbCfg.webhookVerifyToken;
-  } catch { /* DB indisponível, usa fallback */ }
+  } catch {
+    /* DB indisponível */
+  }
   return config.meta.verifyToken;
 }
 
@@ -45,125 +30,18 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 router.post('/', (req: Request, res: Response) => {
-  console.log('[ANA DEBUG] webhook received');
   res.status(200).send('OK');
-
-  const payload = req.body;
+  const payload = req.body as WebhookPayload;
   if (!payload || typeof payload !== 'object') {
-    console.log('[ANA DEBUG] payload inválido ou ausente');
+    console.log('[ANA_PIPELINE] webhook_body_invalid');
     return;
   }
-  if (payload.object !== 'whatsapp_business_account') {
-    console.log('[ANA DEBUG] payload.object !== whatsapp_business_account', payload.object);
-    return;
-  }
-
-  const entry = payload.entry;
-  if (!Array.isArray(entry)) return;
-
-  for (const item of entry) {
-    const changes = item.changes;
-    if (!Array.isArray(changes)) continue;
-    for (const change of changes) {
-      if (change?.field !== 'messages') continue;
-      const value = change.value;
-      if (!value) continue;
-      const messages = value.messages;
-      if (!Array.isArray(messages) || messages.length === 0) continue;
-      const phoneNumberId = value.metadata?.phone_number_id ?? null;
-      const contact = value.contacts?.[0];
-      const contactName = contact?.profile?.name ?? null;
-
-      for (const msg of messages) {
-        const msgId = msg.id ? String(msg.id) : null;
-
-        const from = String(msg.from || '');
-        const type = msg?.type ?? 'unknown';
-        const textBody = type === 'text' && msg.text?.body != null ? String(msg.text.body).trim() : null;
-
-        setImmediate(() => {
-          processOneMessage(from, type, textBody, msgId, contactName, phoneNumberId, msg as Record<string, unknown>).catch((e) => {
-            console.error('[ANA DEBUG] Erro em processOneMessage:', e instanceof Error ? e.message : String(e));
-            if (e instanceof Error && e.stack) {
-              console.error('[ANA DEBUG] Stack:', e.stack);
-            }
-          });
-        });
-      }
-    }
-  }
-});
-
-async function processOneMessage(
-  from: string,
-  type: string,
-  textBody: string | null,
-  metaMessageId: string | null,
-  contactName: string | null,
-  phoneNumberId: string | null,
-  rawMessage?: Record<string, unknown> | null
-): Promise<void> {
-  if (!(await canSendWhatsApp())) {
-    console.error('[ANA DEBUG] WhatsApp não configurado — mensagem ignorada.');
-    return;
-  }
-
-  if (metaMessageId && (await findMessageByMetaId(metaMessageId))) {
-    console.log('[ANA DEBUG] mensagem já processada (idempotência)', { metaMessageId });
-    return;
-  }
-
-  const leadOrigin = leadOriginFromMetaWhatsAppMessage(rawMessage ?? null, phoneNumberId);
-  const conv = await findOrCreateConversation('whatsapp', from, from, contactName, phoneNumberId, leadOrigin);
-  console.log('[ANA DEBUG] conversa obtida', { conversationId: conv.id, from });
-
-  if (type !== 'text' || !textBody) {
-    console.log('[ANA DEBUG] mensagem não textual, enviando resposta fixa', { type, hasBody: !!textBody });
-    try {
-      await sendReply(from, NON_TEXT_MESSAGE);
-    } catch (e) {
-      console.error('[ANA DEBUG] Falha ao enviar resposta para não-texto:', e instanceof Error ? e.message : e);
-    }
-    return;
-  }
-
-  if (metaMessageId) {
-    await insertMessage(conv.id, 'user', textBody, metaMessageId);
-  } else {
-    await insertMessage(conv.id, 'user', textBody, `in-${Date.now()}`);
-  }
-  console.log('[ANA DEBUG] message saved', { conversationId: conv.id, metaMessageId: metaMessageId ?? 'gerado' });
-
-  const aiConfig = await getOpenAIConfig();
-  console.log('[ANA DEBUG] aiConfig loaded', {
-    hasConfig: !!aiConfig,
-    hasApiKey: !!aiConfig?.openaiApiKey?.trim(),
-    aiEnabled: aiConfig?.aiEnabled,
-    conversationId: conv.id,
+  setImmediate(() => {
+    processIncomingWebhook(payload).catch((e) => {
+      console.error('[ANA_PIPELINE] processIncomingWebhook', e instanceof Error ? e.message : String(e));
+      if (e instanceof Error && e.stack) console.error(e.stack);
+    });
   });
-  if (!aiConfig) {
-    console.error('[ANA DEBUG] getOpenAIConfig retornou null — integration_settings id=1 inexistente?', { conversationId: conv.id });
-    return;
-  }
-  if (!aiConfig.openaiApiKey?.trim()) {
-    console.error('[ANA DEBUG] OpenAI API Key não configurada — mensagem salva mas não processada pela IA', { conversationId: conv.id });
-    return;
-  }
-  if (!aiConfig.aiEnabled) {
-    console.log('[ANA DEBUG] aiEnabled check blocked — ai_enabled=false no banco. Ative em Configurações > IA.', { conversationId: conv.id });
-    return;
-  }
-  console.log('[ANA DEBUG] aiEnabled check passed');
-
-  try {
-    console.log('[ANA DEBUG] agendando IA (janela de consolidação WhatsApp)', { conversationId: conv.id });
-    scheduleWhatsAppAiAfterUserMessage(conv.id, from);
-  } catch (e) {
-    console.error('[ANA DEBUG] Erro ao processar com IA:', e instanceof Error ? e.message : String(e));
-    if (e instanceof Error && e.stack) {
-      console.error('[ANA DEBUG] Stack:', e.stack);
-    }
-  }
-}
+});
 
 export default router;

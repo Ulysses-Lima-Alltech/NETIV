@@ -20,6 +20,8 @@ import {
   type FileCategory,
   type EnterpriseRow,
 } from '../repositories/enterpriseRepository.js';
+import { loadRankedKnowledgeChunksForPrompt } from '../repositories/enterpriseKnowledgeChunkRepository.js';
+import { isPipelineStale } from './conversationPipelineToken.js';
 import { generateChatCompletion, type ChatMessage } from './openaiService.js';
 import { resolveEnterpriseLocationContext } from '../utils/anaEnterpriseLocationContext.js';
 import {
@@ -33,6 +35,7 @@ import {
   detectStrongPurchaseIntentForLeadTemperature,
   ANA_FALLBACK_INCOMPREHENSION_REPLY,
   ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY,
+  buildRefinementContextReply,
 } from './anaAgentService.js';
 import {
   randomAnaReplyDelayMs,
@@ -42,6 +45,7 @@ import {
   isSimpleOpeningGreeting,
   pickRandomGreetingReply,
   userUtteranceHasSearchRefinementSignals,
+  repliesSemanticallySimilar,
 } from '../utils/anaReplyFinalize.js';
 import {
   buildUserUtterancesContext,
@@ -55,6 +59,9 @@ import {
   findOpenAppointmentForConversationAndEnterprise,
   type AppointmentRow,
 } from '../repositories/appointmentRepository.js';
+
+/** Modelo principal da Ana (WhatsApp) — saída JSON estruturada. */
+const ANA_CHAT_MODEL = 'gpt-5';
 
 function formatOpenAppointmentSummaryForPrompt(row: AppointmentRow, enterpriseName: string): string {
   const fmt = new Intl.DateTimeFormat('pt-BR', {
@@ -86,6 +93,8 @@ export interface IncomingMessageContext {
   toPhoneNumber: string;
   /** Rajada WhatsApp: quantas bolhas de usuário no fim do histórico foram fundidas em userMessage (omitir = 1 mensagem isolada). */
   trailingUserBubbles?: number;
+  /** Token da janela de debounce; nova mensagem invalida envio pendente. */
+  replyPipelineToken?: number;
 }
 
 /** Reprocessa a última mensagem do usuário sem resposta quando handoff muda true→false. */
@@ -277,7 +286,7 @@ async function sendAnaEnterpriseDocumentWhatsApp(params: {
 }
 
 export async function handleIncomingMessage(ctx: IncomingMessageContext): Promise<void> {
-  const { conversationId, userMessage, toPhoneNumber, trailingUserBubbles } = ctx;
+  const { conversationId, userMessage, toPhoneNumber, trailingUserBubbles, replyPipelineToken } = ctx;
 
   console.log('[ANA DEBUG] handleIncomingMessage start', { conversationId, toPhoneNumber });
 
@@ -348,8 +357,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ...(mergedLeadOnHandoff != null ? { lead_temperature: mergedLeadOnHandoff } : {}),
         handoff: true,
       });
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'handoff_before_delay' });
+        return;
+      }
       const delayMs = randomAnaReplyDelayMs();
       await sleepMs(delayMs);
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'handoff_after_delay' });
+        return;
+      }
       const confirmMsg = finalizeAnaReplyText(
         'Entendido! Um atendente vai entrar em contato em breve. Enquanto isso, sua mensagem já foi registrada. Posso te ajudar com mais alguma coisa antes da transferência?'
       );
@@ -378,14 +395,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const nameKnown = nm.length >= 2;
       let replyTextGreeting = pickRandomGreetingReply(nameKnown ? nm : null);
       replyTextGreeting = finalizeAnaReplyText(replyTextGreeting).slice(0, 4000);
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'greeting_before_delay' });
+        return;
+      }
       const delayGreetingMs = randomAnaReplyDelayMs();
       await sleepMs(delayGreetingMs);
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'greeting_after_delay' });
+        return;
+      }
       const freshRows = await getMessagesByConversationId(conversationId);
       const lastAsstG = [...freshRows].reverse().find((m) => m.role === 'assistant');
       if (lastAsstG && (lastAsstG.content || '').trim() === replyTextGreeting.trim()) {
         const ageG = Date.now() - new Date(lastAsstG.created_at).getTime();
-        if (ageG < 120_000) {
-          console.warn('[ANA DEDupe] ignorando resposta idêntica à anterior (saudação)', { conversationId });
+        if (ageG < 55_000) {
+          console.warn('[ANA_PIPELINE] duplicate_blocked_greeting_identical', { conversationId, ageMs: ageG });
           return;
         }
       }
@@ -474,7 +499,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     } else if (ent) {
       commercialSnapshots = [{ enterpriseName: ent.name, variables: vars }];
     }
-    const knowledgeText = ent ? await loadAgentKnowledgeText(ent.id) : '';
+    const chunkHint = `${trimmed}\n${fullUserUtterances}`.slice(0, 8000);
+    const chunkText = ent ? await loadRankedKnowledgeChunksForPrompt(ent.id, chunkHint) : '';
+    const knowledgeBase = ent ? await loadAgentKnowledgeText(ent.id) : '';
+    const knowledgeText = [chunkText, knowledgeBase].filter(Boolean).join('\n\n').trim();
     let fileInventory = '';
     if (ent) {
       const files = await listEnterpriseFiles(ent.id);
@@ -525,14 +553,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     messages.push({ role: 'user', content: trimmed });
 
-    const model = aiConfig.modelColdLead || aiConfig.modelHotLead || 'gpt-4o-mini';
-    console.log('[ANA DEBUG] building AI context', {
-      mode,
+    const model = ANA_CHAT_MODEL;
+    console.log('[ANA MODEL] modelo_final_selecionado', {
+      conversationId,
       model,
-      appointmentPreflight,
-      enterpriseMatchTextLen: textForEnterpriseMatch.length,
+      mode,
+      enterprise: ent?.name ?? null,
+      appointmentPreflight: appointmentPreflight.active,
     });
-    console.log('[ANA DEBUG] calling AI provider', { model });
     const result = await generateChatCompletion({
       apiKey: aiConfig.openaiApiKey,
       baseUrl: aiConfig.openaiBaseUrl,
@@ -544,9 +572,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
 
     if (result.success) {
-      console.log('[ANA DEBUG] AI response received', { hasContent: !!result.content?.trim() });
+      console.log('[ANA MODEL] resposta_recebida', { conversationId, model, hasContent: !!result.content?.trim() });
     } else {
-      console.error('[ANA DEBUG] AI call failed', { error: result.error });
+      console.error('[ANA MODEL] chamada_falhou', { conversationId, model, error: result.error });
     }
 
     let structured =
@@ -569,6 +597,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       );
     }
     if (!structured) {
+      const fbReason = !result.success ? 'api_error' : !result.content?.trim() ? 'empty_content' : 'parse_failed';
+      console.log('[ANA_PIPELINE] fallback_reply', { conversationId, reason: fbReason });
       structured = {
         reply: isSimpleOpeningGreeting(trimmed)
           ? pickRandomGreetingReply(effectiveConv.customer_name)
@@ -577,8 +607,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             : appointmentPreflight.active
               ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
               : userUtteranceHasSearchRefinementSignals(recentUserContextForFallback)
-                ? ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY
+                ? buildRefinementContextReply(recentUserContextForFallback)
                 : ANA_FALLBACK_INCOMPREHENSION_REPLY,
+        intent: 'fallback',
+        productType: null,
+        wantsCatalog: false,
+        locationPreference: null,
+        budgetPreference: null,
+        bedroomsPreference: null,
+        bathroomsPreference: null,
+        nextBestQuestion: null,
+        userGoal: null,
+        lotSizePreference: null,
+        shouldShowPortfolio: false,
         classification: 'Novo',
         lead_temperature: null,
         project: ent?.name || '',
@@ -647,23 +688,60 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
-    const delayMs = randomAnaReplyDelayMs();
-    console.log('[ANA DEBUG] delay antes do envio (simulação humana)', { conversationId, delayMs });
+    if (isPipelineStale(conversationId, replyPipelineToken)) {
+      console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'after_ai_before_human_delay' });
+      return;
+    }
+    const delayMs = randomAnaReplyDelayMs({
+      burstCount: trailingUserBubbles,
+      replyLength: replyBody.length,
+    });
+    console.log('[ANA_PIPELINE] human_delay_before_send', { conversationId, delayMs });
     await sleepMs(delayMs);
+    if (isPipelineStale(conversationId, replyPipelineToken)) {
+      console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'after_human_delay' });
+      return;
+    }
 
     let replyText = finalizeAnaReplyText(replyBody, { userMessage: trimmed }).slice(0, 4000);
     const rowsBeforeSend = await getMessagesByConversationId(conversationId);
     const lastAsstDup = [...rowsBeforeSend].reverse().find((m) => m.role === 'assistant');
-    if (lastAsstDup && (lastAsstDup.content || '').trim() === replyText.trim()) {
-      const ageDup = Date.now() - new Date(lastAsstDup.created_at).getTime();
-      if (ageDup < 120_000) {
-        console.warn('[ANA DEDupe] bloqueando envio duplicado (mesmo texto que última resposta)', {
-          conversationId,
-        });
+    const lastContent = (lastAsstDup?.content || '').trim();
+    const ageDup = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
+    if (lastContent && lastContent === replyText.trim() && ageDup < 55_000) {
+      console.warn('[ANA_PIPELINE] duplicate_blocked_identical_short_window', { conversationId, ageMs: ageDup });
+      return;
+    }
+    if (lastContent && repliesSemanticallySimilar(lastContent, replyText)) {
+      console.log('[ANA_PIPELINE] duplicate_regeneration_attempt', { conversationId });
+      const regenMessages: ChatMessage[] = [
+        ...messages,
+        {
+          role: 'user',
+          content:
+            'O sistema detectou que o campo "reply" ficou muito parecido com a última mensagem já enviada ao cliente. Gere de novo o MESMO JSON completo (todos os campos obrigatórios), alterando claramente o texto de "reply" sem repetir frases nem a estrutura da resposta anterior.',
+        },
+      ];
+      const regen = await generateChatCompletion({
+        apiKey: aiConfig.openaiApiKey,
+        baseUrl: aiConfig.openaiBaseUrl,
+        model: ANA_CHAT_MODEL,
+        messages: regenMessages,
+        temperature: Math.min(aiConfig.temperature ?? 0.5, 0.75),
+        maxTokens: Math.max(aiConfig.maxTokens ?? 600, 800),
+        responseFormatJson: true,
+      });
+      const parsedRegen = regen.success && regen.content ? parseAnaJson(regen.content) : null;
+      if (parsedRegen?.reply?.trim()) {
+        replyBody = parsedRegen.reply;
+        replyText = finalizeAnaReplyText(replyBody, { userMessage: trimmed }).slice(0, 4000);
+      }
+      if (lastContent && repliesSemanticallySimilar(lastContent, replyText)) {
+        console.warn('[ANA_PIPELINE] duplicate_blocked_after_regen', { conversationId });
         return;
       }
     }
-    console.log('[ANA DEBUG] sending WhatsApp reply', { toPhoneNumber, replyLength: replyText.length });
+    console.log('[ANA_PIPELINE] send_final', { conversationId, toPhoneNumber, replyLength: replyText.length });
     const sendResult = await sendTextMessage(toPhoneNumber, replyText);
     if (sendResult.success && sendResult.metaMessageId) {
       await insertMessage(conversationId, 'assistant', replyText, sendResult.metaMessageId);

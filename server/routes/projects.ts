@@ -1,4 +1,4 @@
-import { Router, Request, Response, NextFunction } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import { randomBytes } from 'crypto';
 import { mkdirSync } from 'fs';
@@ -18,7 +18,9 @@ import {
   deleteEnterpriseFile,
   updateEnterpriseFilePermissions,
   FILE_CATEGORIES,
+  ENTERPRISE_TIPOS,
   type FileCategory,
+  type EnterpriseTipo,
   parseAddons,
 } from '../repositories/enterpriseRepository.js';
 import { createProjectSchema, updateProjectSchema, patchKnowledgeFileSchema } from '../validators/projects.js';
@@ -77,8 +79,12 @@ const upload = multer({
     const name = (file.originalname || '').toLowerCase();
     const isPdf = file.mimetype === 'application/pdf' || name.endsWith('.pdf');
     const isTxt = file.mimetype.startsWith('text/') || name.endsWith('.txt') || name.endsWith('.md');
-    if (!isPdf && !isTxt) {
-      (req as unknown as { fileValidationError?: string }).fileValidationError = 'Tipo inválido. Envie PDF, TXT ou MD.';
+    const isDocx =
+      file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+      name.endsWith('.docx');
+    if (!isPdf && !isTxt && !isDocx) {
+      (req as unknown as { fileValidationError?: string }).fileValidationError =
+        'Tipo inválido. Envie PDF, DOCX, TXT ou MD.';
       return cb(null, false);
     }
     cb(null, true);
@@ -86,10 +92,20 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 },
 });
 
+function parseListFilters(req: Request): { tipo?: EnterpriseTipo; exclusivo?: boolean } {
+  const tipoRaw = typeof req.query.tipo === 'string' ? req.query.tipo.toUpperCase() : '';
+  const tipo = ENTERPRISE_TIPOS.includes(tipoRaw as EnterpriseTipo) ? (tipoRaw as EnterpriseTipo) : undefined;
+  let exclusivo: boolean | undefined;
+  if (req.query.exclusivo === '1' || req.query.exclusivo === 'true') exclusivo = true;
+  else if (req.query.exclusivo === '0' || req.query.exclusivo === 'false') exclusivo = false;
+  return { ...(tipo ? { tipo } : {}), ...(exclusivo !== undefined ? { exclusivo } : {}) };
+}
+
 router.get('/', async (req, res) => {
   try {
     const activeOnly = req.query.active !== '0' && req.query.active !== 'false';
-    const rows = await listEnterprises(activeOnly);
+    const filters = parseListFilters(req);
+    const rows = await listEnterprises(activeOnly, Object.keys(filters).length ? filters : undefined);
     const out = await Promise.all(
       rows.map(async (r) => enterpriseToPublic(r, await getVariablesMap(r.id)))
     );
@@ -150,6 +166,8 @@ router.post('/', async (req, res) => {
     const ent = await createEnterprise(parsed.data.name.trim(), {
       slug: parsed.data.slug,
       languageStyle: parsed.data.languageStyle,
+      tipo: parsed.data.tipo,
+      exclusivo: parsed.data.exclusivo,
     });
     const vars = await getVariablesMap(ent.id);
     res.status(201).json(enterpriseToPublic(ent, vars));
@@ -197,11 +215,14 @@ router.patch('/:id', async (req, res) => {
       }
     }
 
+    console.log('[TIPO_DEBUG] PATCH request body.tipo:', d.tipo, '| id:', id);
     const ent = await updateEnterprise(id, {
       name: d.name,
       status,
       slug: d.slug,
       languageStyle: d.languageStyle,
+      tipo: d.tipo,
+      exclusivo: d.exclusivo,
       promptAddons: d.promptAddons,
       city: d.city,
       stateUf: d.stateUf,
@@ -209,9 +230,12 @@ router.patch('/:id', async (req, res) => {
       ibgeCode: d.ibgeCode,
     });
     if (!ent) return res.status(404).json({ error: 'Não encontrado.' });
+    console.log('[TIPO_DEBUG] PATCH saved tipo:', ent.tipo, '| id:', id);
     if (variables) await setVariables(id, variables);
     const vars = await getVariablesMap(id);
-    res.json(enterpriseToPublic(ent, vars));
+    const pub = enterpriseToPublic(ent, vars);
+    console.log('[TIPO_DEBUG] PATCH response tipo:', pub.tipo, '| id:', id);
+    res.json(pub);
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Erro.';
     if (msg.includes('obrigatório') || msg.includes('Já existe')) {
@@ -258,10 +282,16 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
     const mime = req.file.mimetype || '';
     const isPdf = mime.includes('pdf') || filename.endsWith('.pdf');
     const isTxt = mime.startsWith('text/') || filename.endsWith('.txt') || filename.endsWith('.md');
-    if (!isPdf && !isTxt) {
-      return res.status(400).json({ error: 'Tipo inválido. Envie PDF, TXT ou MD.' });
+    const isDocx =
+      mime.includes('wordprocessingml') || mime.includes('msword') || filename.endsWith('.docx');
+    if (!isPdf && !isTxt && !isDocx) {
+      return res.status(400).json({ error: 'Tipo inválido. Envie PDF, DOCX, TXT ou MD.' });
     }
-    const cat = (req.body?.category as string) || 'outro';
+    const tipoDoc = String(req.body?.tipoDocumento ?? req.body?.tipo_documento ?? '')
+      .trim()
+      .toUpperCase();
+    let cat = (req.body?.category as string) || 'outro';
+    if (tipoDoc === 'BOOK') cat = 'book';
     if (!FILE_CATEGORIES.includes(cat as FileCategory)) {
       return res.status(400).json({ error: 'Categoria inválida: book | unidades | tabela_comercial | outro' });
     }
