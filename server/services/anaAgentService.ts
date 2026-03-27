@@ -650,6 +650,11 @@ Use o bloco acima + variáveis para responder. Pedidos tipo "me conta", "resumo"
 }
 
 const MIN_SALVAGED_REPLY_CHARS = 20;
+const HUMAN_DEGRADED_FALLBACKS = [
+  'Perfeito. Me diz so por onde voce quer comecar.',
+  'Posso te ajudar por localizacao, tipo ou empreendimento.',
+  'Se quiser, eu sigo com o que voce me disser agora.',
+];
 
 function stripModelMarkdownFence(raw: string): string {
   let s = raw.trim();
@@ -683,6 +688,42 @@ function decodeJsonStringContent(s: string): string {
       .replace(/\\"/g, '"')
       .replace(/\\\\/g, '\\');
   }
+}
+
+function extractFirstJsonObjectSlice(raw: string): string | null {
+  const t = raw.trim();
+  const start = t.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < t.length; i++) {
+    const ch = t[i]!;
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+      continue;
+    }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return t.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+function normalizeLooseJsonCandidate(s: string): string {
+  return s
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/,\s*([}\]])/g, '$1')
+    .trim();
 }
 
 /** Tenta obter o valor de "reply" mesmo com JSON incompleto ou truncado. */
@@ -770,14 +811,46 @@ function coerceProductTypeRaw(v: unknown): string | null {
   return null;
 }
 
+function extractReplyCandidateFromObject(o: Record<string, unknown>): string {
+  const direct =
+    typeof o.reply === 'string'
+      ? o.reply
+      : typeof (o as Record<string, unknown>).mensagem === 'string'
+        ? String((o as Record<string, unknown>).mensagem)
+        : typeof (o as Record<string, unknown>).message === 'string'
+          ? String((o as Record<string, unknown>).message)
+          : typeof (o as Record<string, unknown>).texto === 'string'
+            ? String((o as Record<string, unknown>).texto)
+            : '';
+  return direct.trim();
+}
+
 export function parseAnaJson(raw: string): AnaStructuredReply | null {
   if (!raw || typeof raw !== 'string') return null;
   let s = raw.trim();
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fence) s = fence[1].trim();
+  const candidates = [s];
+  const sliced = extractFirstJsonObjectSlice(s);
+  if (sliced && sliced !== s) candidates.push(sliced);
+  let parsedObj: Record<string, unknown> | null = null;
+  for (const c of candidates) {
+    try {
+      parsedObj = JSON.parse(c) as Record<string, unknown>;
+      break;
+    } catch {
+      try {
+        parsedObj = JSON.parse(normalizeLooseJsonCandidate(c)) as Record<string, unknown>;
+        break;
+      } catch {
+        // tenta próximo candidato
+      }
+    }
+  }
   try {
-    const o = JSON.parse(s) as Record<string, unknown>;
-    const reply = typeof o.reply === 'string' ? o.reply.trim() : '';
+    const o = parsedObj as Record<string, unknown> | null;
+    if (!o) throw new Error('json_parse_candidates_failed');
+    const reply = extractReplyCandidateFromObject(o);
     if (!reply) {
       console.warn('[DOC_PARSE] JSON ok mas reply vazio — parse abortado (sem structured)', {
         preview: s.slice(0, 200),
@@ -885,7 +958,7 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
 }
 
 export function fallbackReplyFromRaw(
-  _raw: string,
+  raw: string,
   userMessage?: string,
   knownCustomerName?: string | null,
   appointmentFlow?: boolean,
@@ -895,16 +968,21 @@ export function fallbackReplyFromRaw(
   productTypeHint?: RequestedProductType
 ): AnaStructuredReply {
   const blob = [recentContextForHeuristic, userMessage].filter(Boolean).join('\n');
+  const naturalFromRaw = extractUsableReplyTextFromRawModelOutput(raw);
+  const humanShort =
+    HUMAN_DEGRADED_FALLBACKS[Math.floor(Math.random() * HUMAN_DEGRADED_FALLBACKS.length)]!;
   const reply =
-    userMessage && isSimpleOpeningGreeting(userMessage)
+    naturalFromRaw && naturalFromRaw.trim().length >= MIN_SALVAGED_REPLY_CHARS
+      ? naturalFromRaw.trim().slice(0, 4000)
+      : userMessage && isSimpleOpeningGreeting(userMessage)
       ? pickRandomGreetingReply(knownCustomerName)
       : appointmentFlow && appointmentContinuation
         ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
         : appointmentFlow
           ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
-          : userUtteranceHasSearchRefinementSignals(blob)
+          : userUtteranceHasSearchRefinementSignals(blob) && (allEnterpriseNames?.length ?? 0) > 0
             ? buildRefinementContextReply(blob, allEnterpriseNames, productTypeHint)
-            : ANA_FALLBACK_INCOMPREHENSION_REPLY;
+            : humanShort;
   return {
     reply,
     intent: 'geral',

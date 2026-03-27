@@ -40,8 +40,6 @@ import {
   trySalvageStructuredReplyFromRawModelContent,
   fallbackReplyFromRaw,
   detectStrongPurchaseIntentForLeadTemperature,
-  ANA_FALLBACK_INCOMPREHENSION_REPLY,
-  buildRefinementContextReply,
   buildCatalogFallbackReply,
 } from './anaAgentService.js';
 import {
@@ -49,15 +47,12 @@ import {
   countCustomerNameMentionsInText,
   isSimpleOpeningGreeting,
   pickRandomGreetingReply,
-  userUtteranceHasSearchRefinementSignals,
   repliesSemanticallySimilar,
   pickDuplicateFallbackReply,
 } from '../utils/anaReplyFinalize.js';
 import {
   buildUserUtterancesContext,
   computeAppointmentPreflight,
-  ANA_FALLBACK_APPOINTMENT_FLOW_REPLY,
-  ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY,
 } from '../utils/anaAppointmentIntent.js';
 import { extractLeadDataFromConversation } from './leadWalletExtractionService.js';
 import { registerAnaAppointmentIfConfirmed } from './anaAppointmentFromChatService.js';
@@ -328,6 +323,10 @@ function detectRefinementLoop(
 
 export async function handleIncomingMessage(ctx: IncomingMessageContext): Promise<void> {
   const { conversationId, userMessage, toPhoneNumber, trailingUserBubbles, replyPipelineToken } = ctx;
+  const debugRunId = `run-${Date.now()}-${conversationId}`;
+  // #region agent log
+  fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H7',location:'conversationEngine.ts:332',message:'handle_incoming_entry',data:{conversationId,user_len:(userMessage||'').trim().length,toPhone_len:(toPhoneNumber||'').length},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
 
   console.log('[ANA DEBUG] handleIncomingMessage start', { conversationId, toPhoneNumber });
 
@@ -347,14 +346,23 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       conversationId,
     });
     if (!aiConfig) {
+      // #region agent log
+      fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H6',location:'conversationEngine.ts:349',message:'early_return_no_ai_config',data:{conversationId},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       console.error('[ANA DEBUG] getOpenAIConfig retornou null — ignorando mensagem.');
       return;
     }
     if (!aiConfig.openaiApiKey?.trim()) {
+      // #region agent log
+      fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H6',location:'conversationEngine.ts:354',message:'early_return_no_openai_key',data:{conversationId,aiEnabled:aiConfig.aiEnabled===true},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       console.warn('[ANA DEBUG] OpenAI API Key não configurada — ignorando mensagem.');
       return;
     }
     if (!aiConfig.aiEnabled) {
+      // #region agent log
+      fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H6',location:'conversationEngine.ts:359',message:'early_return_ai_disabled',data:{conversationId,hasOpenAIKey:Boolean(aiConfig.openaiApiKey?.trim())},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       console.log('[ANA DEBUG] aiEnabled check blocked — ai_enabled=false no banco.');
       return;
     }
@@ -470,6 +478,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const allActiveEnterprises = await listEnterprises(true);
     const fullUserUtterances = buildUserUtterancesContext(rows);
     const triageRequestedProductType = inferRequestedProductType(trimmed, fullUserUtterances);
+    // #region agent log
+    fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H1',location:'conversationEngine.ts:473',message:'pre_match_context',data:{conversationId,trimmed_len:trimmed.length,utterances_len:fullUserUtterances.length,triageRequestedProductType,active_count:allActiveEnterprises.length},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     /** Subconjunto por tipo quando o cliente já manifestou LOTEAMENTO/APARTAMENTO/MCMV; INDEFINIDO = todos (só para resolver localização). */
     const enterprisesForLocationResolution =
       triageRequestedProductType === 'INDEFINIDO'
@@ -545,6 +556,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         if (matched != null) enterpriseMatchSource = 'explicit_tail';
       }
     }
+    // #region agent log
+    fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H2',location:'conversationEngine.ts:548',message:'post_match_pre_filter',data:{conversationId,location_ctx:Boolean(locationQueryContext),location_ids_count:locationQueryContext?.filteredEnterpriseIds.length??0,matched_enterprise_id:matched,enterpriseMatchSource,explicitSwitch},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
 
     const strongEnterpriseNameInCurrentMessage =
       matched != null && enterpriseHasStrongNameSignalInTrimmed(matched, trimmed, allActiveEnterprises);
@@ -578,6 +592,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         matched_enterprise_id: matched,
       });
     }
+    // #region agent log
+    fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H3',location:'conversationEngine.ts:582',message:'post_location_filter',data:{conversationId,matched_after_location_filter:matched,strongEnterpriseNameInCurrentMessage,location_ctx:Boolean(locationQueryContext),location_empty:locationQueryContext?.isEmpty??null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
 
     if (matched != null) {
       const hasFocus = effectiveConv.enterprise_id != null;
@@ -633,6 +650,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           ignored_match_id: matched,
         });
       }
+      // #region agent log
+      fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H4',location:'conversationEngine.ts:636',message:'reclassify_decision',data:{conversationId,matched_enterprise_id:matched,hasFocus,isDifferent,allowSwitchFromUserPick,explicitSwitch,shouldReclassify,current_enterprise_id:effectiveConv.enterprise_id??null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
     } else {
       console.log('[ANA_ENTERPRISE_MATCH]', {
         conversationId,
@@ -750,6 +770,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       commercialSnapshots: commercialSnapshots.length > 0 ? commercialSnapshots : undefined,
       commercialListUxHints: commercialSnapshots.length > 1 ? pickCommercialListUx() : undefined,
     };
+    // #region agent log
+    fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H5',location:'conversationEngine.ts:766',message:'prompt_mode_snapshot',data:{conversationId,mode,conversationPhase,ent_id:ent?.id??null,ent_name_len:(ent?.name||'').length,location_ctx_sent_to_prompt:Boolean(promptOpts.locationQueryContext),allEnterpriseNames_count:allEnterpriseNames.length,commercialSnapshots_count:commercialSnapshots.length},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     const systemPrompt = buildAnaSystemPrompt(promptOpts);
 
     const history =
@@ -783,6 +806,7 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
     console.log('[ANA MODEL] modelo_final_selecionado', {
       conversationId,
       model,
+      model_used: model,
       mode,
       enterprise: ent?.name ?? null,
       appointmentPreflight: appointmentPreflight.active,
@@ -799,20 +823,41 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
 
     if (result.success) {
       console.log('[ANA MODEL] resposta_recebida', { conversationId, model, hasContent: !!result.content?.trim() });
+      console.log('[ANA_MODEL_OUTPUT]', {
+        conversationId,
+        raw_model_output_preview: (result.content || '').slice(0, 260),
+      });
     } else {
       console.error('[ANA MODEL] chamada_falhou', { conversationId, model, error: result.error });
     }
 
+    let finalReplySource: 'model' | 'salvage' | 'fallback_raw' | 'fallback_structured' = 'model';
     let structured =
       result.success && result.content ? parseAnaJson(result.content) : null;
+    console.log('[ANA_PARSE_FLOW]', {
+      conversationId,
+      parseAnaJson_success: Boolean(structured),
+      parseAnaJson_fail: !structured,
+    });
     if (!structured && result.success && result.content) {
       structured = trySalvageStructuredReplyFromRawModelContent(result.content);
+      if (structured) finalReplySource = 'salvage';
+      console.log('[ANA_PARSE_FLOW]', {
+        conversationId,
+        salvage_success: Boolean(structured),
+        salvage_fail: !structured,
+      });
     }
     if (!structured && result.success && result.content) {
       console.warn('[DOC_FLOW] parseAnaJson null e sem texto bruto aproveitável — fallbackReplyFromRaw', {
         conversationId,
         contentPreview: result.content.slice(0, 160),
       });
+      console.log('[ANA_PARSE_FLOW]', {
+        conversationId,
+        fallbackReplyFromRaw_used: true,
+      });
+      finalReplySource = 'fallback_raw';
       structured = fallbackReplyFromRaw(
         result.content,
         trimmed,
@@ -827,48 +872,30 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
     if (!structured) {
       const fbReason = !result.success ? 'api_error' : !result.content?.trim() ? 'empty_content' : 'parse_failed';
       console.log('[ANA_PIPELINE] fallback_reply', { conversationId, reason: fbReason });
-      structured = {
-        reply: isSimpleOpeningGreeting(trimmed)
-          ? pickRandomGreetingReply(effectiveConv.customer_name)
-          : appointmentPreflight.active && richAppointmentContext
-            ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
-            : appointmentPreflight.active
-              ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
-              : userUtteranceHasSearchRefinementSignals(recentUserContextForFallback)
-                ? buildRefinementContextReply(
-                    recentUserContextForFallback,
-                    allEnterpriseNames,
-                    promptProductTypeForPrompt ?? triageRequestedProductType
-                  )
-                : ANA_FALLBACK_INCOMPREHENSION_REPLY,
-        intent: 'fallback',
-        productType: null,
-        wantsCatalog: false,
-        locationPreference: null,
-        budgetPreference: null,
-        bedroomsPreference: null,
-        bathroomsPreference: null,
-        nextBestQuestion: null,
-        userGoal: null,
-        lotSizePreference: null,
-        shouldShowPortfolio: false,
-        classification: 'Novo',
-        lead_temperature: null,
-        project: ent?.name || '',
-        handoff: false,
-        customer_name: '',
-        summary: result.error || '',
-        send_file_category: null,
-        appointment_confirmed: false,
-        appointment_date: null,
-        appointment_time: null,
-        appointment_notes: null,
-      };
+      console.log('[ANA_PARSE_FLOW]', {
+        conversationId,
+        structured_fallback_used: true,
+      });
+      finalReplySource = 'fallback_structured';
+      structured = fallbackReplyFromRaw(
+        result.content || '',
+        trimmed,
+        effectiveConv.customer_name,
+        appointmentPreflight.active,
+        richAppointmentContext,
+        recentUserContextForFallback,
+        allEnterpriseNames,
+        promptProductTypeForPrompt ?? triageRequestedProductType
+      );
     }
 
     if (!hasSendableFiles) {
       structured = { ...structured, send_file_category: null };
     }
+    console.log('[ANA_PARSE_FLOW]', {
+      conversationId,
+      final_reply_source: finalReplySource,
+    });
 
     if (structured) {
       const sr = structured;
