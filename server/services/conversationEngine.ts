@@ -13,6 +13,7 @@ import {
   tryMatchEnterpriseAnaphora,
   tryMatchEnterpriseOrdinalFromCatalog,
   tryMatchEnterprisePronounAfterCatalog,
+  enterpriseHasStrongNameSignalInTrimmed,
 } from '../repositories/enterpriseMatch.js';
 import {
   getActiveEnterpriseById,
@@ -490,34 +491,53 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     activeEnterprisesForContext = matchPool;
 
-    if (!locationQueryContext) {
-      matched = tryMatchEnterpriseFromUserCorpus(trimmed, matchPool);
-      if (matched != null) enterpriseMatchSource = 'current';
-      if (matched == null) {
-        matched = tryMatchEnterpriseAnaphora(trimmed, lastAssistantText, matchPool);
-        if (matched != null) enterpriseMatchSource = 'anaphora';
+    /**
+     * 1) Mensagem atual × todos os ativos — prioridade máxima para troca de foco (ignora filtro de tipo).
+     * 2) Mensagem atual × pool (tipo) se ainda vazio.
+     * 3) Anáfora / ordinal / pronome / blob de usuário / cauda explicitSwitch.
+     */
+    const fromGlobalTrimmed = tryMatchEnterpriseFromUserCorpus(trimmed, allActiveEnterprises);
+    if (fromGlobalTrimmed != null) {
+      matched = fromGlobalTrimmed;
+      enterpriseMatchSource = 'current';
+    }
+
+    if (matched == null && !locationQueryContext) {
+      const fromPoolTrimmed = tryMatchEnterpriseFromUserCorpus(trimmed, matchPool);
+      if (fromPoolTrimmed != null) {
+        matched = fromPoolTrimmed;
+        enterpriseMatchSource = 'current';
       }
-      if (matched == null) {
-        matched = tryMatchEnterpriseOrdinalFromCatalog(trimmed, lastAssistantText, matchPool);
-        if (matched != null) enterpriseMatchSource = 'ordinal';
-      }
-      if (matched == null) {
-        matched = tryMatchEnterprisePronounAfterCatalog(trimmed, lastAssistantText, matchPool);
-        if (matched != null) enterpriseMatchSource = 'pronoun_catalog';
-      }
-      if (matched == null) {
-        const userBlob = [fullUserUtterances.trim(), trimmed].filter(Boolean).join('\n');
-        matched = tryMatchEnterpriseFromUserCorpus(userBlob, matchPool);
-        if (matched != null) enterpriseMatchSource = 'context';
-      }
-      if (matched == null && explicitSwitch) {
-        matched = tryMatchEnterpriseByLastMention(matchPool, textForEnterpriseMatch);
-        if (matched != null) enterpriseMatchSource = 'explicit_tail';
-      }
-    } else {
-      matched = tryMatchEnterpriseFromUserCorpus(trimmed, matchPool);
-      if (matched != null) enterpriseMatchSource = 'current';
-      if (matched == null && explicitSwitch) {
+    }
+
+    if (matched == null && !locationQueryContext) {
+      matched = tryMatchEnterpriseAnaphora(trimmed, lastAssistantText, matchPool);
+      if (matched != null) enterpriseMatchSource = 'anaphora';
+    }
+    if (matched == null && !locationQueryContext) {
+      matched = tryMatchEnterpriseOrdinalFromCatalog(trimmed, lastAssistantText, matchPool);
+      if (matched != null) enterpriseMatchSource = 'ordinal';
+    }
+    if (matched == null && !locationQueryContext) {
+      matched = tryMatchEnterprisePronounAfterCatalog(trimmed, lastAssistantText, matchPool);
+      if (matched != null) enterpriseMatchSource = 'pronoun_catalog';
+    }
+    if (matched == null && !locationQueryContext) {
+      const userBlob = [fullUserUtterances.trim(), trimmed].filter(Boolean).join('\n');
+      matched = tryMatchEnterpriseFromUserCorpus(userBlob, matchPool);
+      if (matched != null) enterpriseMatchSource = 'context';
+    }
+    if (matched == null && !locationQueryContext && explicitSwitch) {
+      matched = tryMatchEnterpriseByLastMention(matchPool, textForEnterpriseMatch);
+      if (matched != null) enterpriseMatchSource = 'explicit_tail';
+    }
+
+    if (matched == null && locationQueryContext) {
+      const poolTrim = tryMatchEnterpriseFromUserCorpus(trimmed, matchPool);
+      if (poolTrim != null) {
+        matched = poolTrim;
+        enterpriseMatchSource = 'current';
+      } else if (explicitSwitch) {
         matched = tryMatchEnterpriseByLastMention(matchPool, textForEnterpriseMatch);
         if (matched != null) enterpriseMatchSource = 'explicit_tail';
       }
@@ -537,18 +557,66 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     if (matched != null) {
       const hasFocus = effectiveConv.enterprise_id != null;
       const isDifferent = effectiveConv.enterprise_id !== matched;
+      const contextStrongInCurrent =
+        enterpriseMatchSource === 'context' &&
+        enterpriseHasStrongNameSignalInTrimmed(matched, trimmed, allActiveEnterprises);
       const allowSwitchFromUserPick =
         isDifferent &&
         (enterpriseMatchSource === 'current' ||
           enterpriseMatchSource === 'anaphora' ||
           enterpriseMatchSource === 'pronoun_catalog' ||
           enterpriseMatchSource === 'ordinal' ||
-          enterpriseMatchSource === 'explicit_tail');
-      const shouldReclassify = !hasFocus || explicitSwitch || allowSwitchFromUserPick;
+          enterpriseMatchSource === 'explicit_tail' ||
+          contextStrongInCurrent);
+      const shouldReclassify = !hasFocus || allowSwitchFromUserPick || explicitSwitch;
+      let shouldReclassifyReason = 'none';
+      if (!hasFocus) shouldReclassifyReason = 'no_previous_focus';
+      else if (isDifferent && allowSwitchFromUserPick) {
+        shouldReclassifyReason =
+          enterpriseMatchSource === 'context' && contextStrongInCurrent
+            ? 'switch_context_plus_strong_trimmed_signal'
+            : `switch_match_source_${enterpriseMatchSource}`;
+      } else if (isDifferent && explicitSwitch) shouldReclassifyReason = 'explicit_switch_phrase';
+      else if (!isDifferent) shouldReclassifyReason = 'same_enterprise_as_focus';
+      else shouldReclassifyReason = 'keep_focus_match_not_trusted';
+
+      console.log('[ANA_ENTERPRISE_MATCH]', {
+        conversationId,
+        enterprise_match_current_message: trimmed.slice(0, 240),
+        enterprise_match_source: enterpriseMatchSource,
+        current_enterprise_id: effectiveConv.enterprise_id ?? null,
+        matched_enterprise_id: matched,
+        should_reclassify: shouldReclassify,
+        should_reclassify_reason: shouldReclassifyReason,
+        explicit_switch: explicitSwitch,
+        context_strong_in_current: contextStrongInCurrent,
+      });
+
       if (shouldReclassify) {
         await setConversationEnterpriseId(conversationId, matched);
         effectiveConv = (await getConversationById(conversationId)) ?? effectiveConv;
+        console.log('[ANA_ENTERPRISE_MATCH]', {
+          conversationId,
+          event: 'enterprise_focus_updated',
+          new_enterprise_id: matched,
+        });
+      } else {
+        console.log('[ANA_ENTERPRISE_MATCH]', {
+          conversationId,
+          event: 'enterprise_focus_kept',
+          kept_enterprise_id: effectiveConv.enterprise_id,
+          ignored_match_id: matched,
+        });
       }
+    } else {
+      console.log('[ANA_ENTERPRISE_MATCH]', {
+        conversationId,
+        enterprise_match_current_message: trimmed.slice(0, 240),
+        enterprise_match_source: null,
+        current_enterprise_id: effectiveConv.enterprise_id ?? null,
+        matched_enterprise_id: null,
+        should_reclassify_reason: 'no_match',
+      });
     }
 
     const ent = effectiveConv.enterprise_id ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;

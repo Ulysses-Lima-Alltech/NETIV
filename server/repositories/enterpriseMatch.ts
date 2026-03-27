@@ -77,6 +77,25 @@ export function tryMatchEnterpriseFromUserCorpus(userText: string, enterprises: 
   return tops[0]!;
 }
 
+/**
+ * Sinal forte o suficiente na mensagem atual para trocar foco sem depender de explicitSwitch
+ * (nome/slug inteiro, ou mensagem curta com token distintivo do empreendimento).
+ */
+export function enterpriseHasStrongNameSignalInTrimmed(
+  enterpriseId: number,
+  userTrimmed: string,
+  enterprises: EnterpriseRow[]
+): boolean {
+  const e = enterprises.find((x) => x.id === enterpriseId);
+  if (!e) return false;
+  const t = normEnterpriseMatchText(userTrimmed);
+  if (!t) return false;
+  const s = scoreEnterpriseMentionInText(e, t);
+  if (s >= 1000) return true;
+  if (t.length <= 56 && s >= 130) return true;
+  return false;
+}
+
 /** Nomes exibidos após 📍 na última listagem da Ana (catálogo). */
 export function extractCatalogEnterpriseNamesFromAssistantReply(assistantText: string): string[] {
   const t = assistantText || '';
