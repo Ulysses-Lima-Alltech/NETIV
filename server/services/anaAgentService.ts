@@ -1,4 +1,5 @@
 import type { EnterpriseRow, EnterpriseTipo } from '../repositories/enterpriseRepository.js';
+import type { RequestedProductType } from '../utils/anaRequestedProductType.js';
 import type { LocationQueryContext } from '../utils/anaEnterpriseLocationContext.js';
 import { parseAddons, normalizeFileCategory, type FileCategory } from '../repositories/enterpriseRepository.js';
 import {
@@ -61,6 +62,10 @@ export const ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY =
 const ANA_FALLBACK_REFINEMENT_LOTEAMENTO_REPLY =
   'Me diz a região e a faixa de investimento que eu te mostro os lotes.';
 
+/** Triagem: tipo ainda não inferido no backend — não há lista mista para mostrar. */
+export const ANA_FALLBACK_ASK_PRODUCT_TYPE =
+  'Pra eu te mostrar as opções certas: você busca loteamento, apartamento ou linha MCMV?';
+
 /** Detecta pedido explícito de catálogo/portfólio OU sinal de que o cliente não consegue/quer filtrar antes de ver. */
 export function hasCatalogIntent(ctx: string): boolean {
   if (/\b(me\s+mostr|quero\s+ver|quais\s+opcoes|quais\s+empreendimentos|o\s+que\s+voces?\s+te[mn]|o\s+que\s+voces?\s+trabalha|me\s+mostra\s+tudo|quero\s+conhecer|quero\s+saber\s+quais|mostra\s+as\s+opcoes|me\s+passa\s+as\s+opcoes|lista|catalogo|portfolio)\b/.test(ctx)) return true;
@@ -72,35 +77,53 @@ export function hasCatalogIntent(ctx: string): boolean {
  * Fallback com lista real de nomes do portfólio — usado quando o cliente pede explicitamente catálogo
  * e a reply da LLM falhou no parse ou caiu em fallback genérico.
  */
+function tipoLabelForCatalog(hint: RequestedProductType | undefined, recentContext?: string): string {
+  if (hint === 'LOTEAMENTO') return ' de loteamento';
+  if (hint === 'APARTAMENTO') return ' de apartamento';
+  if (hint === 'MCMV') return ' na linha MCMV';
+  const ctx = (recentContext || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+  if (/\b(lote|lotes|loteamento|terreno|terrenos)\b/.test(ctx)) return ' de loteamento';
+  return '';
+}
+
 export function buildCatalogFallbackReply(
   allEnterpriseNames: string[],
-  recentContext?: string
+  recentContext?: string,
+  productTypeHint?: RequestedProductType
 ): string {
-  const ctx = (recentContext || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
-  const isLot = /\b(lote|lotes|loteamento|terreno|terrenos)\b/.test(ctx);
   const names = allEnterpriseNames.slice(0, 5);
   if (names.length === 0) {
     return 'No momento não tenho empreendimentos ativos no sistema. Quer que eu te avise quando tivermos novidades?';
   }
   const listText = names.map((n) => `📍 ${n}`).join('\n');
-  const tipoLabel = isLot ? ' de loteamento' : '';
+  const tipoLabel = tipoLabelForCatalog(productTypeHint, recentContext);
   const moreText = allEnterpriseNames.length > 5 ? '\n\nTenho mais opções também.' : '';
-  return `Hoje eu trabalho com essas opções${tipoLabel}:\n\n${listText}${moreText}\n\nQual deles te interessa mais ou quer que eu filtre por região?`;
+  return `Tenho sim. Hoje eu trabalho com estas opções${tipoLabel}:\n\n${listText}${moreText}\n\nSe quiser, agora eu separo pelas opções que fazem mais sentido pra você. Em qual região você quer buscar?`;
 }
 
 /** Fallback de refinamento sensível ao tipo de produto inferido no contexto recente. */
 export function buildRefinementContextReply(
   recentContext?: string,
-  allEnterpriseNames?: string[]
+  allEnterpriseNames?: string[],
+  productTypeHint?: RequestedProductType
 ): string {
   const ctx = (recentContext || '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/\p{M}/gu, '');
-  if (hasCatalogIntent(ctx) && allEnterpriseNames && allEnterpriseNames.length > 0) {
-    return buildCatalogFallbackReply(allEnterpriseNames, recentContext);
+  if (hasCatalogIntent(ctx)) {
+    if (allEnterpriseNames && allEnterpriseNames.length > 0) {
+      return buildCatalogFallbackReply(allEnterpriseNames, recentContext, productTypeHint);
+    }
+    if (productTypeHint === 'INDEFINIDO' || productTypeHint == null) {
+      return ANA_FALLBACK_ASK_PRODUCT_TYPE;
+    }
+    return buildCatalogFallbackReply([], recentContext, productTypeHint);
   }
   if (/\b(lote|lotes|loteamento|terreno|terrenos|loteamentos)\b/.test(ctx)) {
+    if (allEnterpriseNames && allEnterpriseNames.length > 0) {
+      return buildCatalogFallbackReply(allEnterpriseNames, recentContext, productTypeHint ?? 'LOTEAMENTO');
+    }
     return ANA_FALLBACK_REFINEMENT_LOTEAMENTO_REPLY;
   }
   return ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY;
@@ -112,8 +135,9 @@ REGRA CRÍTICA (campo "reply"):
 - Se o cliente mencionar localização (cidade, bairro, estado), metragem (m²), preço ou intenção de economia, ou pedir empreendimentos/opções, o "reply" DEVE ser sugestão ou direcionamento comercial (portfólio, dados do prompt, próximo passo útil).
 - NUNCA trate isso como incompreensão. NUNCA use no "reply" a pergunta genérica sobre "empreendimento, valores, localização ou disponibilidade" nesses casos, nem a repita se já houver contexto no histórico.
 - Evite repetir a mesma pergunta genérica que já consta na última resposta sua no histórico; use "nextBestQuestion" para planejar UMA pergunta objetiva diferente quando precisar qualificar.
-- Se o cliente disser "o que você tem?", "o que vocês têm?", "me mostra opções", "quero ver os empreendimentos", "quais opções vocês têm", "me mostra tudo", ou qualquer pedido explícito de ver lista/catálogo/portfólio, interprete como wantsCatalog: true e shouldShowPortfolio: true. O "reply" DEVE conter os nomes reais dos empreendimentos ativos (📍 nome, até 5, sem inventar detalhes), seguido de pergunta curta para refinar.
-- Frases como "quero loteamento", "quero comprar um lote", "lote", "terreno em condomínio" → productType: "LOTEAMENTO" e não conduza como fluxo de apartamento.
+- Se o cliente disser "o que você tem?", "me mostra opções", "quero ver os empreendimentos", "me mostra tudo", ou pedido explícito de lista/catálogo/portfólio, interprete como wantsCatalog: true e shouldShowPortfolio: true. Se o prompt trouxer lista filtrada, o "reply" DEVE citar só esses nomes reais (📍, até 5) e depois perguntar região para refinar; se o prompt indicar tipo indefinido sem lista, pergunte o tipo (loteamento, apartamento ou MCMV) em vez de inventar nomes.
+- O backend já filtra a lista por tipo quando o cliente deixa claro loteamento, apartamento ou MCMV; alinhe productType no JSON a esse tipo e use somente os nomes do prompt.
+- Frases como "quero loteamento", "quero comprar um lote", "lote", "terreno em condomínio" → productType: "LOTEAMENTO".
 - O campo "reply" NUNCA pode conter dados comerciais inventados. Se um campo não existir nos dados fornecidos, não mencione. Não preencha lacunas com texto genérico ou suposição.
 
 {
@@ -213,8 +237,8 @@ REGRA CRÍTICA (obrigatória — tem prioridade sobre "incompreensão" e sobre q
 - Se o cliente mencionar QUALQUER um destes: localização (cidade, bairro, estado), metragem (m²), preço ou intenção de economia ("em conta", "barato", faixa), ou pedido de empreendimentos/opções/lançamentos — você DEVE responder com sugestão ou direcionamento comercial (o que couber do cadastro/portfólio no prompt, ou como avançar na qualificação sem resetar o diálogo).
 - NUNCA trate isso como incompreensão. NUNCA diga que "não entendeu" ou que a mensagem foi ambígua só por ser curta.
 - NUNCA repita a pergunta genérica pedindo para escolher entre "empreendimento, valores, localização ou disponibilidade" quando já houver esse tipo de contexto no histórico ou na mensagem atual — e evite essa frase fixa em geral; prefira pergunta específica sobre o que ainda falta (ex.: só orçamento, só região dentro da cidade).
-- Se o cliente fez pedido vago ("quero saber mais", "me ajuda") sem localização, a próxima ação preferencial é perguntar a localização.
-- MAS se o cliente pediu EXPLICITAMENTE para VER opções/lista/portfólio/catálogo (ex.: "me mostra o que vocês têm", "quero ver os empreendimentos", "quais opções vocês têm", "me mostra tudo", "o que vocês trabalham"), você DEVE listar os nomes reais dos empreendimentos ativos do portfólio (até 5 nomes, só 📍 nome, sem inventar detalhes) e DEPOIS perguntar qual região ou opção interessa mais. Neste caso, listar ANTES de perguntar localização.
+- Se o cliente fez pedido vago ("quero saber mais", "me ajuda") sem tipo de produto nem localização, a próxima ação preferencial é descobrir o tipo (loteamento, apartamento ou MCMV) — não liste portfólio misto.
+- Quando o sistema já filtrou o portfólio por um tipo (veja bloco de triagem) e o cliente pedir ver opções/lista/catálogo, liste até 5 nomes reais daquela lista (📍) e só depois pergunte região/localização para refinar.
 
 BUSCA / REFINAMENTO (mensagens curtas em sequência — prioridade):
 - Trate expressões como "quero em São Paulo", "algo mais em conta", "com uns 300m²", "tem em SP?", "quais empreendimentos em..." como continuação da mesma intenção: una tudo com o histórico recente antes de responder.
@@ -451,6 +475,11 @@ export interface BuildAnaSystemPromptOpts {
   commercialSnapshots?: CommercialSnapshot[] | null;
   /** Só quando há 2+ snapshots: abertura e fechamento sorteados no servidor para variar a UX. */
   commercialListUxHints?: { opening: string; closing: string } | null;
+  /**
+   * Tipo validado no backend (triagem: inferência + filtro de lista; scoped: tipo do empreendimento em foco).
+   * Usado para alinhar o prompt com a lista já filtrada — a IA não decide o tipo sozinha.
+   */
+  requestedProductType?: RequestedProductType | null;
 }
 
 function buildTipoComercialBlock(tipo: EnterpriseTipo, enterpriseName: string): string {
@@ -458,7 +487,7 @@ function buildTipoComercialBlock(tipo: EnterpriseTipo, enterpriseName: string): 
   if (tipo === 'LOTEAMENTO') {
     return `${base}
 - NUNCA pergunte dormitórios ou banheiros.
-- Priorize: localização, faixa de investimento, metragem do lote, finalidade do lote, infraestrutura, condições comerciais (somente o que existir no cadastro/book).`;
+- Qualifique com: localização, faixa de investimento, metragem do lote, finalidade do lote, infraestrutura, condições comerciais (somente o que existir no cadastro/book) — na ordem que fizer sentido no diálogo, sem exigir tudo de uma vez.`;
   }
   if (tipo === 'APARTAMENTO') {
     return `${base}
@@ -470,7 +499,8 @@ function buildTipoComercialBlock(tipo: EnterpriseTipo, enterpriseName: string): 
 
 function buildEnterpriseTipoDirective(
   enterprise: EnterpriseRow | null,
-  mode: 'triage' | 'scoped' | 'inactive_linked'
+  mode: 'triage' | 'scoped' | 'inactive_linked',
+  triageRequestedProductType?: RequestedProductType | null
 ): string {
   if (mode === 'inactive_linked') return '';
   if (mode === 'scoped' && enterprise) {
@@ -478,12 +508,22 @@ function buildEnterpriseTipoDirective(
 
 ${buildTipoComercialBlock(enterprise.tipo, enterprise.name)}`;
   }
+  const t = triageRequestedProductType ?? 'INDEFINIDO';
+  if (t === 'INDEFINIDO') {
+    return `
+
+FLUXO DE TIPO (triagem — o sistema classificou nesta rodada: INDEFINIDO):
+- O tipo de produto ainda NÃO está claro o suficiente. NÃO liste portfólio misto (loteamento + apartamento + MCMV na mesma resposta).
+- Pergunte de forma natural: a pessoa busca loteamento, apartamento ou linha MCMV?
+- No JSON, use productType: "INDEFINIDO" até o cliente deixar claro.`;
+  }
   return `
 
-TIPO DE PRODUTO (triagem — inferir do cliente quando ainda não houver empreendimento focado):
-- "loteamento", "lote", "terreno", "comprar um lote" → productType "LOTEAMENTO" no JSON; não conduza como apartamento.
-- MCMV / minha casa / faixa de renda explícita → productType "MCMV" quando aplicável.
-- Demais → "APARTAMENTO" ou "INDEFINIDO" se não houver sinal claro.`;
+FLUXO DE TIPO (triagem — o sistema classificou nesta rodada: ${t}):
+- A lista de nomes no prompt contém SOMENTE empreendimentos do tipo ${t}. É proibido citar nome fora dessa lista ou de outro tipo.
+- Se o cliente ainda não informou localização: liste até 5 nomes reais (📍, só dados cadastrados) e só depois pergunte em qual região quer buscar. Localização NÃO é pré-condição para essa primeira listagem.
+- LOTEAMENTO: nunca pergunte dormitórios/banheiros. Depois da localização, refine por faixa, metragem do lote, finalidade.
+- APARTAMENTO / MCMV: depois da localização, refine por perfil (dormitórios, renda/elegibilidade MCMV, etc.) sem inventar dados.`;
 }
 
 function buildLocationQueryBlock(loc: LocationQueryContext): string {
@@ -521,12 +561,19 @@ export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
   const commercialBlock = buildCommercialDataBlock(opts.commercialSnapshots ?? []) + commercialListUx;
 
   if (opts.mode === 'triage') {
-    const namesList =
-      loc?.isEmpty
-        ? '(nenhum empreendimento ativo no banco para esta cidade/região)'
-        : (opts.allEnterpriseNames?.length ?? 0) > 0
-          ? opts.allEnterpriseNames!.join(', ')
-          : '(nenhum empreendimento ativo cadastrado)';
+    const triageType = opts.requestedProductType ?? 'INDEFINIDO';
+    let namesList: string;
+    if (loc?.isEmpty) {
+      namesList = '(nenhum empreendimento ativo no banco para esta cidade/região)';
+    } else if ((opts.allEnterpriseNames?.length ?? 0) > 0) {
+      namesList = opts.allEnterpriseNames!.join(', ');
+    } else if (!loc && triageType === 'INDEFINIDO') {
+      namesList = '(tipo indefinido — não invente nomes; pergunte loteamento, apartamento ou MCMV)';
+    } else if (!loc) {
+      namesList = `(nenhum empreendimento ativo do tipo ${triageType} no sistema)`;
+    } else {
+      namesList = '(nenhum resultado nesta localização para o filtro atual)';
+    }
     const cls = (opts.conversationClassification || 'Novo').trim();
     const ap = opts.appointmentPreflight;
     const openCtx = (opts.openAppointmentSummary || '').trim()
@@ -538,15 +585,17 @@ Trate a mensagem atual como complemento ou remarcação; não reinicie triagem n
       : '';
 
     const portfolioLine = loc
-      ? `Lista autorizada para ESTA consulta de localização (única fonte de nomes — não use outro portfólio nem lista global): ${namesList}`
-      : `Empreendimentos ativos no portfólio (use apenas estes nomes, não invente outros): ${namesList}`;
+      ? `Lista autorizada para ESTA consulta de localização (única fonte de nomes — já filtrada por tipo quando o sistema inferiu tipo; não use outro portfólio): ${namesList}`
+      : triageType === 'INDEFINIDO'
+        ? `Portfólio: ${namesList}`
+        : `Portfólio ativo filtrado pelo sistema — somente tipo ${triageType} (cite apenas estes nomes): ${namesList}`;
 
     const triageLocationBullets = loc
-      ? `- O cliente perguntou sobre uma localidade específica: use APENAS availableEnterprises do bloco "CONSULTA POR LOCALIZAÇÃO" e a lista autorizada acima. Não volte ao portfólio geral.
-- Não sugira empreendimento de outra cidade/região fora do filtro. Não diga que não há opções se availableEnterprises não estiver vazio.`
-      : `- Quando o cliente pedir EXPLICITAMENTE para VER opções/portfólio/lista (ex.: "o que vocês têm", "me mostra", "quero ver os empreendimentos", "quais opções vocês têm", "me mostra tudo"), LISTE os nomes reais dos empreendimentos ativos (📍 nome, até 5, sem inventar detalhes) e depois pergunte o que interessa mais ou qual região priorizar. LISTAR PRIMEIRO, refinar depois.
-- Quando o pedido for vago ("quero saber mais", "me ajuda com imóvel") sem menção explícita de ver opções, pode perguntar localização antes de listar.
-- Apresente opções usando APENAS dados reais do cadastro (nome + campos preenchidos). Não invente descrição nem diferenciais.`;
+      ? `- O cliente perguntou sobre uma localidade específica: use APENAS availableEnterprises do bloco "CONSULTA POR LOCALIZAÇÃO" e a lista autorizada acima (já restrita ao tipo quando aplicável). Não volte a um portfólio global misto.
+- Não sugira empreendimento de outra cidade/região ou de outro tipo fora do filtro.`
+      : `- Ordem: validar tipo (o backend já filtrou a lista quando o tipo está claro) → mostrar até 5 nomes reais com 📍 → perguntar região/localização → refinar (faixa, metragem, perfil). Com tipo claro, não exija localização antes da primeira listagem.
+- Com tipo INDEFINIDO, não liste portfólio misto: pergunte loteamento, apartamento ou MCMV.
+- Nunca cite empreendimento de tipo diferente do filtro desta rodada. Dados somente do cadastro; não invente detalhes.`;
 
     const appointmentPriority =
       ap?.active === true
@@ -562,7 +611,7 @@ ${ap.reschedule ? '- O cliente pediu ALTERAR/REAGENDAR: trate como atualização
         : '';
 
     return `${base}
-${buildEnterpriseTipoDirective(null, 'triage')}
+${buildEnterpriseTipoDirective(null, 'triage', triageType)}
 
 ${locationBlock ? `${locationBlock}
 
@@ -920,7 +969,8 @@ export function fallbackReplyFromRaw(
   appointmentFlow?: boolean,
   appointmentContinuation?: boolean,
   recentContextForHeuristic?: string,
-  allEnterpriseNames?: string[]
+  allEnterpriseNames?: string[],
+  productTypeHint?: RequestedProductType
 ): AnaStructuredReply {
   const blob = [recentContextForHeuristic, userMessage].filter(Boolean).join('\n');
   const reply =
@@ -931,7 +981,7 @@ export function fallbackReplyFromRaw(
         : appointmentFlow
           ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
           : userUtteranceHasSearchRefinementSignals(blob)
-            ? buildRefinementContextReply(blob, allEnterpriseNames)
+            ? buildRefinementContextReply(blob, allEnterpriseNames, productTypeHint)
             : ANA_FALLBACK_INCOMPREHENSION_REPLY;
   return {
     reply,

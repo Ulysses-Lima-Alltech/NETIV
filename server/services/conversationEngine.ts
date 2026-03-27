@@ -24,6 +24,7 @@ import { loadRankedKnowledgeChunksForPrompt } from '../repositories/enterpriseKn
 import { isPipelineStale } from './conversationPipelineToken.js';
 import { generateChatCompletion, type ChatMessage } from './openaiService.js';
 import { resolveEnterpriseLocationContext } from '../utils/anaEnterpriseLocationContext.js';
+import { inferRequestedProductType } from '../utils/anaRequestedProductType.js';
 import {
   buildAnaSystemPrompt,
   type BuildAnaSystemPromptOpts,
@@ -437,9 +438,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let matched: number | null = null;
     let activeEnterprisesForContext: EnterpriseRow[] | null = null;
 
-    const listedForNames = await listEnterprises(true);
+    const allActiveEnterprises = await listEnterprises(true);
     const fullUserUtterances = buildUserUtterancesContext(rows);
-    const locationQueryContext = resolveEnterpriseLocationContext(trimmed, fullUserUtterances, listedForNames);
+    const triageRequestedProductType = inferRequestedProductType(trimmed, fullUserUtterances);
+    /** Subconjunto por tipo quando o cliente já manifestou LOTEAMENTO/APARTAMENTO/MCMV; INDEFINIDO = todos (só para resolver localização). */
+    const enterprisesForLocationResolution =
+      triageRequestedProductType === 'INDEFINIDO'
+        ? allActiveEnterprises
+        : allActiveEnterprises.filter((e) => e.tipo === triageRequestedProductType);
+    const locationQueryContext = resolveEnterpriseLocationContext(
+      trimmed,
+      fullUserUtterances,
+      enterprisesForLocationResolution
+    );
     const appointmentPreflight = computeAppointmentPreflight(trimmed, fullUserUtterances);
     /** Com consulta por localização, o match por nome não usa histórico (evita foco errado, ex.: outro empreendimento citado antes). */
     const textForEnterpriseMatch = explicitSwitch
@@ -449,7 +460,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         : fullUserUtterances.trim() || trimmed;
 
     if (explicitSwitch) {
-      activeEnterprisesForContext = listedForNames;
+      activeEnterprisesForContext = enterprisesForLocationResolution;
       matched = tryMatchEnterpriseByLastMention(activeEnterprisesForContext, textForEnterpriseMatch);
     } else {
       matched = await tryMatchActiveEnterpriseId(textForEnterpriseMatch);
@@ -495,10 +506,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     if (inactiveLinked) mode = 'inactive_linked';
     else if (ent) mode = 'scoped';
 
+    const enterprisesForSameTipoAsEnt =
+      ent != null ? allActiveEnterprises.filter((e) => e.tipo === ent.tipo) : [];
+
     const vars = ent ? await getVariablesMap(ent.id) : {};
     let commercialSnapshots: CommercialSnapshot[] = [];
     if (locationQueryContext && locationQueryContext.filteredEnterpriseIds.length > 0) {
-      const byId = new Map(listedForNames.map((e) => [e.id, e] as const));
+      const byId = new Map(enterprisesForLocationResolution.map((e) => [e.id, e] as const));
       for (const id of locationQueryContext.filteredEnterpriseIds) {
         const row = byId.get(id);
         if (!row) continue;
@@ -521,13 +535,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     const hasSendableFiles = fileInventory.trim().length > 0;
 
-    let allEnterpriseNames =
-      mode === 'scoped'
-        ? (activeEnterprisesForContext ?? listedForNames).map((e) => e.name)
-        : listedForNames.map((e) => e.name);
+    let allEnterpriseNames: string[] = [];
     if (locationQueryContext) {
       allEnterpriseNames = locationQueryContext.availableEnterprises.map((e) => e.name);
+    } else if (mode === 'scoped') {
+      allEnterpriseNames = (activeEnterprisesForContext ?? enterprisesForSameTipoAsEnt).map((e) => e.name);
+    } else if (mode === 'triage') {
+      allEnterpriseNames =
+        triageRequestedProductType === 'INDEFINIDO'
+          ? []
+          : enterprisesForLocationResolution.map((e) => e.name);
     }
+
+    const promptProductTypeForPrompt =
+      mode === 'triage'
+        ? triageRequestedProductType
+        : mode === 'scoped' && ent
+          ? ent.tipo
+          : undefined;
+
     const promptOpts: BuildAnaSystemPromptOpts = {
       mode,
       enterprise: ent,
@@ -535,6 +561,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       knowledgeText,
       fileInventory,
       allEnterpriseNames,
+      requestedProductType: promptProductTypeForPrompt,
       knownCustomerName: effectiveConv.customer_name,
       customerNameMentionsSoFar: effectiveConv.ana_customer_name_mentions ?? 0,
       conversationClassification: effectiveConv.classification,
@@ -614,7 +641,8 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
         appointmentPreflight.active,
         richAppointmentContext,
         recentUserContextForFallback,
-        allEnterpriseNames
+        allEnterpriseNames,
+        promptProductTypeForPrompt ?? triageRequestedProductType
       );
     }
     if (!structured) {
@@ -628,7 +656,11 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
             : appointmentPreflight.active
               ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
               : userUtteranceHasSearchRefinementSignals(recentUserContextForFallback)
-                ? buildRefinementContextReply(recentUserContextForFallback, allEnterpriseNames)
+                ? buildRefinementContextReply(
+                    recentUserContextForFallback,
+                    allEnterpriseNames,
+                    promptProductTypeForPrompt ?? triageRequestedProductType
+                  )
                 : ANA_FALLBACK_INCOMPREHENSION_REPLY,
         intent: 'fallback',
         productType: null,
@@ -666,7 +698,11 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
         allEnterpriseNames.length > 0 &&
         !allEnterpriseNames.some((n) => sr.reply.includes(n))
       ) {
-        const catalogReply = buildCatalogFallbackReply(allEnterpriseNames, recentUserContextForFallback);
+        const catalogReply = buildCatalogFallbackReply(
+          allEnterpriseNames,
+          recentUserContextForFallback,
+          promptProductTypeForPrompt ?? triageRequestedProductType
+        );
         console.log('[ANA_PIPELINE] catalog_injected', { conversationId, namesCount: allEnterpriseNames.length });
         structured = { ...sr, reply: catalogReply };
       }
