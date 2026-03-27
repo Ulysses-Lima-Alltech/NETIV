@@ -173,6 +173,9 @@ function rowsToHistory(
 const SWITCH_INTENT_PATTERNS = [
   'agora quero', 'quero saber do', 'quero saber sobre', 'quero informacoes do', 'quero informacoes sobre',
   'quero falar do', 'quero falar sobre', 'quero falar sobre o', 'quero falar sobre a',
+  'pode me falar', 'pode falar mais do', 'pode falar mais sobre', 'me falar mais do', 'me falar mais sobre',
+  'falar mais do', 'falar mais sobre', 'falar do', 'falar sobre',
+  'gostaria de saber do', 'gostaria de saber sobre', 'queria saber do', 'queria saber sobre',
   'tenho interesse no', 'tenho interesse em',
   'me passe mais', 'me passe mais informacoes', 'me passe mais informacoes do', 'me passe mais informacoes sobre',
   'me passa mais', 'me passa mais informacoes', 'me passa mais informacoes do', 'me passa mais informacoes sobre',
@@ -543,15 +546,37 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
+    const strongEnterpriseNameInCurrentMessage =
+      matched != null && enterpriseHasStrongNameSignalInTrimmed(matched, trimmed, allActiveEnterprises);
     if (
       matched &&
       locationQueryContext &&
       !locationQueryContext.isEmpty &&
       locationQueryContext.filteredEnterpriseIds.length > 0 &&
-      !locationQueryContext.filteredEnterpriseIds.includes(matched)
+      !locationQueryContext.filteredEnterpriseIds.includes(matched) &&
+      !strongEnterpriseNameInCurrentMessage
     ) {
+      console.log('[ANA_ENTERPRISE_MATCH]', {
+        conversationId,
+        event: 'location_filter_cleared_match',
+        matched_enterprise_id: matched,
+        filtered_ids: locationQueryContext.filteredEnterpriseIds,
+      });
       matched = null;
       enterpriseMatchSource = null;
+    } else if (
+      matched &&
+      locationQueryContext &&
+      !locationQueryContext.isEmpty &&
+      locationQueryContext.filteredEnterpriseIds.length > 0 &&
+      !locationQueryContext.filteredEnterpriseIds.includes(matched) &&
+      strongEnterpriseNameInCurrentMessage
+    ) {
+      console.log('[ANA_ENTERPRISE_MATCH]', {
+        conversationId,
+        event: 'location_filter_overridden_by_strong_enterprise_name',
+        matched_enterprise_id: matched,
+      });
     }
 
     if (matched != null) {
@@ -652,7 +677,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     const vars = ent ? await getVariablesMap(ent.id) : {};
     let commercialSnapshots: CommercialSnapshot[] = [];
-    if (locationQueryContext && locationQueryContext.filteredEnterpriseIds.length > 0) {
+    /** Com foco scoped, dados e listas devem ser do empreendimento da conversa — não do filtro de cidade antigo no histórico. */
+    if (mode === 'scoped' && ent) {
+      commercialSnapshots = [{ enterpriseName: ent.name, variables: vars }];
+    } else if (locationQueryContext && locationQueryContext.filteredEnterpriseIds.length > 0) {
       const byId = new Map(enterprisesForLocationResolution.map((e) => [e.id, e] as const));
       for (const id of locationQueryContext.filteredEnterpriseIds) {
         const row = byId.get(id);
@@ -685,10 +713,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const hasSendableFiles = fileInventory.trim().length > 0;
 
     let allEnterpriseNames: string[] = [];
-    if (locationQueryContext) {
-      allEnterpriseNames = locationQueryContext.availableEnterprises.map((e) => e.name);
-    } else if (mode === 'scoped') {
+    if (mode === 'scoped' && ent) {
       allEnterpriseNames = (activeEnterprisesForContext ?? enterprisesForSameTipoAsEnt).map((e) => e.name);
+    } else if (locationQueryContext) {
+      allEnterpriseNames = locationQueryContext.availableEnterprises.map((e) => e.name);
     } else if (mode === 'triage') {
       allEnterpriseNames =
         triageRequestedProductType === 'INDEFINIDO'
@@ -717,7 +745,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       conversationClassification: effectiveConv.classification,
       appointmentPreflight,
       openAppointmentSummary,
-      locationQueryContext: locationQueryContext ?? undefined,
+      locationQueryContext:
+        mode === 'scoped' && ent ? undefined : (locationQueryContext ?? undefined),
       commercialSnapshots: commercialSnapshots.length > 0 ? commercialSnapshots : undefined,
       commercialListUxHints: commercialSnapshots.length > 1 ? pickCommercialListUx() : undefined,
     };
@@ -843,8 +872,13 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
 
     if (structured) {
       const sr = structured;
+      const strongCatalogBlockId = tryMatchEnterpriseFromUserCorpus(trimmed, allActiveEnterprises);
+      const blockCatalogInjectionForNamedEnterprise =
+        strongCatalogBlockId != null &&
+        enterpriseHasStrongNameSignalInTrimmed(strongCatalogBlockId, trimmed, allActiveEnterprises);
       if (
         mode !== 'scoped' &&
+        !blockCatalogInjectionForNamedEnterprise &&
         (sr.wantsCatalog || sr.shouldShowPortfolio) &&
         allEnterpriseNames.length > 0 &&
         !allEnterpriseNames.some((n) => sr.reply.includes(n))
