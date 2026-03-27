@@ -101,6 +101,7 @@ interface ChatPanelProps {
     reserve?: ReserveSegmentationPatchBody;
     assignedBrokerId?: number | null;
   }) => void | Promise<void>;
+  onClearPhoneHistory?: (phone: string) => void | Promise<void>;
   projects?: { id: number; name: string; active: boolean }[];
   isSending?: boolean;
   onScrollContainerRef?: (el: HTMLDivElement | null) => void;
@@ -113,6 +114,7 @@ export function ChatPanel({
   loadError,
   onSendMessage,
   onClassificationChange,
+  onClearPhoneHistory,
   projects = [],
   isSending = false,
   onScrollContainerRef,
@@ -201,9 +203,24 @@ export function ChatPanel({
         <div className="flex flex-wrap items-start gap-3">
           <div className="flex-1 min-w-0">
             <h3 className="text-[15px] font-semibold text-[#111827] truncate leading-tight">{displayName}</h3>
-            {conversation.leadPhone && (
-              <p className="text-[13px] text-[#6B7280] truncate mt-0.5">{conversation.leadPhone}</p>
-            )}
+            <div className="flex items-center gap-2 mt-0.5 min-w-0">
+              {conversation.leadPhone ? (
+                <p className="text-[13px] text-[#6B7280] truncate min-w-0 flex-1">{conversation.leadPhone}</p>
+              ) : (
+                <p className="text-[13px] text-[#9CA3AF] italic flex-1">Sem telefone</p>
+              )}
+              {onClearPhoneHistory && conversation.leadPhone && (
+                <button
+                  type="button"
+                  onClick={() => onClearPhoneHistory(conversation.leadPhone)}
+                  title="Excluir todo o histórico deste número"
+                  className="shrink-0 inline-flex items-center gap-1 text-[11px] font-medium text-[#6B7280] border border-[#E5E7EB] hover:text-red-600 hover:border-red-200 hover:bg-red-50 rounded-[6px] px-2 py-0.5 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                  Limpar histórico
+                </button>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {(conversation.projectName || conversation.empreendimento) && (

@@ -8,7 +8,13 @@ import {
   incrementAnaCustomerNameMentions,
 } from '../repositories/conversationRepository.js';
 import { sendTextMessage, sendDocumentMessage } from './whatsappMetaService.js';
-import { tryMatchActiveEnterpriseId } from '../repositories/enterpriseMatch.js';
+import {
+  tryMatchEnterpriseFromUserCorpus,
+  tryMatchEnterpriseAnaphora,
+  tryMatchEnterpriseOrdinalFromCatalog,
+  tryMatchEnterprisePronounAfterCatalog,
+  enterpriseHasStrongNameSignalInTrimmed,
+} from '../repositories/enterpriseMatch.js';
 import {
   getActiveEnterpriseById,
   loadAgentKnowledgeText,
@@ -20,25 +26,32 @@ import {
   type FileCategory,
   type EnterpriseRow,
 } from '../repositories/enterpriseRepository.js';
+import { loadRankedKnowledgeChunksForPrompt } from '../repositories/enterpriseKnowledgeChunkRepository.js';
+import { isPipelineStale } from './conversationPipelineToken.js';
 import { generateChatCompletion, type ChatMessage } from './openaiService.js';
 import { resolveEnterpriseLocationContext } from '../utils/anaEnterpriseLocationContext.js';
+import { inferRequestedProductType } from '../utils/anaRequestedProductType.js';
 import {
   buildAnaSystemPrompt,
   type BuildAnaSystemPromptOpts,
   type CommercialSnapshot,
   pickCommercialListUx,
   parseAnaJson,
+  trySalvageStructuredReplyFromRawModelContent,
   fallbackReplyFromRaw,
   detectStrongPurchaseIntentForLeadTemperature,
   ANA_FALLBACK_INCOMPREHENSION_REPLY,
+  buildRefinementContextReply,
+  buildCatalogFallbackReply,
 } from './anaAgentService.js';
 import {
-  randomAnaReplyDelayMs,
-  sleepMs,
   finalizeAnaReplyText,
   countCustomerNameMentionsInText,
   isSimpleOpeningGreeting,
   pickRandomGreetingReply,
+  userUtteranceHasSearchRefinementSignals,
+  repliesSemanticallySimilar,
+  pickDuplicateFallbackReply,
 } from '../utils/anaReplyFinalize.js';
 import {
   buildUserUtterancesContext,
@@ -52,6 +65,9 @@ import {
   findOpenAppointmentForConversationAndEnterprise,
   type AppointmentRow,
 } from '../repositories/appointmentRepository.js';
+
+/** Modelo principal da Ana (WhatsApp) — saída JSON estruturada. */
+const ANA_CHAT_MODEL = 'gpt-5';
 
 function formatOpenAppointmentSummaryForPrompt(row: AppointmentRow, enterpriseName: string): string {
   const fmt = new Intl.DateTimeFormat('pt-BR', {
@@ -83,6 +99,8 @@ export interface IncomingMessageContext {
   toPhoneNumber: string;
   /** Rajada WhatsApp: quantas bolhas de usuário no fim do histórico foram fundidas em userMessage (omitir = 1 mensagem isolada). */
   trailingUserBubbles?: number;
+  /** Token da janela de debounce; nova mensagem invalida envio pendente. */
+  replyPipelineToken?: number;
 }
 
 /** Reprocessa a última mensagem do usuário sem resposta quando handoff muda true→false. */
@@ -155,12 +173,27 @@ function rowsToHistory(
 const SWITCH_INTENT_PATTERNS = [
   'agora quero', 'quero saber do', 'quero saber sobre', 'quero informacoes do', 'quero informacoes sobre',
   'quero falar do', 'quero falar sobre', 'quero falar sobre o', 'quero falar sobre a',
+  'pode me falar', 'pode falar mais do', 'pode falar mais sobre', 'me falar mais do', 'me falar mais sobre',
+  'falar mais do', 'falar mais sobre', 'falar do', 'falar sobre',
+  'gostaria de saber do', 'gostaria de saber sobre', 'queria saber do', 'queria saber sobre',
   'tenho interesse no', 'tenho interesse em',
   'me passe mais', 'me passe mais informacoes', 'me passe mais informacoes do', 'me passe mais informacoes sobre',
   'me passa mais', 'me passa mais informacoes', 'me passa mais informacoes do', 'me passa mais informacoes sobre',
   'troca para', 'trocar para', 'muda para', 'mudar para',
   'nao quero mais', 'nao gostei desse', 'prefiro o', 'nao me interessa mais',
-  'me fala do', 'me fala sobre', 'fala do', 'fala sobre', 'quero o ',
+  'me fala do',
+  'me fala sobre',
+  'me fale do',
+  'me fale sobre',
+  'fale do',
+  'fale sobre',
+  'fala mais do',
+  'fala mais sobre',
+  'fale mais do',
+  'fale mais sobre',
+  'me explique',
+  'me explica',
+  'quero o ',
 ];
 
 const HANDOFF_INTENT_PATTERNS = [
@@ -273,8 +306,28 @@ async function sendAnaEnterpriseDocumentWhatsApp(params: {
   }
 }
 
+const REFINEMENT_PATTERNS = /\b(regiao|região|localizacao|localização|qual\s+regiao|qual\s+região|qual\s+cidade|faixa\s+de\s+investimento|faixa\s+de\s+valor|metragem|qual\s+bairro)\b/i;
+
+/**
+ * Detecta loop de refinamento: a Ana perguntou região/faixa nas últimas 2 respostas
+ * e o cliente não forneceu a informação (respondeu com "não sei", "me mostra", etc).
+ */
+function detectRefinementLoop(
+  history: { role: 'user' | 'assistant'; content: string }[],
+  currentUserMessage: string
+): boolean {
+  const lastAssistantMsgs = history.filter((h) => h.role === 'assistant').slice(-2);
+  if (lastAssistantMsgs.length < 2) return false;
+  const bothAskedRefinement = lastAssistantMsgs.every((m) => REFINEMENT_PATTERNS.test(m.content));
+  if (!bothAskedRefinement) return false;
+  const norm = currentUserMessage.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+  const clientDidntAnswer = /\b(nao\s+sei|não\s+sei|me\s+mostr|quero\s+ver|mostra\s+tudo|ver\s+tudo|quero\s+tudo|tanto\s+faz|qualquer|nao\s+tenho|sem\s+prefer)\b/.test(norm)
+    || !REFINEMENT_PATTERNS.test(norm);
+  return clientDidntAnswer;
+}
+
 export async function handleIncomingMessage(ctx: IncomingMessageContext): Promise<void> {
-  const { conversationId, userMessage, toPhoneNumber, trailingUserBubbles } = ctx;
+  const { conversationId, userMessage, toPhoneNumber, trailingUserBubbles, replyPipelineToken } = ctx;
 
   console.log('[ANA DEBUG] handleIncomingMessage start', { conversationId, toPhoneNumber });
 
@@ -345,8 +398,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ...(mergedLeadOnHandoff != null ? { lead_temperature: mergedLeadOnHandoff } : {}),
         handoff: true,
       });
-      const delayMs = randomAnaReplyDelayMs();
-      await sleepMs(delayMs);
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'handoff_before_send' });
+        return;
+      }
       const confirmMsg = finalizeAnaReplyText(
         'Entendido! Um atendente vai entrar em contato em breve. Enquanto isso, sua mensagem já foi registrada. Posso te ajudar com mais alguma coisa antes da transferência?'
       );
@@ -375,15 +430,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const nameKnown = nm.length >= 2;
       let replyTextGreeting = pickRandomGreetingReply(nameKnown ? nm : null);
       replyTextGreeting = finalizeAnaReplyText(replyTextGreeting).slice(0, 4000);
-      const delayGreetingMs = randomAnaReplyDelayMs();
-      await sleepMs(delayGreetingMs);
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'greeting_before_send' });
+        return;
+      }
       const freshRows = await getMessagesByConversationId(conversationId);
       const lastAsstG = [...freshRows].reverse().find((m) => m.role === 'assistant');
       if (lastAsstG && (lastAsstG.content || '').trim() === replyTextGreeting.trim()) {
         const ageG = Date.now() - new Date(lastAsstG.created_at).getTime();
-        if (ageG < 120_000) {
-          console.warn('[ANA DEDupe] ignorando resposta idêntica à anterior (saudação)', { conversationId });
-          return;
+        if (ageG < 55_000) {
+          replyTextGreeting = 'Como posso te ajudar?';
+          console.log('[ANA_PIPELINE] duplicate_greeting_fallback', { conversationId, ageMs: ageG });
         }
       }
       const sendGreeting = await sendTextMessage(toPhoneNumber, replyTextGreeting);
@@ -399,11 +456,30 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     const explicitSwitch = hasExplicitSwitchIntent(trimmed);
     let matched: number | null = null;
+    /** De onde veio o match — evita trocar foco por menção antiga em outra bolha. */
+    let enterpriseMatchSource:
+      | 'current'
+      | 'context'
+      | 'anaphora'
+      | 'pronoun_catalog'
+      | 'ordinal'
+      | 'explicit_tail'
+      | null = null;
     let activeEnterprisesForContext: EnterpriseRow[] | null = null;
 
-    const listedForNames = await listEnterprises(true);
+    const allActiveEnterprises = await listEnterprises(true);
     const fullUserUtterances = buildUserUtterancesContext(rows);
-    const locationQueryContext = resolveEnterpriseLocationContext(trimmed, fullUserUtterances, listedForNames);
+    const triageRequestedProductType = inferRequestedProductType(trimmed, fullUserUtterances);
+    /** Subconjunto por tipo quando o cliente já manifestou LOTEAMENTO/APARTAMENTO/MCMV; INDEFINIDO = todos (só para resolver localização). */
+    const enterprisesForLocationResolution =
+      triageRequestedProductType === 'INDEFINIDO'
+        ? allActiveEnterprises
+        : allActiveEnterprises.filter((e) => e.tipo === triageRequestedProductType);
+    const locationQueryContext = resolveEnterpriseLocationContext(
+      trimmed,
+      fullUserUtterances,
+      enterprisesForLocationResolution
+    );
     const appointmentPreflight = computeAppointmentPreflight(trimmed, fullUserUtterances);
     /** Com consulta por localização, o match por nome não usa histórico (evita foco errado, ex.: outro empreendimento citado antes). */
     const textForEnterpriseMatch = explicitSwitch
@@ -412,31 +488,160 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? trimmed
         : fullUserUtterances.trim() || trimmed;
 
-    if (explicitSwitch) {
-      activeEnterprisesForContext = listedForNames;
-      matched = tryMatchEnterpriseByLastMention(activeEnterprisesForContext, textForEnterpriseMatch);
-    } else {
-      matched = await tryMatchActiveEnterpriseId(textForEnterpriseMatch);
+    const matchPool = enterprisesForLocationResolution;
+    const lastAssistantRow = [...rows].reverse().find((r) => r.role === 'assistant');
+    const lastAssistantText = (lastAssistantRow?.content || '').trim();
+
+    activeEnterprisesForContext = matchPool;
+
+    /**
+     * 1) Mensagem atual × todos os ativos — prioridade máxima para troca de foco (ignora filtro de tipo).
+     * 2) Mensagem atual × pool (tipo) se ainda vazio.
+     * 3) Anáfora / ordinal / pronome / blob de usuário / cauda explicitSwitch.
+     */
+    const fromGlobalTrimmed = tryMatchEnterpriseFromUserCorpus(trimmed, allActiveEnterprises);
+    if (fromGlobalTrimmed != null) {
+      matched = fromGlobalTrimmed;
+      enterpriseMatchSource = 'current';
     }
 
+    if (matched == null && !locationQueryContext) {
+      const fromPoolTrimmed = tryMatchEnterpriseFromUserCorpus(trimmed, matchPool);
+      if (fromPoolTrimmed != null) {
+        matched = fromPoolTrimmed;
+        enterpriseMatchSource = 'current';
+      }
+    }
+
+    if (matched == null && !locationQueryContext) {
+      matched = tryMatchEnterpriseAnaphora(trimmed, lastAssistantText, matchPool);
+      if (matched != null) enterpriseMatchSource = 'anaphora';
+    }
+    if (matched == null && !locationQueryContext) {
+      matched = tryMatchEnterpriseOrdinalFromCatalog(trimmed, lastAssistantText, matchPool);
+      if (matched != null) enterpriseMatchSource = 'ordinal';
+    }
+    if (matched == null && !locationQueryContext) {
+      matched = tryMatchEnterprisePronounAfterCatalog(trimmed, lastAssistantText, matchPool);
+      if (matched != null) enterpriseMatchSource = 'pronoun_catalog';
+    }
+    if (matched == null && !locationQueryContext) {
+      const userBlob = [fullUserUtterances.trim(), trimmed].filter(Boolean).join('\n');
+      matched = tryMatchEnterpriseFromUserCorpus(userBlob, matchPool);
+      if (matched != null) enterpriseMatchSource = 'context';
+    }
+    if (matched == null && !locationQueryContext && explicitSwitch) {
+      matched = tryMatchEnterpriseByLastMention(matchPool, textForEnterpriseMatch);
+      if (matched != null) enterpriseMatchSource = 'explicit_tail';
+    }
+
+    if (matched == null && locationQueryContext) {
+      const poolTrim = tryMatchEnterpriseFromUserCorpus(trimmed, matchPool);
+      if (poolTrim != null) {
+        matched = poolTrim;
+        enterpriseMatchSource = 'current';
+      } else if (explicitSwitch) {
+        matched = tryMatchEnterpriseByLastMention(matchPool, textForEnterpriseMatch);
+        if (matched != null) enterpriseMatchSource = 'explicit_tail';
+      }
+    }
+
+    const strongEnterpriseNameInCurrentMessage =
+      matched != null && enterpriseHasStrongNameSignalInTrimmed(matched, trimmed, allActiveEnterprises);
     if (
       matched &&
       locationQueryContext &&
       !locationQueryContext.isEmpty &&
       locationQueryContext.filteredEnterpriseIds.length > 0 &&
-      !locationQueryContext.filteredEnterpriseIds.includes(matched)
+      !locationQueryContext.filteredEnterpriseIds.includes(matched) &&
+      !strongEnterpriseNameInCurrentMessage
     ) {
+      console.log('[ANA_ENTERPRISE_MATCH]', {
+        conversationId,
+        event: 'location_filter_cleared_match',
+        matched_enterprise_id: matched,
+        filtered_ids: locationQueryContext.filteredEnterpriseIds,
+      });
       matched = null;
+      enterpriseMatchSource = null;
+    } else if (
+      matched &&
+      locationQueryContext &&
+      !locationQueryContext.isEmpty &&
+      locationQueryContext.filteredEnterpriseIds.length > 0 &&
+      !locationQueryContext.filteredEnterpriseIds.includes(matched) &&
+      strongEnterpriseNameInCurrentMessage
+    ) {
+      console.log('[ANA_ENTERPRISE_MATCH]', {
+        conversationId,
+        event: 'location_filter_overridden_by_strong_enterprise_name',
+        matched_enterprise_id: matched,
+      });
     }
 
-    if (matched) {
-      const hasCurrentFocus = effectiveConv.enterprise_id != null;
-      const isDifferentEnterprise = effectiveConv.enterprise_id !== matched;
-      const shouldReclassify = !hasCurrentFocus || (isDifferentEnterprise && explicitSwitch);
+    if (matched != null) {
+      const hasFocus = effectiveConv.enterprise_id != null;
+      const isDifferent = effectiveConv.enterprise_id !== matched;
+      const contextStrongInCurrent =
+        enterpriseMatchSource === 'context' &&
+        enterpriseHasStrongNameSignalInTrimmed(matched, trimmed, allActiveEnterprises);
+      const allowSwitchFromUserPick =
+        isDifferent &&
+        (enterpriseMatchSource === 'current' ||
+          enterpriseMatchSource === 'anaphora' ||
+          enterpriseMatchSource === 'pronoun_catalog' ||
+          enterpriseMatchSource === 'ordinal' ||
+          enterpriseMatchSource === 'explicit_tail' ||
+          contextStrongInCurrent);
+      const shouldReclassify = !hasFocus || allowSwitchFromUserPick || explicitSwitch;
+      let shouldReclassifyReason = 'none';
+      if (!hasFocus) shouldReclassifyReason = 'no_previous_focus';
+      else if (isDifferent && allowSwitchFromUserPick) {
+        shouldReclassifyReason =
+          enterpriseMatchSource === 'context' && contextStrongInCurrent
+            ? 'switch_context_plus_strong_trimmed_signal'
+            : `switch_match_source_${enterpriseMatchSource}`;
+      } else if (isDifferent && explicitSwitch) shouldReclassifyReason = 'explicit_switch_phrase';
+      else if (!isDifferent) shouldReclassifyReason = 'same_enterprise_as_focus';
+      else shouldReclassifyReason = 'keep_focus_match_not_trusted';
+
+      console.log('[ANA_ENTERPRISE_MATCH]', {
+        conversationId,
+        enterprise_match_current_message: trimmed.slice(0, 240),
+        enterprise_match_source: enterpriseMatchSource,
+        current_enterprise_id: effectiveConv.enterprise_id ?? null,
+        matched_enterprise_id: matched,
+        should_reclassify: shouldReclassify,
+        should_reclassify_reason: shouldReclassifyReason,
+        explicit_switch: explicitSwitch,
+        context_strong_in_current: contextStrongInCurrent,
+      });
+
       if (shouldReclassify) {
         await setConversationEnterpriseId(conversationId, matched);
         effectiveConv = (await getConversationById(conversationId)) ?? effectiveConv;
+        console.log('[ANA_ENTERPRISE_MATCH]', {
+          conversationId,
+          event: 'enterprise_focus_updated',
+          new_enterprise_id: matched,
+        });
+      } else {
+        console.log('[ANA_ENTERPRISE_MATCH]', {
+          conversationId,
+          event: 'enterprise_focus_kept',
+          kept_enterprise_id: effectiveConv.enterprise_id,
+          ignored_match_id: matched,
+        });
       }
+    } else {
+      console.log('[ANA_ENTERPRISE_MATCH]', {
+        conversationId,
+        enterprise_match_current_message: trimmed.slice(0, 240),
+        enterprise_match_source: null,
+        current_enterprise_id: effectiveConv.enterprise_id ?? null,
+        matched_enterprise_id: null,
+        should_reclassify_reason: 'no_match',
+      });
     }
 
     const ent = effectiveConv.enterprise_id ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;
@@ -459,10 +664,24 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     if (inactiveLinked) mode = 'inactive_linked';
     else if (ent) mode = 'scoped';
 
+    let conversationPhase: NonNullable<BuildAnaSystemPromptOpts['conversationPhase']> = 'triage';
+    if (inactiveLinked) conversationPhase = 'inactive';
+    else if (appointmentPreflight.active) conversationPhase = 'appointment';
+    else if (ent) conversationPhase = 'scoped';
+    else if (locationQueryContext) conversationPhase = 'triage_location';
+    else if (triageRequestedProductType === 'INDEFINIDO') conversationPhase = 'triage_ask_type';
+    else conversationPhase = 'triage_catalog';
+
+    const enterprisesForSameTipoAsEnt =
+      ent != null ? allActiveEnterprises.filter((e) => e.tipo === ent.tipo) : [];
+
     const vars = ent ? await getVariablesMap(ent.id) : {};
     let commercialSnapshots: CommercialSnapshot[] = [];
-    if (locationQueryContext && locationQueryContext.filteredEnterpriseIds.length > 0) {
-      const byId = new Map(listedForNames.map((e) => [e.id, e] as const));
+    /** Com foco scoped, dados e listas devem ser do empreendimento da conversa — não do filtro de cidade antigo no histórico. */
+    if (mode === 'scoped' && ent) {
+      commercialSnapshots = [{ enterpriseName: ent.name, variables: vars }];
+    } else if (locationQueryContext && locationQueryContext.filteredEnterpriseIds.length > 0) {
+      const byId = new Map(enterprisesForLocationResolution.map((e) => [e.id, e] as const));
       for (const id of locationQueryContext.filteredEnterpriseIds) {
         const row = byId.get(id);
         if (!row) continue;
@@ -471,7 +690,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     } else if (ent) {
       commercialSnapshots = [{ enterpriseName: ent.name, variables: vars }];
     }
-    const knowledgeText = ent ? await loadAgentKnowledgeText(ent.id) : '';
+    const chunkHint = [
+      ent?.name && `empreendimento_foco: ${ent.name}`,
+      triageRequestedProductType !== 'INDEFINIDO' && `tipo_interesse: ${triageRequestedProductType}`,
+      trimmed,
+      fullUserUtterances,
+    ]
+      .filter(Boolean)
+      .join('\n')
+      .slice(0, 12_000);
+    const chunkText = ent ? await loadRankedKnowledgeChunksForPrompt(ent.id, chunkHint) : '';
+    const knowledgeBase = ent ? await loadAgentKnowledgeText(ent.id) : '';
+    const knowledgeText = [chunkText, knowledgeBase].filter(Boolean).join('\n\n').trim();
     let fileInventory = '';
     if (ent) {
       const files = await listEnterpriseFiles(ent.id);
@@ -482,13 +712,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     const hasSendableFiles = fileInventory.trim().length > 0;
 
-    let allEnterpriseNames =
-      mode === 'scoped'
-        ? (activeEnterprisesForContext ?? listedForNames).map((e) => e.name)
-        : listedForNames.map((e) => e.name);
-    if (locationQueryContext) {
+    let allEnterpriseNames: string[] = [];
+    if (mode === 'scoped' && ent) {
+      allEnterpriseNames = (activeEnterprisesForContext ?? enterprisesForSameTipoAsEnt).map((e) => e.name);
+    } else if (locationQueryContext) {
       allEnterpriseNames = locationQueryContext.availableEnterprises.map((e) => e.name);
+    } else if (mode === 'triage') {
+      allEnterpriseNames =
+        triageRequestedProductType === 'INDEFINIDO'
+          ? []
+          : enterprisesForLocationResolution.map((e) => e.name);
     }
+
+    const promptProductTypeForPrompt =
+      mode === 'triage'
+        ? triageRequestedProductType
+        : mode === 'scoped' && ent
+          ? ent.tipo
+          : undefined;
+
     const promptOpts: BuildAnaSystemPromptOpts = {
       mode,
       enterprise: ent,
@@ -496,12 +738,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       knowledgeText,
       fileInventory,
       allEnterpriseNames,
+      requestedProductType: promptProductTypeForPrompt,
+      conversationPhase,
       knownCustomerName: effectiveConv.customer_name,
       customerNameMentionsSoFar: effectiveConv.ana_customer_name_mentions ?? 0,
       conversationClassification: effectiveConv.classification,
       appointmentPreflight,
       openAppointmentSummary,
-      locationQueryContext: locationQueryContext ?? undefined,
+      locationQueryContext:
+        mode === 'scoped' && ent ? undefined : (locationQueryContext ?? undefined),
       commercialSnapshots: commercialSnapshots.length > 0 ? commercialSnapshots : undefined,
       commercialListUxHints: commercialSnapshots.length > 1 ? pickCommercialListUx() : undefined,
     };
@@ -512,20 +757,36 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? rowsToHistory(rows, null, trailingUserBubbles)
         : rowsToHistory(rows, trimmed);
 
-    const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
+    const recentUserContextForFallback = [...history.filter((h) => h.role === 'user').map((h) => h.content), trimmed]
+      .join('\n')
+      .slice(-2500);
+
+    const refinementLoopDetected = detectRefinementLoop(history, trimmed);
+    let effectiveSystemPrompt = systemPrompt;
+    if (refinementLoopDetected && allEnterpriseNames.length > 0 && mode !== 'scoped') {
+      const namesList = allEnterpriseNames.slice(0, 5).map((n) => `📍 ${n}`).join('\n');
+      effectiveSystemPrompt += `\n\nINSTRUÇÃO DE EMERGÊNCIA — ANTI-LOOP (prioridade absoluta sobre qualquer outra regra de qualificação):
+O sistema detectou que você já perguntou região/localização/faixa ao cliente e ele não conseguiu ou não quis responder. NÃO pergunte região/localização/faixa novamente nesta rodada.
+Em vez disso, LISTE os empreendimentos disponíveis usando somente nomes reais:
+${namesList}${allEnterpriseNames.length > 5 ? '\n(há mais opções)' : ''}
+Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de região.`;
+      console.log('[ANA_PIPELINE] refinement_loop_escape', { conversationId, namesInjected: allEnterpriseNames.length });
+    }
+
+    const messages: ChatMessage[] = [{ role: 'system', content: effectiveSystemPrompt }];
     for (const h of history) {
       messages.push({ role: h.role, content: h.content });
     }
     messages.push({ role: 'user', content: trimmed });
 
-    const model = aiConfig.modelColdLead || aiConfig.modelHotLead || 'gpt-4o-mini';
-    console.log('[ANA DEBUG] building AI context', {
-      mode,
+    const model = ANA_CHAT_MODEL;
+    console.log('[ANA MODEL] modelo_final_selecionado', {
+      conversationId,
       model,
-      appointmentPreflight,
-      enterpriseMatchTextLen: textForEnterpriseMatch.length,
+      mode,
+      enterprise: ent?.name ?? null,
+      appointmentPreflight: appointmentPreflight.active,
     });
-    console.log('[ANA DEBUG] calling AI provider', { model });
     const result = await generateChatCompletion({
       apiKey: aiConfig.openaiApiKey,
       baseUrl: aiConfig.openaiBaseUrl,
@@ -537,15 +798,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
 
     if (result.success) {
-      console.log('[ANA DEBUG] AI response received', { hasContent: !!result.content?.trim() });
+      console.log('[ANA MODEL] resposta_recebida', { conversationId, model, hasContent: !!result.content?.trim() });
     } else {
-      console.error('[ANA DEBUG] AI call failed', { error: result.error });
+      console.error('[ANA MODEL] chamada_falhou', { conversationId, model, error: result.error });
     }
 
     let structured =
       result.success && result.content ? parseAnaJson(result.content) : null;
     if (!structured && result.success && result.content) {
-      console.warn('[DOC_FLOW] parseAnaJson null — fallback genérico (send_file_category será null)', {
+      structured = trySalvageStructuredReplyFromRawModelContent(result.content);
+    }
+    if (!structured && result.success && result.content) {
+      console.warn('[DOC_FLOW] parseAnaJson null e sem texto bruto aproveitável — fallbackReplyFromRaw', {
         conversationId,
         contentPreview: result.content.slice(0, 160),
       });
@@ -554,10 +818,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         trimmed,
         effectiveConv.customer_name,
         appointmentPreflight.active,
-        richAppointmentContext
+        richAppointmentContext,
+        recentUserContextForFallback,
+        allEnterpriseNames,
+        promptProductTypeForPrompt ?? triageRequestedProductType
       );
     }
     if (!structured) {
+      const fbReason = !result.success ? 'api_error' : !result.content?.trim() ? 'empty_content' : 'parse_failed';
+      console.log('[ANA_PIPELINE] fallback_reply', { conversationId, reason: fbReason });
       structured = {
         reply: isSimpleOpeningGreeting(trimmed)
           ? pickRandomGreetingReply(effectiveConv.customer_name)
@@ -565,7 +834,24 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
             : appointmentPreflight.active
               ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
-              : ANA_FALLBACK_INCOMPREHENSION_REPLY,
+              : userUtteranceHasSearchRefinementSignals(recentUserContextForFallback)
+                ? buildRefinementContextReply(
+                    recentUserContextForFallback,
+                    allEnterpriseNames,
+                    promptProductTypeForPrompt ?? triageRequestedProductType
+                  )
+                : ANA_FALLBACK_INCOMPREHENSION_REPLY,
+        intent: 'fallback',
+        productType: null,
+        wantsCatalog: false,
+        locationPreference: null,
+        budgetPreference: null,
+        bedroomsPreference: null,
+        bathroomsPreference: null,
+        nextBestQuestion: null,
+        userGoal: null,
+        lotSizePreference: null,
+        shouldShowPortfolio: false,
         classification: 'Novo',
         lead_temperature: null,
         project: ent?.name || '',
@@ -582,6 +868,29 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     if (!hasSendableFiles) {
       structured = { ...structured, send_file_category: null };
+    }
+
+    if (structured) {
+      const sr = structured;
+      const strongCatalogBlockId = tryMatchEnterpriseFromUserCorpus(trimmed, allActiveEnterprises);
+      const blockCatalogInjectionForNamedEnterprise =
+        strongCatalogBlockId != null &&
+        enterpriseHasStrongNameSignalInTrimmed(strongCatalogBlockId, trimmed, allActiveEnterprises);
+      if (
+        mode !== 'scoped' &&
+        !blockCatalogInjectionForNamedEnterprise &&
+        (sr.wantsCatalog || sr.shouldShowPortfolio) &&
+        allEnterpriseNames.length > 0 &&
+        !allEnterpriseNames.some((n) => sr.reply.includes(n))
+      ) {
+        const catalogReply = buildCatalogFallbackReply(
+          allEnterpriseNames,
+          recentUserContextForFallback,
+          promptProductTypeForPrompt ?? triageRequestedProductType
+        );
+        console.log('[ANA_PIPELINE] catalog_injected', { conversationId, namesCount: allEnterpriseNames.length });
+        structured = { ...sr, reply: catalogReply };
+      }
     }
 
     const prevClassification = effectiveConv.classification;
@@ -634,23 +943,30 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
-    const delayMs = randomAnaReplyDelayMs();
-    console.log('[ANA DEBUG] delay antes do envio (simulação humana)', { conversationId, delayMs });
-    await sleepMs(delayMs);
+    if (isPipelineStale(conversationId, replyPipelineToken)) {
+      console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'before_send' });
+      return;
+    }
 
-    let replyText = finalizeAnaReplyText(replyBody, { userMessage: trimmed }).slice(0, 4000);
+    let replyText = finalizeAnaReplyText(replyBody, {
+      userMessage: trimmed,
+      conversationMode: mode,
+    }).slice(0, 4000);
     const rowsBeforeSend = await getMessagesByConversationId(conversationId);
     const lastAsstDup = [...rowsBeforeSend].reverse().find((m) => m.role === 'assistant');
-    if (lastAsstDup && (lastAsstDup.content || '').trim() === replyText.trim()) {
-      const ageDup = Date.now() - new Date(lastAsstDup.created_at).getTime();
-      if (ageDup < 120_000) {
-        console.warn('[ANA DEDupe] bloqueando envio duplicado (mesmo texto que última resposta)', {
-          conversationId,
-        });
-        return;
-      }
+    const lastContent = (lastAsstDup?.content || '').trim();
+    const ageDup = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
+    const dupNamePool = mode === 'scoped' ? undefined : allEnterpriseNames;
+    if (lastContent && lastContent === replyText.trim() && ageDup < 55_000) {
+      console.warn('[ANA_PIPELINE] duplicate_detected_identical', { conversationId, ageMs: ageDup });
+      replyText = pickDuplicateFallbackReply(recentUserContextForFallback, dupNamePool);
+      console.log('[ANA_PIPELINE] duplicate_fallback_sent', { conversationId, fallbackLen: replyText.length });
+    } else if (lastContent && repliesSemanticallySimilar(lastContent, replyText)) {
+      console.warn('[ANA_PIPELINE] duplicate_detected_semantic', { conversationId });
+      replyText = pickDuplicateFallbackReply(recentUserContextForFallback, dupNamePool);
+      console.log('[ANA_PIPELINE] duplicate_fallback_sent', { conversationId, fallbackLen: replyText.length });
     }
-    console.log('[ANA DEBUG] sending WhatsApp reply', { toPhoneNumber, replyLength: replyText.length });
+    console.log('[ANA_PIPELINE] send_final', { conversationId, toPhoneNumber, replyLength: replyText.length });
     const sendResult = await sendTextMessage(toPhoneNumber, replyText);
     if (sendResult.success && sendResult.metaMessageId) {
       await insertMessage(conversationId, 'assistant', replyText, sendResult.metaMessageId);

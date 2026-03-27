@@ -1,9 +1,13 @@
 import { z } from 'zod';
 
+const enterpriseTipoSchema = z.enum(['LOTEAMENTO', 'APARTAMENTO', 'MCMV']);
+
 export const createProjectSchema = z.object({
   name: z.string().min(1, 'Nome é obrigatório').max(200),
   slug: z.string().max(80).optional(),
   languageStyle: z.enum(['informal', 'natural', 'formal', 'culta']).optional(),
+  tipo: enterpriseTipoSchema.optional(),
+  exclusivo: z.boolean().optional(),
 });
 
 export const projectVariablesSchema = z.object({
@@ -20,6 +24,8 @@ export const updateProjectSchema = z.object({
   status: z.enum(['ativo', 'inativo']).optional(),
   slug: z.string().max(80).optional(),
   languageStyle: z.enum(['informal', 'natural', 'formal', 'culta']).optional(),
+  tipo: enterpriseTipoSchema.optional(),
+  exclusivo: z.boolean().optional(),
   variables: projectVariablesSchema.optional(),
   promptAddons: z.array(z.string().max(4000)).max(50).optional(),
   city: z.string().max(160).optional(),

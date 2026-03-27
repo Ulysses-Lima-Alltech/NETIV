@@ -489,7 +489,7 @@ export async function loadAgentKnowledgeText(enterpriseId: number): Promise<stri
   const { rows } = await query<{ original_name: string; extracted_text: string | null }>(
     `SELECT original_name, extracted_text FROM enterprise_files
      WHERE enterprise_id = $1 AND is_active = true AND can_be_used_as_knowledge = true
-     ORDER BY category, id`,
+     ORDER BY CASE category WHEN 'book' THEN 0 WHEN 'unidades' THEN 1 WHEN 'tabela_comercial' THEN 2 ELSE 3 END, id`,
     [enterpriseId]
   );
   const parts: string[] = [];

@@ -35,6 +35,8 @@ model Enterprise {
   status        String    @default("ativo")
   language_style String   @default("natural")
   prompt_addons String   @default("[]")
+  tipo          String    @default("APARTAMENTO")
+  exclusivo     Boolean   @default(false)
   created_at    DateTime  @default(now())
   updated_at    DateTime  @updatedAt
 

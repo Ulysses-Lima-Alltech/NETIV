@@ -29,14 +29,19 @@ export async function generateChatCompletion(params: GenerateCompletionParams): 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
+  const gpt5Family = /^gpt-5/i.test(model) || /^o3/i.test(model);
   const body: Record<string, unknown> = {
     model,
     messages,
-    temperature,
-    max_tokens: maxTokens,
   };
   if (responseFormatJson) {
     body.response_format = { type: 'json_object' };
+  }
+  if (gpt5Family) {
+    body.max_completion_tokens = maxTokens;
+  } else {
+    body.temperature = temperature;
+    body.max_tokens = maxTokens;
   }
 
   try {

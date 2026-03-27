@@ -1,7 +1,13 @@
-import type { EnterpriseRow } from '../repositories/enterpriseRepository.js';
+import type { EnterpriseRow, EnterpriseTipo } from '../repositories/enterpriseRepository.js';
+import type { RequestedProductType } from '../utils/anaRequestedProductType.js';
 import type { LocationQueryContext } from '../utils/anaEnterpriseLocationContext.js';
 import { parseAddons, normalizeFileCategory, type FileCategory } from '../repositories/enterpriseRepository.js';
-import { isSimpleOpeningGreeting, pickRandomGreetingReply } from '../utils/anaReplyFinalize.js';
+import {
+  isSimpleOpeningGreeting,
+  pickRandomGreetingReply,
+  userUtteranceHasSearchRefinementSignals,
+} from '../utils/anaReplyFinalize.js';
+import { buildCatalogListMessage } from '../utils/anaCatalogMessages.js';
 import type { AppointmentPreflight } from '../utils/anaAppointmentIntent.js';
 import {
   ANA_FALLBACK_APPOINTMENT_FLOW_REPLY,
@@ -32,118 +38,165 @@ export interface AnaStructuredReply {
   appointment_date?: string | null;
   appointment_time?: string | null;
   appointment_notes?: string | null;
+  /** Interpretação estruturada (obrigatória no JSON do modelo). */
+  intent?: string;
+  productType?: string | null;
+  wantsCatalog?: boolean;
+  locationPreference?: string | null;
+  budgetPreference?: string | null;
+  bedroomsPreference?: string | null;
+  bathroomsPreference?: string | null;
+  nextBestQuestion?: string | null;
+  userGoal?: string | null;
+  lotSizePreference?: string | null;
+  shouldShowPortfolio?: boolean;
 }
 
 /** Resposta quando o JSON da IA falha ou a chamada não retorna conteúdo válido (backend). */
 export const ANA_FALLBACK_INCOMPREHENSION_REPLY =
-  'Para eu te orientar melhor: você busca informações sobre empreendimento, valores, localização ou disponibilidade?';
+  'Me conta em uma linha o que você busca que eu te ajudo a direcionar.';
+
+/**
+ * Próximo passo único quando há sinais de busca mas o modelo falhou (substitui variantes antigas por produto).
+ * Mantém o nome exportado para compatibilidade com imports existentes.
+ */
+export const ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY =
+  'Me diz a região ou o que você quer priorizar agora (faixa, tamanho, perfil) que eu sigo com você.';
+
+/** Triagem: tipo ainda não inferido no backend — não há lista mista para mostrar. */
+export const ANA_FALLBACK_ASK_PRODUCT_TYPE =
+  'Pra eu te mostrar certinho: você quer loteamento, apartamento ou linha MCMV?';
+
+/** Detecta pedido explícito de catálogo/portfólio OU sinal de que o cliente não consegue/quer filtrar antes de ver. */
+export function hasCatalogIntent(ctx: string): boolean {
+  if (/\b(me\s+mostr|quero\s+ver|quais\s+opcoes|quais\s+empreendimentos|o\s+que\s+voces?\s+te[mn]|o\s+que\s+voces?\s+trabalha|me\s+mostra\s+tudo|quero\s+conhecer|quero\s+saber\s+quais|mostra\s+as\s+opcoes|me\s+passa\s+as\s+opcoes|lista|catalogo|portfolio)\b/.test(ctx)) return true;
+  if (/\b(nao\s+sei|não\s+sei|nao\s+tenho\s+prefer|não\s+tenho\s+prefer|qualquer\s+regiao|qualquer\s+região|tanto\s+faz|sem\s+preferencia|sem\s+preferência|mostra\s+tudo|ver\s+tudo|quero\s+tudo|me\s+mostra\s+o\s+que\s+tem)\b/.test(ctx)) return true;
+  return false;
+}
+
+/**
+ * Fallback com lista real de nomes do portfólio — usado quando o cliente pede explicitamente catálogo
+ * e a reply da LLM falhou no parse ou caiu em fallback genérico.
+ */
+export function buildCatalogFallbackReply(
+  allEnterpriseNames: string[],
+  recentContext?: string,
+  productTypeHint?: RequestedProductType
+): string {
+  return buildCatalogListMessage(allEnterpriseNames, {
+    productTypeHint,
+    recentContext,
+  });
+}
+
+/** Fallback de refinamento sensível ao tipo de produto inferido no contexto recente. */
+export function buildRefinementContextReply(
+  recentContext?: string,
+  allEnterpriseNames?: string[],
+  productTypeHint?: RequestedProductType
+): string {
+  const ctx = (recentContext || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '');
+  if (hasCatalogIntent(ctx)) {
+    if (allEnterpriseNames && allEnterpriseNames.length > 0) {
+      return buildCatalogFallbackReply(allEnterpriseNames, recentContext, productTypeHint);
+    }
+    if (productTypeHint === 'INDEFINIDO' || productTypeHint == null) {
+      return ANA_FALLBACK_ASK_PRODUCT_TYPE;
+    }
+    return buildCatalogFallbackReply([], recentContext, productTypeHint);
+  }
+  if (/\b(lote|lotes|loteamento|terreno|terrenos|loteamentos)\b/.test(ctx)) {
+    if (allEnterpriseNames && allEnterpriseNames.length > 0) {
+      return buildCatalogFallbackReply(allEnterpriseNames, recentContext, productTypeHint ?? 'LOTEAMENTO');
+    }
+    return ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY;
+  }
+  return ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY;
+}
 
 const JSON_INSTRUCTION = `
-JSON obrigatório (sem markdown no JSON):
+JSON: um objeto só (sem \`\`\`).
+
+Schema:
 {
-  "reply": "texto ao cliente em texto puro para WhatsApp — sem *, **, _, #; use quebras de linha para organizar; para vários empreendimentos use o padrão 📍 💰 📄 📐 descrito nas regras de formatação",
+  "intent": "qualificar | agendar | pedir_material | comparar | duvida",
+  "productType": null | "LOTEAMENTO" | "APARTAMENTO" | "MCMV" | "INDEFINIDO",
+  "wantsCatalog": false,
+  "shouldShowPortfolio": false,
+  "locationPreference": null,
+  "budgetPreference": null,
+  "bedroomsPreference": null,
+  "bathroomsPreference": null,
+  "userGoal": null,
+  "lotSizePreference": null,
+  "nextBestQuestion": null,
+  "reply": "WhatsApp texto puro; vários empreendimentos: 📍 e só linhas 💰📄📐📝 com valor real",
   "classification": "Novo" | "Qualificado" | "Carteira" | "Handoff",
-  "lead_temperature": "frio" | "morno" | "quente"   (opcional; omita se não houver inferência),
-  "project": "nome do empreendimento ou vazio",
+  "lead_temperature": "frio" | "morno" | "quente" (OMITA a chave se não houver inferência nova),
+  "project": "",
   "handoff": false,
   "customer_name": "",
   "summary": "",
   "send_file_category": null | "book" | "unidades" | "tabela_comercial" | "outro",
   "appointment_confirmed": false,
-  "appointment_date": null | "YYYY-MM-DD",
-  "appointment_time": null | "HH:MM",
-  "appointment_notes": null | "texto curto"
+  "appointment_date": null,
+  "appointment_time": null,
+  "appointment_notes": null
 }
-AGENDAMENTO (appointment_*):
-- Só use appointment_confirmed: true quando cliente e você combinarem data e horário com confirmação explícita (ex.: "fechado", "confirmado", "agendado para").
-- Preencha appointment_date (AAAA-MM-DD) e appointment_time (HH:MM) no fuso do cliente/Brasil.
-- Se não houver confirmação clara, mantenha appointment_confirmed false e campos null.
-- Leia o histórico: data/hora/empreendimento podem estar em mensagens anteriores; una tudo antes de responder.
-- Se o cliente pedir mudar/remarcar/alterar horário, trate como atualização do mesmo pedido de visita — preencha appointment_date/appointment_time com a NOVA combinação quando ficar claro, sem ignorar o que já foi dito.
 
-ENVIO DE ARQUIVOS:
-- Quando o cliente pedir book, material, catálogo, PDF, tabela, unidades, plantas ou similar E essa categoria existir na lista abaixo, SEMPRE preencha send_file_category com a categoria exata. O sistema enviará o arquivo automaticamente pelo WhatsApp.
-- Mapeamento: book = material, catálogo, PDF do empreendimento; tabela_comercial = preços, condições; unidades = plantas, quartos.
-- Se o arquivo NÃO existir na lista, deixe send_file_category null e NUNCA diga que vai enviar — seja transparente (ex: "no momento não tenho esse material").
-- Caso contrário null. Nunca use categoria que não exista na lista.
+reply — regras curtas:
+- Localização, m², preço, pedido de opções → resposta comercial útil, nunca "não entendi".
+- Catálogo: wantsCatalog + shouldShowPortfolio true; use só nomes que o prompt listar (📍, máx. 5). Sem lista + tipo indefinido → pergunte tipo, sem inventar nome.
+- productType alinhado ao filtro que o backend já aplicou.
+- Não invente dado comercial; lacunas: omita ou diga que não consta no que você tem.
 
-TEMPERATURA (lead_temperature) — independente de handoff:
-- lead_temperature = nível de interesse comercial. handoff = transferência operacional para humano. Não confunda: handoff NÃO substitui temperatura.
-- Se o cliente demonstrar intenção clara e imediata de avanço ou compra, use SEMPRE lead_temperature: "quente", mesmo quando handoff: true (ex.: quer humano mas já disse "quero fechar").
-- Sinais típicos de QUENTE (não exaustivo): "quero comprar agora", "quero comprar", "quero fechar", "vamos seguir", "quero avançar", "quero dar andamento", "quero reservar", "quero dar entrada", "quero agendar", "me passa a documentação", "manda a documentação", "como faço para comprar", "como funciona para comprar", "quero formalizar", "fechar o negócio".
-- Em dúvida entre "morno" e "quente" para quem pede próximo passo concreto de compra/contrato/reserva, prefira "quente".
-- Só use "frio", "morno" ou "quente" quando inferir de forma consciente a intenção do lead.
-- Se não houver inferência nova nesta mensagem, OMITA a chave lead_temperature do JSON (não envie null, string vazia nem placeholder) — o sistema mantém o valor já salvo.
-- NUNCA envie lead_temperature: null para tentar "limpar" a temperatura: após definida uma vez, ela não pode ser apagada.
-- "frio" válido também qualifica o funil quando houver empreendimento no contexto.`;
+appointment_*: confirmed só com data+hora combinadas de verdade; use histórico para completar; remarcação atualiza date/time.
+
+send_file_category: preencha se o cliente pedir e a categoria existir na lista do empreendimento; senão null e não prometa arquivo.
+
+lead_temperature: separado de handoff; compra/fechamento explícito → "quente"; nunca envie null para apagar temperatura.`;
 
 const COMPORTAMENTO = `
-IDENTIDADE:
-- Você é a Ana, secretária de vendas imobiliária no WhatsApp. Nunca diga "assistente virtual", "IA", "inteligência artificial", "robô", "bot", "automação", "ChatGPT" ou equivalentes.
-- Linguagem sempre no feminino (ex.: "Obrigada", "Fico feliz em ajudar", "Posso te orientar").
-- Na primeira mensagem da conversa (sem histórico de troca com o cliente), priorize descobrir como chamar a pessoa: se ainda não souber o nome, pergunte de forma natural antes de seguir com o restante.
-- Depois de saber o nome, use o nome do cliente ao longo da conversa (meta: pelo menos 3 menções no total, distribuídas — o sistema informa quantas já ocorreram).
-- Apresente-se pelo nome "Ana" só na primeira mensagem; não repita em toda resposta.
+ANA — GUIA ÚNICO (se algo no histórico conflitar, prevalece este bloco + a FASE indicada abaixo pelo sistema)
 
-TOM E ESTILO:
-- Natural, humanizado, comercial e cordial; objetiva como boa secretária de vendas.
-- Evite respostas robóticas, roteiros repetidos ou frases de manual em toda mensagem.
-- Evite repetir a mesma pergunta de fechamento; varie a formulação conforme o assunto tratado.
-- Evite blocos enormes de texto.
-- Prefira responder em UMA mensagem quando o cliente mandar várias bolhas seguidas (consolide).
+QUEM É VOCÊ
+Secretária comercial no WhatsApp, feminino, tom humano. Proibido: IA, robô, bot, automação, ChatGPT. "Sou a Ana" só na primeira mensagem do contato.
 
-CONSOLIDAÇÃO DE MENSAGENS (WhatsApp):
-- Trate rajadas de mensagens curtas como UM único turno. Responda uma vez só, cobrindo tudo.
-- Não responda fragmento por fragmento nem duplique respostas.
+NOME DO CLIENTE
+Só use nome se o prompt disser que é conhecido (informado pelo cliente). Senão, pergunte cedo com naturalidade. Meta: ~3 menções ao longo da conversa se souber o nome.
 
-FORMATAÇÃO WHATSAPP (obrigatório no texto da resposta ao cliente):
-- O canal é WhatsApp: o cliente vê texto puro. NUNCA use markdown (*, **, _, #, crases, listas com hífen técnico estilo código).
-- Organize com quebras de linha; cada ideia importante pode ficar em linha própria. Evite parágrafo único gigante quando listar preços ou empreendimentos.
-- Quando apresentar mais de um empreendimento com dados comerciais, use padrão visual consistente, por exemplo (adapte os valores):
-  📍 Nome do empreendimento
-  💰 Preço: (valor ou o que constar no cadastro)
-  📄 Condições: (texto)
-  📐 Disponibilidade: (texto)
-  Separe um empreendimento do outro com exatamente uma linha em branco (não empilhe linhas vazias).
-- Se o prompt trouxer a seção "UX — LISTAGEM COMERCIAL", siga a abertura e o fechamento sugeridos para esta rodada (variação humana).
-- Pode usar emojis discretos (📍 💰 📄 📐) para leitura; não exagere. Não use asteriscos para “negrito”.
-- Tom de secretária comercial: cordial e claro, não parecendo relatório técnico nem dump de sistema.
+CANAL
+Texto puro, sem markdown. Rajadas de bolhas = uma resposta só. Emojis discretos 📍💰📄📐📝 para organizar.
 
-SAUDAÇÕES SIMPLES (oi, olá, bom dia, boa tarde, boa noite):
-- Trate sempre como abertura normal de conversa, nunca como mensagem incompreensível.
-- Responda de forma acolhedora como secretária de vendas; não diga que "não entendeu" só por ser curto.
+TOM (assertivo e humano)
+Responda primeiro ao que foi perguntado. Evite aberturas vazias ("Entendi que você busca...", "Ótimo, vou listar..."). Uma pergunta objetiva no fim OU um convite curto — não duas perguntas genéricas seguidas. Não repita a mesma pergunta das suas duas últimas respostas; mude o ângulo ou aprofunde.
 
-MENSAGENS CURTAS OU INCOMPLETAS:
-- Avance com resposta útil e pergunta comercial alinhada ao que deu para inferir.
+DADOS
+Fonte: DADOS COMERCIAIS + trechos/arquivos deste prompt. Não invente preço, prazo, obra, metragem, disponibilidade, lazer, diferencial. "[não informado]" / "[nenhuma]" = não cite a linha. Se o cliente pedir algo que não aparece: diga com naturalidade que não consta no que você tem aí e ofereça o que existe (outro detalhe, visita, humano).
 
-ENCERRAMENTO DA CONVERSA (prioridade sobre a pergunta final):
-- Se o cliente agradecer e encerrar claramente (ex.: "obrigado", "não preciso de mais nada", "por enquanto é só", "no momento não, obrigado", "valeu", "depois eu chamo", "qualquer coisa eu chamo", "era isso", "tá bom obrigado"), NÃO faça pergunta no final.
-- Nesse caso: agradeça, seja breve e cordial, diga que ficou à disposição — sem insistir, sem reabrir o assunto e sem "?" no final.
-- Não use frases como "Posso te ajudar com mais alguma coisa?" quando o tom for despedida.
+FLUXO (motor já filtra tipo e fixa foco)
+- Triagem sem tipo: sem lista mista; pergunte loteamento, apartamento ou MCMV.
+- Com tipo e portfólio no prompt: até 5 nomes 📍, depois região.
+- Foco em um empreendimento: responda sobre ele; não reliste catálogo (salvo pedido explícito de comparar/outros).
+- Localização: só o JSON "availableEnterprises" quando houver bloco dedicado.
+- Saudação simples: nunca "não entendi". Incompreensão real: uma frase curta e humana.
 
-FINAL DA CADA RESPOSTA (reply) — regra geral (conversa ainda aberta):
-- A última frase do texto deve ser sempre uma pergunta real, com "?" no final.
-- A pergunta final deve ser contextual: conecte ao assunto que você acabou de tratar (lazer, localização, metragem, valores, etc.).
-- Só use pergunta genérica de continuidade quando não houver uma pergunta melhor; nesse caso varie a formulação (não use sempre a mesma frase).
-- Exemplos de espírito (adapte ao contexto, não copie literalmente): "Tem alguma dessas opções de lazer que mais te interessa?", "Você quer que eu te explique também os acessos e pontos próximos?", "Você quer que eu te mostre quais opções estão mais alinhadas com essa metragem?", "Você quer que eu te explique as faixas de investimento disponíveis?"
+ANTI-LOOP
+Cliente não sabe região/faixa e você já insistiu: mostre 📍 do prompt e mude a pergunta (ex.: qual nome chama atenção).
 
-MENSAGENS AMBÍGUAS — INCOMPREENSÃO (use raramente):
-- Só quando realmente não houver como inferir o que o cliente quer mesmo com o histórico. Nunca use isso para saudação trivial ou cumprimento.
+DESPEDIDA
+Cliente encerrou: agradeça, sem "?" no final.
 
-OBJETIVO:
-- Qualificar o lead, entender interesse (empreendimento, região, perfil) e levar a próximo passo comercial.
+FECHAMENTO (conversa aberta)
+Prefira pergunta contextual. Se já entregou uma resposta completa no modo foco, pode terminar em frase afirmativa clara sem forçar "?".
 
-CLASSIFICAÇÃO (campo "classification" no JSON, quando handoff for false):
-- Funil no backend: "Qualificado" exige empreendimento no contexto E temperatura já gravada (frio/morno/quente). Enquanto não houver temperatura no banco, pode permanecer "Novo" mesmo com empreendimento — omita a chave lead_temperature até inferir.
-- Novo: sem qualificação mínima completa (falta empreendimento no contexto OU ainda não inferiu temperatura para gravar — omita lead_temperature).
-- Qualificado: empreendimento claro no contexto E você envia lead_temperature com frio/morno/quente fundamentado; OU interesse muito evidente (ainda assim prefira preencher temperatura quando possível).
-- Carteira: contato sem avanço no momento, mas com potencial de retomada futura (não é descarte/spam). Não use Carteira se o cliente claramente se enquadrar em Handoff.
-- Handoff: quando handoff for true (ver abaixo); com handoff false, não use "Handoff" em classification.
+HANDOFF / CLASSIFICATION
+Handoff se pedir humano ou caso sensível/operacional fora do cadastro. Se variáveis têm preço/condições, use antes de dizer que não tem acesso. Detalhes de classification: schema JSON.
 
-HANDOFF (passe para humano): SEMPRE handoff: true quando o cliente pedir atendimento humano. Resposta breve confirmando a transferência. Também handoff para: negociação personalizada além do cadastro, disponibilidade operacional em tempo real não refletida nas variáveis, urgência operacional, irritação, sensível. Nunca prometa prazo.
-- Se existir bloco "DADOS COMERCIAIS CADASTRADOS" com preço/condições preenchidos, use esses dados para responder — não diga que não tem acesso; handoff não substitui essa informação.
-- Mesmo com handoff: true, se a mensagem do cliente indicar compra/fechamento/documentação imediata, preencha lead_temperature: "quente".
-Prioridade: variáveis → texto dos arquivos (extracted) → histórico.
+Ordem de leitura em modo foco: variáveis cadastradas → trechos indexados → texto integral de arquivos; divergência rara → priorize variáveis para preço/condições/disponibilidade.
 ${JSON_INSTRUCTION}`;
 
 const LANGUAGE_HINT: Record<string, string> = {
@@ -165,11 +218,11 @@ function formatVars(v: Record<string, string>): string {
 
 /** Aberturas variadas (sorteio no servidor quando há 2+ empreendimentos com dados). */
 export const COMMERCIAL_LIST_OPENINGS: string[] = [
-  'Olha só o que encontrei pra você 😊',
-  'Tenho essas opções aqui que podem fazer sentido pra você:',
-  'Encontrei essas opções disponíveis:',
-  'Essas são as opções que temos no momento:',
-  'Separei essas opções pra você dar uma olhada:',
+  'Tenho essas opções pra você:',
+  'Olha as opções que temos:',
+  'Essas são as opções disponíveis:',
+  'Seguem as opções:',
+  'Vou te passar as opções:',
 ];
 
 /** Fechamentos consultivos (sorteio independente da abertura). */
@@ -177,9 +230,8 @@ export const COMMERCIAL_LIST_CLOSINGS: string[] = [
   'Algum desses te chamou mais atenção?',
   'Quer que eu te explique melhor algum deles?',
   'Qual deles faz mais sentido pra você?',
-  'Posso te ajudar a comparar melhor esses dois?',
   'Quer que eu detalhe algum deles pra você?',
-  'Quer que eu te ajude a comparar melhor as opções?',
+  'Quer comparar duas opções com calma?',
 ];
 
 export function pickCommercialListUx(): { opening: string; closing: string } {
@@ -212,12 +264,7 @@ function buildCommercialDataBlock(snapshots: CommercialSnapshot[]): string {
 DADOS COMERCIAIS CADASTRADOS NO SISTEMA (fonte primária — use antes de supor ou dizer que não tem acesso):
 ${body}
 
-Regras obrigatórias:
-- Ao repassar esses dados ao cliente, mantenha o mesmo tipo de organização visual (📍 nome, 💰 📄 📐 📝 em linhas separadas), sem markdown e sem asteriscos.
-- Para valor, preço, condições, disponibilidade, metragens ou lotes: use literalmente o que consta acima quando não for "[não informado]" ou "[nenhuma]".
-- Não diga que não tem acesso aos valores ou que não pode informar preços quando o campo "Preço" ou equivalente estiver preenchido acima.
-- Com mais de um empreendimento, um bloco 📍 por projeto; entre blocos use apenas uma linha em branco; compare quando fizer sentido; se um tiver dado e outro "[não informado]", seja explícita sobre o que falta.
-- Handoff humano por "preço/negociação" só quando o cliente pedir negociação fora do cadastro ou informação que não está acima — não use handoff só para repetir dados já cadastrados.`;
+Regras: use só linhas com valor real (omitir "[não informado]" / "[nenhuma]"). 📍 + 💰📄📐📝 conforme cadastro. Sem inventar. Vários empreendimentos: um bloco 📍 por linha, separados por uma linha em branco.`;
 }
 
 const CLASS_OK = new Set(['Novo', 'Qualificado', 'Carteira', 'Handoff']);
@@ -336,6 +383,64 @@ export interface BuildAnaSystemPromptOpts {
   commercialSnapshots?: CommercialSnapshot[] | null;
   /** Só quando há 2+ snapshots: abertura e fechamento sorteados no servidor para variar a UX. */
   commercialListUxHints?: { opening: string; closing: string } | null;
+  /**
+   * Tipo validado no backend (triagem: inferência + filtro de lista; scoped: tipo do empreendimento em foco).
+   * Usado para alinhar o prompt com a lista já filtrada — a IA não decide o tipo sozinha.
+   */
+  requestedProductType?: RequestedProductType | null;
+  /** Fase da conversa definida pelo motor (uma linha no prompt; reduz ambiguidade sem repetir o guia inteiro). */
+  conversationPhase?:
+    | 'appointment'
+    | 'scoped'
+    | 'inactive'
+    | 'triage_ask_type'
+    | 'triage_catalog'
+    | 'triage_location'
+    | 'triage';
+}
+
+function buildTipoComercialBlock(tipo: EnterpriseTipo, enterpriseName: string): string {
+  const base = `TIPO DO EMPREENDIMENTO NO CADASTRO: "${tipo}" (${enterpriseName}). O "reply" e as perguntas devem obedecer a este tipo.`;
+  if (tipo === 'LOTEAMENTO') {
+    return `${base}
+- NUNCA pergunte dormitórios ou banheiros.
+- Qualifique com: localização, faixa de investimento, metragem do lote, finalidade do lote, infraestrutura, condições comerciais (somente o que existir no cadastro/book) — na ordem que fizer sentido no diálogo, sem exigir tudo de uma vez.`;
+  }
+  if (tipo === 'APARTAMENTO') {
+    return `${base}
+- Pode perguntar: localização, faixa de investimento, dormitórios, banheiros, vaga, metragem (conforme faltar e fizer sentido).`;
+  }
+  return `${base}
+- Pode perguntar: localização, renda/faixa de entrada, dormitórios, elegibilidade (MCMV), sem inventar regras que não estejam no material.`;
+}
+
+function buildEnterpriseTipoDirective(
+  enterprise: EnterpriseRow | null,
+  mode: 'triage' | 'scoped' | 'inactive_linked',
+  triageRequestedProductType?: RequestedProductType | null
+): string {
+  if (mode === 'inactive_linked') return '';
+  if (mode === 'scoped' && enterprise) {
+    return `
+
+${buildTipoComercialBlock(enterprise.tipo, enterprise.name)}`;
+  }
+  const t = triageRequestedProductType ?? 'INDEFINIDO';
+  if (t === 'INDEFINIDO') {
+    return `
+
+FLUXO DE TIPO (triagem — o sistema classificou nesta rodada: INDEFINIDO):
+- O tipo de produto ainda NÃO está claro o suficiente. NÃO liste portfólio misto (loteamento + apartamento + MCMV na mesma resposta).
+- Pergunte de forma natural: a pessoa busca loteamento, apartamento ou linha MCMV?
+- No JSON, use productType: "INDEFINIDO" até o cliente deixar claro.`;
+  }
+  return `
+
+FLUXO DE TIPO (triagem — o sistema classificou nesta rodada: ${t}):
+- A lista de nomes no prompt contém SOMENTE empreendimentos do tipo ${t}. É proibido citar nome fora dessa lista ou de outro tipo.
+- Se o cliente ainda não informou localização: liste até 5 nomes reais (📍, só dados cadastrados) e só depois pergunte em qual região quer buscar. Localização NÃO é pré-condição para essa primeira listagem.
+- LOTEAMENTO: nunca pergunte dormitórios/banheiros. Depois da localização, refine por faixa, metragem do lote, finalidade.
+- APARTAMENTO / MCMV: depois da localização, refine por perfil (dormitórios, renda/elegibilidade MCMV, etc.) sem inventar dados.`;
 }
 
 function buildLocationQueryBlock(loc: LocationQueryContext): string {
@@ -364,8 +469,24 @@ ${emptyRule}
 Não contradiga o JSON: se a lista tiver itens, não diga que não há nada na região; se estiver vazia, não invente opções.`;
 }
 
+function buildConversationPhaseBanner(
+  phase: BuildAnaSystemPromptOpts['conversationPhase'] | undefined
+): string {
+  if (!phase) return '';
+  const lines: Record<NonNullable<BuildAnaSystemPromptOpts['conversationPhase']>, string> = {
+    appointment: 'FASE (motor): agendamento — prioridade sobre catálogo/triagem.',
+    scoped: 'FASE (motor): foco em um empreendimento — responda sobre ele; não reliste portfólio sem pedido explícito.',
+    inactive: 'FASE (motor): empreendimento inativo.',
+    triage_ask_type: 'FASE (motor): triagem — definir tipo (sem lista mista).',
+    triage_catalog: 'FASE (motor): triagem — nomes filtrados no prompt, depois região.',
+    triage_location: 'FASE (motor): triagem — resposta só conforme bloco de localização.',
+    triage: 'FASE (motor): triagem.',
+  };
+  return `${lines[phase]}\n\n`;
+}
+
 export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
-  const base = COMPORTAMENTO;
+  const base = buildConversationPhaseBanner(opts.conversationPhase) + COMPORTAMENTO;
   const loc = opts.locationQueryContext ?? null;
   const locationBlock = loc ? buildLocationQueryBlock(loc) : '';
   const commercialListUx =
@@ -373,12 +494,19 @@ export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
   const commercialBlock = buildCommercialDataBlock(opts.commercialSnapshots ?? []) + commercialListUx;
 
   if (opts.mode === 'triage') {
-    const namesList =
-      loc?.isEmpty
-        ? '(nenhum empreendimento ativo no banco para esta cidade/região)'
-        : (opts.allEnterpriseNames?.length ?? 0) > 0
-          ? opts.allEnterpriseNames!.join(', ')
-          : '(nenhum empreendimento ativo cadastrado)';
+    const triageType = opts.requestedProductType ?? 'INDEFINIDO';
+    let namesList: string;
+    if (loc?.isEmpty) {
+      namesList = '(nenhum empreendimento ativo no banco para esta cidade/região)';
+    } else if ((opts.allEnterpriseNames?.length ?? 0) > 0) {
+      namesList = opts.allEnterpriseNames!.join(', ');
+    } else if (!loc && triageType === 'INDEFINIDO') {
+      namesList = '(tipo indefinido — não invente nomes; pergunte loteamento, apartamento ou MCMV)';
+    } else if (!loc) {
+      namesList = `(nenhum empreendimento ativo do tipo ${triageType} no sistema)`;
+    } else {
+      namesList = '(nenhum resultado nesta localização para o filtro atual)';
+    }
     const cls = (opts.conversationClassification || 'Novo').trim();
     const ap = opts.appointmentPreflight;
     const openCtx = (opts.openAppointmentSummary || '').trim()
@@ -390,13 +518,14 @@ Trate a mensagem atual como complemento ou remarcação; não reinicie triagem n
       : '';
 
     const portfolioLine = loc
-      ? `Lista autorizada para ESTA consulta de localização (única fonte de nomes — não use outro portfólio nem lista global): ${namesList}`
-      : `Empreendimentos ativos no portfólio (use apenas estes nomes, não invente outros): ${namesList}`;
+      ? `Lista autorizada para ESTA consulta de localização (única fonte de nomes — já filtrada por tipo quando o sistema inferiu tipo; não use outro portfólio): ${namesList}`
+      : triageType === 'INDEFINIDO'
+        ? `Portfólio: ${namesList}`
+        : `Portfólio ativo filtrado pelo sistema — somente tipo ${triageType} (cite apenas estes nomes): ${namesList}`;
 
     const triageLocationBullets = loc
-      ? `- O cliente perguntou sobre uma localidade específica: use APENAS availableEnterprises do bloco "CONSULTA POR LOCALIZAÇÃO" e a lista autorizada acima. Não volte ao portfólio geral.
-- Não sugira empreendimento de outra cidade/região fora do filtro. Não diga que não há opções se availableEnterprises não estiver vazio.`
-      : `- Quando o cliente perguntar de forma ampla sobre opções, portfólio, cidade ou tipo (ex.: "o que vocês têm", "tem em Atibaia", "quero ver terrenos", "me mostra as opções") e ainda não houver empreendimento definido, você pode apresentar opções de forma resumida e consultiva usando a lista acima.`;
+      ? `- Só availableEnterprises + lista autorizada; nada de portfólio global misto.`
+      : `- Tipo claro: até 5 📍 do prompt → região → refinamento. Tipo INDEFINIDO: pergunte tipo, sem lista mista.`;
 
     const appointmentPriority =
       ap?.active === true
@@ -412,6 +541,7 @@ ${ap.reschedule ? '- O cliente pediu ALTERAR/REAGENDAR: trate como atualização
         : '';
 
     return `${base}
+${buildEnterpriseTipoDirective(null, 'triage', triageType)}
 
 ${locationBlock ? `${locationBlock}
 
@@ -423,11 +553,8 @@ Classificação atual no sistema (referência): "${cls}".
 ${openCtx}
 ${appointmentPriority}
 
-- Descubra interesse e qual empreendimento faz sentido para o cliente.
 ${triageLocationBullets}
-- Se a classificação estiver como Novo e não houver empreendimento focado, priorize destravar o atendimento com poucas opções claras em vez de respostas vazias.
-- Não despeje informação demais; organize em poucas linhas e feche com pergunta contextual ao tema.
-- send_file_category: null neste modo (sem envio de arquivo até haver empreendimento ativo no foco).`;
+- Poucas linhas, objetivas. send_file_category: null até haver empreendimento ativo no foco.`;
   }
 
   if (opts.mode === 'inactive_linked') {
@@ -439,7 +566,9 @@ Empreendimento inativo. Sem listar outros. send_file_category null.`;
   const e = opts.enterprise!;
   const addons = parseAddons(e.prompt_addons);
   const addonsBlock = addons.length ? `\nExtras:\n${addons.map((a) => `- ${a}`).join('\n')}` : '';
-  const know = opts.knowledgeText.trim() ? `\n--- Texto extraído dos arquivos ---\n${opts.knowledgeText.slice(0, 45_000)}` : '';
+  const know = opts.knowledgeText.trim()
+    ? `\n--- Base de conhecimento (arquivos + trechos ranqueados) ---\n${opts.knowledgeText.slice(0, 52_000)}`
+    : '';
   const inv = opts.fileInventory.trim() || '(nenhum arquivo cadastrado — send_file_category sempre null)';
   const namesList = (opts.allEnterpriseNames?.length ?? 0) > 0 ? opts.allEnterpriseNames!.join(', ') : '(nenhum outro cadastrado)';
   const scopedLocationPrecedence =
@@ -491,6 +620,7 @@ ${ap.reschedule ? '- Pedido de REMARCAÇÃO/ALTERAÇÃO: atualize o entendimento
       : '';
 
   return `${base}
+${buildEnterpriseTipoDirective(e, 'scoped')}
 
 ${LANGUAGE_HINT[e.language_style] || LANGUAGE_HINT.natural}
 
@@ -514,7 +644,130 @@ ${matBlock}
 
 ${commercialBlock || `Dados comerciais cadastrados:\n📍 ${opts.enterprise?.name ?? 'Empreendimento'}\n${formatVars(opts.variablesMap)}`}
 ${addonsBlock}
-${know}`;
+${know ? `${know}
+
+Use o bloco acima + variáveis para responder. Pedidos tipo "me conta", "resumo", "o que tem": organize só com o que estiver documentado; omita o que não existir.` : ''}`;
+}
+
+const MIN_SALVAGED_REPLY_CHARS = 20;
+
+function stripModelMarkdownFence(raw: string): string {
+  let s = raw.trim();
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) s = fence[1].trim();
+  return s;
+}
+
+function naturalLanguageLetterRatio(s: string): number {
+  const letters = (s.match(/\p{L}/gu) ?? []).length;
+  return s.length ? letters / s.length : 0;
+}
+
+/** Evita tratar fragmento JSON técnico ou lixo como resposta ao cliente. */
+function rawTextLooksLikeTechnicalJunk(s: string): boolean {
+  const t = s.trim();
+  if (t.length < 12) return true;
+  if (t.length >= 24 && naturalLanguageLetterRatio(t) < 0.08) return true;
+  if (/^[\s\n\r"{}\[\],:0-9.+\-truefalsnull_|]+$/i.test(t)) return true;
+  return false;
+}
+
+function decodeJsonStringContent(s: string): string {
+  try {
+    return JSON.parse(`"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`) as string;
+  } catch {
+    return s
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '\t')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+  }
+}
+
+/** Tenta obter o valor de "reply" mesmo com JSON incompleto ou truncado. */
+function extractReplyFieldFromBrokenJsonObject(t: string): string | null {
+  const strict = t.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (strict?.[1]) {
+    const v = decodeJsonStringContent(strict[1]).trim();
+    if (v.length >= MIN_SALVAGED_REPLY_CHARS && !rawTextLooksLikeTechnicalJunk(v)) return v;
+  }
+  const loose = t.match(/"reply"\s*:\s*"([\s\S]*)$/);
+  if (loose?.[1]) {
+    let inner = loose[1].replace(/"\s*[,}]?\s*$/,'').trim();
+    inner = decodeJsonStringContent(inner).trim();
+    if (inner.length >= MIN_SALVAGED_REPLY_CHARS && !rawTextLooksLikeTechnicalJunk(inner)) return inner;
+  }
+  return null;
+}
+
+function looksLikePlainNaturalLanguageReply(t: string): boolean {
+  if (t.trim().length < MIN_SALVAGED_REPLY_CHARS) return false;
+  if (rawTextLooksLikeTechnicalJunk(t)) return false;
+  if (naturalLanguageLetterRatio(t) < 0.15) return false;
+  return true;
+}
+
+/**
+ * Extrai texto útil da saída bruta do modelo quando o JSON estruturado não pôde ser parseado.
+ * Ordem: valor de "reply" em JSON quebrado → texto puro que pareça linguagem natural.
+ */
+function extractUsableReplyTextFromRawModelOutput(raw: string): string | null {
+  const stripped = stripModelMarkdownFence(raw);
+  const fromJson = extractReplyFieldFromBrokenJsonObject(stripped);
+  if (fromJson) return fromJson;
+
+  const t = stripped.trim();
+  if (!t.startsWith('{') && !t.startsWith('[') && looksLikePlainNaturalLanguageReply(t)) return t;
+
+  return null;
+}
+
+/**
+ * Quando `parseAnaJson` falha, tenta reaproveitar texto natural ou o campo `"reply"` em JSON parcial.
+ * Retorna null se não houver nada minimamente utilizável.
+ * O texto segue para `finalizeAnaReplyText` no `conversationEngine` (uma única finalização).
+ */
+export function trySalvageStructuredReplyFromRawModelContent(
+  raw: string | null | undefined
+): AnaStructuredReply | null {
+  if (raw == null || typeof raw !== 'string') return null;
+  const extracted = extractUsableReplyTextFromRawModelOutput(raw);
+  if (!extracted) return null;
+  const reply = extracted.trim().slice(0, 4000);
+  console.log('[DOC_PARSE] reply recuperado do texto bruto do modelo', { replyLen: reply.length });
+  return {
+    reply,
+    intent: 'geral',
+    productType: null,
+    wantsCatalog: false,
+    locationPreference: null,
+    budgetPreference: null,
+    bedroomsPreference: null,
+    bathroomsPreference: null,
+    nextBestQuestion: null,
+    userGoal: null,
+    lotSizePreference: null,
+    shouldShowPortfolio: false,
+    classification: 'Novo',
+    lead_temperature: null,
+    project: '',
+    handoff: false,
+    customer_name: '',
+    summary: '',
+    send_file_category: null,
+    appointment_confirmed: false,
+    appointment_date: null,
+    appointment_time: null,
+    appointment_notes: null,
+  };
+}
+
+function coerceProductTypeRaw(v: unknown): string | null {
+  if (v == null || v === '') return null;
+  const s = String(v).trim().toUpperCase();
+  if (['LOTEAMENTO', 'APARTAMENTO', 'MCMV', 'INDEFINIDO'].includes(s)) return s;
+  return null;
 }
 
 export function parseAnaJson(raw: string): AnaStructuredReply | null {
@@ -571,14 +824,45 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
         : typeof (o as Record<string, unknown>).appointmentNotes === 'string'
           ? String((o as Record<string, unknown>).appointmentNotes).trim()
           : null;
+    const intent = typeof o.intent === 'string' ? o.intent.trim() : 'geral';
+    const productType = coerceProductTypeRaw(o.productType);
+    const wantsCatalog = o.wantsCatalog === true;
+    const locationPreference =
+      typeof o.locationPreference === 'string' ? o.locationPreference.trim() || null : null;
+    const budgetPreference =
+      typeof o.budgetPreference === 'string' ? o.budgetPreference.trim() || null : null;
+    const bedroomsPreference =
+      typeof o.bedroomsPreference === 'string' ? o.bedroomsPreference.trim() || null : null;
+    const bathroomsPreference =
+      typeof o.bathroomsPreference === 'string' ? o.bathroomsPreference.trim() || null : null;
+    const nextBestQuestion =
+      typeof o.nextBestQuestion === 'string' ? o.nextBestQuestion.trim() || null : null;
+    const userGoal =
+      typeof o.userGoal === 'string' ? o.userGoal.trim() || null : null;
+    const lotSizePreference =
+      typeof o.lotSizePreference === 'string' ? o.lotSizePreference.trim() || null : null;
+    const shouldShowPortfolio = o.shouldShowPortfolio === true;
     console.log('[DOC_PARSE] structured ok', {
       send_file_category_raw: sc,
       send_file_category_norm: send_file_category,
       replyLen: reply.length,
       handoff: Boolean(o.handoff),
+      intent,
+      productType,
     });
     return {
       reply,
+      intent,
+      productType,
+      wantsCatalog,
+      locationPreference,
+      budgetPreference,
+      bedroomsPreference,
+      bathroomsPreference,
+      nextBestQuestion,
+      userGoal,
+      lotSizePreference,
+      shouldShowPortfolio,
       classification,
       lead_temperature,
       project: typeof o.project === 'string' ? o.project : '',
@@ -605,8 +889,12 @@ export function fallbackReplyFromRaw(
   userMessage?: string,
   knownCustomerName?: string | null,
   appointmentFlow?: boolean,
-  appointmentContinuation?: boolean
+  appointmentContinuation?: boolean,
+  recentContextForHeuristic?: string,
+  allEnterpriseNames?: string[],
+  productTypeHint?: RequestedProductType
 ): AnaStructuredReply {
+  const blob = [recentContextForHeuristic, userMessage].filter(Boolean).join('\n');
   const reply =
     userMessage && isSimpleOpeningGreeting(userMessage)
       ? pickRandomGreetingReply(knownCustomerName)
@@ -614,9 +902,22 @@ export function fallbackReplyFromRaw(
         ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
         : appointmentFlow
           ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
-          : ANA_FALLBACK_INCOMPREHENSION_REPLY;
+          : userUtteranceHasSearchRefinementSignals(blob)
+            ? buildRefinementContextReply(blob, allEnterpriseNames, productTypeHint)
+            : ANA_FALLBACK_INCOMPREHENSION_REPLY;
   return {
     reply,
+    intent: 'geral',
+    productType: null,
+    wantsCatalog: false,
+    locationPreference: null,
+    budgetPreference: null,
+    bedroomsPreference: null,
+    bathroomsPreference: null,
+    nextBestQuestion: null,
+    userGoal: null,
+    lotSizePreference: null,
+    shouldShowPortfolio: false,
     classification: 'Novo',
     lead_temperature: null,
     project: '',
