@@ -61,9 +61,11 @@ export const ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY =
 const ANA_FALLBACK_REFINEMENT_LOTEAMENTO_REPLY =
   'Me diz a região e a faixa de investimento que eu te mostro os lotes.';
 
-/** Detecta pedido explícito de catálogo/portfólio no texto do usuário. */
-function hasCatalogIntent(ctx: string): boolean {
-  return /\b(me\s+mostr|quero\s+ver|quais\s+opcoes|quais\s+empreendimentos|o\s+que\s+voces?\s+te[mn]|o\s+que\s+voces?\s+trabalha|me\s+mostra\s+tudo|quero\s+conhecer|quero\s+saber\s+quais|mostra\s+as\s+opcoes|me\s+passa\s+as\s+opcoes|lista|catalogo|portfolio)\b/.test(ctx);
+/** Detecta pedido explícito de catálogo/portfólio OU sinal de que o cliente não consegue/quer filtrar antes de ver. */
+export function hasCatalogIntent(ctx: string): boolean {
+  if (/\b(me\s+mostr|quero\s+ver|quais\s+opcoes|quais\s+empreendimentos|o\s+que\s+voces?\s+te[mn]|o\s+que\s+voces?\s+trabalha|me\s+mostra\s+tudo|quero\s+conhecer|quero\s+saber\s+quais|mostra\s+as\s+opcoes|me\s+passa\s+as\s+opcoes|lista|catalogo|portfolio)\b/.test(ctx)) return true;
+  if (/\b(nao\s+sei|não\s+sei|nao\s+tenho\s+prefer|não\s+tenho\s+prefer|qualquer\s+regiao|qualquer\s+região|tanto\s+faz|sem\s+preferencia|sem\s+preferência|mostra\s+tudo|ver\s+tudo|quero\s+tudo|me\s+mostra\s+o\s+que\s+tem)\b/.test(ctx)) return true;
+  return false;
 }
 
 /**
@@ -218,6 +220,12 @@ BUSCA / REFINAMENTO (mensagens curtas em sequência — prioridade):
 - Trate expressões como "quero em São Paulo", "algo mais em conta", "com uns 300m²", "tem em SP?", "quais empreendimentos em..." como continuação da mesma intenção: una tudo com o histórico recente antes de responder.
 - Se o cliente já citou cidade/região, metragem, faixa/orçamento ("em conta"), tipo de imóvel ou pedido de opções na região, NÃO resete a conversa com pergunta genérica pedindo para escolher entre "empreendimento, valores, localização ou disponibilidade" e NÃO repita essa mesma formulação se ela já tiver aparecido no histórico.
 - Responda com base no que já foi dito; se faltar apenas um dado, pergunte só esse dado, de forma específica.
+
+ANTI-LOOP (prioridade sobre qualificação):
+- NUNCA repita a mesma pergunta que já fez nas suas últimas 2 respostas. Se já perguntou região/localização e o cliente disse "não sei", "me mostra tudo", "qualquer uma", "tanto faz", NÃO pergunte região de novo.
+- Nesse caso: liste os empreendimentos disponíveis (📍 nome, até 5) e depois pergunte qual interessa mais.
+- Se o cliente disser "não sei" para qualquer filtro (região, faixa, metragem), entenda como sinal para mostrar opções amplas, não para insistir no mesmo filtro.
+- Prioridade: destravar a conversa > qualificar perfeitamente. Um lead que vê opções e se interessa vale mais que um lead travado em loop de perguntas.
 
 ENCERRAMENTO DA CONVERSA (prioridade sobre a pergunta final):
 - Se o cliente agradecer e encerrar claramente (ex.: "obrigado", "não preciso de mais nada", "por enquanto é só", "no momento não, obrigado", "valeu", "depois eu chamo", "qualquer coisa eu chamo", "era isso", "tá bom obrigado"), NÃO faça pergunta no final.

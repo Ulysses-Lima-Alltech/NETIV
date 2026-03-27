@@ -11,15 +11,9 @@ export function sleepMs(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-const DUPLICATE_FALLBACKS_LOTEAMENTO = [
-  'Me confirma a região e a faixa de investimento que eu sigo com você.',
-  'Me diz a região que você quer priorizar que eu te mostro os lotes.',
-  'Qual região e faixa de valor você procura?',
-];
-
 const DUPLICATE_FALLBACKS_GENERIC = [
   'Me conta o que você quer priorizar que eu sigo com você.',
-  'Qual região ou tipo de imóvel você procura?',
+  'Qual tipo de imóvel e região te interessa?',
   'Me diz o que falta pra eu te direcionar.',
 ];
 
@@ -29,12 +23,22 @@ function normForDupFallback(s: string): string {
 
 /**
  * Fallback enviado quando a reply da IA ficou duplicada/similar à anterior.
- * Nunca deixa o cliente sem resposta.
+ * Se houver nomes reais e contexto de catálogo/escape, lista o portfólio em vez de repetir refinamento.
  */
-export function pickDuplicateFallbackReply(recentContext?: string): string {
+export function pickDuplicateFallbackReply(
+  recentContext?: string,
+  allEnterpriseNames?: string[]
+): string {
   const ctx = normForDupFallback(recentContext || '');
-  const isLot = /\b(lote|lotes|loteamento|terreno|terrenos)\b/.test(ctx);
-  const pool = isLot ? DUPLICATE_FALLBACKS_LOTEAMENTO : DUPLICATE_FALLBACKS_GENERIC;
+  const names = allEnterpriseNames ?? [];
+  if (names.length > 0) {
+    const isLot = /\b(lote|lotes|loteamento|terreno|terrenos)\b/.test(ctx);
+    const listed = names.slice(0, 5).map((n) => `📍 ${n}`).join('\n');
+    const tipoLabel = isLot ? ' de loteamento' : '';
+    const more = names.length > 5 ? '\n\nTenho mais opções também.' : '';
+    return `Hoje eu trabalho com essas opções${tipoLabel}:\n\n${listed}${more}\n\nQual te interessa mais?`;
+  }
+  const pool = DUPLICATE_FALLBACKS_GENERIC;
   return pool[Math.floor(Math.random() * pool.length)]!;
 }
 
@@ -300,6 +304,8 @@ export function userUtteranceHasSearchRefinementSignals(text: string): boolean {
   if (/\b(infraestrutura|area\s+de\s+lazer|area\s+verde|metragem\s+do\s+lote)\b/.test(t)) return true;
 
   if (/\b(me\s+mostr|quero\s+ver|quais\s+opcoes|o\s+que\s+voces?\s+te[mn]|me\s+passa|catalogo|portfolio|quero\s+conhecer|quais\s+empreendimentos)\b/.test(t)) return true;
+
+  if (/\b(nao\s+sei|mostra\s+tudo|ver\s+tudo|quero\s+tudo|tanto\s+faz|qualquer\s+regiao|sem\s+preferencia|me\s+mostra\s+o\s+que\s+tem)\b/.test(t)) return true;
 
   return false;
 }

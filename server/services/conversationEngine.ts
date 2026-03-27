@@ -285,6 +285,26 @@ async function sendAnaEnterpriseDocumentWhatsApp(params: {
   }
 }
 
+const REFINEMENT_PATTERNS = /\b(regiao|região|localizacao|localização|qual\s+regiao|qual\s+região|qual\s+cidade|faixa\s+de\s+investimento|faixa\s+de\s+valor|metragem|qual\s+bairro)\b/i;
+
+/**
+ * Detecta loop de refinamento: a Ana perguntou região/faixa nas últimas 2 respostas
+ * e o cliente não forneceu a informação (respondeu com "não sei", "me mostra", etc).
+ */
+function detectRefinementLoop(
+  history: { role: 'user' | 'assistant'; content: string }[],
+  currentUserMessage: string
+): boolean {
+  const lastAssistantMsgs = history.filter((h) => h.role === 'assistant').slice(-2);
+  if (lastAssistantMsgs.length < 2) return false;
+  const bothAskedRefinement = lastAssistantMsgs.every((m) => REFINEMENT_PATTERNS.test(m.content));
+  if (!bothAskedRefinement) return false;
+  const norm = currentUserMessage.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+  const clientDidntAnswer = /\b(nao\s+sei|não\s+sei|me\s+mostr|quero\s+ver|mostra\s+tudo|ver\s+tudo|quero\s+tudo|tanto\s+faz|qualquer|nao\s+tenho|sem\s+prefer)\b/.test(norm)
+    || !REFINEMENT_PATTERNS.test(norm);
+  return clientDidntAnswer;
+}
+
 export async function handleIncomingMessage(ctx: IncomingMessageContext): Promise<void> {
   const { conversationId, userMessage, toPhoneNumber, trailingUserBubbles, replyPipelineToken } = ctx;
 
@@ -535,7 +555,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       .join('\n')
       .slice(-2500);
 
-    const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
+    const refinementLoopDetected = detectRefinementLoop(history, trimmed);
+    let effectiveSystemPrompt = systemPrompt;
+    if (refinementLoopDetected && allEnterpriseNames.length > 0) {
+      const namesList = allEnterpriseNames.slice(0, 5).map((n) => `📍 ${n}`).join('\n');
+      effectiveSystemPrompt += `\n\nINSTRUÇÃO DE EMERGÊNCIA — ANTI-LOOP (prioridade absoluta sobre qualquer outra regra de qualificação):
+O sistema detectou que você já perguntou região/localização/faixa ao cliente e ele não conseguiu ou não quis responder. NÃO pergunte região/localização/faixa novamente nesta rodada.
+Em vez disso, LISTE os empreendimentos disponíveis usando somente nomes reais:
+${namesList}${allEnterpriseNames.length > 5 ? '\n(há mais opções)' : ''}
+Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de região.`;
+      console.log('[ANA_PIPELINE] refinement_loop_escape', { conversationId, namesInjected: allEnterpriseNames.length });
+    }
+
+    const messages: ChatMessage[] = [{ role: 'system', content: effectiveSystemPrompt }];
     for (const h of history) {
       messages.push({ role: h.role, content: h.content });
     }
@@ -702,11 +734,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const ageDup = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
     if (lastContent && lastContent === replyText.trim() && ageDup < 55_000) {
       console.warn('[ANA_PIPELINE] duplicate_detected_identical', { conversationId, ageMs: ageDup });
-      replyText = pickDuplicateFallbackReply(recentUserContextForFallback);
+      replyText = pickDuplicateFallbackReply(recentUserContextForFallback, allEnterpriseNames);
       console.log('[ANA_PIPELINE] duplicate_fallback_sent', { conversationId, fallbackLen: replyText.length });
     } else if (lastContent && repliesSemanticallySimilar(lastContent, replyText)) {
       console.warn('[ANA_PIPELINE] duplicate_detected_semantic', { conversationId });
-      replyText = pickDuplicateFallbackReply(recentUserContextForFallback);
+      replyText = pickDuplicateFallbackReply(recentUserContextForFallback, allEnterpriseNames);
       console.log('[ANA_PIPELINE] duplicate_fallback_sent', { conversationId, fallbackLen: replyText.length });
     }
     console.log('[ANA_PIPELINE] send_final', { conversationId, toPhoneNumber, replyLength: replyText.length });
