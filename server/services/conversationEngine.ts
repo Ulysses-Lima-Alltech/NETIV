@@ -8,7 +8,12 @@ import {
   incrementAnaCustomerNameMentions,
 } from '../repositories/conversationRepository.js';
 import { sendTextMessage, sendDocumentMessage } from './whatsappMetaService.js';
-import { tryMatchActiveEnterpriseId } from '../repositories/enterpriseMatch.js';
+import {
+  tryMatchEnterpriseFromUserCorpus,
+  tryMatchEnterpriseAnaphora,
+  tryMatchEnterpriseOrdinalFromCatalog,
+  tryMatchEnterprisePronounAfterCatalog,
+} from '../repositories/enterpriseMatch.js';
 import {
   getActiveEnterpriseById,
   loadAgentKnowledgeText,
@@ -173,7 +178,19 @@ const SWITCH_INTENT_PATTERNS = [
   'me passa mais', 'me passa mais informacoes', 'me passa mais informacoes do', 'me passa mais informacoes sobre',
   'troca para', 'trocar para', 'muda para', 'mudar para',
   'nao quero mais', 'nao gostei desse', 'prefiro o', 'nao me interessa mais',
-  'me fala do', 'me fala sobre', 'fala do', 'fala sobre', 'quero o ',
+  'me fala do',
+  'me fala sobre',
+  'me fale do',
+  'me fale sobre',
+  'fale do',
+  'fale sobre',
+  'fala mais do',
+  'fala mais sobre',
+  'fale mais do',
+  'fale mais sobre',
+  'me explique',
+  'me explica',
+  'quero o ',
 ];
 
 const HANDOFF_INTENT_PATTERNS = [
@@ -436,6 +453,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     const explicitSwitch = hasExplicitSwitchIntent(trimmed);
     let matched: number | null = null;
+    /** De onde veio o match — evita trocar foco por menção antiga em outra bolha. */
+    let enterpriseMatchSource:
+      | 'current'
+      | 'context'
+      | 'anaphora'
+      | 'pronoun_catalog'
+      | 'ordinal'
+      | 'explicit_tail'
+      | null = null;
     let activeEnterprisesForContext: EnterpriseRow[] | null = null;
 
     const allActiveEnterprises = await listEnterprises(true);
@@ -459,11 +485,43 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? trimmed
         : fullUserUtterances.trim() || trimmed;
 
-    if (explicitSwitch) {
-      activeEnterprisesForContext = enterprisesForLocationResolution;
-      matched = tryMatchEnterpriseByLastMention(activeEnterprisesForContext, textForEnterpriseMatch);
+    const matchPool = enterprisesForLocationResolution;
+    const lastAssistantRow = [...rows].reverse().find((r) => r.role === 'assistant');
+    const lastAssistantText = (lastAssistantRow?.content || '').trim();
+
+    activeEnterprisesForContext = matchPool;
+
+    if (!locationQueryContext) {
+      matched = tryMatchEnterpriseFromUserCorpus(trimmed, matchPool);
+      if (matched != null) enterpriseMatchSource = 'current';
+      if (matched == null) {
+        matched = tryMatchEnterpriseAnaphora(trimmed, lastAssistantText, matchPool);
+        if (matched != null) enterpriseMatchSource = 'anaphora';
+      }
+      if (matched == null) {
+        matched = tryMatchEnterpriseOrdinalFromCatalog(trimmed, lastAssistantText, matchPool);
+        if (matched != null) enterpriseMatchSource = 'ordinal';
+      }
+      if (matched == null) {
+        matched = tryMatchEnterprisePronounAfterCatalog(trimmed, lastAssistantText, matchPool);
+        if (matched != null) enterpriseMatchSource = 'pronoun_catalog';
+      }
+      if (matched == null) {
+        const userBlob = [fullUserUtterances.trim(), trimmed].filter(Boolean).join('\n');
+        matched = tryMatchEnterpriseFromUserCorpus(userBlob, matchPool);
+        if (matched != null) enterpriseMatchSource = 'context';
+      }
+      if (matched == null && explicitSwitch) {
+        matched = tryMatchEnterpriseByLastMention(matchPool, textForEnterpriseMatch);
+        if (matched != null) enterpriseMatchSource = 'explicit_tail';
+      }
     } else {
-      matched = await tryMatchActiveEnterpriseId(textForEnterpriseMatch);
+      matched = tryMatchEnterpriseFromUserCorpus(trimmed, matchPool);
+      if (matched != null) enterpriseMatchSource = 'current';
+      if (matched == null && explicitSwitch) {
+        matched = tryMatchEnterpriseByLastMention(matchPool, textForEnterpriseMatch);
+        if (matched != null) enterpriseMatchSource = 'explicit_tail';
+      }
     }
 
     if (
@@ -474,12 +532,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       !locationQueryContext.filteredEnterpriseIds.includes(matched)
     ) {
       matched = null;
+      enterpriseMatchSource = null;
     }
 
-    if (matched) {
-      const hasCurrentFocus = effectiveConv.enterprise_id != null;
-      const isDifferentEnterprise = effectiveConv.enterprise_id !== matched;
-      const shouldReclassify = !hasCurrentFocus || (isDifferentEnterprise && explicitSwitch);
+    if (matched != null) {
+      const hasFocus = effectiveConv.enterprise_id != null;
+      const isDifferent = effectiveConv.enterprise_id !== matched;
+      const allowSwitchFromUserPick =
+        isDifferent &&
+        (enterpriseMatchSource === 'current' ||
+          enterpriseMatchSource === 'anaphora' ||
+          enterpriseMatchSource === 'pronoun_catalog' ||
+          enterpriseMatchSource === 'ordinal' ||
+          enterpriseMatchSource === 'explicit_tail');
+      const shouldReclassify = !hasFocus || explicitSwitch || allowSwitchFromUserPick;
       if (shouldReclassify) {
         await setConversationEnterpriseId(conversationId, matched);
         effectiveConv = (await getConversationById(conversationId)) ?? effectiveConv;
@@ -584,7 +650,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     const refinementLoopDetected = detectRefinementLoop(history, trimmed);
     let effectiveSystemPrompt = systemPrompt;
-    if (refinementLoopDetected && allEnterpriseNames.length > 0) {
+    if (refinementLoopDetected && allEnterpriseNames.length > 0 && mode !== 'scoped') {
       const namesList = allEnterpriseNames.slice(0, 5).map((n) => `📍 ${n}`).join('\n');
       effectiveSystemPrompt += `\n\nINSTRUÇÃO DE EMERGÊNCIA — ANTI-LOOP (prioridade absoluta sobre qualquer outra regra de qualificação):
 O sistema detectou que você já perguntou região/localização/faixa ao cliente e ele não conseguiu ou não quis responder. NÃO pergunte região/localização/faixa novamente nesta rodada.
@@ -694,6 +760,7 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
     if (structured) {
       const sr = structured;
       if (
+        mode !== 'scoped' &&
         (sr.wantsCatalog || sr.shouldShowPortfolio) &&
         allEnterpriseNames.length > 0 &&
         !allEnterpriseNames.some((n) => sr.reply.includes(n))
@@ -768,13 +835,14 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
     const lastAsstDup = [...rowsBeforeSend].reverse().find((m) => m.role === 'assistant');
     const lastContent = (lastAsstDup?.content || '').trim();
     const ageDup = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
+    const dupNamePool = mode === 'scoped' ? undefined : allEnterpriseNames;
     if (lastContent && lastContent === replyText.trim() && ageDup < 55_000) {
       console.warn('[ANA_PIPELINE] duplicate_detected_identical', { conversationId, ageMs: ageDup });
-      replyText = pickDuplicateFallbackReply(recentUserContextForFallback, allEnterpriseNames);
+      replyText = pickDuplicateFallbackReply(recentUserContextForFallback, dupNamePool);
       console.log('[ANA_PIPELINE] duplicate_fallback_sent', { conversationId, fallbackLen: replyText.length });
     } else if (lastContent && repliesSemanticallySimilar(lastContent, replyText)) {
       console.warn('[ANA_PIPELINE] duplicate_detected_semantic', { conversationId });
-      replyText = pickDuplicateFallbackReply(recentUserContextForFallback, allEnterpriseNames);
+      replyText = pickDuplicateFallbackReply(recentUserContextForFallback, dupNamePool);
       console.log('[ANA_PIPELINE] duplicate_fallback_sent', { conversationId, fallbackLen: replyText.length });
     }
     console.log('[ANA_PIPELINE] send_final', { conversationId, toPhoneNumber, replyLength: replyText.length });
