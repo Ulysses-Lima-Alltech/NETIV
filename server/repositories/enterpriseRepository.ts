@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { config } from '../config.js';
 import { query } from '../db/pg.js';
+import { replaceEnterpriseFileChunks } from './enterpriseKnowledgeChunkRepository.js';
 
 export const FILE_CATEGORIES = ['book', 'unidades', 'tabela_comercial', 'outro'] as const;
 export type FileCategory = (typeof FILE_CATEGORIES)[number];
@@ -49,6 +50,9 @@ const VAR_KEYS = ['preco', 'condicoes', 'disponibilidade', 'observacoes'] as con
 
 export type LanguageStyle = 'informal' | 'natural' | 'formal' | 'culta';
 
+export const ENTERPRISE_TIPOS = ['LOTEAMENTO', 'APARTAMENTO', 'MCMV'] as const;
+export type EnterpriseTipo = (typeof ENTERPRISE_TIPOS)[number];
+
 export interface EnterpriseRow {
   id: number;
   name: string;
@@ -56,12 +60,28 @@ export interface EnterpriseRow {
   status: string;
   language_style: string;
   prompt_addons: string;
+  tipo: EnterpriseTipo;
+  exclusivo: boolean;
   city?: string | null;
   state_uf?: string | null;
   commercial_region?: string | null;
   ibge_code?: string | null;
   created_at: Date;
   updated_at: Date;
+}
+
+function coerceEnterpriseTipo(raw: string | null | undefined): EnterpriseTipo {
+  const u = String(raw || '').toUpperCase();
+  return ENTERPRISE_TIPOS.includes(u as EnterpriseTipo) ? (u as EnterpriseTipo) : 'APARTAMENTO';
+}
+
+function rowEnterprise(r: EnterpriseRow): EnterpriseRow {
+  const x = r as unknown as { tipo?: string; exclusivo?: boolean | null };
+  return {
+    ...r,
+    tipo: coerceEnterpriseTipo(x.tipo),
+    exclusivo: x.exclusivo === true,
+  };
 }
 
 function enterpriseDir(id: number): string {
@@ -82,17 +102,38 @@ function slugify(name: string): string {
   );
 }
 
-export async function listEnterprises(activeOnly: boolean): Promise<EnterpriseRow[]> {
-  const sql = activeOnly
-    ? `SELECT * FROM enterprises WHERE status = 'ativo' ORDER BY name`
-    : `SELECT * FROM enterprises ORDER BY name`;
-  const { rows } = await query<EnterpriseRow>(sql);
-  return rows;
+export interface ListEnterprisesFilters {
+  tipo?: EnterpriseTipo;
+  exclusivo?: boolean;
+}
+
+export async function listEnterprises(
+  activeOnly: boolean,
+  filters?: ListEnterprisesFilters
+): Promise<EnterpriseRow[]> {
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  let i = 1;
+  if (activeOnly) {
+    conds.push(`status = 'ativo'`);
+  }
+  if (filters?.tipo) {
+    conds.push(`tipo = $${i++}`);
+    params.push(filters.tipo);
+  }
+  if (filters?.exclusivo !== undefined) {
+    conds.push(`exclusivo = $${i++}`);
+    params.push(filters.exclusivo);
+  }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  const sql = `SELECT * FROM enterprises ${where} ORDER BY name`;
+  const { rows } = await query<EnterpriseRow>(sql, params);
+  return rows.map(rowEnterprise);
 }
 
 export async function getEnterpriseById(id: number): Promise<EnterpriseRow | null> {
   const { rows } = await query<EnterpriseRow>(`SELECT * FROM enterprises WHERE id = $1`, [id]);
-  return rows[0] ?? null;
+  return rows[0] ? rowEnterprise(rows[0]) : null;
 }
 
 export async function getActiveEnterpriseById(id: number): Promise<EnterpriseRow | null> {
@@ -100,7 +141,7 @@ export async function getActiveEnterpriseById(id: number): Promise<EnterpriseRow
     `SELECT * FROM enterprises WHERE id = $1 AND status = 'ativo'`,
     [id]
   );
-  return rows[0] ?? null;
+  return rows[0] ? rowEnterprise(rows[0]) : null;
 }
 
 async function ensureUniqueSlug(base: string, excludeId?: number): Promise<string> {
@@ -121,7 +162,7 @@ async function ensureUniqueSlug(base: string, excludeId?: number): Promise<strin
 
 export async function createEnterprise(
   name: string,
-  opts?: { slug?: string; languageStyle?: LanguageStyle }
+  opts?: { slug?: string; languageStyle?: LanguageStyle; tipo?: EnterpriseTipo; exclusivo?: boolean }
 ): Promise<EnterpriseRow> {
   const trimmed = name.trim();
   if (!trimmed) throw new Error('Nome obrigatório.');
@@ -130,12 +171,14 @@ export async function createEnterprise(
   const base = opts?.slug?.trim() ? slugify(opts.slug) : slugify(trimmed);
   const slug = await ensureUniqueSlug(base);
   const lang = opts?.languageStyle ?? 'natural';
+  const tipo = opts?.tipo != null ? coerceEnterpriseTipo(opts.tipo) : 'APARTAMENTO';
+  const exclusivo = opts?.exclusivo === true;
   const { rows } = await query<EnterpriseRow>(
-    `INSERT INTO enterprises (name, slug, status, language_style, prompt_addons)
-     VALUES ($1, $2, 'ativo', $3, '[]') RETURNING *`,
-    [trimmed, slug, lang]
+    `INSERT INTO enterprises (name, slug, status, language_style, prompt_addons, tipo, exclusivo)
+     VALUES ($1, $2, 'ativo', $3, '[]', $4, $5) RETURNING *`,
+    [trimmed, slug, lang, tipo, exclusivo]
   );
-  const ent = rows[0];
+  const ent = rowEnterprise(rows[0]);
   for (const k of VAR_KEYS) {
     await query(`INSERT INTO enterprise_variables (enterprise_id, var_key, value) VALUES ($1, $2, '')`, [
       ent.id,
@@ -153,6 +196,8 @@ export async function updateEnterprise(
     slug?: string;
     languageStyle?: LanguageStyle;
     promptAddons?: string[];
+    tipo?: EnterpriseTipo;
+    exclusivo?: boolean;
     city?: string | null;
     stateUf?: string | null;
     commercialRegion?: string | null;
@@ -170,6 +215,9 @@ export async function updateEnterprise(
   const status = u.status ?? cur.status;
   const language_style = u.languageStyle ?? cur.language_style;
   const prompt_addons = u.promptAddons !== undefined ? JSON.stringify(u.promptAddons) : cur.prompt_addons;
+  const tipo = u.tipo !== undefined ? coerceEnterpriseTipo(u.tipo) : cur.tipo;
+  const exclusivo = u.exclusivo !== undefined ? u.exclusivo : cur.exclusivo;
+  console.log('[TIPO_DEBUG] updateEnterprise', { id, inputTipo: u.tipo, curTipo: cur.tipo, resolvedTipo: tipo });
 
   const city =
     u.city !== undefined ? ((u.city ?? '').trim() || null) : (cur.city ?? null);
@@ -193,12 +241,12 @@ export async function updateEnterprise(
   }
   const { rows } = await query<EnterpriseRow>(
     `UPDATE enterprises SET name = $1, slug = $2, status = $3, language_style = $4, prompt_addons = $5,
-     city = $7, state_uf = $8, commercial_region = $9, ibge_code = $10,
+     city = $7, state_uf = $8, commercial_region = $9, ibge_code = $10, tipo = $11, exclusivo = $12,
      updated_at = NOW()
      WHERE id = $6 RETURNING *`,
-    [name, slug, status, language_style, prompt_addons, id, city, state_uf, commercial_region, ibge_code]
+    [name, slug, status, language_style, prompt_addons, id, city, state_uf, commercial_region, ibge_code, tipo, exclusivo]
   );
-  return rows[0] ?? null;
+  return rows[0] ? rowEnterprise(rows[0]) : null;
 }
 
 export async function inactivateEnterprise(id: number): Promise<EnterpriseRow | null> {
@@ -300,6 +348,15 @@ async function extractText(filePath: string, mime: string, originalName: string)
     if (mime.includes('text') || lower.endsWith('.txt') || lower.endsWith('.md')) {
       return normalizeExtractedText(buf.toString('utf-8')).slice(0, 500_000);
     }
+    if (
+      mime.includes('wordprocessingml') ||
+      mime.includes('application/msword') ||
+      lower.endsWith('.docx')
+    ) {
+      const mammoth = await import('mammoth');
+      const r = await mammoth.extractRawText({ buffer: buf });
+      return normalizeExtractedText(r.value || '').slice(0, 500_000);
+    }
     if (mime.includes('pdf') || lower.endsWith('.pdf')) {
       const pdfParse = (await import('pdf-parse')).default;
       const d = await pdfParse(buf);
@@ -342,7 +399,19 @@ export async function registerEnterpriseFile(
       canBeSentByAna,
     ]
   );
-  return rows[0].id;
+  const fileId = rows[0].id;
+  if (canBeUsedAsKnowledge && (extracted || '').trim()) {
+    try {
+      await replaceEnterpriseFileChunks(enterpriseId, fileId, extracted);
+    } catch (e) {
+      console.error('[knowledge_chunks] falha ao indexar arquivo', {
+        enterpriseId,
+        fileId,
+        err: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+  return fileId;
 }
 
 export async function updateEnterpriseFilePermissions(
@@ -518,6 +587,8 @@ export function enterpriseToPublic(e: EnterpriseRow, vars: Record<string, string
     name: e.name,
     status: e.status as 'ativo' | 'inativo',
     languageStyle: e.language_style as LanguageStyle,
+    tipo: e.tipo,
+    exclusivo: e.exclusivo,
     variables: varsToFrontend(vars),
     promptAddons: parseAddons(e.prompt_addons),
     city: e.city ?? '',

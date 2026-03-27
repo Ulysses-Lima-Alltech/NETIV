@@ -1,21 +1,87 @@
-/** Delay aleatório entre respostas da ANA (ms), não bloqueia outras conversas (uso com await dentro do handler da conversa). */
-export function randomAnaReplyDelayMs(): number {
-  const min = 5000;
-  const max = 40000;
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+/** Sem delay artificial — resposta enviada imediatamente após geração. */
+export function randomAnaReplyDelayMs(_opts?: {
+  burstCount?: number;
+  replyLength?: number;
+}): number {
+  return 0;
 }
 
 export function sleepMs(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
   return new Promise((r) => setTimeout(r, ms));
+}
+
+const DUPLICATE_FALLBACKS_GENERIC = [
+  'Me conta o que você quer priorizar que eu sigo com você.',
+  'Qual tipo de imóvel e região te interessa?',
+  'Me diz o que falta pra eu te direcionar.',
+];
+
+function normForDupFallback(s: string): string {
+  return s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+}
+
+/**
+ * Fallback enviado quando a reply da IA ficou duplicada/similar à anterior.
+ * Se houver nomes reais e contexto de catálogo/escape, lista o portfólio em vez de repetir refinamento.
+ */
+export function pickDuplicateFallbackReply(
+  recentContext?: string,
+  allEnterpriseNames?: string[]
+): string {
+  const ctx = normForDupFallback(recentContext || '');
+  const names = allEnterpriseNames ?? [];
+  if (names.length > 0) {
+    const isLot = /\b(lote|lotes|loteamento|terreno|terrenos)\b/.test(ctx);
+    const listed = names.slice(0, 5).map((n) => `📍 ${n}`).join('\n');
+    const tipoLabel = isLot ? ' de loteamento' : '';
+    const more = names.length > 5 ? '\n\nTenho mais opções também.' : '';
+    return `Hoje eu trabalho com essas opções${tipoLabel}:\n\n${listed}${more}\n\nQual te interessa mais?`;
+  }
+  const pool = DUPLICATE_FALLBACKS_GENERIC;
+  return pool[Math.floor(Math.random() * pool.length)]!;
+}
+
+function fingerprintReply(s: string): string {
+  return normClosure(s).replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function significantWordSet(s: string): Set<string> {
+  const set = new Set<string>();
+  for (const w of fingerprintReply(s).split(' ')) {
+    if (w.length > 2) set.add(w);
+  }
+  return set;
+}
+
+/**
+ * Evita reenviar resposta quase idêntica (similaridade lexical; sem embeddings).
+ */
+export function repliesSemanticallySimilar(a: string, b: string): boolean {
+  const fa = fingerprintReply(a);
+  const fb = fingerprintReply(b);
+  if (!fa || !fb) return false;
+  if (fa === fb) return true;
+  const A = significantWordSet(a);
+  const B = significantWordSet(b);
+  if (A.size === 0 || B.size === 0) return false;
+  let inter = 0;
+  for (const w of A) if (B.has(w)) inter++;
+  const union = A.size + B.size - inter;
+  const j = union > 0 ? inter / union : 0;
+  return j >= 0.88;
 }
 
 /** Perguntas curtas só quando o modelo não fechou com interrogação — variadas, não uma frase fixa. */
 const FALLBACK_CLOSING_QUESTIONS = [
-  'Posso te ajudar com mais algum detalhe?',
-  'Você quer que eu aprofunde esse ponto?',
-  'Quer que eu te mostre outras opções também?',
-  'O que você gostaria de saber em seguida?',
+  'Quer saber mais sobre algum deles?',
+  'Te ajudo com mais alguma coisa?',
+  'Quer que eu detalhe algum ponto?',
+  'Faz sentido pra você?',
   'Por onde você prefere que a gente continue?',
+  'Quer que eu explique melhor alguma parte?',
+  'Tem alguma dúvida sobre o que conversamos?',
+  'Faz sentido pra você ou prefere que eu detalhe?',
 ];
 
 function normClosure(s: string): string {
@@ -171,7 +237,15 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
     }
   }
 
-  return `${s} ${randomFallbackClosing()}`;
+  const sentences = s.split(/(?<=[.!?])\s+/);
+  if (sentences.length >= 4) {
+    const last = sentences[sentences.length - 1] ?? '';
+    if (looksInterrogativeSentence(last)) {
+      return s.replace(/[.!…]$/, '?');
+    }
+  }
+
+  return `${s}\n\n${randomFallbackClosing()}`;
 }
 
 function normGreeting(s: string): string {
@@ -181,6 +255,59 @@ function normGreeting(s: string): string {
     .replace(/\p{M}/gu, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Heurística leve: sinais de busca/refinamento imobiliário no texto (mensagem atual + histórico recente fundido).
+ * Usada para não aplicar o fallback genérico de incompreensão quando já há contexto aproveitável.
+ */
+export function userUtteranceHasSearchRefinementSignals(text: string): boolean {
+  const raw = (text || '').trim();
+  if (raw.length < 2) return false;
+  const t = raw
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (/\b\d{2,5}\s*m[2²]\b/i.test(raw) || /\b\d{2,5}\s*m2\b/i.test(t)) return true;
+  if (/\bm[2²]\b/i.test(raw) || /\bmetros(\s+quadrados)?\b/.test(t)) return true;
+  if (/\b(uns|com|cerca\s+de)\s+\d{2,5}\b/.test(t) && (/\d+\s*m/i.test(raw) || /\bmetros\b/.test(t))) return true;
+
+  if (
+    /\b(em\s+conta|mais\s+em\s+conta|mais\s+barato|barato|economico|preco|precos|valor|valores|faixa|orcamento|investimento|milhao|milhoes|r\$)\b/.test(
+      t
+    )
+  )
+    return true;
+
+  if (
+    /\b(sao paulo|rio de janeiro|belo horizonte|brasilia|curitiba|porto alegre|salvador|recife|fortaleza|manaus|goiania|vitoria|florianopolis)\b/.test(
+      t
+    )
+  )
+    return true;
+  if (/\b(sp|rj|bh|df)\b/.test(t)) return true;
+  if (/\b(zona\s+(sul|norte|leste|oeste|central)|centro|bairro|cidade|regiao|localizacao)\b/.test(t)) return true;
+
+  if (/\b(quero|queria|preciso|busco|procuro|tem|teria|mostra|mostrar)\b[\s\S]{0,56}\b(em|no|na|pra|para)\b/.test(t))
+    return true;
+  if (/\b(quais|qual|onde)\b[\s\S]{0,72}\b(empreendimento|empreendimentos|opcao|opcoes|unidades|lancamento)\b/.test(t))
+    return true;
+  if (/\b(empreendimentos?|lancamentos?|unidades)\b[\s\S]{0,40}\b(em|no|na)\b/.test(t)) return true;
+  if (/\b(em|no|na)\s+(sp|sao paulo|rio|bh|rj)\b/.test(t)) return true;
+
+  if (/\b(apartamento|casa|studio|cobertura|dormitorio|dormitorios|quarto|quartos|planta)\b/.test(t)) return true;
+
+  if (/\b(lote|lotes|loteamento|loteamentos|terreno|terrenos|condominio\s+fechado|lote\s+para\s+investir|lote\s+para\s+construir)\b/.test(t)) return true;
+  if (/\b(infraestrutura|area\s+de\s+lazer|area\s+verde|metragem\s+do\s+lote)\b/.test(t)) return true;
+
+  if (/\b(me\s+mostr|quero\s+ver|quais\s+opcoes|o\s+que\s+voces?\s+te[mn]|me\s+passa|catalogo|portfolio|quero\s+conhecer|quais\s+empreendimentos)\b/.test(t)) return true;
+
+  if (/\b(nao\s+sei|mostra\s+tudo|ver\s+tudo|quero\s+tudo|tanto\s+faz|qualquer\s+regiao|sem\s+preferencia|me\s+mostra\s+o\s+que\s+tem)\b/.test(t)) return true;
+
+  return false;
 }
 
 /**
@@ -196,16 +323,15 @@ export function isSimpleOpeningGreeting(text: string): boolean {
 }
 
 const GREETING_REPLY_NO_NAME = [
-  'Oi! Seja bem-vindo(a). Eu sou a Ana, secretária de vendas. Pra eu te atender melhor, como posso te chamar?',
-  'Olá! Fico feliz em falar com você. Como posso te chamar?',
-  'Oi! Pra eu te atender melhor, qual é o seu nome?',
-  'Olá! Tudo bem? Eu sou a Ana, do time comercial. Como posso te chamar?',
+  'Oi! Eu sou a Ana. Como posso te chamar?',
+  'Olá! Sou a Ana, do comercial. Qual o seu nome?',
+  'Oi! Tudo bem? Me diz seu nome que a gente conversa.',
 ];
 
 const GREETING_REPLY_WITH_NAME = (name: string) => [
-  `Oi, ${name}! Em que posso te ajudar hoje?`,
-  `Olá, ${name}! O que você gostaria de saber agora?`,
-  `Oi, ${name}! Por onde você quer que a gente comece?`,
+  `Oi, ${name}! Como posso te ajudar?`,
+  `Olá, ${name}! O que você procura?`,
+  `Oi, ${name}! Me conta o que precisa.`,
 ];
 
 /** Resposta acolhedora para saudação simples (sem chamar a API). */

@@ -177,6 +177,25 @@ export async function deleteConversation(id: number): Promise<boolean> {
   return (result.rowCount ?? 0) > 0;
 }
 
+/**
+ * Exclui TODAS as conversas de um número de telefone (contact_phone ou external_contact_id).
+ * Mensagens e logs são removidos via CASCADE.
+ * Retorna a quantidade de conversas removidas.
+ */
+export async function deleteAllConversationsByPhone(phone: string): Promise<number> {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 8) return 0;
+  const result = await query(
+    `DELETE FROM conversations
+     WHERE contact_phone = $1
+        OR external_contact_id = $1
+        OR contact_phone = $2
+        OR external_contact_id = $2`,
+    [phone.trim(), digits]
+  );
+  return result.rowCount ?? 0;
+}
+
 const VALID_CLASSIFICATIONS = new Set(['Novo', 'Qualificado', 'Carteira', 'Handoff']);
 
 function toValidClassification(s: string | null | undefined): string {
