@@ -14,9 +14,11 @@ export function setStoredAuthToken(token: string | null): void {
   else localStorage.setItem(AUTH_TOKEN_KEY, token);
 }
 
-/** Chamado quando a API retorna 401 (sessão inválida/expirada). Limpa token local; não redireciona para login (ANA embutida). */
+/** Chamado quando a API retorna 401 (sessão inválida/expirada). Limpa token e redireciona para login. */
 function handleUnauthorized(): void {
   setStoredAuthToken(null);
+  const base = typeof import.meta.env.BASE_URL === 'string' ? import.meta.env.BASE_URL.replace(/\/$/, '') : '';
+  window.location.href = `${base}/login`;
 }
 
 async function request<T>(
@@ -41,7 +43,7 @@ async function request<T>(
       throw new Error((data as { error?: string }).error ?? 'E-mail ou senha incorretos.');
     }
     handleUnauthorized();
-    throw new Error((data as { error?: string }).error ?? 'Sessão inválida ou não autorizado.');
+    throw new Error((data as { error?: string }).error ?? 'Sessão expirada. Faça login novamente.');
   }
   if (!res.ok) throw new Error((data as { error?: string }).error ?? `Erro ${res.status}`);
   return data as T;
@@ -391,7 +393,10 @@ export const projectsApi = {
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) {
       setStoredAuthToken(null);
-      throw new Error((data as { error?: string }).error ?? 'Sessão inválida ou não autorizado.');
+      const base =
+        typeof import.meta.env.BASE_URL === 'string' ? import.meta.env.BASE_URL.replace(/\/$/, '') : '';
+      window.location.href = `${base}/login`;
+      throw new Error((data as { error?: string }).error ?? 'Sessão expirada. Faça login novamente.');
     }
     if (!res.ok) throw new Error((data as { error?: string }).error ?? `Erro ${res.status}`);
     return data as KnowledgeFileItem;
