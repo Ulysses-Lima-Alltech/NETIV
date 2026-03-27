@@ -40,7 +40,6 @@ import {
   fallbackReplyFromRaw,
   detectStrongPurchaseIntentForLeadTemperature,
   ANA_FALLBACK_INCOMPREHENSION_REPLY,
-  ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY,
   buildRefinementContextReply,
   buildCatalogFallbackReply,
 } from './anaAgentService.js';
@@ -572,6 +571,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     if (inactiveLinked) mode = 'inactive_linked';
     else if (ent) mode = 'scoped';
 
+    let conversationPhase: NonNullable<BuildAnaSystemPromptOpts['conversationPhase']> = 'triage';
+    if (inactiveLinked) conversationPhase = 'inactive';
+    else if (appointmentPreflight.active) conversationPhase = 'appointment';
+    else if (ent) conversationPhase = 'scoped';
+    else if (locationQueryContext) conversationPhase = 'triage_location';
+    else if (triageRequestedProductType === 'INDEFINIDO') conversationPhase = 'triage_ask_type';
+    else conversationPhase = 'triage_catalog';
+
     const enterprisesForSameTipoAsEnt =
       ent != null ? allActiveEnterprises.filter((e) => e.tipo === ent.tipo) : [];
 
@@ -587,7 +594,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     } else if (ent) {
       commercialSnapshots = [{ enterpriseName: ent.name, variables: vars }];
     }
-    const chunkHint = `${trimmed}\n${fullUserUtterances}`.slice(0, 8000);
+    const chunkHint = [
+      ent?.name && `empreendimento_foco: ${ent.name}`,
+      triageRequestedProductType !== 'INDEFINIDO' && `tipo_interesse: ${triageRequestedProductType}`,
+      trimmed,
+      fullUserUtterances,
+    ]
+      .filter(Boolean)
+      .join('\n')
+      .slice(0, 12_000);
     const chunkText = ent ? await loadRankedKnowledgeChunksForPrompt(ent.id, chunkHint) : '';
     const knowledgeBase = ent ? await loadAgentKnowledgeText(ent.id) : '';
     const knowledgeText = [chunkText, knowledgeBase].filter(Boolean).join('\n\n').trim();
@@ -628,6 +643,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       fileInventory,
       allEnterpriseNames,
       requestedProductType: promptProductTypeForPrompt,
+      conversationPhase,
       knownCustomerName: effectiveConv.customer_name,
       customerNameMentionsSoFar: effectiveConv.ana_customer_name_mentions ?? 0,
       conversationClassification: effectiveConv.classification,
@@ -830,7 +846,10 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
       return;
     }
 
-    let replyText = finalizeAnaReplyText(replyBody, { userMessage: trimmed }).slice(0, 4000);
+    let replyText = finalizeAnaReplyText(replyBody, {
+      userMessage: trimmed,
+      conversationMode: mode,
+    }).slice(0, 4000);
     const rowsBeforeSend = await getMessagesByConversationId(conversationId);
     const lastAsstDup = [...rowsBeforeSend].reverse().find((m) => m.role === 'assistant');
     const lastContent = (lastAsstDup?.content || '').trim();

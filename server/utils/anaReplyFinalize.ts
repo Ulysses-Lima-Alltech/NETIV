@@ -11,15 +11,12 @@ export function sleepMs(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-const DUPLICATE_FALLBACKS_GENERIC = [
-  'Me conta o que você quer priorizar que eu sigo com você.',
-  'Qual tipo de imóvel e região te interessa?',
-  'Me diz o que falta pra eu te direcionar.',
-];
+import { buildCatalogListMessage } from './anaCatalogMessages.js';
 
-function normForDupFallback(s: string): string {
-  return s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
-}
+const DUPLICATE_FALLBACKS_GENERIC = [
+  'Me diz o que você quer priorizar que eu sigo com você.',
+  'Qual região ou perfil você quer explorar primeiro?',
+];
 
 /**
  * Fallback enviado quando a reply da IA ficou duplicada/similar à anterior.
@@ -29,14 +26,12 @@ export function pickDuplicateFallbackReply(
   recentContext?: string,
   allEnterpriseNames?: string[]
 ): string {
-  const ctx = normForDupFallback(recentContext || '');
   const names = allEnterpriseNames ?? [];
   if (names.length > 0) {
-    const isLot = /\b(lote|lotes|loteamento|terreno|terrenos)\b/.test(ctx);
-    const listed = names.slice(0, 5).map((n) => `📍 ${n}`).join('\n');
-    const tipoLabel = isLot ? ' de loteamento' : '';
-    const more = names.length > 5 ? '\n\nTenho mais opções também.' : '';
-    return `Hoje eu trabalho com essas opções${tipoLabel}:\n\n${listed}${more}\n\nQual te interessa mais?`;
+    return buildCatalogListMessage(names, {
+      recentContext,
+      closingQuestion: 'Qual deles você quer explorar primeiro?',
+    });
   }
   const pool = DUPLICATE_FALLBACKS_GENERIC;
   return pool[Math.floor(Math.random() * pool.length)]!;
@@ -72,16 +67,12 @@ export function repliesSemanticallySimilar(a: string, b: string): boolean {
   return j >= 0.88;
 }
 
-/** Perguntas curtas só quando o modelo não fechou com interrogação — variadas, não uma frase fixa. */
+/** Só quando o modelo não fechou com interrogação — evite variações quase idênticas. */
 const FALLBACK_CLOSING_QUESTIONS = [
-  'Quer saber mais sobre algum deles?',
-  'Te ajudo com mais alguma coisa?',
   'Quer que eu detalhe algum ponto?',
-  'Faz sentido pra você?',
   'Por onde você prefere que a gente continue?',
-  'Quer que eu explique melhor alguma parte?',
   'Tem alguma dúvida sobre o que conversamos?',
-  'Faz sentido pra você ou prefere que eu detalhe?',
+  'Quer saber mais sobre algum deles?',
 ];
 
 function normClosure(s: string): string {
@@ -175,6 +166,8 @@ function randomFallbackClosing(): string {
 export interface FinalizeAnaReplyOptions {
   /** Mensagem atual do cliente — usada para detectar encerramento e não forçar pergunta. */
   userMessage?: string | null;
+  /** Modo foco: respostas informativas podem terminar sem "?" forçado. */
+  conversationMode?: 'triage' | 'scoped' | 'inactive_linked';
 }
 
 /**
@@ -222,6 +215,14 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   if (!s) return randomFallbackClosing();
 
   if (s.endsWith('?')) return s;
+
+  if (opts?.conversationMode === 'scoped') {
+    const t = s.trim();
+    const tail = t.slice(-140);
+    if (t.length >= 72 && !tail.includes('?') && /[.!…]$/.test(t)) {
+      return t;
+    }
+  }
 
   if (s.endsWith('...')) {
     s = s.slice(0, -3).trim();
