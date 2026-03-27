@@ -6,6 +6,7 @@ import {
   applyAnaConversationUpdate,
   maxLeadTemperature,
   incrementAnaCustomerNameMentions,
+  mergeConversationCommercialFlowState,
 } from '../repositories/conversationRepository.js';
 import { sendTextMessage, sendDocumentMessage } from './whatsappMetaService.js';
 import {
@@ -60,6 +61,13 @@ import {
   findOpenAppointmentForConversationAndEnterprise,
   type AppointmentRow,
 } from '../repositories/appointmentRepository.js';
+import {
+  parseCommercialFlowState,
+  computeNextCommercialFlowState,
+  isShortCommercialContinuation,
+  tryRecoverEnterpriseIdFromFlowState,
+  type CommercialFlowState,
+} from '../utils/commercialFlowState.js';
 
 /** Modelo principal da Ana (WhatsApp) — saída JSON estruturada. */
 const ANA_CHAT_MODEL = 'gpt-5';
@@ -323,10 +331,6 @@ function detectRefinementLoop(
 
 export async function handleIncomingMessage(ctx: IncomingMessageContext): Promise<void> {
   const { conversationId, userMessage, toPhoneNumber, trailingUserBubbles, replyPipelineToken } = ctx;
-  const debugRunId = `run-${Date.now()}-${conversationId}`;
-  // #region agent log
-  fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H7',location:'conversationEngine.ts:332',message:'handle_incoming_entry',data:{conversationId,user_len:(userMessage||'').trim().length,toPhone_len:(toPhoneNumber||'').length},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
 
   console.log('[ANA DEBUG] handleIncomingMessage start', { conversationId, toPhoneNumber });
 
@@ -346,23 +350,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       conversationId,
     });
     if (!aiConfig) {
-      // #region agent log
-      fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H6',location:'conversationEngine.ts:349',message:'early_return_no_ai_config',data:{conversationId},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       console.error('[ANA DEBUG] getOpenAIConfig retornou null — ignorando mensagem.');
       return;
     }
     if (!aiConfig.openaiApiKey?.trim()) {
-      // #region agent log
-      fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H6',location:'conversationEngine.ts:354',message:'early_return_no_openai_key',data:{conversationId,aiEnabled:aiConfig.aiEnabled===true},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       console.warn('[ANA DEBUG] OpenAI API Key não configurada — ignorando mensagem.');
       return;
     }
     if (!aiConfig.aiEnabled) {
-      // #region agent log
-      fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H6',location:'conversationEngine.ts:359',message:'early_return_ai_disabled',data:{conversationId,hasOpenAIKey:Boolean(aiConfig.openaiApiKey?.trim())},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       console.log('[ANA DEBUG] aiEnabled check blocked — ai_enabled=false no banco.');
       return;
     }
@@ -373,6 +368,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       console.error('[ANA DEBUG] conversa inexistente', { conversationId });
       return;
     }
+    let flowStateParsed: CommercialFlowState = parseCommercialFlowState(conv.commercial_flow_state) ?? {};
     console.log('[ANA DEBUG] conversation loaded', { conversationId, handoff: conv.handoff, classification: conv.classification });
 
     // Revalidação imediata antes do bloqueio: sempre buscar estado mais recente (evita race: usuário muda Handoff→ANA durante processamento)
@@ -463,7 +459,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     const explicitSwitch = hasExplicitSwitchIntent(trimmed);
+    const shortContinuation = isShortCommercialContinuation(trimmed, explicitSwitch);
     let matched: number | null = null;
+    let flowRecoverySource: string | null = null;
     /** De onde veio o match — evita trocar foco por menção antiga em outra bolha. */
     let enterpriseMatchSource:
       | 'current'
@@ -478,9 +476,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const allActiveEnterprises = await listEnterprises(true);
     const fullUserUtterances = buildUserUtterancesContext(rows);
     const triageRequestedProductType = inferRequestedProductType(trimmed, fullUserUtterances);
-    // #region agent log
-    fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H1',location:'conversationEngine.ts:473',message:'pre_match_context',data:{conversationId,trimmed_len:trimmed.length,utterances_len:fullUserUtterances.length,triageRequestedProductType,active_count:allActiveEnterprises.length},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     /** Subconjunto por tipo quando o cliente já manifestou LOTEAMENTO/APARTAMENTO/MCMV; INDEFINIDO = todos (só para resolver localização). */
     const enterprisesForLocationResolution =
       triageRequestedProductType === 'INDEFINIDO'
@@ -504,6 +499,41 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const lastAssistantText = (lastAssistantRow?.content || '').trim();
 
     activeEnterprisesForContext = matchPool;
+
+    const recoveredFocus = tryRecoverEnterpriseIdFromFlowState({
+      trimmedUser: trimmed,
+      enterpriseIdInDb: effectiveConv.enterprise_id,
+      lastAssistantText,
+      flowState: flowStateParsed,
+      explicitSwitch,
+      matchPool,
+      allEnterprises: allActiveEnterprises,
+    });
+    if (recoveredFocus) {
+      await setConversationEnterpriseId(conversationId, recoveredFocus.enterpriseId);
+      effectiveConv = (await getConversationById(conversationId)) ?? effectiveConv;
+      flowRecoverySource = recoveredFocus.source;
+      console.log('[ANA_FLOW] enterprise_focus_recovered', {
+        conversationId,
+        source: recoveredFocus.source,
+        enterpriseId: recoveredFocus.enterpriseId,
+      });
+    }
+
+    const lastUserRowForLog = [...rows].reverse().find((r) => r.role === 'user');
+    const inboundMetaMessageId = lastUserRowForLog?.meta_message_id ?? null;
+    console.log('[ANA_MSG]', {
+      conversationId,
+      metaMessageId: inboundMetaMessageId,
+      textLen: trimmed.length,
+      shortContinuation,
+      explicitSwitch,
+      flowRecoverySource,
+      enterpriseIdBeforeMatch: effectiveConv.enterprise_id,
+      stageHint: flowStateParsed.stage ?? null,
+      lastInferredFromState: flowStateParsed.lastInferredEnterpriseId ?? null,
+      pipelineStale: isPipelineStale(conversationId, replyPipelineToken),
+    });
 
     /**
      * 1) Mensagem atual × todos os ativos — prioridade máxima para troca de foco (ignora filtro de tipo).
@@ -556,9 +586,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         if (matched != null) enterpriseMatchSource = 'explicit_tail';
       }
     }
-    // #region agent log
-    fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H2',location:'conversationEngine.ts:548',message:'post_match_pre_filter',data:{conversationId,location_ctx:Boolean(locationQueryContext),location_ids_count:locationQueryContext?.filteredEnterpriseIds.length??0,matched_enterprise_id:matched,enterpriseMatchSource,explicitSwitch},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
 
     const strongEnterpriseNameInCurrentMessage =
       matched != null && enterpriseHasStrongNameSignalInTrimmed(matched, trimmed, allActiveEnterprises);
@@ -592,9 +619,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         matched_enterprise_id: matched,
       });
     }
-    // #region agent log
-    fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H3',location:'conversationEngine.ts:582',message:'post_location_filter',data:{conversationId,matched_after_location_filter:matched,strongEnterpriseNameInCurrentMessage,location_ctx:Boolean(locationQueryContext),location_empty:locationQueryContext?.isEmpty??null},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
 
     if (matched != null) {
       const hasFocus = effectiveConv.enterprise_id != null;
@@ -650,9 +674,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           ignored_match_id: matched,
         });
       }
-      // #region agent log
-      fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H4',location:'conversationEngine.ts:636',message:'reclassify_decision',data:{conversationId,matched_enterprise_id:matched,hasFocus,isDifferent,allowSwitchFromUserPick,explicitSwitch,shouldReclassify,current_enterprise_id:effectiveConv.enterprise_id??null},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
     } else {
       console.log('[ANA_ENTERPRISE_MATCH]', {
         conversationId,
@@ -770,9 +791,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       commercialSnapshots: commercialSnapshots.length > 0 ? commercialSnapshots : undefined,
       commercialListUxHints: commercialSnapshots.length > 1 ? pickCommercialListUx() : undefined,
     };
-    // #region agent log
-    fetch('http://127.0.0.1:7395/ingest/35c3696f-1525-494d-b955-c3b50eb0adf0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7815f2'},body:JSON.stringify({sessionId:'7815f2',runId:debugRunId,hypothesisId:'H5',location:'conversationEngine.ts:766',message:'prompt_mode_snapshot',data:{conversationId,mode,conversationPhase,ent_id:ent?.id??null,ent_name_len:(ent?.name||'').length,location_ctx_sent_to_prompt:Boolean(promptOpts.locationQueryContext),allEnterpriseNames_count:allEnterpriseNames.length,commercialSnapshots_count:commercialSnapshots.length},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
+    console.log('[ANA_MSG]', {
+      conversationId,
+      metaMessageId: inboundMetaMessageId,
+      phase: 'pre_llm',
+      mode,
+      conversationPhase,
+      enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+      focusSource: flowRecoverySource ?? enterpriseMatchSource ?? null,
+      matchedEnterpriseId: matched,
+      calledLlm: true,
+      allEnterpriseNamesCount: allEnterpriseNames.length,
+    });
     const systemPrompt = buildAnaSystemPrompt(promptOpts);
 
     const history =
@@ -897,6 +927,13 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
       final_reply_source: finalReplySource,
     });
 
+    const blockCatalogShortContinuation =
+      shortContinuation &&
+      (effectiveConv.enterprise_id != null || flowRecoverySource != null);
+    if (structured && blockCatalogShortContinuation) {
+      structured = { ...structured, wantsCatalog: false, shouldShowPortfolio: false };
+    }
+
     if (structured) {
       const sr = structured;
       const strongCatalogBlockId = tryMatchEnterpriseFromUserCorpus(trimmed, allActiveEnterprises);
@@ -906,6 +943,7 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
       if (
         mode !== 'scoped' &&
         !blockCatalogInjectionForNamedEnterprise &&
+        !blockCatalogShortContinuation &&
         (sr.wantsCatalog || sr.shouldShowPortfolio) &&
         allEnterpriseNames.length > 0 &&
         !allEnterpriseNames.some((n) => sr.reply.includes(n))
@@ -984,13 +1022,20 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
     const lastContent = (lastAsstDup?.content || '').trim();
     const ageDup = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
     const dupNamePool = mode === 'scoped' ? undefined : allEnterpriseNames;
+    const dupFallbackOpts = {
+      scoped: mode === 'scoped',
+      focusedEnterpriseName: ent?.name ?? null,
+    };
+    let duplicateFallbackUsed = false;
     if (lastContent && lastContent === replyText.trim() && ageDup < 55_000) {
       console.warn('[ANA_PIPELINE] duplicate_detected_identical', { conversationId, ageMs: ageDup });
-      replyText = pickDuplicateFallbackReply(recentUserContextForFallback, dupNamePool);
+      duplicateFallbackUsed = true;
+      replyText = pickDuplicateFallbackReply(recentUserContextForFallback, dupNamePool, dupFallbackOpts);
       console.log('[ANA_PIPELINE] duplicate_fallback_sent', { conversationId, fallbackLen: replyText.length });
     } else if (lastContent && repliesSemanticallySimilar(lastContent, replyText)) {
       console.warn('[ANA_PIPELINE] duplicate_detected_semantic', { conversationId });
-      replyText = pickDuplicateFallbackReply(recentUserContextForFallback, dupNamePool);
+      duplicateFallbackUsed = true;
+      replyText = pickDuplicateFallbackReply(recentUserContextForFallback, dupNamePool, dupFallbackOpts);
       console.log('[ANA_PIPELINE] duplicate_fallback_sent', { conversationId, fallbackLen: replyText.length });
     }
     console.log('[ANA_PIPELINE] send_final', { conversationId, toPhoneNumber, replyLength: replyText.length });
@@ -1003,6 +1048,29 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
       const nameForMention = (structured.customer_name?.trim() || convAfterSend?.customer_name || '').trim();
       const delta = countCustomerNameMentionsInText(replyText, nameForMention);
       if (delta > 0) await incrementAnaCustomerNameMentions(conversationId, delta);
+      const prevForFlow = parseCommercialFlowState(convAfterSend?.commercial_flow_state) ?? flowStateParsed;
+      const nextFlow = computeNextCommercialFlowState(prevForFlow, replyText, {
+        conversationPhase,
+        enterpriseIdResolved: effectiveConv.enterprise_id ?? null,
+        enterprises: allActiveEnterprises,
+        productTypeHint:
+          mode === 'scoped' && ent
+            ? ent.tipo
+            : triageRequestedProductType === 'INDEFINIDO'
+              ? undefined
+              : triageRequestedProductType,
+      });
+      await mergeConversationCommercialFlowState(conversationId, nextFlow);
+      console.log('[ANA_MSG]', {
+        conversationId,
+        metaMessageId: inboundMetaMessageId,
+        phase: 'sent',
+        finalReplySource,
+        finalEnterpriseId: effectiveConv.enterprise_id,
+        conversationPhase,
+        duplicateFallback: duplicateFallbackUsed,
+        replyLen: replyText.length,
+      });
     } else {
       console.error('[ANA DEBUG] Falha ao enviar WhatsApp:', sendResult.error, { toPhoneNumber });
     }

@@ -17,14 +17,25 @@ const DUPLICATE_FALLBACKS_GENERIC = [
   'Me diz o que você quer priorizar que eu sigo com você.',
   'Qual região ou perfil você quer explorar primeiro?',
 ];
+export interface PickDuplicateFallbackOpts {
+  /** Modo foco: não listar portfólio inteiro; variar dentro do empreendimento atual. */
+  scoped?: boolean;
+  focusedEnterpriseName?: string | null;
+}
+
 /**
  * Fallback enviado quando a reply da IA ficou duplicada/similar à anterior.
  * Se houver nomes reais e contexto de catálogo/escape, lista o portfólio em vez de repetir refinamento.
  */
 export function pickDuplicateFallbackReply(
   recentContext?: string,
-  allEnterpriseNames?: string[]
+  allEnterpriseNames?: string[],
+  opts?: PickDuplicateFallbackOpts
 ): string {
+  const name = (opts?.focusedEnterpriseName || '').trim();
+  if (opts?.scoped && name.length >= 2) {
+    return `Vou focar no ${name}: qual ponto você quer aprofundar agora — valor, localização ou lazer?`;
+  }
   const names = allEnterpriseNames ?? [];
   if (names.length > 0) {
     return buildCatalogListMessage(names, {

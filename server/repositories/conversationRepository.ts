@@ -4,6 +4,7 @@ import { getCorretorById } from './corretorRepository.js';
 import { assignBrokerForHandoffConversation } from '../services/handoffQueueService.js';
 import type { LeadOriginInput } from '../services/leadOriginResolver.js';
 import { resolveEnterpriseFromLeadSource } from '../services/leadOriginResolver.js';
+import type { CommercialFlowState } from '../utils/commercialFlowState.js';
 
 export type { LeadOriginInput } from '../services/leadOriginResolver.js';
 
@@ -41,6 +42,8 @@ export interface ConversationRow {
   /** Quando preenchido, handoff será aplicado após esse instante (pós-agendamento). */
   handoff_deferred_until?: Date | null;
   handoff_deferred_broker_id?: number | null;
+  /** JSON: etapa comercial, última listagem, inferência de foco (continuidade em mensagens curtas). */
+  commercial_flow_state?: unknown;
 }
 
 export interface ReserveSegmentationPatch {
@@ -527,6 +530,17 @@ export async function applyAnaConversationUpdate(
     [classification, lead_temperature, handoff, cn ?? null, conversationId, saveBeforeHandoff ?? null]
   );
   if (handoff) await assignBrokerForHandoffConversation(conversationId);
+}
+
+/** Persiste o JSON de estado comercial (objeto completo vindo de `computeNextCommercialFlowState`). */
+export async function mergeConversationCommercialFlowState(
+  conversationId: number,
+  nextState: CommercialFlowState
+): Promise<void> {
+  await query(`UPDATE conversations SET commercial_flow_state = $1::jsonb, updated_at = NOW() WHERE id = $2`, [
+    JSON.stringify(nextState),
+    conversationId,
+  ]);
 }
 
 /**

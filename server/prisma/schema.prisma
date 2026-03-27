@@ -86,6 +86,8 @@ model Conversation {
   handoff               Boolean   @default(false)
   meta_phone_number_id  String?
   last_message_at       DateTime?
+  /// Estado comercial (etapa, última listagem 📍, inferência de foco) — JSON
+  commercial_flow_state Json      @default("{}")
   created_at            DateTime  @default(now())
   updated_at            DateTime  @updatedAt
 
