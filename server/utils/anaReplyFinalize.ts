@@ -1,32 +1,9 @@
-/**
- * Delay adaptativo entre respostas da ANA (ms).
- * Rajada de mensagens → delay curto (cliente em troca rápida).
- * Resposta curta → delay menor (simula digitação proporcional).
- * Resposta longa → delay moderado.
- */
-export function randomAnaReplyDelayMs(opts?: {
+/** Sem delay artificial — resposta enviada imediatamente após geração. */
+export function randomAnaReplyDelayMs(_opts?: {
   burstCount?: number;
   replyLength?: number;
 }): number {
-  const burst = opts?.burstCount ?? 1;
-  const len = opts?.replyLength ?? 200;
-
-  if (burst >= 3) {
-    return Math.floor(Math.random() * 800) + 600;
-  }
-  if (burst >= 2) {
-    return Math.floor(Math.random() * 1000) + 800;
-  }
-  if (len < 80) {
-    return Math.floor(Math.random() * 1000) + 800;
-  }
-  if (len < 200) {
-    return Math.floor(Math.random() * 1500) + 1200;
-  }
-  if (len > 500) {
-    return Math.floor(Math.random() * 2000) + 2000;
-  }
-  return Math.floor(Math.random() * 1500) + 1500;
+  return 0;
 }
 
 export function sleepMs(ms: number): Promise<void> {
@@ -65,10 +42,10 @@ export function repliesSemanticallySimilar(a: string, b: string): boolean {
 
 /** Perguntas curtas só quando o modelo não fechou com interrogação — variadas, não uma frase fixa. */
 const FALLBACK_CLOSING_QUESTIONS = [
-  'Posso te ajudar com mais algum detalhe?',
-  'Você quer que eu aprofunde esse ponto?',
-  'Quer que eu te mostre outras opções também?',
-  'O que você gostaria de saber em seguida?',
+  'Quer saber mais sobre algum deles?',
+  'Te ajudo com mais alguma coisa?',
+  'Quer que eu detalhe algum ponto?',
+  'Faz sentido pra você?',
   'Por onde você prefere que a gente continue?',
   'Quer que eu explique melhor alguma parte?',
   'Tem alguma dúvida sobre o que conversamos?',
@@ -310,16 +287,15 @@ export function isSimpleOpeningGreeting(text: string): boolean {
 }
 
 const GREETING_REPLY_NO_NAME = [
-  'Oi! Seja bem-vindo(a). Eu sou a Ana, secretária de vendas. Pra eu te atender melhor, como posso te chamar?',
-  'Olá! Fico feliz em falar com você. Como posso te chamar?',
-  'Oi! Pra eu te atender melhor, qual é o seu nome?',
-  'Olá! Tudo bem? Eu sou a Ana, do time comercial. Como posso te chamar?',
+  'Oi! Eu sou a Ana. Como posso te chamar?',
+  'Olá! Sou a Ana, do comercial. Qual o seu nome?',
+  'Oi! Tudo bem? Me diz seu nome que a gente conversa.',
 ];
 
 const GREETING_REPLY_WITH_NAME = (name: string) => [
-  `Oi, ${name}! Em que posso te ajudar hoje?`,
-  `Olá, ${name}! O que você gostaria de saber agora?`,
-  `Oi, ${name}! Por onde você quer que a gente comece?`,
+  `Oi, ${name}! Como posso te ajudar?`,
+  `Olá, ${name}! O que você procura?`,
+  `Oi, ${name}! Me conta o que precisa.`,
 ];
 
 /** Resposta acolhedora para saudação simples (sem chamar a API). */

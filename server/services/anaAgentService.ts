@@ -52,14 +52,14 @@ export interface AnaStructuredReply {
 
 /** Resposta quando o JSON da IA falha ou a chamada não retorna conteúdo válido (backend). */
 export const ANA_FALLBACK_INCOMPREHENSION_REPLY =
-  'Não peguei bem essa parte — me conta em uma frase o que você está buscando (região, tipo de imóvel ou faixa de investimento) que eu te direciono certinho.';
+  'Me conta o que você procura que eu te ajudo.';
 
 /** Quando o parse JSON falha mas há sinais de busca no histórico/mensagem — evita repetir a pergunta genérica acima. */
 export const ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY =
-  'Pelo que você comentou, já dá para seguir na linha comercial sem recomeçar do zero. Me diz só o que ainda falta para eu cruzar com o portfólio: você prefere que eu priorize faixa de investimento, metragem ou dormitórios (por exemplo 2 ou 3 quartos)?';
+  'Me diz só a região e o que você procura que eu te mostro as opções.';
 
 const ANA_FALLBACK_REFINEMENT_LOTEAMENTO_REPLY =
-  'Pelo que você comentou, já dá para seguir na linha comercial. Me diz só o que falta para eu cruzar com o portfólio: localização, faixa de investimento ou metragem do lote?';
+  'Me diz a região e a faixa de investimento que eu te mostro os lotes.';
 
 /** Fallback de refinamento sensível ao tipo de produto inferido no contexto recente. */
 export function buildRefinementContextReply(recentContext?: string): string {
@@ -201,6 +201,7 @@ FINAL DA CADA RESPOSTA (reply) — regra geral (conversa ainda aberta):
 MENSAGENS AMBÍGUAS — INCOMPREENSÃO (use raramente):
 - Só quando realmente não houver como inferir o que o cliente quer mesmo com o histórico. Nunca use isso para saudação trivial ou cumprimento.
 - PROIBIDO tratar como incompreensível quando houver menção a: localização (cidade, bairro, estado), metragem (m²), preço ou economia, ou pedido de empreendimentos — nesses casos sempre resposta comercial (regra crítica acima).
+- Quando realmente não entender, responda de forma curta e humana, como alguém do comercial faria. Ex.: "Me conta o que você procura que eu te ajudo." — sem frases como "não peguei bem essa parte", "me conta em uma frase", "que eu te direciono certinho".
 
 OBJETIVO:
 - Qualificar o lead, entender interesse (empreendimento, região, perfil) e levar a próximo passo comercial.
