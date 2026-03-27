@@ -627,14 +627,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       structured = { ...structured, send_file_category: null };
     }
 
-    if (
-      (structured.wantsCatalog || structured.shouldShowPortfolio) &&
-      allEnterpriseNames.length > 0 &&
-      !allEnterpriseNames.some((n) => structured.reply.includes(n))
-    ) {
-      const catalogReply = buildCatalogFallbackReply(allEnterpriseNames, recentUserContextForFallback);
-      console.log('[ANA_PIPELINE] catalog_injected', { conversationId, namesCount: allEnterpriseNames.length });
-      structured = { ...structured, reply: catalogReply };
+    if (structured) {
+      const sr = structured;
+      if (
+        (sr.wantsCatalog || sr.shouldShowPortfolio) &&
+        allEnterpriseNames.length > 0 &&
+        !allEnterpriseNames.some((n) => sr.reply.includes(n))
+      ) {
+        const catalogReply = buildCatalogFallbackReply(allEnterpriseNames, recentUserContextForFallback);
+        console.log('[ANA_PIPELINE] catalog_injected', { conversationId, namesCount: allEnterpriseNames.length });
+        structured = { ...sr, reply: catalogReply };
+      }
     }
 
     const prevClassification = effectiveConv.classification;
