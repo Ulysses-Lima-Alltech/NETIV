@@ -9,13 +9,7 @@ import {
   mergeConversationCommercialFlowState,
 } from '../repositories/conversationRepository.js';
 import { sendTextMessage, sendDocumentMessage } from './whatsappMetaService.js';
-import {
-  tryMatchEnterpriseFromUserCorpus,
-  tryMatchEnterpriseAnaphora,
-  tryMatchEnterpriseOrdinalFromCatalog,
-  tryMatchEnterprisePronounAfterCatalog,
-  enterpriseHasStrongNameSignalInTrimmed,
-} from '../repositories/enterpriseMatch.js';
+import { tryMatchEnterpriseFromUserCorpus } from '../repositories/enterpriseMatch.js';
 import {
   getActiveEnterpriseById,
   loadAgentKnowledgeText,
@@ -36,10 +30,9 @@ import {
   buildAnaSystemPrompt,
   type BuildAnaSystemPromptOpts,
   type CommercialSnapshot,
-  pickCommercialListUx,
+  type AnaStructuredReply,
+  ANA_TECHNICAL_FALLBACK_NEUTRAL,
   parseAnaJson,
-  trySalvageStructuredReplyFromRawModelContent,
-  fallbackReplyFromRaw,
   detectStrongPurchaseIntentForLeadTemperature,
 } from './anaAgentService.js';
 import { finalizeAnaReplyText, countCustomerNameMentionsInText } from '../utils/anaReplyFinalize.js';
@@ -56,12 +49,39 @@ import {
 import {
   parseCommercialFlowState,
   computeNextCommercialFlowState,
-  tryRecoverEnterpriseIdFromFlowState,
   type CommercialFlowState,
 } from '../utils/commercialFlowState.js';
 
 /** Modelo principal da Ana (WhatsApp) — saída JSON estruturada. */
 const ANA_CHAT_MODEL = 'gpt-5';
+
+function anaTechnicalFallbackStructured(classificationHint: string | null): AnaStructuredReply {
+  return {
+    reply: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+    intent: 'geral',
+    productType: null,
+    wantsCatalog: false,
+    locationPreference: null,
+    budgetPreference: null,
+    bedroomsPreference: null,
+    bathroomsPreference: null,
+    nextBestQuestion: null,
+    userGoal: null,
+    lotSizePreference: null,
+    shouldShowPortfolio: false,
+    classification: (classificationHint || 'Novo').trim() || 'Novo',
+    lead_temperature: null,
+    project: '',
+    handoff: false,
+    customer_name: '',
+    summary: '',
+    send_file_category: null,
+    appointment_confirmed: false,
+    appointment_date: null,
+    appointment_time: null,
+    appointment_notes: null,
+  };
+}
 
 function formatOpenAppointmentSummaryForPrompt(row: AppointmentRow, enterpriseName: string): string {
   const fmt = new Intl.DateTimeFormat('pt-BR', {
@@ -164,32 +184,6 @@ function rowsToHistory(
   return list.filter((m) => m.content.length > 0).slice(-MAX_HISTORY);
 }
 
-const SWITCH_INTENT_PATTERNS = [
-  'agora quero', 'quero saber do', 'quero saber sobre', 'quero informacoes do', 'quero informacoes sobre',
-  'quero falar do', 'quero falar sobre', 'quero falar sobre o', 'quero falar sobre a',
-  'pode me falar', 'pode falar mais do', 'pode falar mais sobre', 'me falar mais do', 'me falar mais sobre',
-  'falar mais do', 'falar mais sobre', 'falar do', 'falar sobre',
-  'gostaria de saber do', 'gostaria de saber sobre', 'queria saber do', 'queria saber sobre',
-  'tenho interesse no', 'tenho interesse em',
-  'me passe mais', 'me passe mais informacoes', 'me passe mais informacoes do', 'me passe mais informacoes sobre',
-  'me passa mais', 'me passa mais informacoes', 'me passa mais informacoes do', 'me passa mais informacoes sobre',
-  'troca para', 'trocar para', 'muda para', 'mudar para',
-  'nao quero mais', 'nao gostei desse', 'prefiro o', 'nao me interessa mais',
-  'me fala do',
-  'me fala sobre',
-  'me fale do',
-  'me fale sobre',
-  'fale do',
-  'fale sobre',
-  'fala mais do',
-  'fala mais sobre',
-  'fale mais do',
-  'fale mais sobre',
-  'me explique',
-  'me explica',
-  'quero o ',
-];
-
 const HANDOFF_INTENT_PATTERNS = [
   'quero falar com um humano', 'quero falar com humano', 'falar com um humano',
   'quero um atendente', 'quero atendente', 'preciso de atendente',
@@ -203,47 +197,6 @@ const HANDOFF_INTENT_PATTERNS = [
 
 function normText(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim();
-}
-
-function hasExplicitSwitchIntent(message: string): boolean {
-  return SWITCH_INTENT_PATTERNS.some((p) => normText(message).includes(p));
-}
-
-function tryMatchEnterpriseByLastMention(activeEnterprises: EnterpriseRow[], message: string): number | null {
-  const lower = normText(message);
-  let anchorIndex = -1;
-  let anchorLen = 0;
-
-  for (const p of SWITCH_INTENT_PATTERNS) {
-    const idx = lower.lastIndexOf(p);
-    if (idx > anchorIndex) {
-      anchorIndex = idx;
-      anchorLen = p.length;
-    }
-  }
-
-  const tail = anchorIndex >= 0 ? lower.slice(anchorIndex + anchorLen) : lower;
-
-  let best: { id: number; lastIndex: number } | null = null;
-
-  for (const p of activeEnterprises) {
-    const nameNorm = normText(p.name);
-    const slugNorm = normText(p.slug || '');
-
-    let lastIndex = -1;
-    if (nameNorm.length >= 3) {
-      lastIndex = Math.max(lastIndex, tail.lastIndexOf(nameNorm));
-    }
-    if (slugNorm.length >= 3) {
-      lastIndex = Math.max(lastIndex, tail.lastIndexOf(slugNorm));
-    }
-
-    if (lastIndex >= 0 && (!best || lastIndex > best.lastIndex)) {
-      best = { id: p.id, lastIndex };
-    }
-  }
-
-  return best?.id ?? null;
 }
 
 function hasExplicitHandoffIntent(message: string): boolean {
@@ -395,232 +348,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         break;
       }
     }
-    const explicitSwitch = hasExplicitSwitchIntent(trimmed);
-    let matched: number | null = null;
-    let flowRecoverySource: string | null = null;
-    /** De onde veio o match — evita trocar foco por menção antiga em outra bolha. */
-    let enterpriseMatchSource:
-      | 'current'
-      | 'context'
-      | 'anaphora'
-      | 'pronoun_catalog'
-      | 'ordinal'
-      | 'explicit_tail'
-      | null = null;
-    let activeEnterprisesForContext: EnterpriseRow[] | null = null;
-
     const allActiveEnterprises = await listEnterprises(true);
     const fullUserUtterances = buildUserUtterancesContext(rows);
     const triageRequestedProductType = inferRequestedProductType(trimmed, fullUserUtterances);
-    /** Subconjunto por tipo quando o cliente já manifestou LOTEAMENTO/APARTAMENTO/MCMV; INDEFINIDO = todos (só para resolver localização). */
-    const enterprisesForLocationResolution =
+    const enterprisesPool =
       triageRequestedProductType === 'INDEFINIDO'
         ? allActiveEnterprises
         : allActiveEnterprises.filter((e) => e.tipo === triageRequestedProductType);
     const locationQueryContext = resolveEnterpriseLocationContext(
       trimmed,
       fullUserUtterances,
-      enterprisesForLocationResolution
+      enterprisesPool
     );
     const appointmentPreflight = computeAppointmentPreflight(trimmed, fullUserUtterances);
-    /** Com consulta por localização, o match por nome não usa histórico (evita foco errado, ex.: outro empreendimento citado antes). */
-    const textForEnterpriseMatch = explicitSwitch
-      ? fullUserUtterances.trim() || trimmed
-      : locationQueryContext
-        ? trimmed
-        : fullUserUtterances.trim() || trimmed;
 
-    const matchPool = enterprisesForLocationResolution;
-    const lastAssistantRow = [...rows].reverse().find((r) => r.role === 'assistant');
-    const lastAssistantText = (lastAssistantRow?.content || '').trim();
-
-    activeEnterprisesForContext = matchPool;
-
-    const recoveredFocus = tryRecoverEnterpriseIdFromFlowState({
-      trimmedUser: trimmed,
-      enterpriseIdInDb: effectiveConv.enterprise_id,
-      lastAssistantText,
-      flowState: flowStateParsed,
-      explicitSwitch,
-      matchPool,
-      allEnterprises: allActiveEnterprises,
-    });
-    if (recoveredFocus) {
-      await setConversationEnterpriseId(conversationId, recoveredFocus.enterpriseId);
-      effectiveConv = (await getConversationById(conversationId)) ?? effectiveConv;
-      flowRecoverySource = recoveredFocus.source;
-      console.log('[ANA_FLOW] enterprise_focus_recovered', {
-        conversationId,
-        source: recoveredFocus.source,
-        enterpriseId: recoveredFocus.enterpriseId,
-      });
-    }
-
-    const lastUserRowForLog = [...rows].reverse().find((r) => r.role === 'user');
-    const inboundMetaMessageId = lastUserRowForLog?.meta_message_id ?? null;
-    console.log('[ANA_MSG]', {
-      conversationId,
-      metaMessageId: inboundMetaMessageId,
-      textLen: trimmed.length,
-      explicitSwitch,
-      flowRecoverySource,
-      enterpriseIdBeforeMatch: effectiveConv.enterprise_id,
-      stageHint: flowStateParsed.stage ?? null,
-      lastInferredFromState: flowStateParsed.lastInferredEnterpriseId ?? null,
-      pipelineStale: isPipelineStale(conversationId, replyPipelineToken),
-    });
-
-    /**
-     * 1) Mensagem atual × todos os ativos — prioridade máxima para troca de foco (ignora filtro de tipo).
-     * 2) Mensagem atual × pool (tipo) se ainda vazio.
-     * 3) Anáfora / ordinal / pronome / blob de usuário / cauda explicitSwitch.
-     */
-    const fromGlobalTrimmed = tryMatchEnterpriseFromUserCorpus(trimmed, allActiveEnterprises);
-    if (fromGlobalTrimmed != null) {
-      matched = fromGlobalTrimmed;
-      enterpriseMatchSource = 'current';
-    }
-
-    if (matched == null && !locationQueryContext) {
-      const fromPoolTrimmed = tryMatchEnterpriseFromUserCorpus(trimmed, matchPool);
-      if (fromPoolTrimmed != null) {
-        matched = fromPoolTrimmed;
-        enterpriseMatchSource = 'current';
-      }
-    }
-
-    if (matched == null && !locationQueryContext) {
-      matched = tryMatchEnterpriseAnaphora(trimmed, lastAssistantText, matchPool);
-      if (matched != null) enterpriseMatchSource = 'anaphora';
-    }
-    if (matched == null && !locationQueryContext) {
-      matched = tryMatchEnterpriseOrdinalFromCatalog(trimmed, lastAssistantText, matchPool);
-      if (matched != null) enterpriseMatchSource = 'ordinal';
-    }
-    if (matched == null && !locationQueryContext) {
-      matched = tryMatchEnterprisePronounAfterCatalog(trimmed, lastAssistantText, matchPool);
-      if (matched != null) enterpriseMatchSource = 'pronoun_catalog';
-    }
-    if (matched == null && !locationQueryContext) {
-      const userBlob = [fullUserUtterances.trim(), trimmed].filter(Boolean).join('\n');
-      matched = tryMatchEnterpriseFromUserCorpus(userBlob, matchPool);
-      if (matched != null) enterpriseMatchSource = 'context';
-    }
-    if (matched == null && !locationQueryContext && explicitSwitch) {
-      matched = tryMatchEnterpriseByLastMention(matchPool, textForEnterpriseMatch);
-      if (matched != null) enterpriseMatchSource = 'explicit_tail';
-    }
-
-    if (matched == null && locationQueryContext) {
-      const poolTrim = tryMatchEnterpriseFromUserCorpus(trimmed, matchPool);
-      if (poolTrim != null) {
-        matched = poolTrim;
-        enterpriseMatchSource = 'current';
-      } else if (explicitSwitch) {
-        matched = tryMatchEnterpriseByLastMention(matchPool, textForEnterpriseMatch);
-        if (matched != null) enterpriseMatchSource = 'explicit_tail';
-      }
-    }
-
-    const strongEnterpriseNameInCurrentMessage =
-      matched != null && enterpriseHasStrongNameSignalInTrimmed(matched, trimmed, allActiveEnterprises);
-    if (
-      matched &&
-      locationQueryContext &&
-      !locationQueryContext.isEmpty &&
-      locationQueryContext.filteredEnterpriseIds.length > 0 &&
-      !locationQueryContext.filteredEnterpriseIds.includes(matched) &&
-      !strongEnterpriseNameInCurrentMessage
-    ) {
-      console.log('[ANA_ENTERPRISE_MATCH]', {
-        conversationId,
-        event: 'location_filter_cleared_match',
-        matched_enterprise_id: matched,
-        filtered_ids: locationQueryContext.filteredEnterpriseIds,
-      });
-      matched = null;
-      enterpriseMatchSource = null;
-    } else if (
-      matched &&
-      locationQueryContext &&
-      !locationQueryContext.isEmpty &&
-      locationQueryContext.filteredEnterpriseIds.length > 0 &&
-      !locationQueryContext.filteredEnterpriseIds.includes(matched) &&
-      strongEnterpriseNameInCurrentMessage
-    ) {
-      console.log('[ANA_ENTERPRISE_MATCH]', {
-        conversationId,
-        event: 'location_filter_overridden_by_strong_enterprise_name',
-        matched_enterprise_id: matched,
-      });
-    }
-
-    if (matched != null) {
-      const hasFocus = effectiveConv.enterprise_id != null;
-      const isDifferent = effectiveConv.enterprise_id !== matched;
-      const contextStrongInCurrent =
-        enterpriseMatchSource === 'context' &&
-        enterpriseHasStrongNameSignalInTrimmed(matched, trimmed, allActiveEnterprises);
-      const allowSwitchFromUserPick =
-        isDifferent &&
-        (enterpriseMatchSource === 'current' ||
-          enterpriseMatchSource === 'anaphora' ||
-          enterpriseMatchSource === 'pronoun_catalog' ||
-          enterpriseMatchSource === 'ordinal' ||
-          enterpriseMatchSource === 'explicit_tail' ||
-          contextStrongInCurrent);
-      const shouldReclassify = !hasFocus || allowSwitchFromUserPick || explicitSwitch;
-      let shouldReclassifyReason = 'none';
-      if (!hasFocus) shouldReclassifyReason = 'no_previous_focus';
-      else if (isDifferent && allowSwitchFromUserPick) {
-        shouldReclassifyReason =
-          enterpriseMatchSource === 'context' && contextStrongInCurrent
-            ? 'switch_context_plus_strong_trimmed_signal'
-            : `switch_match_source_${enterpriseMatchSource}`;
-      } else if (isDifferent && explicitSwitch) shouldReclassifyReason = 'explicit_switch_phrase';
-      else if (!isDifferent) shouldReclassifyReason = 'same_enterprise_as_focus';
-      else shouldReclassifyReason = 'keep_focus_match_not_trusted';
-
-      console.log('[ANA_ENTERPRISE_MATCH]', {
-        conversationId,
-        enterprise_match_current_message: trimmed.slice(0, 240),
-        enterprise_match_source: enterpriseMatchSource,
-        current_enterprise_id: effectiveConv.enterprise_id ?? null,
-        matched_enterprise_id: matched,
-        should_reclassify: shouldReclassify,
-        should_reclassify_reason: shouldReclassifyReason,
-        explicit_switch: explicitSwitch,
-        context_strong_in_current: contextStrongInCurrent,
-      });
-
-      if (shouldReclassify) {
-        await setConversationEnterpriseId(conversationId, matched);
-        effectiveConv = (await getConversationById(conversationId)) ?? effectiveConv;
-        console.log('[ANA_ENTERPRISE_MATCH]', {
-          conversationId,
-          event: 'enterprise_focus_updated',
-          new_enterprise_id: matched,
-        });
-      } else {
-        console.log('[ANA_ENTERPRISE_MATCH]', {
-          conversationId,
-          event: 'enterprise_focus_kept',
-          kept_enterprise_id: effectiveConv.enterprise_id,
-          ignored_match_id: matched,
-        });
-      }
-    } else {
-      console.log('[ANA_ENTERPRISE_MATCH]', {
-        conversationId,
-        enterprise_match_current_message: trimmed.slice(0, 240),
-        enterprise_match_source: null,
-        current_enterprise_id: effectiveConv.enterprise_id ?? null,
-        matched_enterprise_id: null,
-        should_reclassify_reason: 'no_match',
-      });
-    }
-
-    const ent = effectiveConv.enterprise_id ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;
+    let ent =
+      effectiveConv.enterprise_id != null ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;
     const inactiveLinked = Boolean(effectiveConv.enterprise_id && !ent);
 
     let openAppointmentSummary: string | null = null;
@@ -631,73 +374,78 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
-    const richAppointmentContext =
-      appointmentPreflight.dateContestation ||
-      appointmentPreflight.reschedule ||
-      Boolean(openAppointmentSummary?.trim());
-
     let mode: 'triage' | 'scoped' | 'inactive_linked' = 'triage';
     if (inactiveLinked) mode = 'inactive_linked';
     else if (ent) mode = 'scoped';
 
-    let conversationPhase: NonNullable<BuildAnaSystemPromptOpts['conversationPhase']> = 'triage';
-    if (inactiveLinked) conversationPhase = 'inactive';
-    else if (appointmentPreflight.active) conversationPhase = 'appointment';
-    else if (ent) conversationPhase = 'scoped';
-    else if (locationQueryContext) conversationPhase = 'triage_location';
-    else if (triageRequestedProductType === 'INDEFINIDO') conversationPhase = 'triage_ask_type';
-    else conversationPhase = 'triage_catalog';
+    const conversationPhase =
+      inactiveLinked
+        ? 'inactive'
+        : appointmentPreflight.active
+          ? 'appointment'
+          : ent
+            ? 'scoped'
+            : locationQueryContext
+              ? 'triage_location'
+              : triageRequestedProductType === 'INDEFINIDO'
+                ? 'triage_ask_type'
+                : 'triage_catalog';
 
+    const focusEnterprise = ent;
     const enterprisesForSameTipoAsEnt =
-      ent != null ? allActiveEnterprises.filter((e) => e.tipo === ent.tipo) : [];
+      focusEnterprise == null
+        ? []
+        : allActiveEnterprises.filter((e) => e.tipo === focusEnterprise.tipo);
 
     const vars = ent ? await getVariablesMap(ent.id) : {};
     let commercialSnapshots: CommercialSnapshot[] = [];
-    /** Com foco scoped, dados e listas devem ser do empreendimento da conversa — não do filtro de cidade antigo no histórico. */
     if (mode === 'scoped' && ent) {
       commercialSnapshots = [{ enterpriseName: ent.name, variables: vars }];
-    } else if (locationQueryContext && locationQueryContext.filteredEnterpriseIds.length > 0) {
-      const byId = new Map(enterprisesForLocationResolution.map((e) => [e.id, e] as const));
-      for (const id of locationQueryContext.filteredEnterpriseIds) {
-        const row = byId.get(id);
-        if (!row) continue;
-        commercialSnapshots.push({ enterpriseName: row.name, variables: await getVariablesMap(id) });
+    } else {
+      for (const e of enterprisesPool) {
+        commercialSnapshots.push({ enterpriseName: e.name, variables: await getVariablesMap(e.id) });
       }
-    } else if (ent) {
-      commercialSnapshots = [{ enterpriseName: ent.name, variables: vars }];
     }
-    const chunkHint = [
-      ent?.name && `empreendimento_foco: ${ent.name}`,
-      triageRequestedProductType !== 'INDEFINIDO' && `tipo_interesse: ${triageRequestedProductType}`,
-      trimmed,
-      fullUserUtterances,
-    ]
-      .filter(Boolean)
-      .join('\n')
-      .slice(0, 12_000);
-    const chunkText = ent ? await loadRankedKnowledgeChunksForPrompt(ent.id, chunkHint) : '';
-    const knowledgeBase = ent ? await loadAgentKnowledgeText(ent.id) : '';
-    const knowledgeText = [chunkText, knowledgeBase].filter(Boolean).join('\n\n').trim();
+
+    const chunkHint = [trimmed, fullUserUtterances].filter(Boolean).join('\n').slice(0, 12_000);
+    const knowledgeParts: string[] = [];
+    const knowledgeIds =
+      ent != null
+        ? [ent.id]
+        : enterprisesPool.length <= 6
+          ? enterprisesPool.map((e) => e.id)
+          : enterprisesPool.slice(0, 4).map((e) => e.id);
+    for (const eid of knowledgeIds) {
+      const row = allActiveEnterprises.find((x) => x.id === eid);
+      if (!row) continue;
+      const chunk = await loadRankedKnowledgeChunksForPrompt(eid, `${row.name}\n${chunkHint}`);
+      const kb = await loadAgentKnowledgeText(eid);
+      const merged = [chunk, kb].filter(Boolean).join('\n\n');
+      if (merged.trim()) knowledgeParts.push(`--- ${row.name} ---\n${merged}`);
+    }
+    const knowledgeText = knowledgeParts.join('\n\n').slice(0, 52_000);
+
     let fileInventory = '';
+    let hasSendableFiles = false;
     if (ent) {
       const files = await listEnterpriseFiles(ent.id);
       fileInventory = files
         .filter((f) => f.is_active && f.can_be_sent_by_ana)
         .map((f) => `${f.category}: ${f.original_name}`)
         .join('; ');
+      hasSendableFiles = fileInventory.trim().length > 0;
     }
-    const hasSendableFiles = fileInventory.trim().length > 0;
 
     let allEnterpriseNames: string[] = [];
     if (mode === 'scoped' && ent) {
-      allEnterpriseNames = (activeEnterprisesForContext ?? enterprisesForSameTipoAsEnt).map((e) => e.name);
+      allEnterpriseNames = enterprisesForSameTipoAsEnt.map((e) => e.name);
     } else if (locationQueryContext) {
       allEnterpriseNames = locationQueryContext.availableEnterprises.map((e) => e.name);
-    } else if (mode === 'triage') {
+    } else {
       allEnterpriseNames =
         triageRequestedProductType === 'INDEFINIDO'
           ? []
-          : enterprisesForLocationResolution.map((e) => e.name);
+          : enterprisesPool.map((e) => e.name);
     }
 
     const promptProductTypeForPrompt =
@@ -707,6 +455,26 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           ? ent.tipo
           : undefined;
 
+    const persistedContextBlock = [
+      `enterprise_id_conversa: ${effectiveConv.enterprise_id ?? 'null'}`,
+      `estado_comercial_json: ${JSON.stringify(flowStateParsed)}`,
+      `tipo_interesse_inferido_hint: ${triageRequestedProductType}`,
+    ].join('\n');
+
+    const lastUserRowForLog = [...rows].reverse().find((r) => r.role === 'user');
+    const inboundMetaMessageId = lastUserRowForLog?.meta_message_id ?? null;
+
+    const history =
+      trailingUserBubbles != null && trailingUserBubbles > 1
+        ? rowsToHistory(rows, null, trailingUserBubbles)
+        : rowsToHistory(rows, trimmed);
+    const historyCount = history.length;
+
+    const stateBefore = {
+      enterpriseId: effectiveConv.enterprise_id,
+      flowState: flowStateParsed,
+    };
+
     const promptOpts: BuildAnaSystemPromptOpts = {
       mode,
       enterprise: ent,
@@ -715,7 +483,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       fileInventory,
       allEnterpriseNames,
       requestedProductType: promptProductTypeForPrompt,
-      conversationPhase,
       knownCustomerName: effectiveConv.customer_name,
       customerNameMentionsSoFar: effectiveConv.ana_customer_name_mentions ?? 0,
       conversationClassification: effectiveConv.classification,
@@ -724,30 +491,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       locationQueryContext:
         mode === 'scoped' && ent ? undefined : (locationQueryContext ?? undefined),
       commercialSnapshots: commercialSnapshots.length > 0 ? commercialSnapshots : undefined,
-      commercialListUxHints: commercialSnapshots.length > 1 ? pickCommercialListUx() : undefined,
+      persistedContextBlock,
     };
-    console.log('[ANA_MSG]', {
+
+    console.log('[ANA_CHAT_AUDIT]', {
       conversationId,
-      metaMessageId: inboundMetaMessageId,
-      phase: 'pre_llm',
-      mode,
-      conversationPhase,
-      enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
-      focusSource: flowRecoverySource ?? enterpriseMatchSource ?? null,
-      matchedEnterpriseId: matched,
-      calledLlm: true,
-      allEnterpriseNamesCount: allEnterpriseNames.length,
+      messageId: inboundMetaMessageId,
+      userText: trimmed.slice(0, 500),
+      historyCount,
+      stateBefore,
+      phase: 'pre_openai',
+      openAiCalled: false,
+      openAiModel: ANA_CHAT_MODEL,
+      pipelineStale: isPipelineStale(conversationId, replyPipelineToken),
     });
+
     const systemPrompt = buildAnaSystemPrompt(promptOpts);
-
-    const history =
-      trailingUserBubbles != null && trailingUserBubbles > 1
-        ? rowsToHistory(rows, null, trailingUserBubbles)
-        : rowsToHistory(rows, trimmed);
-
-    const recentUserContextForFallback = [...history.filter((h) => h.role === 'user').map((h) => h.content), trimmed]
-      .join('\n')
-      .slice(-2500);
 
     const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
     for (const h of history) {
@@ -784,62 +543,48 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       console.error('[ANA MODEL] chamada_falhou', { conversationId, model, error: result.error });
     }
 
-    let finalReplySource: 'model' | 'salvage' | 'fallback_raw' | 'fallback_structured' = 'model';
-    let structured =
+    const openAiCalled = true;
+    let replySource: 'openai' | 'technical_fallback' = 'openai';
+    let fallbackReason: string | null = null;
+    let structured: AnaStructuredReply | null =
       result.success && result.content ? parseAnaJson(result.content) : null;
     console.log('[ANA_PARSE_FLOW]', {
       conversationId,
       parseAnaJson_success: Boolean(structured),
       parseAnaJson_fail: !structured,
     });
-    if (!structured && result.success && result.content) {
-      structured = trySalvageStructuredReplyFromRawModelContent(result.content);
-      if (structured) finalReplySource = 'salvage';
-      console.log('[ANA_PARSE_FLOW]', {
-        conversationId,
-        salvage_success: Boolean(structured),
-        salvage_fail: !structured,
-      });
-    }
-    if (!structured && result.success && result.content) {
-      console.warn('[DOC_FLOW] parseAnaJson null e sem texto bruto aproveitável — fallbackReplyFromRaw', {
-        conversationId,
-        contentPreview: result.content.slice(0, 160),
-      });
-      console.log('[ANA_PARSE_FLOW]', {
-        conversationId,
-        fallbackReplyFromRaw_used: true,
-      });
-      finalReplySource = 'fallback_raw';
-      structured = fallbackReplyFromRaw(
-        result.content,
-        trimmed,
-        effectiveConv.customer_name,
-        appointmentPreflight.active,
-        richAppointmentContext,
-        recentUserContextForFallback,
-        allEnterpriseNames,
-        promptProductTypeForPrompt ?? triageRequestedProductType
-      );
-    }
     if (!structured) {
-      const fbReason = !result.success ? 'api_error' : !result.content?.trim() ? 'empty_content' : 'parse_failed';
-      console.log('[ANA_PIPELINE] fallback_reply', { conversationId, reason: fbReason });
+      fallbackReason = !result.success
+        ? 'api_error'
+        : !result.content?.trim()
+          ? 'empty_content'
+          : 'parse_failed_strict';
+      replySource = 'technical_fallback';
+      console.log('[ANA_PIPELINE] technical_fallback_neutral', { conversationId, reason: fallbackReason });
       console.log('[ANA_PARSE_FLOW]', {
         conversationId,
-        structured_fallback_used: true,
+        technical_fallback_used: true,
       });
-      finalReplySource = 'fallback_structured';
-      structured = fallbackReplyFromRaw(
-        result.content || '',
-        trimmed,
-        effectiveConv.customer_name,
-        appointmentPreflight.active,
-        richAppointmentContext,
-        recentUserContextForFallback,
-        allEnterpriseNames,
-        promptProductTypeForPrompt ?? triageRequestedProductType
-      );
+      structured = anaTechnicalFallbackStructured(effectiveConv.classification);
+    }
+
+    if (structured.project?.trim()) {
+      const pid = tryMatchEnterpriseFromUserCorpus(structured.project.trim(), allActiveEnterprises);
+      if (pid != null) {
+        if (effectiveConv.enterprise_id !== pid) {
+          await setConversationEnterpriseId(conversationId, pid);
+          effectiveConv = (await getConversationById(conversationId)) ?? effectiveConv;
+        }
+        ent = await getActiveEnterpriseById(pid);
+        if (ent) {
+          const files = await listEnterpriseFiles(ent.id);
+          fileInventory = files
+            .filter((f) => f.is_active && f.can_be_sent_by_ana)
+            .map((f) => `${f.category}: ${f.original_name}`)
+            .join('; ');
+          hasSendableFiles = fileInventory.trim().length > 0;
+        }
+      }
     }
 
     if (!hasSendableFiles) {
@@ -847,7 +592,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     console.log('[ANA_PARSE_FLOW]', {
       conversationId,
-      final_reply_source: finalReplySource,
+      replySource,
+      fallbackReason,
     });
 
     const prevClassification = effectiveConv.classification;
@@ -939,11 +685,30 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               : triageRequestedProductType,
       });
       await mergeConversationCommercialFlowState(conversationId, nextFlow);
+      const stateAfter = {
+        enterpriseId: effectiveConv.enterprise_id,
+        flowState: nextFlow,
+      };
+      console.log('[ANA_CHAT_AUDIT]', {
+        conversationId,
+        messageId: inboundMetaMessageId,
+        userText: trimmed.slice(0, 500),
+        historyCount,
+        stateBefore,
+        phase: 'post_send',
+        openAiCalled,
+        openAiModel: ANA_CHAT_MODEL,
+        openAiReplyPreview: replyText.slice(0, 260),
+        fallbackUsed: replySource === 'technical_fallback',
+        fallbackReason,
+        replySource,
+        stateAfter,
+      });
       console.log('[ANA_MSG]', {
         conversationId,
         metaMessageId: inboundMetaMessageId,
         phase: 'sent',
-        finalReplySource,
+        replySource,
         finalEnterpriseId: effectiveConv.enterprise_id,
         conversationPhase,
         replyLen: replyText.length,
