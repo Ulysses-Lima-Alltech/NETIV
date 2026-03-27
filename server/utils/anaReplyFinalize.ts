@@ -77,14 +77,6 @@ export function repliesSemanticallySimilar(a: string, b: string): boolean {
   return j >= 0.88;
 }
 
-/** Só quando o modelo não fechou com interrogação — evite variações quase idênticas. */
-const FALLBACK_CLOSING_QUESTIONS = [
-  'Quer que eu detalhe algum ponto?',
-  'Por onde você prefere que a gente continue?',
-  'Tem alguma dúvida sobre o que conversamos?',
-  'Quer saber mais sobre algum deles?',
-];
-
 function normClosure(s: string): string {
   return s
     .toLowerCase()
@@ -138,41 +130,6 @@ export function detectClientConversationClosure(userMessage: string): boolean {
   return false;
 }
 
-const FAREWELL_NO_QUESTION = [
-  'Obrigada pelo contato e fico à disposição quando precisar.',
-  'Combinado! Obrigada e conte comigo quando precisar.',
-  'Sem problema. Obrigada e um ótimo dia!',
-  'Perfeito, obrigada pelo contato.',
-];
-
-function randomFarewellNoQuestion(): string {
-  return FAREWELL_NO_QUESTION[Math.floor(Math.random() * FAREWELL_NO_QUESTION.length)]!;
-}
-
-/** Remove sufixo igual ao fallback automático, se o modelo repetir o padrão. */
-function stripKnownAppendedClosingQuestion(s: string): string {
-  let t = s.trim();
-  for (const q of FALLBACK_CLOSING_QUESTIONS) {
-    if (t.endsWith(q)) {
-      return t.slice(0, -q.length).trim().replace(/[\s,.;:!…]+$/u, '');
-    }
-  }
-  return t;
-}
-
-function looksInterrogativeSentence(sentence: string): boolean {
-  const t = sentence.trim().toLowerCase();
-  if (!t) return false;
-  return /\b(qual|quais|quanto|quantas|quantos|como|onde|quando|por que|porque|posso|pode|quer|você quer|tem como|há |existe |me diz|me conta|prefere|gostaria|deseja|seria|está buscando|faz sentido|te interessa|quer que|posso te|devo te|gostaria de|deseja ver)\b/.test(
-    t
-  );
-}
-
-function randomFallbackClosing(): string {
-  const i = Math.floor(Math.random() * FALLBACK_CLOSING_QUESTIONS.length);
-  return FALLBACK_CLOSING_QUESTIONS[i]!;
-}
-
 export interface FinalizeAnaReplyOptions {
   /** Mensagem atual do cliente — usada para detectar encerramento e não forçar pergunta. */
   userMessage?: string | null;
@@ -208,55 +165,11 @@ function normalizeWhitespacePreservingLines(text: string): string {
 }
 
 /**
- * UX: em conversa aberta, a última ideia deve fechar com pergunta e interrogação.
- * Exceção: se o cliente encerrou claramente, não acrescenta pergunta nem força "?".
+ * Só higieniza texto para WhatsApp: sem perguntas aleatórias, sem despedidas fixas — o conteúdo vem do modelo.
  */
-export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOptions): string {
-  const closure =
-    opts?.userMessage != null && opts.userMessage.length > 0 && detectClientConversationClosure(opts.userMessage);
-
-  let s = normalizeWhitespacePreservingLines(stripMarkdownArtifactsForWhatsApp((text || '').trim()));
-
-  if (closure) {
-    if (!s) return randomFarewellNoQuestion();
-    return stripKnownAppendedClosingQuestion(s);
-  }
-
-  if (!s) return randomFallbackClosing();
-
-  if (s.endsWith('?')) return s;
-
-  if (opts?.conversationMode === 'scoped') {
-    const t = s.trim();
-    const tail = t.slice(-140);
-    if (t.length >= 72 && !tail.includes('?') && /[.!…]$/.test(t)) {
-      return t;
-    }
-  }
-
-  if (s.endsWith('...')) {
-    s = s.slice(0, -3).trim();
-  }
-
-  const lastCh = s[s.length - 1];
-  if (lastCh === '.' || lastCh === '!' || lastCh === '…') {
-    const body = s.slice(0, -1).trim();
-    const parts = body.split(/(?<=[.!?])\s+/);
-    const lastSentence = parts[parts.length - 1] ?? body;
-    if (looksInterrogativeSentence(lastSentence)) {
-      return `${body}?`;
-    }
-  }
-
-  const sentences = s.split(/(?<=[.!?])\s+/);
-  if (sentences.length >= 4) {
-    const last = sentences[sentences.length - 1] ?? '';
-    if (looksInterrogativeSentence(last)) {
-      return s.replace(/[.!…]$/, '?');
-    }
-  }
-
-  return `${s}\n\n${randomFallbackClosing()}`;
+export function finalizeAnaReplyText(text: string, _opts?: FinalizeAnaReplyOptions): string {
+  const s = normalizeWhitespacePreservingLines(stripMarkdownArtifactsForWhatsApp((text || '').trim()));
+  return s.slice(0, 4000);
 }
 
 function normGreeting(s: string): string {

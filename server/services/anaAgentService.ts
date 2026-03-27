@@ -2,18 +2,8 @@ import type { EnterpriseRow, EnterpriseTipo } from '../repositories/enterpriseRe
 import type { RequestedProductType } from '../utils/anaRequestedProductType.js';
 import type { LocationQueryContext } from '../utils/anaEnterpriseLocationContext.js';
 import { parseAddons, normalizeFileCategory, type FileCategory } from '../repositories/enterpriseRepository.js';
-import {
-  isSimpleOpeningGreeting,
-  pickRandomGreetingReply,
-  userUtteranceHasSearchRefinementSignals,
-} from '../utils/anaReplyFinalize.js';
 import { buildCatalogListMessage } from '../utils/anaCatalogMessages.js';
 import type { AppointmentPreflight } from '../utils/anaAppointmentIntent.js';
-import {
-  ANA_FALLBACK_APPOINTMENT_FLOW_REPLY,
-  ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY,
-} from '../utils/anaAppointmentIntent.js';
-
 export type { AppointmentPreflight } from '../utils/anaAppointmentIntent.js';
 
 /** Variáveis comerciais por empreendimento (preço, condições, disponibilidade) para o prompt. */
@@ -650,11 +640,6 @@ Use o bloco acima + variáveis para responder. Pedidos tipo "me conta", "resumo"
 }
 
 const MIN_SALVAGED_REPLY_CHARS = 20;
-const HUMAN_DEGRADED_FALLBACKS = [
-  'Perfeito. Me diz so por onde voce quer comecar.',
-  'Posso te ajudar por localizacao, tipo ou empreendimento.',
-  'Se quiser, eu sigo com o que voce me disser agora.',
-];
 
 function stripModelMarkdownFence(raw: string): string {
   let s = raw.trim();
@@ -959,30 +944,24 @@ export function parseAnaJson(raw: string): AnaStructuredReply | null {
 
 export function fallbackReplyFromRaw(
   raw: string,
-  userMessage?: string,
-  knownCustomerName?: string | null,
-  appointmentFlow?: boolean,
-  appointmentContinuation?: boolean,
-  recentContextForHeuristic?: string,
-  allEnterpriseNames?: string[],
-  productTypeHint?: RequestedProductType
+  _userMessage?: string,
+  _knownCustomerName?: string | null,
+  _appointmentFlow?: boolean,
+  _appointmentContinuation?: boolean,
+  _recentContextForHeuristic?: string,
+  _allEnterpriseNames?: string[],
+  _productTypeHint?: RequestedProductType
 ): AnaStructuredReply {
-  const blob = [recentContextForHeuristic, userMessage].filter(Boolean).join('\n');
   const naturalFromRaw = extractUsableReplyTextFromRawModelOutput(raw);
-  const humanShort =
-    HUMAN_DEGRADED_FALLBACKS[Math.floor(Math.random() * HUMAN_DEGRADED_FALLBACKS.length)]!;
-  const reply =
+  let reply =
     naturalFromRaw && naturalFromRaw.trim().length >= MIN_SALVAGED_REPLY_CHARS
       ? naturalFromRaw.trim().slice(0, 4000)
-      : userMessage && isSimpleOpeningGreeting(userMessage)
-      ? pickRandomGreetingReply(knownCustomerName)
-      : appointmentFlow && appointmentContinuation
-        ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
-        : appointmentFlow
-          ? ANA_FALLBACK_APPOINTMENT_FLOW_REPLY
-          : userUtteranceHasSearchRefinementSignals(blob) && (allEnterpriseNames?.length ?? 0) > 0
-            ? buildRefinementContextReply(blob, allEnterpriseNames, productTypeHint)
-            : humanShort;
+      : (raw || '').trim().length > 0
+        ? (raw || '').trim().slice(0, 4000)
+        : ANA_FALLBACK_INCOMPREHENSION_REPLY;
+  if (reply.trim().length < MIN_SALVAGED_REPLY_CHARS) {
+    reply = ANA_FALLBACK_INCOMPREHENSION_REPLY;
+  }
   return {
     reply,
     intent: 'geral',

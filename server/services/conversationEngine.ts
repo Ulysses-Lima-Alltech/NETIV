@@ -41,16 +41,8 @@ import {
   trySalvageStructuredReplyFromRawModelContent,
   fallbackReplyFromRaw,
   detectStrongPurchaseIntentForLeadTemperature,
-  buildCatalogFallbackReply,
 } from './anaAgentService.js';
-import {
-  finalizeAnaReplyText,
-  countCustomerNameMentionsInText,
-  isSimpleOpeningGreeting,
-  pickRandomGreetingReply,
-  repliesSemanticallySimilar,
-  pickDuplicateFallbackReply,
-} from '../utils/anaReplyFinalize.js';
+import { finalizeAnaReplyText, countCustomerNameMentionsInText } from '../utils/anaReplyFinalize.js';
 import {
   buildUserUtterancesContext,
   computeAppointmentPreflight,
@@ -64,7 +56,6 @@ import {
 import {
   parseCommercialFlowState,
   computeNextCommercialFlowState,
-  isShortCommercialContinuation,
   tryRecoverEnterpriseIdFromFlowState,
   type CommercialFlowState,
 } from '../utils/commercialFlowState.js';
@@ -309,26 +300,6 @@ async function sendAnaEnterpriseDocumentWhatsApp(params: {
   }
 }
 
-const REFINEMENT_PATTERNS = /\b(regiao|região|localizacao|localização|qual\s+regiao|qual\s+região|qual\s+cidade|faixa\s+de\s+investimento|faixa\s+de\s+valor|metragem|qual\s+bairro)\b/i;
-
-/**
- * Detecta loop de refinamento: a Ana perguntou região/faixa nas últimas 2 respostas
- * e o cliente não forneceu a informação (respondeu com "não sei", "me mostra", etc).
- */
-function detectRefinementLoop(
-  history: { role: 'user' | 'assistant'; content: string }[],
-  currentUserMessage: string
-): boolean {
-  const lastAssistantMsgs = history.filter((h) => h.role === 'assistant').slice(-2);
-  if (lastAssistantMsgs.length < 2) return false;
-  const bothAskedRefinement = lastAssistantMsgs.every((m) => REFINEMENT_PATTERNS.test(m.content));
-  if (!bothAskedRefinement) return false;
-  const norm = currentUserMessage.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
-  const clientDidntAnswer = /\b(nao\s+sei|não\s+sei|me\s+mostr|quero\s+ver|mostra\s+tudo|ver\s+tudo|quero\s+tudo|tanto\s+faz|qualquer|nao\s+tenho|sem\s+prefer)\b/.test(norm)
-    || !REFINEMENT_PATTERNS.test(norm);
-  return clientDidntAnswer;
-}
-
 export async function handleIncomingMessage(ctx: IncomingMessageContext): Promise<void> {
   const { conversationId, userMessage, toPhoneNumber, trailingUserBubbles, replyPipelineToken } = ctx;
 
@@ -424,42 +395,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         break;
       }
     }
-    const historyForGreeting =
-      trailingUserBubbles != null && trailingUserBubbles > 1
-        ? rowsToHistory(rows, null, trailingUserBubbles)
-        : rowsToHistory(rows, trimmed);
-
-    if (isSimpleOpeningGreeting(trimmed) && historyForGreeting.length === 0) {
-      const nm = (effectiveConv.customer_name || '').trim();
-      const nameKnown = nm.length >= 2;
-      let replyTextGreeting = pickRandomGreetingReply(nameKnown ? nm : null);
-      replyTextGreeting = finalizeAnaReplyText(replyTextGreeting).slice(0, 4000);
-      if (isPipelineStale(conversationId, replyPipelineToken)) {
-        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'greeting_before_send' });
-        return;
-      }
-      const freshRows = await getMessagesByConversationId(conversationId);
-      const lastAsstG = [...freshRows].reverse().find((m) => m.role === 'assistant');
-      if (lastAsstG && (lastAsstG.content || '').trim() === replyTextGreeting.trim()) {
-        const ageG = Date.now() - new Date(lastAsstG.created_at).getTime();
-        if (ageG < 55_000) {
-          replyTextGreeting = 'Como posso te ajudar?';
-          console.log('[ANA_PIPELINE] duplicate_greeting_fallback', { conversationId, ageMs: ageG });
-        }
-      }
-      const sendGreeting = await sendTextMessage(toPhoneNumber, replyTextGreeting);
-      if (sendGreeting.success && sendGreeting.metaMessageId) {
-        await insertMessage(conversationId, 'assistant', replyTextGreeting, sendGreeting.metaMessageId);
-        const convAfterG = await getConversationById(conversationId);
-        const nameForG = (convAfterG?.customer_name || '').trim();
-        const deltaG = countCustomerNameMentionsInText(replyTextGreeting, nameForG);
-        if (deltaG > 0) await incrementAnaCustomerNameMentions(conversationId, deltaG);
-      }
-      return;
-    }
-
     const explicitSwitch = hasExplicitSwitchIntent(trimmed);
-    const shortContinuation = isShortCommercialContinuation(trimmed, explicitSwitch);
     let matched: number | null = null;
     let flowRecoverySource: string | null = null;
     /** De onde veio o match — evita trocar foco por menção antiga em outra bolha. */
@@ -526,7 +462,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       conversationId,
       metaMessageId: inboundMetaMessageId,
       textLen: trimmed.length,
-      shortContinuation,
       explicitSwitch,
       flowRecoverySource,
       enterpriseIdBeforeMatch: effectiveConv.enterprise_id,
@@ -814,19 +749,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       .join('\n')
       .slice(-2500);
 
-    const refinementLoopDetected = detectRefinementLoop(history, trimmed);
-    let effectiveSystemPrompt = systemPrompt;
-    if (refinementLoopDetected && allEnterpriseNames.length > 0 && mode !== 'scoped') {
-      const namesList = allEnterpriseNames.slice(0, 5).map((n) => `📍 ${n}`).join('\n');
-      effectiveSystemPrompt += `\n\nINSTRUÇÃO DE EMERGÊNCIA — ANTI-LOOP (prioridade absoluta sobre qualquer outra regra de qualificação):
-O sistema detectou que você já perguntou região/localização/faixa ao cliente e ele não conseguiu ou não quis responder. NÃO pergunte região/localização/faixa novamente nesta rodada.
-Em vez disso, LISTE os empreendimentos disponíveis usando somente nomes reais:
-${namesList}${allEnterpriseNames.length > 5 ? '\n(há mais opções)' : ''}
-Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de região.`;
-      console.log('[ANA_PIPELINE] refinement_loop_escape', { conversationId, namesInjected: allEnterpriseNames.length });
-    }
-
-    const messages: ChatMessage[] = [{ role: 'system', content: effectiveSystemPrompt }];
+    const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
     for (const h of history) {
       messages.push({ role: h.role, content: h.content });
     }
@@ -927,37 +850,6 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
       final_reply_source: finalReplySource,
     });
 
-    const blockCatalogShortContinuation =
-      shortContinuation &&
-      (effectiveConv.enterprise_id != null || flowRecoverySource != null);
-    if (structured && blockCatalogShortContinuation) {
-      structured = { ...structured, wantsCatalog: false, shouldShowPortfolio: false };
-    }
-
-    if (structured) {
-      const sr = structured;
-      const strongCatalogBlockId = tryMatchEnterpriseFromUserCorpus(trimmed, allActiveEnterprises);
-      const blockCatalogInjectionForNamedEnterprise =
-        strongCatalogBlockId != null &&
-        enterpriseHasStrongNameSignalInTrimmed(strongCatalogBlockId, trimmed, allActiveEnterprises);
-      if (
-        mode !== 'scoped' &&
-        !blockCatalogInjectionForNamedEnterprise &&
-        !blockCatalogShortContinuation &&
-        (sr.wantsCatalog || sr.shouldShowPortfolio) &&
-        allEnterpriseNames.length > 0 &&
-        !allEnterpriseNames.some((n) => sr.reply.includes(n))
-      ) {
-        const catalogReply = buildCatalogFallbackReply(
-          allEnterpriseNames,
-          recentUserContextForFallback,
-          promptProductTypeForPrompt ?? triageRequestedProductType
-        );
-        console.log('[ANA_PIPELINE] catalog_injected', { conversationId, namesCount: allEnterpriseNames.length });
-        structured = { ...sr, reply: catalogReply };
-      }
-    }
-
     const prevClassification = effectiveConv.classification;
 
     console.log('[DOC_FLOW] structured final (pronto para texto + arquivo)', {
@@ -1021,22 +913,8 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
     const lastAsstDup = [...rowsBeforeSend].reverse().find((m) => m.role === 'assistant');
     const lastContent = (lastAsstDup?.content || '').trim();
     const ageDup = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
-    const dupNamePool = mode === 'scoped' ? undefined : allEnterpriseNames;
-    const dupFallbackOpts = {
-      scoped: mode === 'scoped',
-      focusedEnterpriseName: ent?.name ?? null,
-    };
-    let duplicateFallbackUsed = false;
     if (lastContent && lastContent === replyText.trim() && ageDup < 55_000) {
-      console.warn('[ANA_PIPELINE] duplicate_detected_identical', { conversationId, ageMs: ageDup });
-      duplicateFallbackUsed = true;
-      replyText = pickDuplicateFallbackReply(recentUserContextForFallback, dupNamePool, dupFallbackOpts);
-      console.log('[ANA_PIPELINE] duplicate_fallback_sent', { conversationId, fallbackLen: replyText.length });
-    } else if (lastContent && repliesSemanticallySimilar(lastContent, replyText)) {
-      console.warn('[ANA_PIPELINE] duplicate_detected_semantic', { conversationId });
-      duplicateFallbackUsed = true;
-      replyText = pickDuplicateFallbackReply(recentUserContextForFallback, dupNamePool, dupFallbackOpts);
-      console.log('[ANA_PIPELINE] duplicate_fallback_sent', { conversationId, fallbackLen: replyText.length });
+      console.warn('[ANA_PIPELINE] duplicate_reply_unchanged', { conversationId, ageMs: ageDup });
     }
     console.log('[ANA_PIPELINE] send_final', { conversationId, toPhoneNumber, replyLength: replyText.length });
     const sendResult = await sendTextMessage(toPhoneNumber, replyText);
@@ -1068,7 +946,6 @@ Depois de listar, pergunte qual deles interessa mais. NÃO repita pergunta de re
         finalReplySource,
         finalEnterpriseId: effectiveConv.enterprise_id,
         conversationPhase,
-        duplicateFallback: duplicateFallbackUsed,
         replyLen: replyText.length,
       });
     } else {
