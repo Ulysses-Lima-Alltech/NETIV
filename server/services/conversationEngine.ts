@@ -31,7 +31,12 @@ import {
   resolveEnterpriseLocationContext,
   findMunicipioInMessage,
 } from '../utils/anaEnterpriseLocationContext.js';
-import { inferRequestedProductType } from '../utils/anaRequestedProductType.js';
+import {
+  inferRequestedProductType,
+  expandTiposForCommercialPool,
+  expandCadastroTipoToPool,
+  tiposComercialEquivalentes,
+} from '../utils/anaRequestedProductType.js';
 import {
   buildAnaSystemPrompt,
   type BuildAnaSystemPromptOpts,
@@ -358,10 +363,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const allActiveEnterprises = await listEnterprises(true);
     const fullUserUtterances = buildUserUtterancesContext(rows);
     const triageRequestedProductType = inferRequestedProductType(trimmed, fullUserUtterances);
+    const acceptedTiposPool = expandTiposForCommercialPool(triageRequestedProductType);
     const enterprisesPool =
-      triageRequestedProductType === 'INDEFINIDO'
+      acceptedTiposPool == null
         ? allActiveEnterprises
-        : allActiveEnterprises.filter((e) => e.tipo === triageRequestedProductType);
+        : allActiveEnterprises.filter((e) => acceptedTiposPool.includes(e.tipo));
     const appointmentPreflight = computeAppointmentPreflight(trimmed, fullUserUtterances);
     const locGlobal = resolveEnterpriseLocationContext(trimmed, fullUserUtterances, allActiveEnterprises);
 
@@ -380,7 +386,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         await setConversationEnterpriseId(conversationId, null);
         await mergeConversationCommercialFlowState(conversationId, resetCommercialScopeHints(flowStateParsed));
         scopeMutated = true;
-      } else if (triageRequestedProductType !== 'INDEFINIDO' && triageRequestedProductType !== entFocusForScope.tipo) {
+      } else if (triageRequestedProductType !== 'INDEFINIDO' && !tiposComercialEquivalentes(entFocusForScope.tipo, triageRequestedProductType)) {
         await setConversationEnterpriseId(conversationId, null);
         await mergeConversationCommercialFlowState(conversationId, resetCommercialScopeHints(flowStateParsed));
         scopeMutated = true;
@@ -455,7 +461,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const enterprisesForSameTipoAsEnt =
       focusEnterprise == null
         ? []
-        : allActiveEnterprises.filter((e) => e.tipo === focusEnterprise.tipo);
+        : allActiveEnterprises.filter((e) => expandCadastroTipoToPool(focusEnterprise.tipo).includes(e.tipo));
 
     const vars = ent ? await getVariablesMap(ent.id) : {};
     let commercialSnapshots: CommercialSnapshot[] = [];

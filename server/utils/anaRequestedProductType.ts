@@ -3,6 +3,29 @@ import type { EnterpriseTipo } from '../repositories/enterpriseRepository.js';
 /** Tipo comercial inferido no backend a partir da mensagem + contexto recente (triagem). */
 export type RequestedProductType = EnterpriseTipo | 'INDEFINIDO';
 
+/** Tipos cadastro tratados como o mesmo universo na oferta/triagem (temporário). */
+export function expandCadastroTipoToPool(t: EnterpriseTipo): EnterpriseTipo[] {
+  if (t === 'APARTAMENTO' || t === 'MCMV') return ['APARTAMENTO', 'MCMV'];
+  return [t];
+}
+
+/** Expansão para filtro de empreendimentos; `null` = sem filtro (todos ativos). */
+export function expandTiposForCommercialPool(t: RequestedProductType): EnterpriseTipo[] | null {
+  if (t === 'INDEFINIDO') return null;
+  return expandCadastroTipoToPool(t);
+}
+
+/** Inferência do cliente compatível com o tipo cadastrado do empreendimento em foco? */
+export function tiposComercialEquivalentes(
+  cadastroTipo: EnterpriseTipo,
+  inferido: RequestedProductType
+): boolean {
+  if (inferido === 'INDEFINIDO') return true;
+  if (cadastroTipo === inferido) return true;
+  const apt = new Set<EnterpriseTipo>(['APARTAMENTO', 'MCMV']);
+  return apt.has(cadastroTipo) && apt.has(inferido);
+}
+
 function norm(s: string): string {
   return s
     .toLowerCase()
