@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import { authApi, getStoredAuthToken, setStoredAuthToken, type AuthUser } from '../api/client';
+import { AUTH_BYPASS_MOCK_USER, setStoredAuthToken, type AuthUser } from '../api/client';
 
 interface AuthState {
   user: AuthUser | null;
@@ -20,76 +20,29 @@ interface AuthContextValue extends AuthState {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<AuthUser | null>(AUTH_BYPASS_MOCK_USER);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadUser = useCallback(async () => {
-    const token = getStoredAuthToken();
-    if (!token) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
-    try {
-      const data = await authApi.me();
-      setUser(data.user);
-    } catch {
-      setUser(null);
-    } finally {
-      setLoading(false);
-    }
+    setStoredAuthToken(null);
+    setUser(AUTH_BYPASS_MOCK_USER);
+    setLoading(false);
   }, []);
 
   useEffect(() => {
-    loadUser();
+    void loadUser();
   }, [loadUser]);
 
-  // ── SSO via postMessage (quando dentro do iframe do Django) ──
-  // O Django NÃO coloca o token na URL (seria interceptável via proxy).
-  // Em vez disso, envia via postMessage — um canal interno do browser que
-  // NÃO passa pela rede, NÃO é interceptável via Burp Suite.
-  useEffect(() => {
-    function handleSsoMessage(event: MessageEvent) {
-      // SEGURANÇA: só aceitar mensagens da origem do Django
-      // Se um site malicioso tentar enviar postMessage, o origin será diferente
-      // e a mensagem será ignorada.
-      const allowedOrigins = [
-        'https://app.queromeuape.com.br',
-        'http://localhost:8000',   // dev local
-      ];
-      if (!allowedOrigins.includes(event.origin)) return;
-
-      // Verificar que é uma mensagem SSO (e não qualquer postMessage aleatório)
-      if (event.data?.type !== 'sso_token') return;
-
-      const ssoToken = event.data?.token;
-      if (typeof ssoToken === 'string' && ssoToken.length > 0) {
-        // Salvar o token e carregar o usuário
-        setStoredAuthToken(ssoToken);
-        loadUser();
-      }
-    }
-
-    window.addEventListener('message', handleSsoMessage);
-    return () => window.removeEventListener('message', handleSsoMessage);
-  }, [loadUser]);
-
-  const login = useCallback(async (email: string, password: string) => {
+  const login = useCallback(async (_email: string, _password: string) => {
     setError(null);
-    const data = await authApi.login(email, password);
-    setStoredAuthToken(data.token);
-    setUser(data.user);
+    setStoredAuthToken(null);
+    setUser(AUTH_BYPASS_MOCK_USER);
   }, []);
 
   const logout = useCallback(async () => {
-    try {
-      await authApi.logout();
-    } catch {
-      // ignora erro de rede
-    }
     setStoredAuthToken(null);
-    setUser(null);
+    setUser(AUTH_BYPASS_MOCK_USER);
   }, []);
 
   const clearError = useCallback(() => setError(null), []);

@@ -14,11 +14,9 @@ export function setStoredAuthToken(token: string | null): void {
   else localStorage.setItem(AUTH_TOKEN_KEY, token);
 }
 
-/** Chamado quando a API retorna 401 (sessão inválida/expirada). Limpa token e redireciona para login. */
+/** Bypass temporário: 401 só limpa token local; sem redirect para /login. */
 function handleUnauthorized(): void {
   setStoredAuthToken(null);
-  const base = typeof import.meta.env.BASE_URL === 'string' ? import.meta.env.BASE_URL.replace(/\/$/, '') : '';
-  window.location.href = `${base}/login`;
 }
 
 async function request<T>(
@@ -74,11 +72,19 @@ export interface AuthUser {
   role: UserRole;
 }
 
+/** Usuário mock estável para bypass temporário de auth (sem chamadas à API de login). */
+export const AUTH_BYPASS_MOCK_USER: AuthUser = {
+  id: 0,
+  name: 'Dev (bypass)',
+  email: 'dev@local',
+  role: 'ADMIN',
+};
+
 export const authApi = {
-  login: (email: string, password: string) =>
-    request<{ token: string; user: AuthUser }>('/auth/login', { method: 'POST', body: { email, password } }),
-  me: () => request<{ user: AuthUser }>('/auth/me'),
-  logout: () => request<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
+  login: (_email: string, _password: string) =>
+    Promise.resolve({ token: '', user: AUTH_BYPASS_MOCK_USER }),
+  me: () => Promise.resolve({ user: AUTH_BYPASS_MOCK_USER }),
+  logout: () => Promise.resolve({ ok: true as const }),
 };
 
 export interface WhatsAppConfigPublic {
@@ -397,9 +403,6 @@ export const projectsApi = {
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) {
       setStoredAuthToken(null);
-      const base =
-        typeof import.meta.env.BASE_URL === 'string' ? import.meta.env.BASE_URL.replace(/\/$/, '') : '';
-      window.location.href = `${base}/login`;
       throw new Error((data as { error?: string }).error ?? 'Sessão expirada. Faça login novamente.');
     }
     if (!res.ok) throw new Error((data as { error?: string }).error ?? `Erro ${res.status}`);
