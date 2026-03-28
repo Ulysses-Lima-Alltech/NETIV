@@ -167,7 +167,10 @@ export function ChatPanel({
     );
   }
 
-  const displayName = conversation.leadName.trim() || 'Lead sem nome';
+  const displayName =
+    (conversation.confirmedCustomerName ?? '').trim() ||
+    conversation.leadPhone.trim() ||
+    'Lead';
   let lastDate = '';
   const cls = conversation.classificationStatus ?? conversation.status ?? 'Novo';
   const showCarteiraBlock = cls === 'Carteira' && !conversation.handoff;

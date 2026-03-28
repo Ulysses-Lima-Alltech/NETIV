@@ -188,15 +188,17 @@ appointment_*: confirmed só com data+hora combinadas de verdade; use histórico
 
 send_file_category: preencha se o cliente pedir e a categoria existir na lista do empreendimento; senão null e não prometa arquivo.
 
-lead_temperature: separado de handoff; compra/fechamento explícito → "quente"; nunca envie null para apagar temperatura.`;
+lead_temperature: separado de handoff; compra/fechamento explícito → "quente"; nunca envie null para apagar temperatura.
+
+customer_name: preencha no JSON somente quando o cliente disser o próprio nome explicitamente nesta conversa; não use nome de perfil do WhatsApp; se ainda não souber, mantenha "".`;
 
 const COMPORTAMENTO = `
-Você é Ana.
+Você é Ana, secretária de vendas.
 
 Seu papel é conduzir conversas de forma natural, contextual, objetiva e humana.
 
 INSTRUÇÕES GERAIS
-- Apresente-se apenas como Ana. Não diga que é assistente virtual, IA, robô ou sistema, a menos que isso seja exigido explicitamente.
+- Apresente-se como Ana, secretária de vendas, sem dizer que é IA, robô ou sistema automático, salvo se o cliente exigir.
 - Responda de forma natural ao que o cliente disser, sem depender de respostas prontas.
 - Considere o contexto recente antes de responder.
 - Trate mensagens curtas como continuidade do assunto atual quando houver contexto suficiente.
@@ -389,6 +391,8 @@ export interface BuildAnaSystemPromptOpts {
   knownCustomerName?: string | null;
   /** Quantas vezes a Ana já mencionou o nome do cliente nas respostas anteriores. */
   customerNameMentionsSoFar?: number;
+  /** Se já foi feita a pergunta inicial pelo nome confirmado (evita repetir a mesma formulação). */
+  anaAskedCustomerName?: boolean;
   /** Classificação atual da conversa no banco (referência para triagem). */
   conversationClassification?: string | null;
   /** Pré-detecção na engine: fluxo de agendamento (prioridade sobre triagem genérica). */
@@ -440,6 +444,34 @@ function buildUnifiedAppointmentHint(ap: AppointmentPreflight | null | undefined
 ${ap.reschedule ? '- Remarcação: atualize sem recomeçar do zero.\n' : ''}${ap.dateContestation ? '- Contestação de data: calendário Brasil.\n' : ''}${ap.continuationOnly ? '- Possível complemento só de data/hora.\n' : ''}`;
 }
 
+function buildCustomerNameInstructions(opts: BuildAnaSystemPromptOpts): string {
+  const nm = (opts.knownCustomerName || '').trim();
+  const mentions = opts.customerNameMentionsSoFar ?? 0;
+  const asked = opts.anaAskedCustomerName === true;
+  if (nm.length >= 2) {
+    const target = 3;
+    const need = Math.max(0, target - mentions);
+    if (need > 0) {
+      return `--- NOME DO CLIENTE (confirmado por ele neste atendimento) ---
+Nome: "${nm}". O sistema estima ~${mentions} menção(ões) desse nome nas suas respostas anteriores; objetivo: pelo menos ${target} ao longo da conversa, de forma natural (faltam cerca de ${need}). Não force em toda frase.
+`;
+    }
+    return `--- NOME DO CLIENTE ---
+Nome: "${nm}". Objetivo de menções ao nome já atingido; cite só quando soar natural.
+`;
+  }
+  if (!asked) {
+    return `--- NOME DO CLIENTE (ainda não confirmado) ---
+Não use nome vindo só do perfil do WhatsApp. Só trate como nome do cliente o que ele disser explicitamente aqui.
+Nesta resposta: apresente-se como Ana, secretária de vendas (ex.: que você é a Ana, secretária de vendas).
+Antes de aprofundar produto, catálogo ou negócio, faça a pergunta obrigatória pedindo o nome de forma cordial (ex.: "Antes de continuarmos, posso saber seu nome?").
+`;
+  }
+  return `--- NOME DO CLIENTE (ainda não confirmado) ---
+Você já pediu o nome antes; continue com naturalidade e, se couber, reforce sem repetir a mesma frase literal.
+`;
+}
+
 /** Prompt único: só a OpenAI redige a resposta; o backend só junta dados e contexto. */
 export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
   const base = COMPORTAMENTO;
@@ -471,7 +503,8 @@ export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
     return `${base}
 
 ${persisted}--- EMPREENDIMENTO VINCULADO INATIVO ---
-O cadastro associado a esta conversa não está ativo. Informe com cordialidade; não invente dados. send_file_category: null.`;
+O cadastro associado a esta conversa não está ativo. Informe com cordialidade; não invente dados. send_file_category: null.
+${buildCustomerNameInstructions(opts)}`;
   }
 
   const know = opts.knowledgeText.trim()
@@ -484,6 +517,7 @@ O cadastro associado a esta conversa não está ativo. Informe com cordialidade;
 ${persisted}${locationHint ? `${locationHint}\n\n` : ''}${commercialBlock ? `${commercialBlock}\n\n` : ''}PORTFÓLIO (nomes permitidos neste contexto — tipo de interesse: ${triageType}): ${namesList}
 Classificação (referência): "${cls}".
 ${openCtx}${appointmentHint}
+${buildCustomerNameInstructions(opts)}
 - Você conduz a conversa; use o histórico e os dados acima.`;
   }
 
@@ -495,13 +529,6 @@ ${openCtx}${appointmentHint}
   const matBlock = allowMat
     ? `Arquivos que podem ser enviados (por categoria):\n${inv}\nMapeamento: book | unidades | tabela_comercial | outro.\n`
     : `Envio de arquivos por aqui desativado — send_file_category sempre null.\n`;
-
-  const nm = (opts.knownCustomerName || '').trim();
-  const mentions = opts.customerNameMentionsSoFar ?? 0;
-  const nameHint =
-    nm.length >= 2
-      ? `Nome do cliente: "${nm}" (menções aproximadas nas suas respostas: ${mentions}).`
-      : 'Nome do cliente ainda não identificado — pergunte com naturalidade quando fizer sentido.';
 
   const openScoped = (opts.openAppointmentSummary || '').trim()
     ? `AGENDAMENTO EM ANDAMENTO:\n${(opts.openAppointmentSummary || '').trim()}\n\n`
@@ -516,7 +543,7 @@ ${ap.reschedule ? '- Remarcação.\n' : ''}${ap.dateContestation ? '- Contestaç
 
 ${persisted}${locationHint ? `${locationHint}\n\n` : ''}${commercialBlock ? `${commercialBlock}\n\n` : ''}--- FOCO DO CADASTRO ATUAL ---
 Empreendimento: "${e.name}" (${e.tipo}).
-${nameHint}
+${buildCustomerNameInstructions(opts)}
 ${openScoped}${appointmentScoped}
 ${matBlock}
 📍 ${e.name}

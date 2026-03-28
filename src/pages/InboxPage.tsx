@@ -15,7 +15,13 @@ import {
 } from '../components/InboxFilterBar';
 
 function mapApiConversationToConversation(c: ApiConversation): Conversation {
-  const leadName = c.contactName?.trim() || c.contactPhone || c.externalContactId || 'Sem nome';
+  const leadName =
+    (c.whatsappDisplayName ?? '').trim() ||
+    (c.customerName ?? '').trim() ||
+    (c.contactName ?? '').trim() ||
+    c.contactPhone ||
+    c.externalContactId ||
+    'Sem nome';
   const leadPhone = c.contactPhone || c.externalContactId || '';
   const ls = c.leadStage;
   const temperatura: LeadTemperatura | null =
@@ -38,6 +44,7 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
   return {
     id: c.id,
     leadName,
+    confirmedCustomerName: c.customerName ?? null,
     leadPhone,
     lastMessage: c.lastMessagePreview || '',
     updatedAt: c.lastMessageAt || c.updatedAt || c.createdAt,

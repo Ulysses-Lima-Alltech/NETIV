@@ -4,7 +4,10 @@ export type LeadTemperatura = 'quente' | 'morno' | 'frio';
 
 export interface Conversation {
   id: string;
+  /** Título na lista lateral: perfil WhatsApp, senão nome confirmado, senão telefone. */
   leadName: string;
+  /** Nome que o cliente informou na conversa (cabeçalho do chat; não usar perfil WA). */
+  confirmedCustomerName?: string | null;
   leadPhone: string;
   lastMessage: string;
   updatedAt: string; // ISO date

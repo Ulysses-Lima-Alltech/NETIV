@@ -10,6 +10,27 @@ import { sendTextMessage } from './whatsappMetaService.js';
 
 const NON_TEXT_MESSAGE = 'No momento só consigo responder a mensagens de texto.';
 
+function whatsAppProfileDisplayName(
+  value: { contacts?: Array<{ profile?: { name?: string }; wa_id?: string }> },
+  msgFrom: string
+): string | null {
+  const contacts = value.contacts;
+  if (!contacts?.length) return null;
+  const fromDigits = msgFrom.replace(/\D/g, '');
+  for (const c of contacts) {
+    const wa = String(c.wa_id ?? '').replace(/\D/g, '');
+    if (fromDigits && wa && wa === fromDigits) {
+      const n = c.profile?.name?.trim();
+      if (n) return n.slice(0, 200);
+    }
+  }
+  if (contacts.length === 1) {
+    const n = contacts[0]?.profile?.name?.trim();
+    if (n) return n.slice(0, 200);
+  }
+  return null;
+}
+
 export async function verifyWebhook(mode: string, token: string, challenge: string): Promise<string | null> {
   if (mode !== 'subscribe' || !challenge) return null;
   const config = await getWhatsAppConfig();
@@ -60,13 +81,14 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           msg as unknown as Record<string, unknown>,
           phoneNumberId ?? null
         );
+        const waDisplay = whatsAppProfileDisplayName(value, String(msg.from));
         const conv = await findOrCreateConversation(
           'whatsapp',
           String(msg.from),
           msg.from,
-          null,
           phoneNumberId ?? null,
-          leadOrigin
+          leadOrigin,
+          { whatsappDisplayName: waDisplay }
         );
 
         const type = msg.type ?? 'unknown';

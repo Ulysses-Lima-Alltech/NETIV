@@ -111,6 +111,10 @@ export interface ConversationListItem {
   externalContactId: string;
   contactPhone: string | null;
   contactName: string | null;
+  /** Nome de perfil WhatsApp (listagem). */
+  whatsappDisplayName?: string | null;
+  /** Nome confirmado pelo cliente na conversa. */
+  customerName?: string | null;
   status: string;
   lastMessageAt: string | null;
   lastMessagePreview: string | null;

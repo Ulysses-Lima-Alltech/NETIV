@@ -7,6 +7,8 @@ import {
   maxLeadTemperature,
   incrementAnaCustomerNameMentions,
   mergeConversationCommercialFlowState,
+  mergeConfirmedCustomerNameIfEmpty,
+  markAnaAskedForCustomerName,
 } from '../repositories/conversationRepository.js';
 import { sendTextMessage, sendDocumentMessage } from './whatsappMetaService.js';
 import {
@@ -48,6 +50,7 @@ import {
   hasCatalogReopenIntent,
 } from './anaAgentService.js';
 import { finalizeAnaReplyText, countCustomerNameMentionsInText } from '../utils/anaReplyFinalize.js';
+import { extractCustomerNameFromUserUtterance } from '../utils/extractCustomerNameFromMessage.js';
 import {
   buildUserUtterancesContext,
   computeAppointmentPreflight,
@@ -352,6 +355,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    const extractedCustomerName = extractCustomerNameFromUserUtterance(trimmed);
+    if (extractedCustomerName) {
+      const mergedName = await mergeConfirmedCustomerNameIfEmpty(conversationId, extractedCustomerName);
+      if (mergedName) {
+        const refreshedAfterName = await getConversationById(conversationId);
+        if (refreshedAfterName) {
+          effectiveConv = refreshedAfterName;
+          conv = refreshedAfterName;
+        }
+      }
+    }
+
     const rows = await getMessagesByConversationId(conversationId);
     let lastUserMessageAt = new Date();
     for (let i = rows.length - 1; i >= 0; i--) {
@@ -579,6 +594,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       requestedProductType: promptProductTypeForPrompt,
       knownCustomerName: effectiveConv.customer_name,
       customerNameMentionsSoFar: effectiveConv.ana_customer_name_mentions ?? 0,
+      anaAskedCustomerName: effectiveConv.ana_asked_customer_name === true,
       conversationClassification: effectiveConv.classification,
       appointmentPreflight,
       openAppointmentSummary,
@@ -811,9 +827,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       console.log('[ANA DEBUG] WhatsApp reply sent', { metaMessageId: sendResult.metaMessageId });
       console.log('[ANA DEBUG] assistant message saved');
       const convAfterSend = await getConversationById(conversationId);
-      const nameForMention = (structured.customer_name?.trim() || convAfterSend?.customer_name || '').trim();
-      const delta = countCustomerNameMentionsInText(replyText, nameForMention);
+      const nameConfirmedForCount = (convAfterSend?.customer_name || '').trim();
+      const delta =
+        nameConfirmedForCount.length >= 2
+          ? countCustomerNameMentionsInText(replyText, nameConfirmedForCount)
+          : 0;
       if (delta > 0) await incrementAnaCustomerNameMentions(conversationId, delta);
+      if (!nameConfirmedForCount && replyText.trim().length >= 24) {
+        await markAnaAskedForCustomerName(conversationId);
+      }
       const prevForFlow = parseCommercialFlowState(convAfterSend?.commercial_flow_state) ?? flowStateParsed;
       const nextFlow = computeNextCommercialFlowState(prevForFlow, replyText, {
         conversationPhase,

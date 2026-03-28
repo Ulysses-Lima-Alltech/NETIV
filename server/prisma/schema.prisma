@@ -78,6 +78,8 @@ model Conversation {
   external_contact_id   String
   contact_phone         String?
   customer_name         String?
+  whatsapp_display_name String?
+  ana_asked_customer_name Boolean @default(false)
   enterprise_id         Int?
   enterprise_origin_id  Int?
   lead_source_raw       Json?

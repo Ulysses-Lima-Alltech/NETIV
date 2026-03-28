@@ -41,7 +41,7 @@ router.post('/send', async (req, res) => {
       const config = await getWhatsAppConfig();
       let conversationId: number | undefined;
       if (config && result.metaMessageId) {
-        const conv = await findOrCreateConversation('whatsapp', to, to, null, config.whatsappPhoneNumberId);
+        const conv = await findOrCreateConversation('whatsapp', to, to, config.whatsappPhoneNumberId, null);
         await insertMessage(conv.id, 'assistant', message, result.metaMessageId ?? null);
         conversationId = conv.id;
       }
@@ -87,7 +87,12 @@ router.get('/conversations', async (req, res) => {
         channel: r.channel,
         externalContactId: r.external_contact_id,
         contactPhone: r.contact_phone,
-        contactName: r.customer_name,
+        contactName:
+          (r.whatsapp_display_name ?? '').trim() ||
+          (r.customer_name ?? '').trim() ||
+          null,
+        whatsappDisplayName: r.whatsapp_display_name ?? null,
+        customerName: r.customer_name ?? null,
         status: 'open',
         lastMessageAt: r.last_message_at?.toISOString() ?? null,
         lastMessagePreview: r.last_message_preview ?? null,

@@ -14,6 +14,10 @@ export interface ConversationRow {
   external_contact_id: string;
   contact_phone: string | null;
   customer_name: string | null;
+  /** Nome de perfil do WhatsApp — só para listagem interna; não usar como nome confirmado. */
+  whatsapp_display_name?: string | null;
+  /** Se a Ana já fez a pergunta inicial pelo nome confirmado (evita repetir a mesma abordagem). */
+  ana_asked_customer_name?: boolean;
   enterprise_id: number | null;
   /** Empreendimento da campanha/origem (imutável após primeiro preenchimento). */
   enterprise_origin_id?: number | null;
@@ -128,9 +132,9 @@ export async function findOrCreateConversation(
   channel: string,
   externalId: string,
   contactPhone: string | null,
-  contactName: string | null,
   metaPhoneNumberId: string | null,
-  leadOrigin?: LeadOriginInput | null
+  leadOrigin?: LeadOriginInput | null,
+  opts?: { whatsappDisplayName?: string | null } | null
 ): Promise<ConversationRow> {
   const { enterpriseId: resolvedEnterpriseId } = await resolveEnterpriseFromLeadSource(leadOrigin ?? null);
   const rawSnapshot = leadOrigin?.rawSnapshot;
@@ -139,15 +143,21 @@ export async function findOrCreateConversation(
       ? rawSnapshot
       : null;
 
+  const waName = (opts?.whatsappDisplayName ?? '').trim() || null;
+
   const { rows } = await query<ConversationRow>(
     `INSERT INTO conversations (
-       channel, external_contact_id, contact_phone, customer_name, meta_phone_number_id, last_message_at,
+       channel, external_contact_id, contact_phone, customer_name, whatsapp_display_name, meta_phone_number_id, last_message_at,
        enterprise_id, enterprise_origin_id, lead_source_raw
      )
-     VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8::jsonb)
+     VALUES ($1, $2, $3, NULL, $4, $5, NOW(), $6, $7, $8::jsonb)
      ON CONFLICT (channel, external_contact_id) DO UPDATE SET
        contact_phone = COALESCE(EXCLUDED.contact_phone, conversations.contact_phone),
-       customer_name = COALESCE(EXCLUDED.customer_name, conversations.customer_name),
+       whatsapp_display_name = CASE
+         WHEN EXCLUDED.whatsapp_display_name IS NOT NULL AND length(trim(EXCLUDED.whatsapp_display_name)) > 0
+         THEN trim(EXCLUDED.whatsapp_display_name)
+         ELSE conversations.whatsapp_display_name
+       END,
        meta_phone_number_id = COALESCE(EXCLUDED.meta_phone_number_id, conversations.meta_phone_number_id),
        last_message_at = NOW(),
        updated_at = NOW(),
@@ -159,7 +169,7 @@ export async function findOrCreateConversation(
       channel,
       externalId,
       contactPhone,
-      contactName,
+      waName,
       metaPhoneNumberId,
       resolvedEnterpriseId,
       resolvedEnterpriseId,
@@ -336,7 +346,7 @@ export async function listConversationsWithPreview(
   if (filters?.search && filters.search.trim() !== '') {
     const searchTerm = `%${filters.search.trim().replace(/%/g, '\\%').replace(/_/g, '\\_')}%`;
     conditions.push(
-      `(c.customer_name ILIKE $${paramIndex} OR c.contact_phone ILIKE $${paramIndex} OR EXISTS (
+      `(c.customer_name ILIKE $${paramIndex} OR c.whatsapp_display_name ILIKE $${paramIndex} OR c.contact_phone ILIKE $${paramIndex} OR EXISTS (
         SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content ILIKE $${paramIndex}
       ))`
     );
@@ -555,7 +565,12 @@ export async function applyAnaConversationUpdate(
       : null;
   await query(
     `UPDATE conversations SET classification = $1, lead_temperature = $2, handoff = $3,
-     customer_name = CASE WHEN $4::text IS NOT NULL AND length(trim($4)) > 0 THEN trim($4) ELSE customer_name END,
+     customer_name = CASE
+       WHEN $4::text IS NOT NULL AND length(trim($4)) > 0
+         AND (customer_name IS NULL OR trim(customer_name) = '')
+       THEN trim($4)
+       ELSE customer_name
+     END,
      classification_before_handoff = CASE WHEN $3 = true AND ($6::text) IS NOT NULL THEN $6::text ELSE
        (CASE WHEN $3 = false THEN NULL ELSE classification_before_handoff END) END,
      updated_at = NOW() WHERE id = $5`,
@@ -642,5 +657,30 @@ export async function incrementAnaCustomerNameMentions(conversationId: number, d
   await query(
     `UPDATE conversations SET ana_customer_name_mentions = ana_customer_name_mentions + $1, updated_at = NOW() WHERE id = $2`,
     [delta, conversationId]
+  );
+}
+
+/** Grava nome confirmado pelo cliente (texto da conversa); não sobrescreve se já houver nome. */
+export async function mergeConfirmedCustomerNameIfEmpty(conversationId: number, name: string): Promise<boolean> {
+  const trimmed = name.trim();
+  if (trimmed.length < 2) return false;
+  const result = await query(
+    `UPDATE conversations SET customer_name = $1, updated_at = NOW()
+     WHERE id = $2 AND (customer_name IS NULL OR trim(customer_name) = '')
+     RETURNING id`,
+    [trimmed, conversationId]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * Marca que a Ana já endereçou a coleta do nome (evita repetir a mesma pergunta obrigatória literalmente).
+ * Só aplica enquanto não há customer_name confirmado.
+ */
+export async function markAnaAskedForCustomerName(conversationId: number): Promise<void> {
+  await query(
+    `UPDATE conversations SET ana_asked_customer_name = true, updated_at = NOW()
+     WHERE id = $1 AND (customer_name IS NULL OR trim(customer_name) = '')`,
+    [conversationId]
   );
 }
