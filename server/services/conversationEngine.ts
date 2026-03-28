@@ -49,7 +49,12 @@ import {
   detectStrongPurchaseIntentForLeadTemperature,
   hasCatalogReopenIntent,
 } from './anaAgentService.js';
-import { finalizeAnaReplyText, countCustomerNameMentionsInText } from '../utils/anaReplyFinalize.js';
+import {
+  finalizeAnaReplyText,
+  countCustomerNameMentionsInText,
+  sleepMs,
+  randomAnaReplyDelayMs,
+} from '../utils/anaReplyFinalize.js';
 import { extractCustomerNameFromUserUtterance } from '../utils/extractCustomerNameFromMessage.js';
 import {
   buildUserUtterancesContext,
@@ -260,6 +265,7 @@ async function sendAnaEnterpriseDocumentWhatsApp(params: {
     });
     const fallbackText =
       `Não consegui enviar o arquivo "${file.originalName}" pelo WhatsApp neste momento. Peça o material a um atendente ou tente novamente em instantes.`;
+    await sleepMs(randomAnaReplyDelayMs({ replyLength: fallbackText.length }));
     const fixRes = await sendTextMessage(toPhoneNumber, fallbackText);
     if (fixRes.success && fixRes.metaMessageId) {
       await insertMessage(conversationId, 'assistant', fallbackText, fixRes.metaMessageId);
@@ -348,6 +354,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const confirmMsg = finalizeAnaReplyText(
         'Entendido! Um atendente vai entrar em contato em breve. Enquanto isso, sua mensagem já foi registrada. Posso te ajudar com mais alguma coisa antes da transferência?'
       );
+      await sleepMs(randomAnaReplyDelayMs({ replyLength: confirmMsg.length }));
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'after_handoff_delay' });
+        return;
+      }
       const sendResult = await sendTextMessage(toPhoneNumber, confirmMsg);
       if (sendResult.success && sendResult.metaMessageId) {
         await insertMessage(conversationId, 'assistant', confirmMsg, sendResult.metaMessageId);
@@ -821,6 +832,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       console.warn('[ANA_PIPELINE] duplicate_reply_unchanged', { conversationId, ageMs: ageDup });
     }
     console.log('[ANA_PIPELINE] send_final', { conversationId, toPhoneNumber, replyLength: replyText.length });
+    await sleepMs(randomAnaReplyDelayMs({ replyLength: replyText.length }));
+    if (isPipelineStale(conversationId, replyPipelineToken)) {
+      console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'after_reply_delay' });
+      return;
+    }
     const sendResult = await sendTextMessage(toPhoneNumber, replyText);
     if (sendResult.success && sendResult.metaMessageId) {
       await insertMessage(conversationId, 'assistant', replyText, sendResult.metaMessageId);

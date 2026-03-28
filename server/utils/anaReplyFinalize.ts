@@ -1,9 +1,9 @@
-/** Sem delay artificial — resposta enviada imediatamente após geração. */
+/** Delay fixo antes do envio da mensagem da Ana ao WhatsApp (humanização; sem faixa aleatória). */
 export function randomAnaReplyDelayMs(_opts?: {
   burstCount?: number;
   replyLength?: number;
 }): number {
-  return 0;
+  return 7000;
 }
 
 export function sleepMs(ms: number): Promise<void> {
