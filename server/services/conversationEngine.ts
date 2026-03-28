@@ -9,7 +9,10 @@ import {
   mergeConversationCommercialFlowState,
 } from '../repositories/conversationRepository.js';
 import { sendTextMessage, sendDocumentMessage } from './whatsappMetaService.js';
-import { tryMatchEnterpriseFromUserCorpus } from '../repositories/enterpriseMatch.js';
+import {
+  tryMatchEnterpriseFromUserCorpus,
+  explainEnterpriseMentionMatch,
+} from '../repositories/enterpriseMatch.js';
 import {
   getActiveEnterpriseById,
   loadAgentKnowledgeText,
@@ -24,7 +27,10 @@ import {
 import { loadRankedKnowledgeChunksForPrompt } from '../repositories/enterpriseKnowledgeChunkRepository.js';
 import { isPipelineStale } from './conversationPipelineToken.js';
 import { generateChatCompletion, type ChatMessage } from './openaiService.js';
-import { resolveEnterpriseLocationContext } from '../utils/anaEnterpriseLocationContext.js';
+import {
+  resolveEnterpriseLocationContext,
+  findMunicipioInMessage,
+} from '../utils/anaEnterpriseLocationContext.js';
 import { inferRequestedProductType } from '../utils/anaRequestedProductType.js';
 import {
   buildAnaSystemPrompt,
@@ -34,6 +40,7 @@ import {
   ANA_TECHNICAL_FALLBACK_NEUTRAL,
   parseAnaJson,
   detectStrongPurchaseIntentForLeadTemperature,
+  hasCatalogReopenIntent,
 } from './anaAgentService.js';
 import { finalizeAnaReplyText, countCustomerNameMentionsInText } from '../utils/anaReplyFinalize.js';
 import {
@@ -49,6 +56,7 @@ import {
 import {
   parseCommercialFlowState,
   computeNextCommercialFlowState,
+  resetCommercialScopeHints,
   type CommercialFlowState,
 } from '../utils/commercialFlowState.js';
 import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
@@ -291,6 +299,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
     let flowStateParsed: CommercialFlowState = parseCommercialFlowState(conv.commercial_flow_state) ?? {};
+    const previousProductTypeHintForLog = flowStateParsed.productTypeHint ?? null;
     console.log('[ANA DEBUG] conversation loaded', { conversationId, handoff: conv.handoff, classification: conv.classification });
 
     // Revalidação imediata antes do bloqueio: sempre buscar estado mais recente (evita race: usuário muda Handoff→ANA durante processamento)
@@ -353,12 +362,65 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       triageRequestedProductType === 'INDEFINIDO'
         ? allActiveEnterprises
         : allActiveEnterprises.filter((e) => e.tipo === triageRequestedProductType);
+    const appointmentPreflight = computeAppointmentPreflight(trimmed, fullUserUtterances);
+    const locGlobal = resolveEnterpriseLocationContext(trimmed, fullUserUtterances, allActiveEnterprises);
+
+    const globalMatchId = tryMatchEnterpriseFromUserCorpus(trimmed, allActiveEnterprises);
+    const mentionExplain = explainEnterpriseMentionMatch(trimmed, allActiveEnterprises, globalMatchId);
+
+    let scopeMutated = false;
+    const entFocusForScope =
+      effectiveConv.enterprise_id != null ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;
+    if (entFocusForScope) {
+      if (globalMatchId != null && globalMatchId !== entFocusForScope.id) {
+        await setConversationEnterpriseId(conversationId, globalMatchId);
+        await mergeConversationCommercialFlowState(conversationId, resetCommercialScopeHints(flowStateParsed));
+        scopeMutated = true;
+      } else if (locGlobal != null) {
+        await setConversationEnterpriseId(conversationId, null);
+        await mergeConversationCommercialFlowState(conversationId, resetCommercialScopeHints(flowStateParsed));
+        scopeMutated = true;
+      } else if (triageRequestedProductType !== 'INDEFINIDO' && triageRequestedProductType !== entFocusForScope.tipo) {
+        await setConversationEnterpriseId(conversationId, null);
+        await mergeConversationCommercialFlowState(conversationId, resetCommercialScopeHints(flowStateParsed));
+        scopeMutated = true;
+      } else if (!appointmentPreflight.active && hasCatalogReopenIntent(trimmed)) {
+        await setConversationEnterpriseId(conversationId, null);
+        await mergeConversationCommercialFlowState(conversationId, resetCommercialScopeHints(flowStateParsed));
+        scopeMutated = true;
+      }
+    }
+    if (scopeMutated) {
+      const refreshed = await getConversationById(conversationId);
+      if (refreshed) {
+        effectiveConv = refreshed;
+        flowStateParsed = parseCommercialFlowState(refreshed.commercial_flow_state) ?? {};
+      }
+    }
+
     const locationQueryContext = resolveEnterpriseLocationContext(
       trimmed,
       fullUserUtterances,
       enterprisesPool
     );
-    const appointmentPreflight = computeAppointmentPreflight(trimmed, fullUserUtterances);
+
+    const muni = findMunicipioInMessage(`${trimmed}\n${fullUserUtterances}`);
+    console.log('[ANA_INTENT]', {
+      conversationId,
+      userText: trimmed.slice(0, 500),
+      inferredProductType: triageRequestedProductType,
+      inferredCity: muni?.n ?? null,
+      mentionedEnterpriseName: mentionExplain.bestEnterpriseName,
+      previousProductTypeHint: previousProductTypeHintForLog,
+    });
+    console.log('[ANA_MENTION_DEBUG]', {
+      conversationId,
+      userText: trimmed.slice(0, 400),
+      mentionedEnterpriseName: mentionExplain.bestEnterpriseName,
+      matchedByName: mentionExplain.matchedByName,
+      matchedBySlug: mentionExplain.matchedBySlug,
+      matchedEnterpriseId: globalMatchId,
+    });
 
     let ent =
       effectiveConv.enterprise_id != null ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;
@@ -446,6 +508,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           : enterprisesPool.map((e) => e.name);
     }
 
+    const scopedEnterpriseNames =
+      mode === 'scoped' && ent ? enterprisesForSameTipoAsEnt.map((e) => e.name) : [];
+
     const promptProductTypeForPrompt =
       mode === 'triage'
         ? triageRequestedProductType
@@ -467,6 +532,31 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? rowsToHistory(rows, null, trailingUserBubbles)
         : rowsToHistory(rows, trimmed);
     const historyCount = history.length;
+
+    if (historyCount === 0) {
+      console.log('[CLEAR_HISTORY_AFTER]', {
+        conversationId,
+        afterMessagesCount: rows.length,
+        newStage: flowStateParsed.stage ?? null,
+        newProductTypeHint: flowStateParsed.productTypeHint ?? null,
+        newLastCatalogOfferedNames: flowStateParsed.lastCatalogOfferedNames ?? null,
+        newLastSingleCatalogEnterpriseId: flowStateParsed.lastSingleCatalogEnterpriseId ?? null,
+        clearedAt: flowStateParsed.clearedAt ?? null,
+        note: 'openai_thread_empty_prior_turn',
+      });
+    }
+
+    console.log('[ANA_SCOPE_DEBUG]', {
+      conversationId,
+      userText: trimmed.slice(0, 400),
+      stage: conversationPhase,
+      productTypeHint: flowStateParsed.productTypeHint ?? triageRequestedProductType,
+      lastCatalogOfferedNames: flowStateParsed.lastCatalogOfferedNames ?? null,
+      allEnterpriseNames: allActiveEnterprises.map((e) => e.name),
+      scopedEnterpriseNames,
+      finalEnterpriseNames: allEnterpriseNames,
+      mode,
+    });
 
     const stateBefore = {
       enterpriseId: effectiveConv.enterprise_id,
@@ -520,7 +610,23 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       pipelineStale: isPipelineStale(conversationId, replyPipelineToken),
     });
 
+    console.log('[ANA_PROMPT_COMMERCIAL]', {
+      conversationId,
+      productTypeHint: promptProductTypeForPrompt ?? flowStateParsed.productTypeHint ?? triageRequestedProductType,
+      offeredNames: allEnterpriseNames,
+    });
+
     const systemPrompt = buildAnaSystemPrompt(promptOpts);
+
+    console.log('[ANA_HISTORY_LOAD]', {
+      conversationId,
+      userText: trimmed.slice(0, 500),
+      historyCount,
+      stage: flowStateParsed.stage ?? conversationPhase,
+      productTypeHint: flowStateParsed.productTypeHint ?? null,
+      lastCatalogOfferedNames: flowStateParsed.lastCatalogOfferedNames ?? null,
+      clearedAt: flowStateParsed.clearedAt ?? null,
+    });
 
     const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
     for (const h of history) {

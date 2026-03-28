@@ -4,7 +4,7 @@ import { getCorretorById } from './corretorRepository.js';
 import { assignBrokerForHandoffConversation } from '../services/handoffQueueService.js';
 import type { LeadOriginInput } from '../services/leadOriginResolver.js';
 import { resolveEnterpriseFromLeadSource } from '../services/leadOriginResolver.js';
-import type { CommercialFlowState } from '../utils/commercialFlowState.js';
+import { parseCommercialFlowState, type CommercialFlowState } from '../utils/commercialFlowState.js';
 
 export type { LeadOriginInput } from '../services/leadOriginResolver.js';
 
@@ -188,15 +188,47 @@ export async function deleteConversation(id: number): Promise<boolean> {
 export async function deleteAllConversationsByPhone(phone: string): Promise<number> {
   const digits = phone.replace(/\D/g, '');
   if (digits.length < 8) return 0;
+  const trimmed = phone.trim();
+  const { rows: toRemove } = await query<{
+    id: number;
+    commercial_flow_state: unknown;
+    before_messages_count: string;
+  }>(
+    `SELECT c.id, c.commercial_flow_state,
+            (SELECT COUNT(*)::text FROM messages m WHERE m.conversation_id = c.id) AS before_messages_count
+     FROM conversations c
+     WHERE c.contact_phone = $1
+        OR c.external_contact_id = $1
+        OR c.contact_phone = $2
+        OR c.external_contact_id = $2`,
+    [trimmed, digits]
+  );
+  for (const r of toRemove) {
+    const st = parseCommercialFlowState(r.commercial_flow_state) ?? {};
+    console.log('[CLEAR_HISTORY]', {
+      conversationId: r.id,
+      beforeMessagesCount: parseInt(r.before_messages_count, 10) || 0,
+      oldStage: st.stage ?? null,
+      oldProductTypeHint: st.productTypeHint ?? null,
+      oldLastCatalogOfferedNames: st.lastCatalogOfferedNames ?? null,
+      oldLastSingleCatalogEnterpriseId: st.lastSingleCatalogEnterpriseId ?? null,
+    });
+  }
   const result = await query(
     `DELETE FROM conversations
      WHERE contact_phone = $1
         OR external_contact_id = $1
         OR contact_phone = $2
         OR external_contact_id = $2`,
-    [phone.trim(), digits]
+    [trimmed, digits]
   );
-  return result.rowCount ?? 0;
+  const deletedCount = result.rowCount ?? 0;
+  console.log('[CLEAR_HISTORY_AFTER]', {
+    removedConversationIds: toRemove.map((x) => x.id),
+    deletedCount,
+    newConversationIdNote: 'created_on_next_whatsapp_inbound_if_deleted',
+  });
+  return deletedCount;
 }
 
 const VALID_CLASSIFICATIONS = new Set(['Novo', 'Qualificado', 'Carteira', 'Handoff']);

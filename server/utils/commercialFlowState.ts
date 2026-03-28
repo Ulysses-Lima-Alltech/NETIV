@@ -16,6 +16,22 @@ export interface CommercialFlowState {
   lastInferredEnterpriseId?: number | null;
   lastAssistantSnippet?: string;
   updatedAt?: string;
+  /** Marca último reset de escopo comercial (saída de foco / catálogo). */
+  clearedAt?: string;
+}
+
+/** Zera shortlist e hints de foco ao sair do escopo ou trocar empreendimento por menção explícita. */
+export function resetCommercialScopeHints(prev: CommercialFlowState | null): CommercialFlowState {
+  const next: CommercialFlowState = { ...(prev || {}) };
+  delete next.lastCatalogOfferedNames;
+  delete next.lastSingleCatalogEnterpriseId;
+  delete next.lastInferredEnterpriseId;
+  delete next.lastAssistantSnippet;
+  delete next.productTypeHint;
+  delete next.stage;
+  next.clearedAt = new Date().toISOString();
+  next.updatedAt = new Date().toISOString();
+  return next;
 }
 
 export function parseCommercialFlowState(raw: unknown): CommercialFlowState | null {

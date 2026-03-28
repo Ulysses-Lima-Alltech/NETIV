@@ -68,6 +68,41 @@ export function hasCatalogIntent(ctx: string): boolean {
   return false;
 }
 
+function normCatalogReopen(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Pedido explícito de reabrir portfólio / alternativas — mais estreito que hasCatalogIntent
+ * (evita sair do escopo em frases genéricas tipo "quero ver a planta").
+ */
+export function hasCatalogReopenIntent(message: string): boolean {
+  const n = normCatalogReopen(message);
+  if (!n) return false;
+  if (
+    /\b(tem\s+mais|tem\s+algo\s+mais|outras?\s+opcoes|outros?\s+empreendimentos|outro\s+empreendimento|alguma\s+outra|mais\s+opcoes|mais\s+alguma)\b/.test(n)
+  ) {
+    return true;
+  }
+  if (
+    /\b(quais\s+empreendimentos|quais\s+opcoes|lista\s+de\s+empreendimentos|catalogo|portfolio|portifolio)\b/.test(n)
+  ) {
+    return true;
+  }
+  if (/\b(mostra\s+tudo|ver\s+tudo|quero\s+tudo|me\s+mostra\s+o\s+que\s+tem)\b/.test(n)) {
+    return true;
+  }
+  if (/\b(outro\s+loteamento|outro\s+apartamento|mudando\s+de\s+assunto)\b/.test(n)) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Fallback com lista real de nomes do portfólio — usado quando o cliente pede explicitamente catálogo
  * e a reply da LLM falhou no parse ou caiu em fallback genérico.

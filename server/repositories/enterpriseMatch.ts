@@ -77,6 +77,25 @@ export function tryMatchEnterpriseFromUserCorpus(userText: string, enterprises: 
   return tops[0]!;
 }
 
+/** Diagnóstico para logs: como o match único foi obtido (nome completo vs slug no texto). */
+export function explainEnterpriseMentionMatch(
+  userText: string,
+  enterprises: EnterpriseRow[],
+  matchedId: number | null
+): { matchedByName: boolean; matchedBySlug: boolean; bestEnterpriseName: string | null } {
+  if (matchedId == null) {
+    return { matchedByName: false, matchedBySlug: false, bestEnterpriseName: null };
+  }
+  const e = enterprises.find((x) => x.id === matchedId);
+  if (!e) return { matchedByName: false, matchedBySlug: false, bestEnterpriseName: null };
+  const lower = normEnterpriseMatchText(userText);
+  const n = normEnterpriseMatchText(e.name);
+  const sl = normEnterpriseMatchText(e.slug || '');
+  const matchedByName = n.length >= 3 && lower.includes(n);
+  const matchedBySlug = sl.length >= 3 && lower.includes(sl);
+  return { matchedByName, matchedBySlug, bestEnterpriseName: e.name };
+}
+
 /**
  * Sinal forte o suficiente na mensagem atual para trocar foco sem depender de explicitSwitch
  * (nome/slug inteiro, ou mensagem curta com token distintivo do empreendimento).
