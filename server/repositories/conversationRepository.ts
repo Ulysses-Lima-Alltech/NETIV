@@ -5,6 +5,12 @@ import { assignBrokerForHandoffConversation } from '../services/handoffQueueServ
 import type { LeadOriginInput } from '../services/leadOriginResolver.js';
 import { resolveEnterpriseFromLeadSource } from '../services/leadOriginResolver.js';
 import { parseCommercialFlowState, type CommercialFlowState } from '../utils/commercialFlowState.js';
+import { normalizePhoneE164 } from '../utils/phone.js';
+import {
+  assignContactToConversation,
+  findOrCreateContactByPhone,
+  syncConversationOwnerFromContact,
+} from './contactsRepository.js';
 
 export type { LeadOriginInput } from '../services/leadOriginResolver.js';
 
@@ -28,6 +34,7 @@ export interface ConversationRow {
   lead_temperature: string | null;
   handoff: boolean;
   meta_phone_number_id: string | null;
+  contact_id?: number | null;
   last_message_at: Date | null;
   created_at: Date;
   updated_at: Date;
@@ -136,6 +143,16 @@ export async function findOrCreateConversation(
   leadOrigin?: LeadOriginInput | null,
   opts?: { whatsappDisplayName?: string | null } | null
 ): Promise<ConversationRow> {
+  const normalizedPhone = normalizePhoneE164(contactPhone ?? externalId);
+  const contact =
+    normalizedPhone != null
+      ? await findOrCreateContactByPhone({
+          phoneE164: normalizedPhone,
+          phoneDisplay: contactPhone ?? externalId,
+          fullName: opts?.whatsappDisplayName ?? null,
+          source: 'whatsapp',
+        })
+      : null;
   const { enterpriseId: resolvedEnterpriseId } = await resolveEnterpriseFromLeadSource(leadOrigin ?? null);
   const rawSnapshot = leadOrigin?.rawSnapshot;
   const leadSourceJson =
@@ -147,10 +164,10 @@ export async function findOrCreateConversation(
 
   const { rows } = await query<ConversationRow>(
     `INSERT INTO conversations (
-       channel, external_contact_id, contact_phone, customer_name, whatsapp_display_name, meta_phone_number_id, last_message_at,
+       channel, external_contact_id, contact_phone, customer_name, whatsapp_display_name, meta_phone_number_id, contact_id, last_message_at,
        enterprise_id, enterprise_origin_id, lead_source_raw
      )
-     VALUES ($1, $2, $3, NULL, $4, $5, NOW(), $6, $7, $8::jsonb)
+     VALUES ($1, $2, $3, NULL, $4, $5, $6, NOW(), $7, $8, $9::jsonb)
      ON CONFLICT (channel, external_contact_id) DO UPDATE SET
        contact_phone = COALESCE(EXCLUDED.contact_phone, conversations.contact_phone),
        whatsapp_display_name = CASE
@@ -159,6 +176,7 @@ export async function findOrCreateConversation(
          ELSE conversations.whatsapp_display_name
        END,
        meta_phone_number_id = COALESCE(EXCLUDED.meta_phone_number_id, conversations.meta_phone_number_id),
+       contact_id = COALESCE(conversations.contact_id, EXCLUDED.contact_id),
        last_message_at = NOW(),
        updated_at = NOW(),
        enterprise_origin_id = COALESCE(conversations.enterprise_origin_id, EXCLUDED.enterprise_origin_id),
@@ -171,15 +189,22 @@ export async function findOrCreateConversation(
       contactPhone,
       waName,
       metaPhoneNumberId,
+      contact?.id ?? null,
       resolvedEnterpriseId,
       resolvedEnterpriseId,
       leadSourceJson != null ? JSON.stringify(leadSourceJson) : null,
     ]
   );
-  return rows[0];
+  const conv = rows[0];
+  if (contact?.id && conv.id) {
+    await assignContactToConversation(conv.id, contact.id);
+    await syncConversationOwnerFromContact(conv.id);
+  }
+  return conv;
 }
 
 export async function getConversationById(id: number): Promise<ConversationRow | null> {
+  await syncConversationOwnerFromContact(id);
   const { rows } = await query<ConversationRow>(`SELECT * FROM conversations WHERE id = $1`, [id]);
   return rows[0] ?? null;
 }

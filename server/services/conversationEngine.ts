@@ -1,4 +1,10 @@
-import { getMessagesByConversationId, getLastUserMessageNeedingReply, insertMessage } from '../repositories/messageRepository.js';
+import { statSync } from 'fs';
+import {
+  getMessagesByConversationId,
+  getLastUserMessageNeedingReply,
+  insertMessage,
+  type MessageAttachmentPayload,
+} from '../repositories/messageRepository.js';
 import { getOpenAIConfig, getIntegrationModelStringsRaw } from '../repositories/openaiConfigRepository.js';
 import {
   getConversationById,
@@ -10,7 +16,11 @@ import {
   mergeConfirmedCustomerNameIfEmpty,
   markAnaAskedForCustomerName,
 } from '../repositories/conversationRepository.js';
-import { sendTextMessage, sendDocumentMessage } from './whatsappMetaService.js';
+import { sendTextMessage, sendLocalMediaToWhatsApp } from './whatsappMetaService.js';
+import {
+  mergeHonestMaterialFallbackWhenNoFile,
+  anaMediaDeliveryFailedReply,
+} from '../utils/anaMaterialReply.js';
 import {
   tryMatchEnterpriseFromUserCorpus,
   explainEnterpriseMentionMatch,
@@ -55,7 +65,10 @@ import {
   sleepMs,
   randomAnaReplyDelayMs,
 } from '../utils/anaReplyFinalize.js';
-import { extractCustomerNameFromUserUtterance } from '../utils/extractCustomerNameFromMessage.js';
+import {
+  extractCustomerNameFromUserUtterance,
+  replyExplicitlyAsksCustomerName,
+} from '../utils/extractCustomerNameFromMessage.js';
 import {
   buildUserUtterancesContext,
   computeAppointmentPreflight,
@@ -73,6 +86,11 @@ import {
   type CommercialFlowState,
 } from '../utils/commercialFlowState.js';
 import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
+
+function anaPhoneTail(raw: string | null | undefined, len = 6): string | null {
+  const d = String(raw ?? '').replace(/\D/g, '');
+  return d.length ? d.slice(-len) : null;
+}
 
 function anaTechnicalFallbackStructured(classificationHint: string | null): AnaStructuredReply {
   return {
@@ -134,6 +152,8 @@ export interface IncomingMessageContext {
   trailingUserBubbles?: number;
   /** Token da janela de debounce; nova mensagem invalida envio pendente. */
   replyPipelineToken?: number;
+  /** wamid da bolha persistida no webhook (correlação ponta a ponta nos logs). */
+  inboundMetaMessageId?: string | null;
 }
 
 /** Reprocessa a última mensagem do usuário sem resposta quando handoff muda true→false. */
@@ -153,6 +173,7 @@ export async function reprocessLastUserMessage(conversationId: number): Promise<
     conversationId,
     userMessage: lastUserMsg.content,
     toPhoneNumber,
+    inboundMetaMessageId: lastUserMsg.meta_message_id ?? null,
   });
 }
 
@@ -222,66 +243,115 @@ function hasExplicitHandoffIntent(message: string): boolean {
   return HANDOFF_INTENT_PATTERNS.some((p) => normText(message).includes(p));
 }
 
+/** Intervalo curto entre mídia confirmada e texto complementar (naturalidade no WhatsApp). */
+const ANA_MEDIA_THEN_TEXT_GAP_MS = 2200;
+
+type ResolvedEnterpriseFile = NonNullable<Awaited<ReturnType<typeof getFileForSend>>>;
+
+type AnaMediaFirstResult = { ok: true } | { ok: false; error: string; code?: number; fileName: string };
+
 /**
- * Envio de PDF/arquivo após a mensagem de texto — fora do lock da conversa para não bloquear
- * a próxima mensagem do cliente (upload Meta pode levar até ~60s).
+ * Envio de mídia ANTES do texto da Ana. Só persiste no histórico se a Meta aceitar.
+ * Em falha, não grava mensagem de sucesso; o chamador ajusta o texto ao cliente.
  */
-async function sendAnaEnterpriseDocumentWhatsApp(params: {
+async function sendAnaEnterpriseMediaFirst(params: {
   conversationId: number;
   toPhoneNumber: string;
   ent: EnterpriseRow;
   enterpriseIdForFile: number;
   cat: FileCategory;
-}): Promise<void> {
-  const { conversationId, toPhoneNumber, ent, enterpriseIdForFile, cat } = params;
-  const file = await getFileForSend(enterpriseIdForFile, cat);
-  if (!file) {
-    console.warn('[DOC_FLOW] skip arquivo: getFileForSend retornou null (async)', { conversationId, category: cat });
-    return;
-  }
-  const docRes = await sendDocumentMessage(toPhoneNumber, file.path, file.originalName, file.mime, {
-    enterpriseId: enterpriseIdForFile,
-    enterpriseName: ent.name,
-    conversationId,
-    fileCategory: cat,
-    enterpriseFileId: file.id,
-    relativeStoragePath: file.relativeStoragePath,
-    absolutePath: file.path,
+  preResolvedFile: ResolvedEnterpriseFile;
+}): Promise<AnaMediaFirstResult> {
+  const { conversationId, toPhoneNumber, ent, enterpriseIdForFile, cat, preResolvedFile: file } = params;
+  const mediaRes = await sendLocalMediaToWhatsApp(toPhoneNumber, file.path, file.originalName, file.mime, {
+    logCtx: {
+      enterpriseId: enterpriseIdForFile,
+      enterpriseName: ent.name,
+      conversationId,
+      fileCategory: cat,
+      enterpriseFileId: file.id,
+      relativeStoragePath: file.relativeStoragePath,
+      absolutePath: file.path,
+    },
+    caption: null,
   });
-  if (docRes.success && docRes.metaMessageId) {
+  if (mediaRes.success && mediaRes.metaMessageId) {
     await logSentFile(conversationId, file.id);
-    await insertMessage(conversationId, 'assistant', `[Arquivo: ${file.originalName}]`, docRes.metaMessageId);
-    console.log('[DOC_SEND] documento enviado com sucesso (async)', {
-      conversationId,
-      metaMessageId: docRes.metaMessageId,
-      file: file.originalName,
-    });
-  } else {
-    console.error('[DOC_SEND] falha sendDocumentMessage (async)', {
-      conversationId,
-      error: docRes.error,
-      code: docRes.code,
-      file: file.originalName,
-    });
-    const fallbackText =
-      `Não consegui enviar o arquivo "${file.originalName}" pelo WhatsApp neste momento. Peça o material a um atendente ou tente novamente em instantes.`;
-    await sleepMs(randomAnaReplyDelayMs({ replyLength: fallbackText.length }));
-    const fixRes = await sendTextMessage(toPhoneNumber, fallbackText);
-    if (fixRes.success && fixRes.metaMessageId) {
-      await insertMessage(conversationId, 'assistant', fallbackText, fixRes.metaMessageId);
+    const mk = mediaRes.messageKind === 'image' ? 'image' : 'document';
+    let sizeBytes: number | undefined;
+    try {
+      sizeBytes = statSync(file.path).size;
+    } catch {
+      sizeBytes = undefined;
     }
+    const attachment: MessageAttachmentPayload = {
+      fileName: file.originalName,
+      mimeType: file.mime,
+      sizeBytes,
+      whatsappMediaId: mediaRes.whatsappMediaId ?? null,
+      caption: null,
+      enterpriseFileId: file.id,
+    };
+    await insertMessage(conversationId, 'assistant', `[Arquivo: ${file.originalName}]`, mediaRes.metaMessageId, {
+      messageKind: mk,
+      attachment,
+    });
+    console.log('[DOC_SEND] mídia enviada com sucesso (antes do texto Ana)', {
+      conversationId,
+      metaMessageId: mediaRes.metaMessageId,
+      file: file.originalName,
+      messageKind: mk,
+    });
+    return { ok: true };
   }
+  console.error('[ANA_DOC_SEND_FAILED]', {
+    conversationId,
+    enterpriseIdForFile,
+    category: cat,
+    fileName: file.originalName,
+    error: mediaRes.error ?? null,
+    code: mediaRes.code ?? null,
+    phase: 'upload_or_messages_meta',
+    note: 'Nenhuma linha de mídia gravada em messages; texto ao cliente será substituído por falha honesta.',
+  });
+  return {
+    ok: false,
+    error: mediaRes.error || 'Falha ao enviar mídia pela Meta',
+    code: mediaRes.code,
+    fileName: file.originalName,
+  };
 }
 
 export async function handleIncomingMessage(ctx: IncomingMessageContext): Promise<void> {
-  const { conversationId, userMessage, toPhoneNumber, trailingUserBubbles, replyPipelineToken } = ctx;
+  const {
+    conversationId,
+    userMessage,
+    toPhoneNumber,
+    trailingUserBubbles,
+    replyPipelineToken,
+    inboundMetaMessageId: inboundMetaFromCtx,
+  } = ctx;
 
   console.log('[ANA DEBUG] handleIncomingMessage start', { conversationId, toPhoneNumber });
 
   const release = await acquireConversationLock(conversationId);
   try {
+    console.log('[ANA_PIPELINE] engine_start', {
+      conversationId,
+      toPhoneTail: anaPhoneTail(toPhoneNumber),
+      replyPipelineToken: replyPipelineToken ?? null,
+      inboundMetaMessageId: inboundMetaFromCtx ?? null,
+      rawUserLen: userMessage.length,
+      trailingUserBubbles: trailingUserBubbles ?? 1,
+    });
+
     const trimmed = userMessage.trim();
     if (!trimmed) {
+      console.log('[ANA_PIPELINE] engine_skip', {
+        reason: 'empty_user_message_after_trim',
+        conversationId,
+        replyPipelineToken: replyPipelineToken ?? null,
+      });
       console.log('[ANA DEBUG] mensagem vazia após trim — ignorando');
       return;
     }
@@ -294,14 +364,29 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       conversationId,
     });
     if (!aiConfig) {
+      console.log('[ANA_PIPELINE] engine_skip', {
+        reason: 'openai_config_null',
+        conversationId,
+        replyPipelineToken: replyPipelineToken ?? null,
+      });
       console.error('[ANA DEBUG] getOpenAIConfig retornou null — ignorando mensagem.');
       return;
     }
     if (!aiConfig.openaiApiKey?.trim()) {
+      console.log('[ANA_PIPELINE] engine_skip', {
+        reason: 'openai_api_key_missing',
+        conversationId,
+        replyPipelineToken: replyPipelineToken ?? null,
+      });
       console.warn('[ANA DEBUG] OpenAI API Key não configurada — ignorando mensagem.');
       return;
     }
     if (!aiConfig.aiEnabled) {
+      console.log('[ANA_PIPELINE] engine_skip', {
+        reason: 'ai_disabled_in_db',
+        conversationId,
+        replyPipelineToken: replyPipelineToken ?? null,
+      });
       console.log('[ANA DEBUG] aiEnabled check blocked — ai_enabled=false no banco.');
       return;
     }
@@ -309,12 +394,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     let conv = await getConversationById(conversationId);
     if (!conv) {
+      console.log('[ANA_PIPELINE] engine_skip', {
+        reason: 'conversation_not_found',
+        conversationId,
+        replyPipelineToken: replyPipelineToken ?? null,
+      });
       console.error('[ANA DEBUG] conversa inexistente', { conversationId });
       return;
     }
     let flowStateParsed: CommercialFlowState = parseCommercialFlowState(conv.commercial_flow_state) ?? {};
     const previousProductTypeHintForLog = flowStateParsed.productTypeHint ?? null;
     console.log('[ANA DEBUG] conversation loaded', { conversationId, handoff: conv.handoff, classification: conv.classification });
+    console.log('[ANA_PIPELINE] conversation_phone_context', {
+      conversationId,
+      toPhoneTail: anaPhoneTail(toPhoneNumber),
+      externalContactIdTail: anaPhoneTail(conv.external_contact_id),
+      contactPhoneTail: anaPhoneTail(conv.contact_phone),
+      externalMatchesToParam:
+        String(toPhoneNumber).replace(/\D/g, '') === String(conv.external_contact_id ?? '').replace(/\D/g, ''),
+    });
 
     // Revalidação imediata antes do bloqueio: sempre buscar estado mais recente (evita race: usuário muda Handoff→ANA durante processamento)
     const latestConv = await getConversationById(conversationId);
@@ -328,6 +426,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     // Decisão final SEMPRE com base no estado mais recente. Modo handoff: NÃO responder. Modo ANA: SEMPRE responder via IA.
     if (effectiveConv.handoff === true || effectiveConv.classification === 'Handoff') {
+      console.log('[ANA_PIPELINE] engine_blocked_handoff', {
+        conversationId,
+        handoff: effectiveConv.handoff,
+        classification: effectiveConv.classification,
+        toPhoneTail: anaPhoneTail(toPhoneNumber),
+        inboundMetaMessageId: inboundMetaFromCtx ?? null,
+      });
       console.log('[ANA DEBUG] handoff check blocked — conversa em modo humano, ANA não responde', {
         conversationId,
         handoff: effectiveConv.handoff,
@@ -348,7 +453,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         handoff: true,
       });
       if (isPipelineStale(conversationId, replyPipelineToken)) {
-        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'handoff_before_send' });
+        console.log('[ANA_PIPELINE] engine_cancelled_stale', {
+          conversationId,
+          replyPipelineToken: replyPipelineToken ?? null,
+          phase: 'handoff_before_send',
+          inboundMetaMessageId: inboundMetaFromCtx ?? null,
+        });
         return;
       }
       const confirmMsg = finalizeAnaReplyText(
@@ -356,19 +466,51 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       );
       await sleepMs(randomAnaReplyDelayMs({ replyLength: confirmMsg.length }));
       if (isPipelineStale(conversationId, replyPipelineToken)) {
-        console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'after_handoff_delay' });
+        console.log('[ANA_PIPELINE] engine_cancelled_stale', {
+          conversationId,
+          replyPipelineToken: replyPipelineToken ?? null,
+          phase: 'after_handoff_intent_delay',
+          inboundMetaMessageId: inboundMetaFromCtx ?? null,
+        });
         return;
       }
+      console.log('[ANA_PIPELINE] engine_send_attempt', {
+        conversationId,
+        toPhoneTail: anaPhoneTail(toPhoneNumber),
+        inboundMetaMessageId: inboundMetaFromCtx ?? null,
+        replyPipelineToken: replyPipelineToken ?? null,
+        phase: 'handoff_intent_confirm',
+        textLen: confirmMsg.length,
+      });
       const sendResult = await sendTextMessage(toPhoneNumber, confirmMsg);
       if (sendResult.success && sendResult.metaMessageId) {
         await insertMessage(conversationId, 'assistant', confirmMsg, sendResult.metaMessageId);
+        console.log('[ANA_PIPELINE] engine_send_success', {
+          conversationId,
+          phase: 'handoff_intent_confirm',
+          outboundMetaMessageId: sendResult.metaMessageId,
+          inboundMetaMessageId: inboundMetaFromCtx ?? null,
+        });
+      } else {
+        console.log('[ANA_PIPELINE] engine_send_fail', {
+          conversationId,
+          phase: 'handoff_intent_confirm',
+          inboundMetaMessageId: inboundMetaFromCtx ?? null,
+          error: sendResult.error ?? null,
+          code: sendResult.code ?? null,
+          toPhoneTail: anaPhoneTail(toPhoneNumber),
+        });
       }
       return;
     }
 
-    const extractedCustomerName = extractCustomerNameFromUserUtterance(trimmed);
-    if (extractedCustomerName) {
-      const mergedName = await mergeConfirmedCustomerNameIfEmpty(conversationId, extractedCustomerName);
+    const rows = await getMessagesByConversationId(conversationId);
+    const lastAssistantBeforeUser = [...rows].reverse().find((m) => m.role === 'assistant');
+    const lastAssistantPlain = lastAssistantBeforeUser?.content?.trim() || null;
+    const trustedCustomerName =
+      extractCustomerNameFromUserUtterance(trimmed, { lastAssistantPlain }) || null;
+    if (trustedCustomerName) {
+      const mergedName = await mergeConfirmedCustomerNameIfEmpty(conversationId, trustedCustomerName);
       if (mergedName) {
         const refreshedAfterName = await getConversationById(conversationId);
         if (refreshedAfterName) {
@@ -377,8 +519,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         }
       }
     }
-
-    const rows = await getMessagesByConversationId(conversationId);
     let lastUserMessageAt = new Date();
     for (let i = rows.length - 1; i >= 0; i--) {
       if (rows[i].role === 'user') {
@@ -557,7 +697,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     ].join('\n');
 
     const lastUserRowForLog = [...rows].reverse().find((r) => r.role === 'user');
-    const inboundMetaMessageId = lastUserRowForLog?.meta_message_id ?? null;
+    const inboundMetaMessageId = lastUserRowForLog?.meta_message_id ?? inboundMetaFromCtx ?? null;
 
     const history =
       trailingUserBubbles != null && trailingUserBubbles > 1
@@ -756,8 +896,36 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
+    let preResolvedFileForAna: Awaited<ReturnType<typeof getFileForSend>> = null;
+    let effectiveSendCategory: FileCategory | null = null;
+
     if (!hasSendableFiles) {
       structured = { ...structured, send_file_category: null };
+      structured = {
+        ...structured,
+        reply: mergeHonestMaterialFallbackWhenNoFile(structured.reply),
+      };
+    } else {
+      effectiveSendCategory = structured.send_file_category as FileCategory | null;
+      const enterpriseIdForFileEarly = ent != null ? Number(ent.id) : null;
+      if (effectiveSendCategory && enterpriseIdForFileEarly != null && Number.isFinite(enterpriseIdForFileEarly)) {
+        preResolvedFileForAna = await getFileForSend(enterpriseIdForFileEarly, effectiveSendCategory);
+        if (!preResolvedFileForAna) {
+          effectiveSendCategory = null;
+          structured = {
+            ...structured,
+            send_file_category: null,
+            reply: mergeHonestMaterialFallbackWhenNoFile(structured.reply),
+          };
+        }
+      } else if (effectiveSendCategory) {
+        effectiveSendCategory = null;
+        structured = {
+          ...structured,
+          send_file_category: null,
+          reply: mergeHonestMaterialFallbackWhenNoFile(structured.reply),
+        };
+      }
     }
     console.log('[ANA_PARSE_FLOW]', {
       conversationId,
@@ -785,7 +953,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     await applyAnaConversationUpdate(conversationId, {
       classification: structured.classification,
       ...(mergedLeadForAna != null ? { lead_temperature: mergedLeadForAna } : {}),
-      customer_name: structured.customer_name,
+      ...(trustedCustomerName ? { customer_name: trustedCustomerName } : {}),
       handoff: structured.handoff,
     });
 
@@ -795,7 +963,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       try {
         const apptRes = await registerAnaAppointmentIfConfirmed({
           conversationId,
-          customerName: (convForApptRegister?.customer_name || structured.customer_name || '').trim() || 'Cliente',
+          customerName: (convForApptRegister?.customer_name || trustedCustomerName || '').trim() || 'Cliente',
           customerPhone: (convForApptRegister?.contact_phone || convForApptRegister?.external_contact_id || '').replace(/\D/g, ''),
           enterpriseId: ent.id,
           city: '',
@@ -816,7 +984,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     if (isPipelineStale(conversationId, replyPipelineToken)) {
-      console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'before_send' });
+      console.log('[ANA_PIPELINE] engine_cancelled_stale', {
+        conversationId,
+        replyPipelineToken: replyPipelineToken ?? null,
+        phase: 'before_send',
+        inboundMetaMessageId,
+      });
       return;
     }
 
@@ -824,6 +997,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       userMessage: trimmed,
       conversationMode: mode,
     }).slice(0, 4000);
+
+    const enterpriseIdForFile = ent != null ? Number(ent.id) : null;
+    const willSendMediaFirst =
+      preResolvedFileForAna != null &&
+      effectiveSendCategory != null &&
+      ent != null &&
+      enterpriseIdForFile != null &&
+      Number.isFinite(enterpriseIdForFile);
+
     const rowsBeforeSend = await getMessagesByConversationId(conversationId);
     const lastAsstDup = [...rowsBeforeSend].reverse().find((m) => m.role === 'assistant');
     const lastContent = (lastAsstDup?.content || '').trim();
@@ -831,15 +1013,87 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     if (lastContent && lastContent === replyText.trim() && ageDup < 55_000) {
       console.warn('[ANA_PIPELINE] duplicate_reply_unchanged', { conversationId, ageMs: ageDup });
     }
-    console.log('[ANA_PIPELINE] send_final', { conversationId, toPhoneNumber, replyLength: replyText.length });
+    console.log('[ANA_PIPELINE] engine_reply_generated', {
+      conversationId,
+      inboundMetaMessageId,
+      replyPipelineToken: replyPipelineToken ?? null,
+      replyLen: replyText.length,
+      replySource,
+      fallbackReason,
+    });
+    console.log('[ANA_PIPELINE] engine_send_attempt', {
+      conversationId,
+      toPhoneTail: anaPhoneTail(toPhoneNumber),
+      inboundMetaMessageId,
+      replyPipelineToken: replyPipelineToken ?? null,
+      phase: willSendMediaFirst ? 'ana_media_then_text' : 'ana_main_reply',
+      replyLen: replyText.length,
+      willSendMediaFirst,
+    });
     await sleepMs(randomAnaReplyDelayMs({ replyLength: replyText.length }));
     if (isPipelineStale(conversationId, replyPipelineToken)) {
-      console.log('[ANA_PIPELINE] cancel_pending_reply', { conversationId, phase: 'after_reply_delay' });
+      console.log('[ANA_PIPELINE] engine_cancelled_stale', {
+        conversationId,
+        replyPipelineToken: replyPipelineToken ?? null,
+        phase: 'after_reply_delay',
+        inboundMetaMessageId,
+      });
       return;
     }
+
+    if (
+      willSendMediaFirst &&
+      preResolvedFileForAna &&
+      effectiveSendCategory &&
+      ent &&
+      enterpriseIdForFile != null
+    ) {
+      console.log('[ANA_PIPELINE] engine_media_first_start', {
+        conversationId,
+        enterpriseIdForFile,
+        category: effectiveSendCategory,
+        file: preResolvedFileForAna.originalName,
+      });
+      const mediaOutcome = await sendAnaEnterpriseMediaFirst({
+        conversationId,
+        toPhoneNumber,
+        ent,
+        enterpriseIdForFile,
+        cat: effectiveSendCategory as FileCategory,
+        preResolvedFile: preResolvedFileForAna,
+      });
+      if (!mediaOutcome.ok) {
+        replyText = anaMediaDeliveryFailedReply(mediaOutcome.fileName, mediaOutcome.error).slice(0, 4000);
+        console.log('[ANA_PIPELINE] engine_media_failed_reply_replaced', {
+          conversationId,
+          fileName: mediaOutcome.fileName,
+          code: mediaOutcome.code ?? null,
+          replyLenAfterReplace: replyText.length,
+        });
+      } else {
+        await sleepMs(ANA_MEDIA_THEN_TEXT_GAP_MS);
+        if (isPipelineStale(conversationId, replyPipelineToken)) {
+          console.log('[ANA_PIPELINE] engine_cancelled_stale', {
+            conversationId,
+            replyPipelineToken: replyPipelineToken ?? null,
+            phase: 'after_media_before_text',
+            inboundMetaMessageId,
+          });
+          return;
+        }
+      }
+    }
+
     const sendResult = await sendTextMessage(toPhoneNumber, replyText);
     if (sendResult.success && sendResult.metaMessageId) {
       await insertMessage(conversationId, 'assistant', replyText, sendResult.metaMessageId);
+      console.log('[ANA_PIPELINE] engine_send_success', {
+        conversationId,
+        phase: 'ana_main_reply',
+        inboundMetaMessageId,
+        outboundMetaMessageId: sendResult.metaMessageId,
+        replyLen: replyText.length,
+      });
       console.log('[ANA DEBUG] WhatsApp reply sent', { metaMessageId: sendResult.metaMessageId });
       console.log('[ANA DEBUG] assistant message saved');
       const convAfterSend = await getConversationById(conversationId);
@@ -849,7 +1103,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           ? countCustomerNameMentionsInText(replyText, nameConfirmedForCount)
           : 0;
       if (delta > 0) await incrementAnaCustomerNameMentions(conversationId, delta);
-      if (!nameConfirmedForCount && replyText.trim().length >= 24) {
+      if (!nameConfirmedForCount && replyExplicitlyAsksCustomerName(replyText)) {
         await markAnaAskedForCustomerName(conversationId);
       }
       const prevForFlow = parseCommercialFlowState(convAfterSend?.commercial_flow_state) ?? flowStateParsed;
@@ -895,6 +1149,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         replyLen: replyText.length,
       });
     } else {
+      console.log('[ANA_PIPELINE] engine_send_fail', {
+        conversationId,
+        phase: 'ana_main_reply',
+        inboundMetaMessageId,
+        error: sendResult.error ?? null,
+        code: sendResult.code ?? null,
+        toPhoneTail: anaPhoneTail(toPhoneNumber),
+      });
       console.error('[ANA DEBUG] Falha ao enviar WhatsApp:', sendResult.error, { toPhoneNumber });
     }
 
@@ -902,39 +1164,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const convRef = await getConversationById(conversationId);
       void extractLeadDataFromConversation(
         conversationId,
-        convRef?.customer_name ?? structured.customer_name ?? null,
+        convRef?.customer_name ?? trustedCustomerName ?? null,
         ent?.name ?? null
       ).catch((e) => console.error('[Carteira extract]', e));
     }
 
-    const cat = hasSendableFiles ? structured.send_file_category : null;
-    /** `ent` já vem de `getActiveEnterpriseById(effectiveConv.enterprise_id)` — usar `ent.id` evita falso negativo se `enterprise_id` da conversa e `ent.id` divergirem por tipo/serialização. */
-    const enterpriseIdForFile = ent != null ? Number(ent.id) : null;
-
-    if (!cat) {
-      console.log('[DOC_FLOW] skip arquivo: sem send_file_category na resposta estruturada', { conversationId });
-    } else if (ent == null || enterpriseIdForFile == null || !Number.isFinite(enterpriseIdForFile)) {
-      console.warn('[DOC_FLOW] skip arquivo: empreendimento ativo não resolvido (ANA pediu arquivo)', {
-        conversationId,
-        cat,
-        enterprise_id_conv: effectiveConv.enterprise_id,
-        mode,
-        inactive_linked: inactiveLinked,
-      });
-    } else {
-      console.log('[DOC_LOOKUP] agendando envio de documento (assíncrono, não bloqueia próxima mensagem)', {
-        conversationId,
-        enterpriseIdForFile,
-        category: cat,
-      });
-      void sendAnaEnterpriseDocumentWhatsApp({
-        conversationId,
-        toPhoneNumber,
-        ent,
-        enterpriseIdForFile,
-        cat: cat as FileCategory,
-      }).catch((e) => console.error('[DOC_SEND async]', e));
-    }
   } finally {
     release();
   }

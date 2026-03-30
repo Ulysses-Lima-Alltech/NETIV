@@ -10,6 +10,7 @@ import { getWhatsAppConfig } from './repositories/whatsappConfigRepository.js';
 import { getOpenAIConfig } from './repositories/openaiConfigRepository.js';
 import { bootstrapFirstAdmin } from './bootstrap/adminBootstrap.js';
 import { processDueDeferredHandoffs } from './repositories/conversationRepository.js';
+import { syncAllConversationOwnersFromContacts } from './repositories/contactsRepository.js';
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -38,6 +39,15 @@ initPostgres()
       await bootstrapFirstAdmin();
     } catch (e) {
       console.error('[startup] Falha no bootstrap do admin:', e instanceof Error ? e.stack ?? e.message : e);
+    }
+
+    try {
+      const synced = await syncAllConversationOwnersFromContacts();
+      if (synced > 0) {
+        console.log(`[startup] Sync contacts.owner_user_id → conversations.assigned_broker_id: ${synced} conversa(ões).`);
+      }
+    } catch (e) {
+      console.warn('[startup] Sync assigned_broker desde contacts:', e instanceof Error ? e.message : e);
     }
 
     try {

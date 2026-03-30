@@ -1,4 +1,16 @@
 import { query } from '../db/pg.js';
+import { touchContactInteractionByConversation } from './contactsRepository.js';
+
+export type MessageKindDb = 'text' | 'document' | 'image';
+
+export interface MessageAttachmentPayload {
+  fileName: string;
+  mimeType: string;
+  sizeBytes?: number;
+  whatsappMediaId?: string | null;
+  caption?: string | null;
+  enterpriseFileId?: number | null;
+}
 
 export interface MessageRow {
   id: number;
@@ -6,6 +18,8 @@ export interface MessageRow {
   role: string;
   content: string | null;
   meta_message_id: string | null;
+  message_kind?: MessageKindDb;
+  attachment_json?: unknown | null;
   created_at: Date;
 }
 
@@ -13,13 +27,30 @@ export async function insertMessage(
   conversationId: number,
   role: 'user' | 'assistant',
   content: string | null,
-  metaMessageId: string | null
+  metaMessageId: string | null,
+  opts?: {
+    messageKind?: MessageKindDb;
+    attachment?: MessageAttachmentPayload | null;
+  }
 ): Promise<MessageRow> {
+  const messageKind: MessageKindDb =
+    opts?.messageKind ?? (opts?.attachment != null ? 'document' : 'text');
+  const attachmentJson = opts?.attachment != null ? JSON.stringify(opts.attachment) : null;
+
   const { rows } = await query<MessageRow>(
-    `INSERT INTO messages (conversation_id, role, content, meta_message_id) VALUES ($1, $2, $3, $4) RETURNING *`,
-    [conversationId, role, content, metaMessageId]
+    `INSERT INTO messages (conversation_id, role, content, meta_message_id, message_kind, attachment_json)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb) RETURNING *`,
+    [
+      conversationId,
+      role,
+      content,
+      metaMessageId,
+      messageKind,
+      attachmentJson,
+    ]
   );
   await query(`UPDATE conversations SET last_message_at = NOW(), updated_at = NOW() WHERE id = $1`, [conversationId]);
+  await touchContactInteractionByConversation({ conversationId, role });
   return rows[0];
 }
 

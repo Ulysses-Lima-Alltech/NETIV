@@ -186,11 +186,11 @@ reply — regras curtas:
 
 appointment_*: confirmed só com data+hora combinadas de verdade; use histórico para completar; remarcação atualiza date/time.
 
-send_file_category: preencha se o cliente pedir e a categoria existir na lista do empreendimento; senão null e não prometa arquivo.
+send_file_category: preencha somente se o cliente pedir material/arquivo E a lista "Arquivos que podem ser enviados" acima incluir essa categoria; caso contrário null. NUNCA diga que vai enviar, mandar ou anexar arquivo/PDF/book se send_file_category for null ou se a lista disser que envio está desativado — nesse caso ofereça informações pelo texto ou encaminhamento a humano.
 
 lead_temperature: separado de handoff; compra/fechamento explícito → "quente"; nunca envie null para apagar temperatura.
 
-customer_name: preencha no JSON somente quando o cliente disser o próprio nome explicitamente nesta conversa; não use nome de perfil do WhatsApp; se ainda não souber, mantenha "".`;
+customer_name: deixe sempre "" no JSON — o backend deriva o nome só de autoidentificação clara no texto do cliente (não preencha por inferência). Não trate "Ana" em saudações ou vocativos ("Oi Ana", "Bom dia Ana", "Ana, quero…") como nome do cliente: nesses casos Ana é a atendente. Sem nome confirmado no sistema, não use nome próprio do cliente na saudação da reply ("Olá, X"); responda de forma neutra ou apresente-se como Ana até haver nome confirmado.`;
 
 const COMPORTAMENTO = `
 Você é Ana, secretária de vendas.
@@ -472,7 +472,7 @@ function buildCustomerNameInstructions(opts: BuildAnaSystemPromptOpts): string {
     const target = 3;
     const need = Math.max(0, target - mentions);
     if (need > 0) {
-      return `--- NOME DO CLIENTE (confirmado por ele neste atendimento) ---
+      return `--- NOME DO CLIENTE (confirmado no sistema; veio de autoidentificação clara) ---
 Nome: "${nm}". O sistema estima ~${mentions} menção(ões) desse nome nas suas respostas anteriores; objetivo: pelo menos ${target} ao longo da conversa, de forma natural (faltam cerca de ${need}). Não force em toda frase.
 `;
     }
@@ -481,14 +481,13 @@ Nome: "${nm}". Objetivo de menções ao nome já atingido; cite só quando soar 
 `;
   }
   if (!asked) {
-    return `--- NOME DO CLIENTE (ainda não confirmado) ---
-Não use nome vindo só do perfil do WhatsApp. Só trate como nome do cliente o que ele disser explicitamente aqui.
-Nesta resposta: apresente-se como Ana, secretária de vendas (ex.: que você é a Ana, secretária de vendas).
-Antes de aprofundar produto, catálogo ou negócio, faça a pergunta obrigatória pedindo o nome de forma cordial (ex.: "Antes de continuarmos, posso saber seu nome?").
+    return `--- NOME DO CLIENTE (ainda não confirmado no sistema) ---
+"Socando" ou saudando "Ana" não é nome do cliente — é a você (atendente). Não assuma nome do lead em saudações genéricas.
+Nesta resposta: apresente-se como Ana, secretária de vendas quando fizer sentido. Peça o nome de forma cordial com no máximo UMA pergunta (ex.: "Como posso te chamar?"). Se o cliente já trouxe pergunta objetiva (empreendimento, preço, local), responda primeiro ao conteúdo e só então peça o nome na mesma mensagem, sem mais de uma pergunta no total.
 `;
   }
   return `--- NOME DO CLIENTE (ainda não confirmado) ---
-Você já pediu o nome antes; continue com naturalidade e, se couber, reforce sem repetir a mesma frase literal.
+Você já pediu o nome antes; continue com naturalidade e, se couber, reforce sem repetir a mesma frase literal. No máximo uma pergunta por mensagem.
 `;
 }
 
@@ -825,7 +824,7 @@ export function parseAnaJson(raw: string, ctx?: ParseAnaJsonContext): AnaStructu
     lead_temperature,
     project,
     handoff,
-    customer_name: typeof o.customer_name === 'string' ? o.customer_name.trim() : '',
+    customer_name: '',
     summary: typeof o.summary === 'string' ? o.summary.trim() : '',
     send_file_category,
     appointment_confirmed,

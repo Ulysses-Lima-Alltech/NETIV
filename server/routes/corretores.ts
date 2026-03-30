@@ -9,6 +9,7 @@ import {
   inactivateCorretor,
   deleteCorretor,
 } from '../repositories/corretorRepository.js';
+import { releaseContactOwnersByCorretor } from '../repositories/contactsRepository.js';
 import { createCorretorSchema, updateCorretorSchema } from '../validators/corretores.js';
 import {
   listByBroker,
@@ -267,6 +268,7 @@ router.delete('/:id', async (req, res) => {
     if (inactivate) {
       const r = await inactivateCorretor(id);
       if (!r) return res.status(404).json({ error: 'Não encontrado.' });
+      const releasedContacts = await releaseContactOwnersByCorretor(id);
       res.json({
         id: r.id,
         fullName: r.full_name,
@@ -274,10 +276,12 @@ router.delete('/:id', async (req, res) => {
         phone: r.phone,
         realEstateAgency: r.real_estate_agency,
         active: false,
+        releasedContacts,
         createdAt: r.created_at.toISOString(),
         updatedAt: r.updated_at.toISOString(),
       });
     } else {
+      await releaseContactOwnersByCorretor(id);
       const ok = await deleteCorretor(id);
       if (!ok) return res.status(404).json({ error: 'Não encontrado.' });
       res.json({ ok: true });

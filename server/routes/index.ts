@@ -13,6 +13,7 @@ import appointmentsRouter from './appointments.js';
 import openaiTestRouter from './openaiTest.js';
 import aiChatRouter from './aiChat.js';
 import dashboardRouter from './dashboard.js';
+import contactsRouter from './contacts.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { ROLES_ORG_ADMIN, ROLES_SETTINGS_ADMIN } from '../constants/roles.js';
 
@@ -37,5 +38,6 @@ router.use('/corretores', requireRole(...ROLES_ORG_ADMIN), corretoresRouter);
 router.use('/appointments', appointmentsRouter);
 router.use('/openai', openaiTestRouter);
 router.use('/ai', aiChatRouter);
+router.use('/contacts', requireRole(...ROLES_SETTINGS_ADMIN), contactsRouter);
 
 export default router;
