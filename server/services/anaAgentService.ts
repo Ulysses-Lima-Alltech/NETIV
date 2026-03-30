@@ -180,6 +180,7 @@ Obrigatório: "reply" (texto ao cliente, string não vazia). Todos os outros cam
 
 reply — regras curtas:
 - Localização, m², preço, pedido de opções → resposta comercial útil, nunca "não entendi".
+- Onde fica / localização: use a cidade cadastrada no contexto (bloco "LOCALIZAÇÃO DO EMPREENDIMENTO" ou cidade no JSON de referência). Pode acrescentar endereço, acesso, mapa ou infraestrutura ao redor se estiver na base ou se o cliente pedir. Não acrescente região metropolitana, macrorregião, microrregião, "interior de SP" (ou outro estado), proximidade com Campinas ou outras cidades grandes, nem equivalentes — mesmo que um trecho da base cite isso, não reproduza aglomeração regional na sua mensagem sobre onde fica.
 - Lista de empreendimentos no reply: você só pode listar opções se o cliente pedir explicitamente para ver opções, comparar opções ou conhecer o portfólio (wantsCatalog + shouldShowPortfolio true; nomes só os que o prompt listar, 📍, máx. 5). Se já existir um empreendimento em foco, aprofunde esse foco e não reabra a lista por iniciativa própria.
 - productType alinhado ao filtro que o backend já aplicou.
 - Não invente dado comercial; lacunas: omita ou diga que não consta no que você tem.
@@ -233,6 +234,12 @@ SEM REPETIR NEM ESPELHAR A FALA DO CLIENTE
 - Varie aberturas; evite tom de assistente que "resume em voz alta" o pedido do cliente.
 - Reduza sinais de texto gerado por IA: menos checklist, menos parafrase longa, mais conversa humana e objetiva.
 
+LOCALIZAÇÃO NO WHATSAPP (ONDE FICA)
+- Quando o cliente perguntar onde fica o empreendimento ou falar de localização em nível de cidade, a resposta deve girar em torno da cidade cadastrada no contexto (e UF se indicada), não de regiões amplas.
+- Não complemente com: região metropolitana, macrorregião, microrregião, "interior", proximidade ou referência a outras cidades (ex.: Campinas, capital) salvo se o cliente perguntar explicitamente por isso.
+- Exemplos de tom certo: "O [nome] fica em Atibaia." / "Fica em Atibaia. Quer o endereço ou um mapa?"
+- Evite fórmulas do tipo "em Atibaia, na região de Campinas" ou "interior de São Paulo, próximo a Campinas".
+
 DESPEDIDA
 Se o cliente encerrar, agradeça em feminino ("Obrigada", etc.) sem forçar pergunta final.
 
@@ -257,6 +264,19 @@ function formatVars(v: Record<string, string>): string {
     `📐 Disponibilidade: ${v.disponibilidade?.trim() || '[não informado]'}`,
     `📝 Observações: ${v.observacoes?.trim() || '[nenhuma]'}`,
   ].join('\n');
+}
+
+/** Cidade/UF do cadastro para respostas de localização (sem expor commercial_region ao cliente). */
+function buildScopedEnterpriseLocationBlock(e: EnterpriseRow): string {
+  const city = (e.city || '').trim();
+  const uf = (e.state_uf || '').trim();
+  const head = city
+    ? `Cidade cadastrada: ${city}${uf ? ` (${uf})` : ''}.`
+    : 'Cidade cadastrada: não informada no cadastro — sobre "onde fica", use só o que estiver explícito na base de conhecimento, sem inventar cidade nem aglomeração regional.';
+  return `--- LOCALIZAÇÃO DO EMPREENDIMENTO (prioridade ao responder "onde fica") ---
+${head}
+Responda sobre localidade em torno dessa cidade. Endereço exato, acesso, mapa ou infra ao redor: só se constarem na base ou se o cliente pedir.
+Não acrescente região metropolitana, macrorregião, microrregião, "interior" nem proximidade com outras cidades; se a base mencionar isso, não repasse ao cliente neste tipo de resposta.`;
 }
 
 /** Aberturas variadas (sorteio no servidor quando há 2+ empreendimentos com dados). */
@@ -448,14 +468,16 @@ export interface BuildAnaSystemPromptOpts {
 
 /** Dados de apoio para pergunta de localização (sem impor “fases” de motor). */
 function buildLocationHintForPrompt(loc: LocationQueryContext): string {
-  const payload = JSON.stringify({ availableEnterprises: loc.availableEnterprises }, null, 0);
+  const slim = loc.availableEnterprises.map(({ name, city }) => ({ name, city: city ?? null }));
+  const payload = JSON.stringify({ availableEnterprises: slim }, null, 0);
   const emptyRule = loc.isEmpty
     ? 'Lista vazia no cadastro para essa localidade: informe sem inventar nomes.'
     : 'Há empreendimentos nesta lista para esta consulta.';
   return `--- Referência de localização (quando a mensagem for sobre cidade/região) ---
 Mencionado pelo cliente: "${loc.userMentionLabel}".
 ${payload}
-${emptyRule}`;
+${emptyRule}
+Ao descrever onde ficam para o cliente: cite nome do empreendimento e cidade quando houver; não mencione região metropolitana, macrorregião, interior nem proximidade com outras cidades.`;
 }
 
 function buildUnifiedAppointmentHint(ap: AppointmentPreflight | null | undefined): string {
@@ -562,6 +584,7 @@ ${ap.reschedule ? '- Remarcação.\n' : ''}${ap.dateContestation ? '- Contestaç
 
 ${persisted}${locationHint ? `${locationHint}\n\n` : ''}${commercialBlock ? `${commercialBlock}\n\n` : ''}--- FOCO DO CADASTRO ATUAL ---
 Empreendimento: "${e.name}" (${e.tipo}).
+${buildScopedEnterpriseLocationBlock(e)}
 ${buildCustomerNameInstructions(opts)}
 ${openScoped}${appointmentScoped}
 ${matBlock}
