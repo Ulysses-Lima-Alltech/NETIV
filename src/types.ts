@@ -40,6 +40,12 @@ export interface Conversation {
   assignedBrokerName?: string | null;
   /** ID do corretor fixo da conversa (prioridade sobre distribuição automática). */
   assignedBrokerId?: number | null;
+  whatsappWindow?: {
+    isOpen: boolean;
+    lastInboundAt: string | null;
+    closesAt: string | null;
+    reason: 'open' | 'no_inbound' | 'expired';
+  };
 }
 
 export type MessageSender = 'LEAD' | 'AGENT';

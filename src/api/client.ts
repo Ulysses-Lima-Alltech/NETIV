@@ -14,6 +14,11 @@ export function setStoredAuthToken(token: string | null): void {
   else localStorage.setItem(AUTH_TOKEN_KEY, token);
 }
 
+export class ApiError extends Error {
+  code?: string;
+  status?: number;
+}
+
 /** Bypass temporário: 401 só limpa token local; sem redirect para /login. */
 function handleUnauthorized(): void {
   setStoredAuthToken(null);
@@ -43,7 +48,13 @@ async function request<T>(
     handleUnauthorized();
     throw new Error((data as { error?: string }).error ?? 'Sessão expirada. Faça login novamente.');
   }
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? `Erro ${res.status}`);
+  if (!res.ok) {
+    const payload = data as { error?: string; code?: string };
+    const err = new ApiError(payload.error ?? `Erro ${res.status}`);
+    err.code = payload.code;
+    err.status = res.status;
+    throw err;
+  }
   return data as T;
 }
 
@@ -174,6 +185,13 @@ export interface MessageListItem {
   createdAt: string;
 }
 
+export interface WhatsAppWindowStatus {
+  isOpen: boolean;
+  lastInboundAt: string | null;
+  closesAt: string | null;
+  reason: 'open' | 'no_inbound' | 'expired';
+}
+
 export interface AIConfigPublic {
   openaiApiKeyMasked: boolean;
   openaiBaseUrl: string | null;
@@ -209,10 +227,10 @@ export const settingsApi = {
 };
 
 export const whatsappApi = {
-  send: (to: string, message: string) =>
+  send: (to: string, message: string, options?: { templateKey?: string }) =>
     request<{ success: boolean; metaMessageId?: string; conversationId?: number }>('/whatsapp/send', {
       method: 'POST',
-      body: { to, message },
+      body: options?.templateKey ? { to, templateKey: options.templateKey } : { to, message },
     }),
   configCheck: () => request<{ configured: boolean }>('/whatsapp/config/check'),
   getConversations: (params?: {
@@ -234,7 +252,9 @@ export const whatsappApi = {
     return request<{ conversations: ConversationListItem[] }>(`/whatsapp/conversations${query ? `?${query}` : ''}`);
   },
   getConversationMessages: (conversationId: number) =>
-    request<{ conversationId: number; messages: MessageListItem[] }>(`/whatsapp/conversations/${conversationId}/messages`),
+    request<{ conversationId: number; window?: WhatsAppWindowStatus; messages: MessageListItem[] }>(
+      `/whatsapp/conversations/${conversationId}/messages`
+    ),
   updateClassification: (
     conversationId: number,
     body: {

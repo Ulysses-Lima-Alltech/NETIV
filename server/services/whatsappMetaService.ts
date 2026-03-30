@@ -19,6 +19,55 @@ export interface SendTextResult {
   code?: number;
 }
 
+type TemplateParamKey = 'customerName' | 'enterpriseName' | 'agentName' | 'city' | 'productType';
+
+interface ManualTemplateDef {
+  name: string;
+  languageCode: string;
+  bodyParamKeys?: TemplateParamKey[];
+}
+
+const MANUAL_WHATSAPP_TEMPLATES: Record<string, ManualTemplateDef> = {
+  // Base inicial: sem variáveis obrigatórias para reduzir risco de rejeição enquanto o template é ajustado na Meta.
+  reengage_default: { name: 'reengage_default', languageCode: 'pt_BR', bodyParamKeys: [] },
+};
+
+export function isMetaWindowClosedError(params: { code?: number; message?: string }): boolean {
+  const code = params.code;
+  const msg = (params.message || '').toLowerCase();
+  if (code === 131047) return true;
+  if (msg.includes('24 hours') || msg.includes('outside the customer care window') || msg.includes('template')) {
+    return true;
+  }
+  return false;
+}
+
+export function resolveManualTemplate(templateKey: string): ManualTemplateDef | null {
+  return MANUAL_WHATSAPP_TEMPLATES[templateKey] ?? null;
+}
+
+export interface TemplateParamsContext {
+  customerName?: string | null;
+  enterpriseName?: string | null;
+  agentName?: string | null;
+  city?: string | null;
+  productType?: string | null;
+}
+
+export function buildTemplateParams(
+  template: ManualTemplateDef,
+  ctx?: TemplateParamsContext
+): Array<{ type: 'text'; text: string }> {
+  const map: Record<TemplateParamKey, string> = {
+    customerName: (ctx?.customerName || '').trim() || 'cliente',
+    enterpriseName: (ctx?.enterpriseName || '').trim() || 'nosso empreendimento',
+    agentName: (ctx?.agentName || '').trim() || 'Ana',
+    city: (ctx?.city || '').trim() || 'sua cidade',
+    productType: (ctx?.productType || '').trim() || 'imóvel',
+  };
+  return (template.bodyParamKeys ?? []).map((k) => ({ type: 'text', text: map[k] }));
+}
+
 export async function sendTextMessage(to: string, text: string): Promise<SendTextResult> {
   const config = await getCfg();
   if (!config) {
@@ -86,6 +135,66 @@ export async function sendTextMessage(to: string, text: string): Promise<SendTex
     clearTimeout(timeout);
     console.error('[MANUAL_SEND_ERROR] erro bruto da Meta', e);
     return { success: false, error: e instanceof Error ? e.message : 'Erro ao enviar' };
+  }
+}
+
+export async function sendTemplateMessage(
+  to: string,
+  templateKey: string,
+  ctx?: TemplateParamsContext
+): Promise<SendTextResult> {
+  const config = await getCfg();
+  if (!config) return { success: false, error: 'Integração WhatsApp não configurada no banco.' };
+  const normalizedTo = to.replace(/\D/g, '');
+  if (!normalizedTo) return { success: false, error: 'Número inválido.' };
+  const template = resolveManualTemplate(templateKey);
+  if (!template) return { success: false, error: 'Template inválido.' };
+
+  const url = `${META_GRAPH_BASE}/${config.apiVersion}/${config.whatsappPhoneNumberId}/messages`;
+  const bodyParams = buildTemplateParams(template, ctx);
+  const requestBody = {
+    messaging_product: 'whatsapp',
+    to: normalizedTo,
+    type: 'template',
+    template: {
+      name: template.name,
+      language: { code: template.languageCode },
+      ...(bodyParams.length > 0
+        ? {
+            components: [
+              {
+                type: 'body',
+                parameters: bodyParams,
+              },
+            ],
+          }
+        : {}),
+    },
+  };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.metaAccessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    const data = (await res.json()) as MetaSendMessageResponse | MetaErrorResponse;
+    if (!res.ok) {
+      const err = (data as MetaErrorResponse).error;
+      return { success: false, error: err?.message ?? `HTTP ${res.status}`, code: err?.code };
+    }
+    const mid = (data as MetaSendMessageResponse).messages?.[0]?.id;
+    if (!mid || typeof mid !== 'string') return { success: false, error: 'Meta não retornou o ID da mensagem.' };
+    return { success: true, metaMessageId: mid };
+  } catch (e) {
+    clearTimeout(timeout);
+    return { success: false, error: e instanceof Error ? e.message : 'Erro ao enviar template' };
   }
 }
 

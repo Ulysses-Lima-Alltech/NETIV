@@ -184,6 +184,24 @@ export async function getConversationById(id: number): Promise<ConversationRow |
   return rows[0] ?? null;
 }
 
+export async function findLatestWhatsAppConversationByPhoneDigits(phoneDigits: string): Promise<ConversationRow | null> {
+  const digits = (phoneDigits || '').replace(/\D/g, '');
+  if (!digits) return null;
+  const { rows } = await query<ConversationRow>(
+    `SELECT *
+     FROM conversations
+     WHERE channel = 'whatsapp'
+       AND (
+         regexp_replace(COALESCE(contact_phone, ''), '\D', '', 'g') = $1
+         OR regexp_replace(COALESCE(external_contact_id, ''), '\D', '', 'g') = $1
+       )
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [digits]
+  );
+  return rows[0] ?? null;
+}
+
 /** Exclui a conversa e suas mensagens (CASCADE). Retorna true se excluiu. */
 export async function deleteConversation(id: number): Promise<boolean> {
   const result = await query(`DELETE FROM conversations WHERE id = $1`, [id]);

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { whatsappApi } from '../api/client';
+import { whatsappApi, ApiError } from '../api/client';
 
 interface NewMessageModalProps {
   open: boolean;
@@ -13,6 +13,8 @@ const field =
 export function NewMessageModal({ open, onClose, onSent }: NewMessageModalProps) {
   const [phone, setPhone] = useState('');
   const [message, setMessage] = useState('');
+  const [templateKey, setTemplateKey] = useState<'reengage_default'>('reengage_default');
+  const [windowClosed, setWindowClosed] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,6 +27,7 @@ export function NewMessageModal({ open, onClose, onSent }: NewMessageModalProps)
     }
     const text = message.trim() || 'Olá!';
     setError(null);
+    setWindowClosed(false);
     setSending(true);
     whatsappApi
       .send(digits, text)
@@ -36,7 +39,36 @@ export function NewMessageModal({ open, onClose, onSent }: NewMessageModalProps)
         onClose();
       })
       .catch((err: Error) => {
+        if (err instanceof ApiError && err.code === 'WHATSAPP_WINDOW_CLOSED') {
+          setWindowClosed(true);
+          setError('Este contato não interagiu nas últimas 24 horas. Para iniciar contato, use uma mensagem padrão/template.');
+          return;
+        }
         setError(err.message ?? 'Erro ao enviar.');
+      })
+      .finally(() => setSending(false));
+  };
+
+  const handleSendTemplate = () => {
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length < 10) {
+      setError('Informe um número válido (com DDD).');
+      return;
+    }
+    setError(null);
+    setSending(true);
+    whatsappApi
+      .send(digits, '', { templateKey })
+      .then((data) => {
+        const convId = (data as { conversationId?: number }).conversationId;
+        setPhone('');
+        setMessage('');
+        setWindowClosed(false);
+        onSent(convId);
+        onClose();
+      })
+      .catch((err: Error) => {
+        setError(err.message ?? 'Erro ao enviar template.');
       })
       .finally(() => setSending(false));
   };
@@ -44,6 +76,7 @@ export function NewMessageModal({ open, onClose, onSent }: NewMessageModalProps)
   const handleClose = () => {
     if (!sending) {
       setError(null);
+      setWindowClosed(false);
       setPhone('');
       setMessage('');
       onClose();
@@ -74,6 +107,26 @@ export function NewMessageModal({ open, onClose, onSent }: NewMessageModalProps)
             <div className="flex items-start gap-2 text-[13px] text-red-700 bg-red-50 border border-red-100 rounded-[10px] px-3.5 py-2.5">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
               {error}
+            </div>
+          )}
+          {windowClosed && (
+            <div className="space-y-2 rounded-[10px] border border-[#E5E7EB] p-3 bg-[#F9FAFB]">
+              <p className="text-[12px] text-[#374151]">Envio por template (permitido fora da janela):</p>
+              <select
+                value={templateKey}
+                onChange={(e) => setTemplateKey(e.target.value as 'reengage_default')}
+                className={field}
+              >
+                <option value="reengage_default">reengage_default (pt_BR)</option>
+              </select>
+              <button
+                type="button"
+                onClick={handleSendTemplate}
+                disabled={sending}
+                className="w-full px-4 py-[9px] text-[13px] font-semibold text-white bg-[#2563EB] rounded-[10px] hover:bg-[#1D4ED8] disabled:opacity-40 transition-colors"
+              >
+                Enviar template
+              </button>
             </div>
           )}
           <div className="flex gap-3 justify-end pt-2">

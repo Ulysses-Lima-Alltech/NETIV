@@ -89,6 +89,8 @@ function draftToPatch(d: ReserveDraft): ReserveSegmentationPatchBody {
 
 interface ChatPanelProps {
   conversation: Conversation | null;
+  windowStatus?: Conversation['whatsappWindow'] | null;
+  sendError?: string | null;
   messages: Message[];
   isLoadingMessages: boolean;
   loadError: string | null;
@@ -109,6 +111,8 @@ interface ChatPanelProps {
 
 export function ChatPanel({
   conversation,
+  windowStatus = null,
+  sendError = null,
   messages,
   isLoadingMessages,
   loadError,
@@ -559,6 +563,22 @@ export function ChatPanel({
             </button>
           </div>
         )}
+        {windowStatus && (
+          <div className="mt-3 pt-3 border-t border-[#F3F4F6]">
+            <span
+              className={`inline-flex items-center text-[11px] font-semibold px-2.5 py-1 rounded-[6px] ${
+                windowStatus.isOpen ? 'bg-[#ECFDF5] text-[#047857] border border-[#A7F3D0]' : 'bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA]'
+              }`}
+            >
+              {windowStatus.isOpen ? 'Janela aberta' : 'Fora da janela de 24h'}
+            </span>
+            {!windowStatus.isOpen && (
+              <p className="mt-2 text-[12px] text-[#B91C1C]">
+                Este contato não interagiu nas últimas 24 horas. Para iniciar contato, use uma mensagem padrão/template.
+              </p>
+            )}
+          </div>
+        )}
       </header>
 
       <div ref={setRef} className="flex-1 overflow-y-auto min-h-0 p-4 bg-[#F9FAFB]">
@@ -603,7 +623,20 @@ export function ChatPanel({
       </div>
 
       {!loadError && !isLoadingMessages && (
-        <ChatComposer onSend={onSendMessage} disabled={isSending} />
+        <>
+          {sendError && (
+            <div className="px-4 py-2 border-t border-[#FEE2E2] bg-[#FEF2F2] text-[12px] text-[#B91C1C]">{sendError}</div>
+          )}
+          <ChatComposer
+            onSend={onSendMessage}
+            disabled={isSending || (windowStatus ? !windowStatus.isOpen : false)}
+            placeholder={
+              windowStatus && !windowStatus.isOpen
+                ? 'Envio de texto livre bloqueado fora da janela de 24h.'
+                : 'Digite sua mensagem...'
+            }
+          />
+        </>
       )}
     </div>
   );

@@ -1,7 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AppNav } from '../components/AppNav';
 import type { Conversation, LeadTemperatura, Message } from '../types';
-import { whatsappApi, projectsApi, type ReserveSegmentationPatchBody } from '../api/client';
+import {
+  whatsappApi,
+  projectsApi,
+  ApiError,
+  type ReserveSegmentationPatchBody,
+  type WhatsAppWindowStatus,
+} from '../api/client';
 import type { ConversationListItem as ApiConversation, MessageListItem } from '../api/client';
 import { ConversationList } from '../components/ConversationList';
 import { ChatPanel } from '../components/ChatPanel';
@@ -89,6 +95,7 @@ export function InboxPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [messagesError, setMessagesError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [newMessageOpen, setNewMessageOpen] = useState(false);
@@ -116,6 +123,7 @@ export function InboxPage() {
   const selectedConversation = selectedId
     ? conversations.find((c) => c.id === selectedId) ?? null
     : null;
+  const selectedWindow = selectedConversation?.whatsappWindow ?? null;
 
   const loadConversations = useCallback((silent?: boolean) => {
     if (!silent) setConversationsLoading(true);
@@ -135,9 +143,14 @@ export function InboxPage() {
     const shouldScroll = isUserAtBottom();
     if (!silent) setMessagesLoading(true);
     if (!silent) setMessagesError(null);
+    if (!silent) setSendError(null);
     whatsappApi
       .getConversationMessages(id)
       .then((data) => {
+        const windowStatus: WhatsAppWindowStatus | undefined = data.window;
+        setConversations((prev) =>
+          prev.map((c) => (c.id === convId ? { ...c, whatsappWindow: windowStatus ?? c.whatsappWindow } : c))
+        );
         const apiMapped = data.messages
           .map((m) => mapApiMessageToMessage(m, convId))
           .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
@@ -201,8 +214,15 @@ export function InboxPage() {
   const handleSendMessage = useCallback(
     async (text: string) => {
       if (!selectedId) return;
+      if (selectedWindow && !selectedWindow.isOpen) {
+        setSendError(
+          'Este contato não interagiu nas últimas 24 horas. Para iniciar contato, use uma mensagem padrão/template.'
+        );
+        return;
+      }
       const id = parseInt(selectedId, 10);
       if (Number.isNaN(id)) return;
+      setSendError(null);
       setSending(true);
       const tempMessage: Message = {
         id: `temp-${Date.now()}`,
@@ -220,13 +240,20 @@ export function InboxPage() {
         await whatsappApi.sendToConversation(id, text);
         setMessages((prev) => prev.map((m) => (m.id === tempMessage.id ? { ...tempMessage, id: `sent-${Date.now()}` } : m)));
         loadConversations();
-      } catch {
+      } catch (e) {
         setMessages((prev) => prev.filter((m) => m.id !== tempMessage.id));
+        if (e instanceof ApiError && e.code === 'WHATSAPP_WINDOW_CLOSED') {
+          setSendError(
+            'Este contato não interagiu nas últimas 24 horas. Para iniciar contato, use uma mensagem padrão/template.'
+          );
+        } else {
+          setSendError(e instanceof Error ? e.message : 'Erro ao enviar mensagem.');
+        }
       } finally {
         setSending(false);
       }
     },
-    [selectedId, loadConversations, isUserAtBottom, scrollToBottom]
+    [selectedId, selectedWindow, loadConversations, isUserAtBottom, scrollToBottom]
   );
 
   const handleNewMessageSent = useCallback(
@@ -394,6 +421,8 @@ export function InboxPage() {
         <main className="flex-1 flex flex-col min-w-0 min-h-0">
           <ChatPanel
             conversation={selectedConversation}
+            windowStatus={selectedWindow}
+            sendError={sendError}
             messages={messages}
             isLoadingMessages={messagesLoading}
             loadError={messagesError}

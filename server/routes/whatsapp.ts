@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { sendTextMessage } from '../services/whatsappMetaService.js';
+import { sendTextMessage, sendTemplateMessage, isMetaWindowClosedError } from '../services/whatsappMetaService.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import {
   findOrCreateConversation,
@@ -15,6 +15,10 @@ import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
 import { insertMessage, getMessagesByConversationId } from '../repositories/messageRepository.js';
 import { getCorretorById } from '../repositories/corretorRepository.js';
 import { sendMessageSchema, updateClassificationSchema } from '../validators/whatsapp.js';
+import {
+  getConversationWhatsAppWindowStatus,
+  getPhoneWhatsAppWindowStatus,
+} from '../services/whatsappWindowService.js';
 
 const router = Router();
 
@@ -30,6 +34,21 @@ function tempToStage(t: string | null | undefined): string | null {
 router.post('/send', async (req, res) => {
   try {
     console.log('[MANUAL_SEND_ROUTE] body recebido', req.body);
+    const templateKey = typeof req.body?.templateKey === 'string' ? req.body.templateKey.trim() : '';
+    if (templateKey) {
+      const toRaw = typeof req.body?.to === 'string' ? req.body.to : '';
+      const finalNumber = String(toRaw).replace(/\D/g, '');
+      if (!finalNumber || finalNumber.length < 10) {
+        return res.status(400).json({ success: false, error: 'Campo "to" é obrigatório e deve ser válido.' });
+      }
+      const templateResult = await sendTemplateMessage(finalNumber, templateKey);
+      if (templateResult.success) {
+        return res.json({ success: true, metaMessageId: templateResult.metaMessageId });
+      }
+      const code = templateResult.code && templateResult.code >= 400 ? templateResult.code : 502;
+      return res.status(code).json({ success: false, error: templateResult.error || 'Falha ao enviar template.' });
+    }
+
     const parsed = sendMessageSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues.map((e: { message: string }) => e.message).join('; ') || 'Dados inválidos.';
@@ -40,6 +59,26 @@ router.post('/send', async (req, res) => {
     const finalText = String(message);
     console.log('[MANUAL_SEND_ROUTE] número final', { to: finalNumber });
     console.log('[MANUAL_SEND_ROUTE] texto final', { message: finalText });
+
+    const byPhone = await getPhoneWhatsAppWindowStatus(finalNumber);
+    console.log('[WHATSAPP_WINDOW_CHECK]', {
+      conversationId: byPhone.conversationId,
+      lastInboundAt: byPhone.window.lastInboundAt,
+      closesAt: byPhone.window.closesAt,
+      isOpen: byPhone.window.isOpen,
+      reason: byPhone.window.reason,
+    });
+    if (!byPhone.window.isOpen) {
+      const windowClosedResponse = {
+        success: false,
+        error: 'Janela de atendimento encerrada. Envie uma mensagem padrão/template.',
+        code: 'WHATSAPP_WINDOW_CLOSED',
+        windowOpen: false,
+      };
+      console.log('[MANUAL_SEND_ROUTE] resposta final enviada ao frontend', windowClosedResponse);
+      return res.status(409).json(windowClosedResponse);
+    }
+
     const result = await sendTextMessage(to, message);
 
     if (result.success) {
@@ -53,6 +92,16 @@ router.post('/send', async (req, res) => {
       const responseBody = { success: true, metaMessageId: result.metaMessageId, conversationId };
       console.log('[MANUAL_SEND_ROUTE] resposta final enviada ao frontend', responseBody);
       return res.json(responseBody);
+    }
+    if (isMetaWindowClosedError({ code: result.code, message: result.error })) {
+      const windowClosedResponse = {
+        success: false,
+        error: 'Janela de atendimento encerrada. Envie uma mensagem padrão/template.',
+        code: 'WHATSAPP_WINDOW_CLOSED',
+        windowOpen: false,
+      };
+      console.log('[MANUAL_SEND_ROUTE] resposta final enviada ao frontend', windowClosedResponse);
+      return res.status(409).json(windowClosedResponse);
     }
     console.error('[WhatsApp] POST /send falhou:', { error: result.error, code: result.code });
     const errorResponse = { success: false, error: result.error || 'Falha ao enviar via Meta.' };
@@ -215,18 +264,60 @@ router.post('/conversations/:id/send', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    const templateKey = typeof req.body?.templateKey === 'string' ? req.body.templateKey.trim() : '';
     const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
-    if (!message) return res.status(400).json({ success: false, error: 'Campo "message" é obrigatório.' });
+    if (!templateKey && !message) return res.status(400).json({ success: false, error: 'Campo "message" é obrigatório.' });
     const conv = await getConversationById(id);
     if (!conv) return res.status(404).json({ success: false, error: 'Conversa não encontrada.' });
     const to = (conv.contact_phone || conv.external_contact_id || '').replace(/\D/g, '');
     if (!to) return res.status(400).json({ success: false, error: 'Sem número de telefone na conversa.' });
+
+    if (templateKey) {
+      const result = await sendTemplateMessage(to, templateKey, {
+        customerName: conv.customer_name ?? conv.whatsapp_display_name ?? conv.contact_phone ?? conv.external_contact_id,
+        enterpriseName: conv.enterprise_id ? (await getEnterpriseById(conv.enterprise_id))?.name ?? null : null,
+      });
+      if (result.success && result.metaMessageId) {
+        await insertMessage(id, 'assistant', `[template:${templateKey}]`, result.metaMessageId);
+      }
+      if (result.success) return res.json({ success: true, metaMessageId: result.metaMessageId });
+      return res.status(result.code && result.code >= 400 ? result.code : 502).json({
+        success: false,
+        error: result.error || 'Falha ao enviar template.',
+      });
+    }
+
+    const window = await getConversationWhatsAppWindowStatus(id);
+    console.log('[WHATSAPP_WINDOW_CHECK]', {
+      conversationId: id,
+      lastInboundAt: window.lastInboundAt,
+      closesAt: window.closesAt,
+      isOpen: window.isOpen,
+      reason: window.reason,
+    });
+    if (!window.isOpen) {
+      return res.status(409).json({
+        success: false,
+        error: 'Janela de atendimento encerrada. Envie uma mensagem padrão/template.',
+        code: 'WHATSAPP_WINDOW_CLOSED',
+        windowOpen: false,
+      });
+    }
+
     const result = await sendTextMessage(to, message);
     if (result.success && result.metaMessageId) {
       await insertMessage(id, 'assistant', message, result.metaMessageId);
     }
     if (result.success) {
       return res.json({ success: true, metaMessageId: result.metaMessageId });
+    }
+    if (isMetaWindowClosedError({ code: result.code, message: result.error })) {
+      return res.status(409).json({
+        success: false,
+        error: 'Janela de atendimento encerrada. Envie uma mensagem padrão/template.',
+        code: 'WHATSAPP_WINDOW_CLOSED',
+        windowOpen: false,
+      });
     }
     console.error('[WhatsApp] POST /conversations/:id/send falhou:', { convId: id, to: to.slice(-4), error: result.error, code: result.code });
     res.status(result.code && result.code >= 400 ? result.code : 502).json({ success: false, error: result.error || 'Falha ao enviar via Meta.' });
@@ -243,8 +334,10 @@ router.get('/conversations/:id/messages', async (req, res) => {
     const conv = await getConversationById(id);
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
     const rows = await getMessagesByConversationId(id);
+    const window = await getConversationWhatsAppWindowStatus(id);
     res.json({
       conversationId: id,
+      window,
       messages: rows.map((m) => ({
         id: String(m.id),
         conversationId: id,

@@ -38,6 +38,18 @@ export async function getMessagesByConversationId(conversationId: number): Promi
   return rows;
 }
 
+export async function getLastInboundUserMessageAt(conversationId: number): Promise<Date | null> {
+  const { rows } = await query<{ created_at: Date }>(
+    `SELECT created_at
+     FROM messages
+     WHERE conversation_id = $1 AND role = 'user'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [conversationId]
+  );
+  return rows[0]?.created_at ?? null;
+}
+
 /**
  * Última mensagem do usuário que ainda precisa de resposta da IA.
  * Lógica: compara última mensagem do usuário vs última da IA.
