@@ -29,12 +29,17 @@ function tempToStage(t: string | null | undefined): string | null {
 
 router.post('/send', async (req, res) => {
   try {
+    console.log('[MANUAL_SEND_ROUTE] body recebido', req.body);
     const parsed = sendMessageSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues.map((e: { message: string }) => e.message).join('; ') || 'Dados inválidos.';
       return res.status(400).json({ success: false, error: msg });
     }
     const { to, message } = parsed.data;
+    const finalNumber = String(to).replace(/\D/g, '');
+    const finalText = String(message);
+    console.log('[MANUAL_SEND_ROUTE] número final', { to: finalNumber });
+    console.log('[MANUAL_SEND_ROUTE] texto final', { message: finalText });
     const result = await sendTextMessage(to, message);
 
     if (result.success) {
@@ -45,13 +50,19 @@ router.post('/send', async (req, res) => {
         await insertMessage(conv.id, 'assistant', message, result.metaMessageId ?? null);
         conversationId = conv.id;
       }
-      return res.json({ success: true, metaMessageId: result.metaMessageId, conversationId });
+      const responseBody = { success: true, metaMessageId: result.metaMessageId, conversationId };
+      console.log('[MANUAL_SEND_ROUTE] resposta final enviada ao frontend', responseBody);
+      return res.json(responseBody);
     }
     console.error('[WhatsApp] POST /send falhou:', { error: result.error, code: result.code });
-    res.status(result.code && result.code >= 400 ? result.code : 502).json({ success: false, error: result.error || 'Falha ao enviar via Meta.' });
+    const errorResponse = { success: false, error: result.error || 'Falha ao enviar via Meta.' };
+    console.log('[MANUAL_SEND_ROUTE] resposta final enviada ao frontend', errorResponse);
+    res.status(result.code && result.code >= 400 ? result.code : 502).json(errorResponse);
   } catch (e) {
     console.error('[WhatsApp] POST /send:', e);
-    res.status(500).json({ success: false, error: 'Erro interno ao enviar.' });
+    const errorResponse = { success: false, error: 'Erro interno ao enviar.' };
+    console.log('[MANUAL_SEND_ROUTE] resposta final enviada ao frontend', errorResponse);
+    res.status(500).json(errorResponse);
   }
 });
 

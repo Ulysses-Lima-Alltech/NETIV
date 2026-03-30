@@ -33,6 +33,19 @@ export async function sendTextMessage(to: string, text: string): Promise<SendTex
   const normalizedTo = to.replace(/\D/g, '');
   if (!normalizedTo) return { success: false, error: 'Número inválido.' };
   const url = `${META_GRAPH_BASE}/${config.apiVersion}/${config.whatsappPhoneNumberId}/messages`;
+  const requestBody = {
+    messaging_product: 'whatsapp',
+    to: normalizedTo,
+    type: 'text',
+    text: { body: text },
+  };
+  console.log('[MANUAL_SEND_META] endpoint da Meta', {
+    endpoint: url,
+    apiVersion: config.apiVersion,
+    phoneNumberId: config.whatsappPhoneNumberId,
+    to: normalizedTo,
+  });
+  console.log('[MANUAL_SEND_META] payload enviado', requestBody);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -42,24 +55,36 @@ export async function sendTextMessage(to: string, text: string): Promise<SendTex
         Authorization: `Bearer ${config.metaAccessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: normalizedTo,
-        type: 'text',
-        text: { body: text },
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
     clearTimeout(timeout);
     const data = (await res.json()) as MetaSendMessageResponse | MetaErrorResponse;
+    console.log('[MANUAL_SEND_META] resposta bruta da Meta', {
+      httpStatus: res.status,
+      body: data,
+    });
     if (!res.ok) {
       const err = (data as MetaErrorResponse).error;
+      console.error('[MANUAL_SEND_ERROR] erro bruto da Meta', {
+        httpStatus: res.status,
+        error: err ?? data,
+      });
       return { success: false, error: err?.message ?? `HTTP ${res.status}`, code: err?.code };
     }
     const mid = (data as MetaSendMessageResponse).messages?.[0]?.id;
+    if (!mid || typeof mid !== 'string') {
+      console.error('[MANUAL_SEND_ERROR] erro bruto da Meta', {
+        httpStatus: res.status,
+        error: 'Resposta sem messages[0].id',
+        body: data,
+      });
+      return { success: false, error: 'Meta não retornou o ID da mensagem.' };
+    }
     return { success: true, metaMessageId: mid };
   } catch (e) {
     clearTimeout(timeout);
+    console.error('[MANUAL_SEND_ERROR] erro bruto da Meta', e);
     return { success: false, error: e instanceof Error ? e.message : 'Erro ao enviar' };
   }
 }
