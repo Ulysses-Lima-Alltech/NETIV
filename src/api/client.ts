@@ -353,6 +353,9 @@ export interface ContactListItem {
   phoneE164: string;
   phoneDisplay?: string | null;
   email?: string | null;
+  /** ID do empreendimento cadastrado (quando vínculo canônico existe). */
+  enterpriseId?: number | null;
+  /** Nome para exibição (JOIN ou texto legado). */
   enterpriseInterest?: string | null;
   notes?: string | null;
   source?: string;
@@ -402,7 +405,14 @@ export const contactsApi = {
   get: (id: number) => request<ContactListItem>(`/contacts/${id}`),
   update: (
     id: number,
-    body: { fullName?: string; email?: string; enterpriseInterest?: string; notes?: string; source?: string }
+    body: {
+      fullName?: string;
+      email?: string;
+      enterpriseId?: number | null;
+      enterpriseInterest?: string;
+      notes?: string;
+      source?: string;
+    }
   ) => request<{ success: boolean }>(`/contacts/${id}`, { method: 'PATCH', body }),
   setOwner: (id: number, ownerUserId: number | null) =>
     request<{ success: boolean }>(`/contacts/${id}/owner`, {

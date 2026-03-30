@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { writeFile, unlink } from 'fs/promises';
-import multer from 'multer';
+import multer, { MulterError } from 'multer';
 import {
   sendTextMessage,
   sendTemplateMessage,
@@ -13,7 +13,8 @@ import {
 import {
   normalizeManualAttachmentMime,
   isManualAttachmentAllowed,
-  MANUAL_WHATSAPP_ATTACHMENT_MAX_BYTES,
+  manualAttachmentRejectionMessage,
+  MANUAL_UPLOAD_BODY_LIMIT_BYTES,
 } from '../utils/manualWhatsappAttachment.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import {
@@ -43,13 +44,23 @@ const router = Router();
 
 const manualAttachmentUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: MANUAL_WHATSAPP_ATTACHMENT_MAX_BYTES },
+  limits: { fileSize: MANUAL_UPLOAD_BODY_LIMIT_BYTES },
 });
 
 function conditionalManualFileUpload(req: Request, res: Response, next: NextFunction) {
   const ct = String(req.headers['content-type'] || '');
   if (ct.includes('multipart/form-data')) {
-    return manualAttachmentUpload.single('file')(req, res, next);
+    return manualAttachmentUpload.single('file')(req, res, (err: unknown) => {
+      if (err instanceof MulterError && err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({
+          success: false,
+          error: 'Arquivo excede o limite de 100 MB permitido pelo servidor.',
+          code: 'PAYLOAD_TOO_LARGE',
+        });
+      }
+      if (err) return next(err);
+      next();
+    });
   }
   return next();
 }
@@ -351,7 +362,7 @@ router.post('/conversations/:id/send', conditionalManualFileUpload, async (req, 
       if (!resolvedMime || !isManualAttachmentAllowed(safeName, file.mimetype, file.size)) {
         return res.status(400).json({
           success: false,
-          error: 'Anexo não suportado. Use PDF, JPG, PNG ou WEBP (máx. 10 MB).',
+          error: manualAttachmentRejectionMessage(safeName, file.mimetype, file.size),
         });
       }
       const tempPath = join(tmpdir(), `wa-manual-${randomBytes(16).toString('hex')}-${safeName}`);
@@ -361,7 +372,8 @@ router.post('/conversations/:id/send', conditionalManualFileUpload, async (req, 
           caption: message.length > 0 ? message : null,
         });
         if (mediaRes.success && mediaRes.metaMessageId) {
-          const mk = mediaRes.messageKind === 'image' ? 'image' : 'document';
+          const mk =
+            mediaRes.messageKind === 'image' ? 'image' : mediaRes.messageKind === 'video' ? 'video' : 'document';
           const displayText =
             message.length > 0 ? `${message}\n\n📎 ${safeName}` : `📎 ${safeName}`;
           const attachment: MessageAttachmentPayload = {
@@ -439,7 +451,7 @@ router.get('/conversations/:id/messages', async (req, res) => {
       window,
       messages: rows.map((m) => {
         const kind = (m.message_kind as string | undefined) || 'text';
-        const hasAtt = kind === 'document' || kind === 'image';
+        const hasAtt = kind === 'document' || kind === 'image' || kind === 'video';
         return {
           id: String(m.id),
           conversationId: id,

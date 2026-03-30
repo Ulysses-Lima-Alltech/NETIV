@@ -1,6 +1,8 @@
 import { useState, useRef, useCallback } from 'react';
+import { validateManualUploadFile } from '../constants/whatsappManualUpload';
 
-const ACCEPT_MANUAL = '.pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp';
+const ACCEPT_MANUAL =
+  '.pdf,.jpg,.jpeg,.png,.webp,.mp4,.3gp,application/pdf,image/jpeg,image/png,image/webp,video/mp4,video/3gpp';
 
 interface ChatComposerProps {
   onSend: (text: string, file?: File | null) => void;
@@ -11,12 +13,21 @@ interface ChatComposerProps {
 export function ChatComposer({ onSend, disabled = false, placeholder = 'Digite sua mensagem...' }: ChatComposerProps) {
   const [text, setText] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const send = useCallback(() => {
     const trimmed = text.trim();
     if (disabled || (!trimmed && !file)) return;
+    if (file) {
+      const v = validateManualUploadFile(file);
+      if (!v.ok) {
+        setFileError(v.message);
+        return;
+      }
+    }
+    setFileError(null);
     onSend(trimmed, file);
     setText('');
     setFile(null);
@@ -46,6 +57,9 @@ export function ChatComposer({ onSend, disabled = false, placeholder = 'Digite s
 
   return (
     <div className="flex flex-col gap-2 p-4 border-t border-[#E5E7EB] bg-white">
+      {fileError && (
+        <div className="rounded-[10px] border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-800">{fileError}</div>
+      )}
       {file && (
         <div className="flex items-center justify-between gap-2 rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2 text-[12px] text-[#374151]">
           <span className="truncate">
@@ -55,6 +69,7 @@ export function ChatComposer({ onSend, disabled = false, placeholder = 'Digite s
             type="button"
             onClick={() => {
               setFile(null);
+              setFileError(null);
               if (fileInputRef.current) fileInputRef.current.value = '';
             }}
             className="shrink-0 text-[#6B7280] hover:text-[#111827] underline"
@@ -71,13 +86,28 @@ export function ChatComposer({ onSend, disabled = false, placeholder = 'Digite s
           className="hidden"
           aria-hidden
           disabled={disabled}
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          onChange={(e) => {
+            const f = e.target.files?.[0] ?? null;
+            setFileError(null);
+            if (!f) {
+              setFile(null);
+              return;
+            }
+            const v = validateManualUploadFile(f);
+            if (!v.ok) {
+              setFileError(v.message);
+              setFile(null);
+              if (fileInputRef.current) fileInputRef.current.value = '';
+              return;
+            }
+            setFile(f);
+          }}
         />
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled}
-          title="Anexar arquivo (PDF, JPG, PNG, WEBP)"
+          title="Anexar arquivo (PDF, imagens, MP4/3GP)"
           aria-label="Anexar arquivo"
           className="shrink-0 inline-flex h-[42px] w-[42px] items-center justify-center rounded-[10px] border border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F9FAFB] disabled:opacity-40 disabled:cursor-not-allowed"
         >

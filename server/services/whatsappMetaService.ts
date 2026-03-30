@@ -2,6 +2,7 @@ import type { WhatsAppIntegrationConfig } from '../types/settings.js';
 import type { MetaSendMessageResponse, MetaErrorResponse } from '../types/whatsapp.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { readFile } from 'fs/promises';
+import { classifyManualMediaKind } from '../utils/manualWhatsappAttachment.js';
 
 const META_GRAPH_BASE = 'https://graph.facebook.com';
 const REQUEST_TIMEOUT_MS = 120000;
@@ -17,7 +18,7 @@ export interface SendTextResult {
   metaMessageId?: string;
   /** ID retornado pelo upload GET /media (antes da mensagem). */
   whatsappMediaId?: string;
-  messageKind?: 'text' | 'document' | 'image';
+  messageKind?: 'text' | 'document' | 'image' | 'video';
   error?: string;
   code?: number;
 }
@@ -212,14 +213,10 @@ export interface DocumentSendLogContext {
   absolutePath: string;
 }
 
-/** JPEG/PNG/WebP como mensagem `image`; demais tipos suportados como `document`. */
-export function classifyOutboundWhatsAppMedia(filename: string, mimeFromDb: string): 'image' | 'document' {
-  const name = (filename || '').toLowerCase();
-  const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : '';
-  const m = (mimeFromDb || '').trim().toLowerCase();
-  if (m === 'image/jpg') return 'image';
-  if (['image/jpeg', 'image/png', 'image/webp'].includes(m)) return 'image';
-  if (['jpg', 'jpeg', 'png', 'webp'].includes(ext)) return 'image';
+/** Imagem, vídeo (MP4/3GP) ou documento — alinhado a `manualWhatsappAttachment`. */
+export function classifyOutboundWhatsAppMedia(filename: string, mimeFromDb: string): 'image' | 'video' | 'document' {
+  const k = classifyManualMediaKind(filename, mimeFromDb);
+  if (k) return k;
   return 'document';
 }
 
@@ -524,6 +521,169 @@ export async function sendDocumentMessage(
 }
 
 /** Imagem: upload + mensagem type=image (JPEG, PNG, WebP). */
+function resolveVideoMimeType(filename: string, mimeFromDb: string): string {
+  const name = (filename || '').toLowerCase();
+  const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : '';
+  const m = (mimeFromDb || '').trim().toLowerCase();
+  if (m === 'video/3gpp' || ext === '3gp') return 'video/3gpp';
+  return 'video/mp4';
+}
+
+/** Vídeo: upload + mensagem type=video (MP4/3GP). */
+export async function sendVideoMessage(
+  to: string,
+  filePath: string,
+  filename: string,
+  mimeFromDb: string,
+  logCtx?: DocumentSendLogContext,
+  caption?: string | null
+): Promise<SendTextResult> {
+  let mediaId: string | undefined;
+  let metaMessageId: string | undefined;
+  let errorMessageIfAny: string | undefined;
+  let resultCode: number | undefined;
+
+  try {
+    const config = await getCfg();
+    if (!config) {
+      errorMessageIfAny = 'WhatsApp não configurado.';
+      return { success: false, error: errorMessageIfAny };
+    }
+    const normalizedTo = to.replace(/\D/g, '');
+    if (!normalizedTo) {
+      errorMessageIfAny = 'Número inválido.';
+      return { success: false, error: errorMessageIfAny };
+    }
+    const token = config.metaAccessToken;
+    const phoneId = config.whatsappPhoneNumberId;
+    const v = config.apiVersion;
+    const effectiveMediaUrl = `${META_GRAPH_BASE}/${v}/${phoneId}/media`;
+    const msgUrl = `${META_GRAPH_BASE}/${v}/${phoneId}/messages`;
+    const safeFilename = (filename || 'video.mp4').replace(/[\r\n\u0000]/g, '_').slice(0, 240);
+    const mimeType = resolveVideoMimeType(safeFilename, mimeFromDb);
+
+    const FormDataCtor = (globalThis as unknown as { FormData?: new () => FormData }).FormData;
+    if (!FormDataCtor) {
+      errorMessageIfAny = 'FormData indisponível no runtime.';
+      return { success: false, error: errorMessageIfAny };
+    }
+
+    let fileBuf: Buffer;
+    try {
+      fileBuf = await readFile(filePath);
+    } catch (e) {
+      errorMessageIfAny = e instanceof Error ? `Falha ao ler arquivo: ${e.message}` : 'Falha ao ler arquivo.';
+      return { success: false, error: errorMessageIfAny };
+    }
+
+    const form = new FormDataCtor();
+    form.append('messaging_product', 'whatsapp');
+    form.append('type', mimeType);
+    form.append('file', new Blob([Uint8Array.from(fileBuf)], { type: mimeType }), safeFilename);
+
+    const uploadController = new AbortController();
+    const uploadTimeout = setTimeout(() => uploadController.abort(), REQUEST_TIMEOUT_MS);
+    let upRaw: string;
+    let up: Response;
+    try {
+      up = await fetch(effectiveMediaUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+        signal: uploadController.signal,
+      });
+      upRaw = await up.text();
+    } catch (e) {
+      clearTimeout(uploadTimeout);
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`[upload network] ${msg}`);
+    }
+    clearTimeout(uploadTimeout);
+
+    let upData: { id?: string; error?: { message?: string; code?: number } };
+    try {
+      upData = JSON.parse(upRaw) as typeof upData;
+    } catch {
+      throw new Error(
+        `[upload parse] Resposta não é JSON. HTTP ${up.status}. Corpo (início): ${upRaw.slice(0, 2000)}`
+      );
+    }
+
+    if (!up.ok) {
+      const err = upData.error;
+      throw new Error(`[upload Meta API] ${JSON.stringify({ httpStatus: up.status, error: err ?? upData, rawBody: upRaw.slice(0, 8000) })}`);
+    }
+
+    const uploadedId = upData.id;
+    if (!uploadedId || typeof uploadedId !== 'string') {
+      throw new Error(`[upload sem media id] Corpo: ${upRaw.slice(0, 4000)}`);
+    }
+    mediaId = uploadedId;
+
+    const cap = (caption ?? '').trim().slice(0, 1024);
+    const messageBody: Record<string, unknown> = {
+      messaging_product: 'whatsapp',
+      to: normalizedTo,
+      type: 'video',
+      video: cap.length > 0 ? { id: mediaId, caption: cap } : { id: mediaId },
+    };
+
+    const sendController = new AbortController();
+    const sendTimeout = setTimeout(() => sendController.abort(), 120000);
+    let resRaw: string;
+    let res: Response;
+    try {
+      res = await fetch(msgUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(messageBody),
+        signal: sendController.signal,
+      });
+      resRaw = await res.text();
+    } catch (e) {
+      clearTimeout(sendTimeout);
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`[messages network] ${msg}`);
+    }
+    clearTimeout(sendTimeout);
+
+    let data: MetaSendMessageResponse | MetaErrorResponse;
+    try {
+      data = JSON.parse(resRaw) as MetaSendMessageResponse | MetaErrorResponse;
+    } catch {
+      throw new Error(`[messages parse] HTTP ${res.status}. Corpo: ${resRaw.slice(0, 2000)}`);
+    }
+
+    if (!res.ok) {
+      const err = (data as MetaErrorResponse).error;
+      throw new Error(
+        `[messages Meta API] ${JSON.stringify({ httpStatus: res.status, error: err ?? data, rawBody: resRaw.slice(0, 8000) })}`
+      );
+    }
+
+    const mid = (data as MetaSendMessageResponse).messages?.[0]?.id;
+    if (!mid || typeof mid !== 'string') {
+      throw new Error(`[messages sem message id] Corpo: ${resRaw.slice(0, 4000)}`);
+    }
+    metaMessageId = mid;
+    return { success: true, metaMessageId: mid, whatsappMediaId: mediaId, messageKind: 'video' };
+  } catch (e) {
+    const errObj = e instanceof Error ? e : new Error(String(e));
+    errorMessageIfAny = errorMessageIfAny ?? errObj.message;
+    console.error('[WhatsAppMeta][video] erro', { message: errObj.message });
+    return {
+      success: false,
+      error: errorMessageIfAny,
+      code: resultCode,
+    };
+  } finally {
+    logWhatsappDocumentResult({ mediaId, metaMessageId, errorMessageIfAny });
+  }
+}
+
 export async function sendImageMessage(
   to: string,
   filePath: string,
@@ -686,7 +846,7 @@ export async function sendImageMessage(
   }
 }
 
-/** Envia arquivo local: escolhe image vs document conforme MIME/extensão. */
+/** Envia arquivo local: image, video ou document conforme MIME/extensão. */
 export async function sendLocalMediaToWhatsApp(
   to: string,
   filePath: string,
@@ -697,6 +857,9 @@ export async function sendLocalMediaToWhatsApp(
   const kind = classifyOutboundWhatsAppMedia(filename, mimeFromDb);
   if (kind === 'image') {
     return sendImageMessage(to, filePath, filename, mimeFromDb, options?.logCtx, options?.caption ?? null);
+  }
+  if (kind === 'video') {
+    return sendVideoMessage(to, filePath, filename, mimeFromDb, options?.logCtx, options?.caption ?? null);
   }
   return sendDocumentMessage(to, filePath, filename, mimeFromDb, options?.logCtx, options?.caption ?? null);
 }

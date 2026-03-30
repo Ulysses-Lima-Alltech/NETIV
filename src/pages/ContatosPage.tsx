@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
-import { contactsApi, corretoresApi, type ContactImportPreview, type ContactListItem } from '../api/client';
+import {
+  contactsApi,
+  corretoresApi,
+  projectsApi,
+  type ContactImportPreview,
+  type ContactListItem,
+  type ProjectListItem,
+} from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 
 const inputCls =
@@ -17,6 +24,10 @@ export function ContatosPage() {
   const [ownerUserId, setOwnerUserId] = useState<string>('');
   const [brokers, setBrokers] = useState<Array<{ id: number; fullName: string }>>([]);
   const [editContact, setEditContact] = useState<ContactListItem | null>(null);
+  const [modalEnterpriseTouched, setModalEnterpriseTouched] = useState(false);
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -48,6 +59,13 @@ export function ContatosPage() {
       .list()
       .then((d) => setBrokers(d.corretores.map((b) => ({ id: b.id, fullName: b.fullName }))))
       .catch(() => setBrokers([]));
+  }, []);
+
+  useEffect(() => {
+    projectsApi
+      .list(true)
+      .then((d) => setProjects(d.projects.filter((p) => p.status === 'ativo')))
+      .catch(() => setProjects([]));
   }, []);
 
   useEffect(() => {
@@ -182,7 +200,11 @@ export function ContatosPage() {
                       <td className="px-3 py-2">
                         <button
                           type="button"
-                          onClick={() => setEditContact(c)}
+                          onClick={() => {
+                            setModalError(null);
+                            setModalEnterpriseTouched(false);
+                            setEditContact(c);
+                          }}
                           className="px-2 py-1 rounded-[8px] border border-[#D1D5DB] text-[12px] hover:bg-[#F3F4F6]"
                         >
                           Detalhes/Editar
@@ -201,6 +223,7 @@ export function ContatosPage() {
         <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4">
           <div className="w-full max-w-xl bg-white rounded-[14px] border border-[#E5E7EB] p-4 space-y-3">
             <h3 className="text-[15px] font-semibold">Contato #{editContact.id}</h3>
+            {modalError && <div className="text-[12px] text-red-700 bg-red-50 border border-red-100 rounded-[8px] px-3 py-2">{modalError}</div>}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <input
                 className={inputCls}
@@ -215,12 +238,28 @@ export function ContatosPage() {
                 onChange={(e) => setEditContact({ ...editContact, email: e.target.value })}
                 placeholder="E-mail"
               />
-              <input
+              <select
                 className={inputCls}
-                value={editContact.enterpriseInterest ?? ''}
-                onChange={(e) => setEditContact({ ...editContact, enterpriseInterest: e.target.value })}
-                placeholder="Empreendimento de interesse"
-              />
+                value={editContact.enterpriseId != null ? String(editContact.enterpriseId) : ''}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  const id = raw === '' ? null : parseInt(raw, 10);
+                  const p = id != null && !Number.isNaN(id) ? projects.find((x) => x.id === id) : undefined;
+                  setModalEnterpriseTouched(true);
+                  setEditContact({
+                    ...editContact,
+                    enterpriseId: id != null && !Number.isNaN(id) ? id : null,
+                    enterpriseInterest: p?.name ?? editContact.enterpriseInterest,
+                  });
+                }}
+              >
+                <option value="">Selecione um empreendimento</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
               <select
                 className={inputCls}
                 value={editContact.ownerUserId ?? ''}
@@ -257,28 +296,42 @@ export function ContatosPage() {
               <div className="flex gap-2 ml-auto">
                 <button
                   type="button"
-                  onClick={() => setEditContact(null)}
-                  className="px-3 py-2 rounded-[10px] bg-[#F3F4F6] text-[13px]"
+                  disabled={saveLoading}
+                  onClick={() => {
+                    setEditContact(null);
+                    setModalError(null);
+                  }}
+                  className="px-3 py-2 rounded-[10px] bg-[#F3F4F6] text-[13px] disabled:opacity-60"
                 >
                   Cancelar
                 </button>
                 <button
                   type="button"
+                  disabled={saveLoading}
                   onClick={async () => {
-                    await contactsApi.update(editContact.id, {
-                      fullName: editContact.fullName ?? undefined,
-                      email: editContact.email ?? undefined,
-                      enterpriseInterest: editContact.enterpriseInterest ?? undefined,
-                      notes: editContact.notes ?? undefined,
-                      source: editContact.source ?? undefined,
-                    });
-                    await contactsApi.setOwner(editContact.id, editContact.ownerUserId);
-                    setEditContact(null);
-                    await load();
+                    if (!editContact) return;
+                    setModalError(null);
+                    setSaveLoading(true);
+                    try {
+                      await contactsApi.update(editContact.id, {
+                        fullName: editContact.fullName ?? undefined,
+                        email: editContact.email ?? undefined,
+                        notes: editContact.notes ?? undefined,
+                        source: editContact.source ?? undefined,
+                        ...(modalEnterpriseTouched ? { enterpriseId: editContact.enterpriseId ?? null } : {}),
+                      });
+                      await contactsApi.setOwner(editContact.id, editContact.ownerUserId);
+                      setEditContact(null);
+                      await load();
+                    } catch (e) {
+                      setModalError(e instanceof Error ? e.message : 'Não foi possível salvar.');
+                    } finally {
+                      setSaveLoading(false);
+                    }
                   }}
-                  className="px-3 py-2 rounded-[10px] bg-[#2563EB] text-white text-[13px] font-semibold"
+                  className="px-3 py-2 rounded-[10px] bg-[#2563EB] text-white text-[13px] font-semibold disabled:opacity-60"
                 >
-                  Salvar
+                  {saveLoading ? 'Salvando…' : 'Salvar'}
                 </button>
               </div>
             </div>

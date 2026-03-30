@@ -1,7 +1,7 @@
 import { query } from '../db/pg.js';
 import { touchContactInteractionByConversation } from './contactsRepository.js';
 
-export type MessageKindDb = 'text' | 'document' | 'image';
+export type MessageKindDb = 'text' | 'document' | 'image' | 'video';
 
 export interface MessageAttachmentPayload {
   fileName: string;
