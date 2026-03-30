@@ -19,6 +19,7 @@ import {
 import { sendTextMessage, sendLocalMediaToWhatsApp } from './whatsappMetaService.js';
 import {
   mergeHonestMaterialFallbackWhenNoFile,
+  forceHonestMaterialFallbackWhenNoFile,
   anaMediaDeliveryFailedReply,
 } from '../utils/anaMaterialReply.js';
 import {
@@ -263,6 +264,16 @@ async function sendAnaEnterpriseMediaFirst(params: {
   preResolvedFile: ResolvedEnterpriseFile;
 }): Promise<AnaMediaFirstResult> {
   const { conversationId, toPhoneNumber, ent, enterpriseIdForFile, cat, preResolvedFile: file } = params;
+  console.log('[ANA_DOC_SEND_START]', {
+    conversationId,
+    toPhoneTail: anaPhoneTail(toPhoneNumber),
+    enterpriseId: enterpriseIdForFile,
+    enterpriseName: ent.name,
+    category: cat,
+    preResolvedFileId: file.id,
+    preResolvedFileName: file.originalName,
+    preResolvedFilePath: file.path,
+  });
   const mediaRes = await sendLocalMediaToWhatsApp(toPhoneNumber, file.path, file.originalName, file.mime, {
     logCtx: {
       enterpriseId: enterpriseIdForFile,
@@ -275,34 +286,79 @@ async function sendAnaEnterpriseMediaFirst(params: {
     },
     caption: null,
   });
+  console.log('[ANA_DOC_UPLOAD_RESULT]', {
+    conversationId,
+    enterpriseId: enterpriseIdForFile,
+    category: cat,
+    fileId: file.id,
+    fileName: file.originalName,
+    ok: mediaRes.success,
+    messageKind: mediaRes.messageKind ?? null,
+    metaMessageId: mediaRes.metaMessageId ?? null,
+    code: mediaRes.code ?? null,
+    error: mediaRes.error ?? null,
+  });
   if (mediaRes.success && mediaRes.metaMessageId) {
-    await logSentFile(conversationId, file.id);
-    const mk = mediaRes.messageKind === 'image' ? 'image' : 'document';
-    let sizeBytes: number | undefined;
+    const mk =
+      mediaRes.messageKind === 'image' ? 'image' : mediaRes.messageKind === 'video' ? 'video' : 'document';
     try {
-      sizeBytes = statSync(file.path).size;
-    } catch {
-      sizeBytes = undefined;
+      console.log('[ANA_DOC_LOG_SENT_FILE_START]', {
+        conversationId,
+        enterpriseId: enterpriseIdForFile,
+        category: cat,
+        fileId: file.id,
+      });
+      await logSentFile(conversationId, file.id);
+      console.log('[ANA_DOC_LOG_SENT_FILE_OK]', {
+        conversationId,
+        enterpriseId: enterpriseIdForFile,
+        category: cat,
+        fileId: file.id,
+      });
+
+      let sizeBytes: number | undefined;
+      try {
+        sizeBytes = statSync(file.path).size;
+      } catch {
+        sizeBytes = undefined;
+      }
+      const attachment: MessageAttachmentPayload = {
+        fileName: file.originalName,
+        mimeType: file.mime,
+        sizeBytes,
+        whatsappMediaId: mediaRes.whatsappMediaId ?? null,
+        caption: null,
+        enterpriseFileId: file.id,
+      };
+      await insertMessage(conversationId, 'assistant', `[Arquivo: ${file.originalName}]`, mediaRes.metaMessageId, {
+        messageKind: mk,
+        attachment,
+      });
+      console.log('[ANA_DOC_SEND_SUCCESS]', {
+        conversationId,
+        metaMessageId: mediaRes.metaMessageId,
+        fileId: file.id,
+        fileName: file.originalName,
+        messageKind: mk,
+      });
+      return { ok: true };
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      console.error('[ANA_DOC_POST_UPLOAD_FAILED]', {
+        conversationId,
+        enterpriseId: enterpriseIdForFile,
+        category: cat,
+        fileId: file.id,
+        fileName: file.originalName,
+        error: err,
+      });
+      return {
+        ok: false,
+        error: `Falha após upload/aceite pela Meta: ${err}`,
+        code: mediaRes.code,
+        fileName: file.originalName,
+      };
     }
-    const attachment: MessageAttachmentPayload = {
-      fileName: file.originalName,
-      mimeType: file.mime,
-      sizeBytes,
-      whatsappMediaId: mediaRes.whatsappMediaId ?? null,
-      caption: null,
-      enterpriseFileId: file.id,
-    };
-    await insertMessage(conversationId, 'assistant', `[Arquivo: ${file.originalName}]`, mediaRes.metaMessageId, {
-      messageKind: mk,
-      attachment,
-    });
-    console.log('[DOC_SEND] mídia enviada com sucesso (antes do texto Ana)', {
-      conversationId,
-      metaMessageId: mediaRes.metaMessageId,
-      file: file.originalName,
-      messageKind: mk,
-    });
-    return { ok: true };
   }
   console.error('[ANA_DOC_SEND_FAILED]', {
     conversationId,
@@ -898,32 +954,81 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     let preResolvedFileForAna: Awaited<ReturnType<typeof getFileForSend>> = null;
     let effectiveSendCategory: FileCategory | null = null;
+    let requestedSendCategoryForLog: FileCategory | null = null;
+    let fileResolutionSkipReason: string | null = null;
 
     if (!hasSendableFiles) {
+      fileResolutionSkipReason = 'no_sendable_files_in_enterprise_focus';
+      console.log('[ANA_DOC_RESOLVE_SKIP]', {
+        conversationId,
+        enterpriseId: ent?.id ?? null,
+        enterpriseName: ent?.name ?? null,
+        requestedCategory: structured.send_file_category ?? null,
+        hasSendableFiles,
+        reason: fileResolutionSkipReason,
+      });
       structured = { ...structured, send_file_category: null };
       structured = {
         ...structured,
-        reply: mergeHonestMaterialFallbackWhenNoFile(structured.reply),
+        reply: forceHonestMaterialFallbackWhenNoFile(structured.reply),
       };
     } else {
       effectiveSendCategory = structured.send_file_category as FileCategory | null;
+      requestedSendCategoryForLog = effectiveSendCategory;
       const enterpriseIdForFileEarly = ent != null ? Number(ent.id) : null;
       if (effectiveSendCategory && enterpriseIdForFileEarly != null && Number.isFinite(enterpriseIdForFileEarly)) {
+        console.log('[ANA_DOC_RESOLVE_TRY]', {
+          conversationId,
+          enterpriseId: enterpriseIdForFileEarly,
+          enterpriseName: ent?.name ?? null,
+          category: effectiveSendCategory,
+        });
         preResolvedFileForAna = await getFileForSend(enterpriseIdForFileEarly, effectiveSendCategory);
         if (!preResolvedFileForAna) {
+          fileResolutionSkipReason = 'file_not_found_or_missing_on_disk';
           effectiveSendCategory = null;
           structured = {
             ...structured,
             send_file_category: null,
-            reply: mergeHonestMaterialFallbackWhenNoFile(structured.reply),
+            reply: forceHonestMaterialFallbackWhenNoFile(structured.reply),
           };
+          console.log('[ANA_DOC_RESOLVE_SKIP]', {
+            conversationId,
+            enterpriseId: enterpriseIdForFileEarly,
+            enterpriseName: ent?.name ?? null,
+            category: requestedSendCategoryForLog,
+            preResolvedFileForAna: null,
+            reason: fileResolutionSkipReason,
+          });
+        } else {
+          console.log('[ANA_DOC_RESOLVE_OK]', {
+            conversationId,
+            enterpriseId: enterpriseIdForFileEarly,
+            enterpriseName: ent?.name ?? null,
+            category: effectiveSendCategory,
+            preResolvedFileForAna: {
+              id: preResolvedFileForAna.id,
+              name: preResolvedFileForAna.originalName,
+              path: preResolvedFileForAna.path,
+            },
+          });
         }
       } else if (effectiveSendCategory) {
+        fileResolutionSkipReason = 'missing_enterpriseId_for_file_lookup';
         effectiveSendCategory = null;
+        console.log('[ANA_DOC_RESOLVE_SKIP]', {
+          conversationId,
+          enterpriseId: ent?.id ?? null,
+          enterpriseName: ent?.name ?? null,
+          category: requestedSendCategoryForLog,
+          requestedCategory: requestedSendCategoryForLog,
+          preResolvedFileForAna: null,
+          reason: fileResolutionSkipReason,
+        });
         structured = {
           ...structured,
           send_file_category: null,
-          reply: mergeHonestMaterialFallbackWhenNoFile(structured.reply),
+          reply: forceHonestMaterialFallbackWhenNoFile(structured.reply),
         };
       }
     }
@@ -1063,7 +1168,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         preResolvedFile: preResolvedFileForAna,
       });
       if (!mediaOutcome.ok) {
-        replyText = anaMediaDeliveryFailedReply(mediaOutcome.fileName, mediaOutcome.error).slice(0, 4000);
+        replyText = anaMediaDeliveryFailedReply(mediaOutcome.fileName, mediaOutcome.error);
         console.log('[ANA_PIPELINE] engine_media_failed_reply_replaced', {
           conversationId,
           fileName: mediaOutcome.fileName,
