@@ -34,6 +34,7 @@ import {
   logSentFile,
   listEnterprises,
   normalizeFileCategory,
+  logAnaDocInventoryForEnterprise,
   type FileCategory,
   type EnterpriseRow,
 } from '../repositories/enterpriseRepository.js';
@@ -1015,6 +1016,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const llmCat = structured.send_file_category;
       requestedSendCategoryForLog = llmCat ?? userCatHint;
       const tryOrder = buildDocCategoryTryOrder(llmCat, userCatHint, sendableAnaCategories);
+      await logAnaDocInventoryForEnterprise(ent.id);
+      if (tryOrder.length === 0) {
+        console.log('[ANA_DOC_LOOKUP_MISS_REASON]', {
+          conversationId,
+          enterpriseId: ent.id,
+          reason: 'empty_try_order_no_category_passes_send_filters',
+          sendableAnaCategories,
+          note: 'Nenhum arquivo com is_active e can_be_sent_by_ana na listagem; getFileForSend não será chamado.',
+        });
+      }
       console.log('[ANA_DOC_RESOLVE_TRY]', {
         conversationId,
         enterpriseId: ent.id,
@@ -1022,6 +1033,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         tryOrder,
         llmCategory: llmCat,
         userHint: userCatHint,
+        sendableAnaCategoriesFromEngine: sendableAnaCategories,
       });
       let resolvedFile: Awaited<ReturnType<typeof getFileForSend>> = null;
       let winningCat: FileCategory | null = null;

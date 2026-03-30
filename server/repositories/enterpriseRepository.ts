@@ -506,15 +506,86 @@ export async function loadAgentKnowledgeText(enterpriseId: number): Promise<stri
   return parts.join('\n').trim();
 }
 
+/**
+ * Inventário completo de `enterprise_files` para comparar UI vs elegibilidade de envio.
+ * Base de conhecimento usa `can_be_used_as_knowledge`; envio exige também `can_be_sent_by_ana`.
+ */
+export async function logAnaDocInventoryForEnterprise(enterpriseId: number): Promise<void> {
+  const { rows } = await query<{
+    id: number;
+    enterprise_id: number;
+    category: string;
+    original_name: string;
+    storage_path: string;
+    mime_type: string;
+    is_active: boolean;
+    can_be_used_as_knowledge: boolean;
+    can_be_sent_by_ana: boolean;
+    created_at: Date;
+  }>(
+    `SELECT id, enterprise_id, category, original_name, storage_path, mime_type, is_active,
+            can_be_used_as_knowledge, can_be_sent_by_ana, created_at
+     FROM enterprise_files WHERE enterprise_id = $1 ORDER BY id`,
+    [enterpriseId]
+  );
+  const root = enterpriseDir(enterpriseId);
+  const files = rows.map((r) => {
+    const abs = join(root, r.storage_path);
+    const onDisk = existsSync(abs);
+    const mismatchKnowledgeVsSend =
+      r.can_be_used_as_knowledge === true &&
+      r.can_be_sent_by_ana === false &&
+      r.is_active === true;
+    return {
+      id: r.id,
+      enterpriseId: r.enterprise_id,
+      category: r.category,
+      originalName: r.original_name,
+      relativeStoragePath: r.storage_path,
+      mimeType: r.mime_type,
+      isActive: r.is_active,
+      useAsKnowledge: r.can_be_used_as_knowledge,
+      canBeSentByAna: r.can_be_sent_by_ana,
+      createdAt: r.created_at.toISOString(),
+      existsOnDisk: onDisk,
+      matchesSendQuery: r.is_active && r.can_be_sent_by_ana,
+      /** Se true, a Ana usa o texto na base mas `getFileForSend` ignora a linha. */
+      knowledgeOnlyNoSendFlag: mismatchKnowledgeVsSend,
+    };
+  });
+  console.log('[ANA_DOC_INVENTORY]', {
+    enterpriseId,
+    fileCount: files.length,
+    files,
+  });
+}
+
 export async function getFileForSend(
   enterpriseId: number,
   category: FileCategory | string
 ): Promise<{ id: number; path: string; originalName: string; mime: string; relativeStoragePath: string } | null> {
   const catNorm = normalizeFileCategory(String(category));
   if (!catNorm) {
-    console.warn('[DOC_LOOKUP] categoria inválida após normalização', { enterpriseId, category });
+    console.log('[ANA_DOC_LOOKUP_MISS_REASON]', {
+      enterpriseId,
+      rawCategory: category,
+      reason: 'invalid_category_after_normalize',
+    });
+    console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: String(category), found: false });
     return null;
   }
+
+  console.log('[ANA_DOC_LOOKUP_QUERY]', {
+    enterpriseId,
+    category: catNorm,
+    table: 'enterprise_files',
+    filters: {
+      enterprise_id: enterpriseId,
+      category: catNorm,
+      is_active: true,
+      can_be_sent_by_ana: true,
+    },
+  });
 
   const { rows } = await query<{ id: number; storage_path: string; original_name: string; mime_type: string }>(
     `SELECT id, storage_path, original_name, mime_type FROM enterprise_files
@@ -525,34 +596,70 @@ export async function getFileForSend(
   );
   const r = rows[0];
   if (!r) {
-    const { rows: byEnt } = await query<{ category: string; n: string }>(
-      `SELECT category, COUNT(*)::text AS n FROM enterprise_files WHERE enterprise_id = $1 GROUP BY category ORDER BY category`,
-      [enterpriseId]
+    const { rows: sameCatActive } = await query<{
+      id: number;
+      is_active: boolean;
+      can_be_sent_by_ana: boolean;
+      can_be_used_as_knowledge: boolean;
+      original_name: string;
+    }>(
+      `SELECT id, is_active, can_be_sent_by_ana, can_be_used_as_knowledge, original_name
+       FROM enterprise_files
+       WHERE enterprise_id = $1 AND category = $2
+       ORDER BY id DESC
+       LIMIT 10`,
+      [enterpriseId, catNorm]
     );
-    console.warn('[DOC_LOOKUP] nenhuma linha ativa para a categoria pedida', {
-      enterpriseId,
-      categoryRequested: catNorm,
-      categoriesPresentInDb: byEnt.map((x) => `${x.category}(${x.n})`),
-    });
+    if (sameCatActive.length === 0) {
+      const { rows: byEnt } = await query<{ category: string; n: string }>(
+        `SELECT category, COUNT(*)::text AS n FROM enterprise_files WHERE enterprise_id = $1 GROUP BY category ORDER BY category`,
+        [enterpriseId]
+      );
+      console.log('[ANA_DOC_LOOKUP_MISS_REASON]', {
+        enterpriseId,
+        category: catNorm,
+        reason: 'no_row_for_category',
+        categoriesPresentInDb: byEnt.map((x) => `${x.category}(${x.n})`),
+      });
+    } else {
+      const blocked = sameCatActive.filter((x) => !x.is_active || !x.can_be_sent_by_ana);
+      console.log('[ANA_DOC_LOOKUP_MISS_REASON]', {
+        enterpriseId,
+        category: catNorm,
+        reason: 'row_exists_but_fails_send_filters',
+        detail:
+          blocked.some((x) => !x.is_active) ? 'inactive_row' : 'can_be_sent_by_ana_false',
+        rowsInCategory: sameCatActive,
+        hint:
+          sameCatActive.some((x) => x.can_be_used_as_knowledge && !x.can_be_sent_by_ana)
+            ? 'Arquivo na base de conhecimento (can_be_used_as_knowledge) mas "Enviar ao cliente" desligado no banco (can_be_sent_by_ana=false). Ative no admin ou PATCH /projects/:id/knowledge/:fileId.'
+            : undefined,
+      });
+    }
+    console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
     return null;
   }
   const path = join(enterpriseDir(enterpriseId), r.storage_path);
   if (!existsSync(path)) {
-    console.warn('[DOC_LOOKUP] linha no banco mas arquivo ausente no disco', {
+    console.log('[ANA_DOC_LOOKUP_MISS_REASON]', {
       enterpriseId,
       category: catNorm,
-      enterprise_file_id: r.id,
-      storage_path: r.storage_path,
+      enterpriseFileId: r.id,
+      reason: 'row_ok_but_file_missing_on_disk',
+      relativeStoragePath: r.storage_path,
       absolutePath: path,
     });
+    console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
     return null;
   }
-  console.log('[DOC_LOOKUP] arquivo resolvido para envio', {
+  console.log('[ANA_DOC_LOOKUP_RESULT]', {
     enterpriseId,
     category: catNorm,
-    enterprise_file_id: r.id,
-    storage_path: r.storage_path,
-    original_name: r.original_name,
+    found: true,
+    enterpriseFileId: r.id,
+    originalName: r.original_name,
+    relativeStoragePath: r.storage_path,
+    existsOnDisk: true,
   });
   return {
     id: r.id,
