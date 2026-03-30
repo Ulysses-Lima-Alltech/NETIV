@@ -32,6 +32,7 @@ import {
   getVariablesMap,
   logSentFile,
   listEnterprises,
+  normalizeFileCategory,
   type FileCategory,
   type EnterpriseRow,
 } from '../repositories/enterpriseRepository.js';
@@ -85,6 +86,13 @@ import {
   type CommercialFlowState,
 } from '../utils/commercialFlowState.js';
 import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
+import {
+  isBareGreetingOnly,
+  userAskedForSendableMaterial,
+  inferPreferredCategoryFromUserText,
+  buildDocCategoryTryOrder,
+  pickPostMediaAckText,
+} from '../utils/anaDocSendIntent.js';
 
 function anaPhoneTail(raw: string | null | undefined, len = 6): string | null {
   const d = String(raw ?? '').replace(/\D/g, '');
@@ -713,13 +721,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     let fileInventory = '';
     let hasSendableFiles = false;
+    let sendableAnaCategories: FileCategory[] = [];
     if (ent) {
       const files = await listEnterpriseFiles(ent.id);
-      fileInventory = files
-        .filter((f) => f.is_active && f.can_be_sent_by_ana)
-        .map((f) => `${f.category}: ${f.original_name}`)
-        .join('; ');
-      hasSendableFiles = fileInventory.trim().length > 0;
+      const sendableRows = files.filter((f) => f.is_active && f.can_be_sent_by_ana);
+      sendableAnaCategories = [
+        ...new Set(
+          sendableRows
+            .map((f) => normalizeFileCategory(f.category))
+            .filter((c): c is FileCategory => c != null)
+        ),
+      ];
+      fileInventory = sendableRows.map((f) => `${f.category}: ${f.original_name}`).join('; ');
+      hasSendableFiles = sendableAnaCategories.length > 0;
     }
 
     let allEnterpriseNames: string[] = [];
@@ -941,11 +955,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ent = await getActiveEnterpriseById(pid);
         if (ent) {
           const files = await listEnterpriseFiles(ent.id);
-          fileInventory = files
-            .filter((f) => f.is_active && f.can_be_sent_by_ana)
-            .map((f) => `${f.category}: ${f.original_name}`)
-            .join('; ');
-          hasSendableFiles = fileInventory.trim().length > 0;
+          const sendableRows = files.filter((f) => f.is_active && f.can_be_sent_by_ana);
+          sendableAnaCategories = [
+            ...new Set(
+              sendableRows
+                .map((f) => normalizeFileCategory(f.category))
+                .filter((c): c is FileCategory => c != null)
+            ),
+          ];
+          fileInventory = sendableRows.map((f) => `${f.category}: ${f.original_name}`).join('; ');
+          hasSendableFiles = sendableAnaCategories.length > 0;
         }
       }
     }
@@ -956,8 +975,33 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let fileResolutionSkipReason: string | null = null;
     let usedHumanMaterialFallbackForNoFile = false;
 
-    if (!hasSendableFiles) {
-      fileResolutionSkipReason = 'no_sendable_files_in_enterprise_focus';
+    const bareGreeting = isBareGreetingOnly(trimmed);
+    const userMaterialAsk =
+      userAskedForSendableMaterial(trimmed, fullUserUtterances) && !bareGreeting;
+    const shouldAttemptDocSend =
+      !bareGreeting && (userMaterialAsk || structured.send_file_category != null);
+
+    console.log('[ANA_DOC_INTENT]', {
+      conversationId,
+      userMaterialAsk,
+      llmSendCategory: structured.send_file_category ?? null,
+      intent: structured.intent,
+      bareGreeting,
+      shouldAttemptDocSend,
+      enterpriseId: ent?.id ?? null,
+      sendableCategories: sendableAnaCategories,
+    });
+
+    if (!shouldAttemptDocSend) {
+      structured = { ...structured, send_file_category: null };
+      fileResolutionSkipReason = 'no_material_intent_this_turn';
+      console.log('[ANA_DOC_RESOLVE_SKIP]', {
+        conversationId,
+        enterpriseId: ent?.id ?? null,
+        reason: fileResolutionSkipReason,
+      });
+    } else if (!hasSendableFiles || !ent) {
+      fileResolutionSkipReason = !ent ? 'no_enterprise_focus_for_file' : 'no_sendable_files_in_enterprise_focus';
       console.log('[ANA_DOC_RESOLVE_SKIP]', {
         conversationId,
         enterpriseId: ent?.id ?? null,
@@ -978,75 +1022,64 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       };
       usedHumanMaterialFallbackForNoFile = true;
     } else {
-      effectiveSendCategory = structured.send_file_category as FileCategory | null;
-      requestedSendCategoryForLog = effectiveSendCategory;
-      const enterpriseIdForFileEarly = ent != null ? Number(ent.id) : null;
-      if (effectiveSendCategory && enterpriseIdForFileEarly != null && Number.isFinite(enterpriseIdForFileEarly)) {
-        console.log('[ANA_DOC_RESOLVE_TRY]', {
-          conversationId,
-          enterpriseId: enterpriseIdForFileEarly,
-          enterpriseName: ent?.name ?? null,
-          category: effectiveSendCategory,
-        });
-        preResolvedFileForAna = await getFileForSend(enterpriseIdForFileEarly, effectiveSendCategory);
-        if (!preResolvedFileForAna) {
-          fileResolutionSkipReason = 'file_not_found_or_missing_on_disk';
-          effectiveSendCategory = null;
-          structured = {
-            ...structured,
-            send_file_category: null,
-            reply: buildHumanMaterialFallback({
-              enterpriseName: ent?.name ?? null,
-              reply: structured.reply,
-              customerAskedForBook: true,
-              lastAssistantMessage: null,
-            }),
-          };
-          usedHumanMaterialFallbackForNoFile = true;
-          console.log('[ANA_DOC_RESOLVE_SKIP]', {
-            conversationId,
-            enterpriseId: enterpriseIdForFileEarly,
-            enterpriseName: ent?.name ?? null,
-            category: requestedSendCategoryForLog,
-            preResolvedFileForAna: null,
-            reason: fileResolutionSkipReason,
-          });
-        } else {
-          console.log('[ANA_DOC_RESOLVE_OK]', {
-            conversationId,
-            enterpriseId: enterpriseIdForFileEarly,
-            enterpriseName: ent?.name ?? null,
-            category: effectiveSendCategory,
-            preResolvedFileForAna: {
-              id: preResolvedFileForAna.id,
-              name: preResolvedFileForAna.originalName,
-              path: preResolvedFileForAna.path,
-            },
-          });
+      const userCatHint = inferPreferredCategoryFromUserText(trimmed, fullUserUtterances);
+      const llmCat = structured.send_file_category;
+      requestedSendCategoryForLog = llmCat ?? userCatHint;
+      const tryOrder = buildDocCategoryTryOrder(llmCat, userCatHint, sendableAnaCategories);
+      console.log('[ANA_DOC_RESOLVE_TRY]', {
+        conversationId,
+        enterpriseId: ent.id,
+        enterpriseName: ent.name,
+        tryOrder,
+        llmCategory: llmCat,
+        userHint: userCatHint,
+      });
+      let resolvedFile: Awaited<ReturnType<typeof getFileForSend>> = null;
+      let winningCat: FileCategory | null = null;
+      for (const cat of tryOrder) {
+        const f = await getFileForSend(ent.id, cat);
+        if (f) {
+          resolvedFile = f;
+          winningCat = cat;
+          break;
         }
-      } else if (effectiveSendCategory) {
-        fileResolutionSkipReason = 'missing_enterpriseId_for_file_lookup';
+      }
+      if (!resolvedFile || !winningCat) {
+        fileResolutionSkipReason = 'file_not_found_or_missing_on_disk_after_try_order';
         effectiveSendCategory = null;
-        console.log('[ANA_DOC_RESOLVE_SKIP]', {
-          conversationId,
-          enterpriseId: ent?.id ?? null,
-          enterpriseName: ent?.name ?? null,
-          category: requestedSendCategoryForLog,
-          requestedCategory: requestedSendCategoryForLog,
-          preResolvedFileForAna: null,
-          reason: fileResolutionSkipReason,
-        });
         structured = {
           ...structured,
           send_file_category: null,
           reply: buildHumanMaterialFallback({
-            enterpriseName: ent?.name ?? null,
+            enterpriseName: ent.name,
             reply: structured.reply,
             customerAskedForBook: true,
             lastAssistantMessage: null,
           }),
         };
         usedHumanMaterialFallbackForNoFile = true;
+        console.log('[ANA_DOC_RESOLVE_SKIP]', {
+          conversationId,
+          enterpriseId: ent.id,
+          enterpriseName: ent.name,
+          tryOrder,
+          reason: fileResolutionSkipReason,
+        });
+      } else {
+        preResolvedFileForAna = resolvedFile;
+        effectiveSendCategory = winningCat;
+        structured = { ...structured, send_file_category: winningCat };
+        console.log('[ANA_DOC_RESOLVE_OK]', {
+          conversationId,
+          enterpriseId: ent.id,
+          enterpriseName: ent.name,
+          category: effectiveSendCategory,
+          preResolvedFileForAna: {
+            id: resolvedFile.id,
+            name: resolvedFile.originalName,
+            path: resolvedFile.path,
+          },
+        });
       }
     }
     console.log('[ANA_PARSE_FLOW]', {
@@ -1128,6 +1161,23 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       enterpriseIdForFile != null &&
       Number.isFinite(enterpriseIdForFile);
 
+    let docMediaFirstSkipReason: string | null = null;
+    if (!willSendMediaFirst) {
+      if (!preResolvedFileForAna) docMediaFirstSkipReason = 'no_pre_resolved_file';
+      else if (!effectiveSendCategory) docMediaFirstSkipReason = 'no_effective_category';
+      else if (!ent) docMediaFirstSkipReason = 'no_enterprise_row';
+      else if (enterpriseIdForFile == null || !Number.isFinite(enterpriseIdForFile))
+        docMediaFirstSkipReason = 'invalid_enterprise_id';
+      else docMediaFirstSkipReason = 'unknown';
+    }
+    console.log('[ANA_DOC_MEDIA_FIRST_DECISION]', {
+      conversationId,
+      willSendMediaFirst,
+      skipReason: docMediaFirstSkipReason,
+      effectiveSendCategory: effectiveSendCategory ?? null,
+      fileName: preResolvedFileForAna?.originalName ?? null,
+    });
+
     const rowsBeforeSend = await getMessagesByConversationId(conversationId);
     const lastAsstDup = [...rowsBeforeSend].reverse().find((m) => m.role === 'assistant');
     const lastContent = (lastAsstDup?.content || '').trim();
@@ -1207,6 +1257,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           replyLenAfterReplace: replyText.length,
         });
       } else {
+        replyText = pickPostMediaAckText(lastAsstDup?.content ?? null);
+        console.log('[ANA_PIPELINE] engine_post_media_short_ack', {
+          conversationId,
+          replyLen: replyText.length,
+        });
         await sleepMs(ANA_MEDIA_THEN_TEXT_GAP_MS);
         if (isPipelineStale(conversationId, replyPipelineToken)) {
           console.log('[ANA_PIPELINE] engine_cancelled_stale', {
