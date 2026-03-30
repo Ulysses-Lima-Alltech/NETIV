@@ -29,6 +29,39 @@ export function stripMaterialDeliveryClaims(text: string): string {
 const HONEST_FALLBACK_PURE = 'Claro. Posso te adiantar os principais pontos por aqui. Seu foco é morar ou investir?';
 const HONEST_FALLBACK_MARKER = 'Seu foco é morar ou investir?';
 
+/** Turno hard-send: arquivo não encontrado / sem envio — sem pergunta, sem desvio de assunto. */
+const MATERIAL_UNAVAILABLE_NEUTRAL: readonly string[] = [
+  'No momento não localizei esse material.',
+  'Agora não encontrei esse material disponível.',
+  'Esse material não está disponível para envio neste momento.',
+] as const;
+
+/** Turno hard-send: tentativa de envio falhou — sem pergunta, sem promessa. */
+const MATERIAL_SEND_FAILED_NEUTRAL: readonly string[] = [
+  'Agora não consegui concluir esse envio.',
+  'No momento esse material não foi enviado.',
+  'Esse envio não foi concluído agora.',
+] as const;
+
+function pickFirstNotSimilarToLast(options: readonly string[], lastAssistantMessage: string | null | undefined): string {
+  const last = (lastAssistantMessage ?? '').trim().toLowerCase();
+  for (const t of options) {
+    const p = t.slice(0, Math.min(22, t.length)).toLowerCase();
+    if (!last.includes(p)) return t;
+  }
+  return options[0] ?? '';
+}
+
+/** Quando o cliente pediu material mas não há arquivo resolvível no empreendimento. */
+export function pickMaterialUnavailableNeutralReply(lastAssistantMessage?: string | null): string {
+  return pickFirstNotSimilarToLast(MATERIAL_UNAVAILABLE_NEUTRAL, lastAssistantMessage);
+}
+
+/** Quando há arquivo mas o envio (Meta/WhatsApp) falhou. */
+export function pickMaterialSendFailedNeutralReply(lastAssistantMessage?: string | null): string {
+  return pickFirstNotSimilarToLast(MATERIAL_SEND_FAILED_NEUTRAL, lastAssistantMessage);
+}
+
 function norm(s: string): string {
   return (s || '')
     .toLowerCase()
@@ -104,5 +137,5 @@ export function forceHonestMaterialFallbackWhenNoFile(reply: string): string {
 export function anaMediaDeliveryFailedReply(fileName: string, technicalHint?: string | null): string {
   void fileName;
   void technicalHint;
-  return buildHumanMaterialFallback({ customerAskedForBook: true });
+  return pickMaterialSendFailedNeutralReply(null);
 }

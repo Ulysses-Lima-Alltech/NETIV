@@ -187,7 +187,7 @@ reply — regras curtas:
 
 appointment_*: confirmed só com data+hora combinadas de verdade; use histórico para completar; remarcação atualiza date/time.
 
-send_file_category: preencha somente se o cliente pedir material/arquivo E a lista "Arquivos que podem ser enviados" acima incluir essa categoria; caso contrário null. O backend tenta o envio real pelo WhatsApp quando houver arquivo; a mensagem final ao cliente sobre “mandar/enviar/anexar/material/PDF/book” só é definida **depois** desse envio. No campo "reply" do JSON, **não** escreva que você vai mandar, enviar ou anexar, nem que já mandou, nem “segue o material/PDF”, nem “posso te mandar o book/material completo”, nem “se quiser te envio” — descreva o produto ou pergunte algo útil, sem promessa de anexo. Se send_file_category for null ou a lista disser que envio está desativado, continue sem prometer arquivo; ofereça informação por texto ou encaminhamento a humano.
+send_file_category: preencha somente se o cliente pedir material/arquivo E a lista "Arquivos que podem ser enviados" acima incluir essa categoria; caso contrário null. Se o cliente pedir material/book/PDF/catálogo/apresentação/documento, o backend usa fluxo hard-send: tenta enviar o arquivo e só então manda uma linha curta (ACK ou indisponibilidade neutra) — **o campo "reply" não é enviado ao cliente nesse turno** (use placeholder mínimo, ex.: "."); não coloque promessas de envio, perguntas comerciais nem desvio de assunto no "reply" nesse caso.
 
 lead_temperature: separado de handoff; compra/fechamento explícito → "quente"; nunca envie null para apagar temperatura.
 

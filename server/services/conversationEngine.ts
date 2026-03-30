@@ -18,9 +18,8 @@ import {
 } from '../repositories/conversationRepository.js';
 import { sendTextMessage, sendLocalMediaToWhatsApp } from './whatsappMetaService.js';
 import {
-  buildHumanMaterialFallback,
-  stripMaterialDeliveryClaims,
-  textHasMaterialDeliveryClaim,
+  pickMaterialUnavailableNeutralReply,
+  pickMaterialSendFailedNeutralReply,
 } from '../utils/anaMaterialReply.js';
 import {
   tryMatchEnterpriseFromUserCorpus,
@@ -975,8 +974,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let effectiveSendCategory: FileCategory | null = null;
     let requestedSendCategoryForLog: FileCategory | null = null;
     let fileResolutionSkipReason: string | null = null;
-    let usedHumanMaterialFallbackForNoFile = false;
-
     const bareGreeting = isBareGreetingOnly(trimmed);
     const userMaterialAsk =
       userAskedForSendableMaterial(trimmed, fullUserUtterances) && !bareGreeting;
@@ -1013,16 +1010,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         reason: fileResolutionSkipReason,
       });
       structured = { ...structured, send_file_category: null };
-      structured = {
-        ...structured,
-        reply: buildHumanMaterialFallback({
-          enterpriseName: ent?.name ?? null,
-          reply: structured.reply,
-          customerAskedForBook: true,
-          lastAssistantMessage: null,
-        }),
-      };
-      usedHumanMaterialFallbackForNoFile = true;
     } else {
       const userCatHint = inferPreferredCategoryFromUserText(trimmed, fullUserUtterances);
       const llmCat = structured.send_file_category;
@@ -1049,17 +1036,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (!resolvedFile || !winningCat) {
         fileResolutionSkipReason = 'file_not_found_or_missing_on_disk_after_try_order';
         effectiveSendCategory = null;
-        structured = {
-          ...structured,
-          send_file_category: null,
-          reply: buildHumanMaterialFallback({
-            enterpriseName: ent.name,
-            reply: structured.reply,
-            customerAskedForBook: true,
-            lastAssistantMessage: null,
-          }),
-        };
-        usedHumanMaterialFallbackForNoFile = true;
+        structured = { ...structured, send_file_category: null };
         console.log('[ANA_DOC_RESOLVE_SKIP]', {
           conversationId,
           enterpriseId: ent.id,
@@ -1228,45 +1205,36 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     let replyText: string;
-    if (canClaimMaterialWasSent) {
-      replyText = pickPostMediaAckText(lastAsstDup?.content ?? null);
-      console.log('[ANA_PIPELINE] engine_post_media_short_ack', {
-        conversationId,
-        replyLen: replyText.length,
-        canClaimMaterialWasSent: true,
-      });
+    if (shouldAttemptDocSend) {
+      if (canClaimMaterialWasSent) {
+        replyText = pickPostMediaAckText(lastAsstDup?.content ?? null);
+        console.log('[ANA_PIPELINE] engine_post_media_short_ack', {
+          conversationId,
+          replyLen: replyText.length,
+          canClaimMaterialWasSent: true,
+        });
+      } else if (mediaOutcome != null && !mediaOutcome.ok) {
+        replyText = pickMaterialSendFailedNeutralReply(lastAsstDup?.content ?? null);
+        console.log('[ANA_DOC_HARD_FAIL_NO_FALLBACK]', {
+          conversationId,
+          branch: 'meta_send_failed',
+        });
+      } else {
+        replyText = pickMaterialUnavailableNeutralReply(lastAsstDup?.content ?? null);
+        const branch =
+          !ent || !hasSendableFiles
+            ? 'no_enterprise_or_no_sendable_files'
+            : 'file_not_found_after_category_try';
+        console.log('[ANA_DOC_HARD_FAIL_NO_FALLBACK]', {
+          conversationId,
+          branch,
+        });
+      }
     } else {
-      let rt = finalizeAnaReplyText(replyBody, {
+      replyText = finalizeAnaReplyText(replyBody, {
         userMessage: trimmed,
         conversationMode: mode,
       }).slice(0, 4000);
-      if (usedHumanMaterialFallbackForNoFile) {
-        rt = buildHumanMaterialFallback({
-          enterpriseName: ent?.name ?? null,
-          customerAskedForBook: true,
-          reply: rt,
-          lastAssistantMessage: lastAsstDup?.content ?? null,
-        });
-        usedHumanMaterialFallbackForNoFile = false;
-      }
-      if (shouldAttemptDocSend && !canClaimMaterialWasSent) {
-        rt = stripMaterialDeliveryClaims(rt);
-        if (!rt.trim() || textHasMaterialDeliveryClaim(rt)) {
-          rt = buildHumanMaterialFallback({
-            enterpriseName: ent?.name ?? null,
-            customerAskedForBook: true,
-            reply: '',
-            lastAssistantMessage: lastAsstDup?.content ?? null,
-          });
-        }
-        console.log('[ANA_PIPELINE] engine_material_reply_no_send_claim_stripped', {
-          conversationId,
-          hadResolvedPath: willSendMediaFirst,
-          mediaAttempted: mediaOutcome != null,
-          mediaOk: mediaOutcome?.ok ?? null,
-        });
-      }
-      replyText = rt;
     }
 
     const lastContent = (lastAsstDup?.content || '').trim();
