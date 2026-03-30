@@ -1,8 +1,30 @@
 /**
- * Quando não há arquivo enviável, evita promessa falsa de envio de material.
+ * Frases que afirmam ou prometem envio de material/arquivo — só permitidas se o backend
+ * confirmou envio real (`mediaOutcome.ok === true`). Caso contrário, remover do texto ao cliente.
  */
 const DELIVERY_PROMISE_RE =
-  /(vou te enviar|vou enviar|vou mandar|vou te mandar|vou encaminhar|posso te enviar|posso te mandar|te envio|j[aá] te envio|te mando( o| a)?|mandarei|mandando (o |a )?(arquivo|material|pdf|book|documento)|segue (o |a )?(arquivo|material|pdf|book)|envio (o |a )?(arquivo|material|pdf|book)|em anexo|já te envio|já te mando|o arquivo está a caminho|te entrego( o| a)?|vou te passar (o |a )?(arquivo|material|pdf|book))/i;
+  /(vou te enviar|vou enviar|vou mandar|vou te mandar|vou encaminhar|posso te enviar|posso te mandar|posso enviar|posso mandar|consigo (te )?(enviar|mandar)|se quiser (eu )?(te )?(envio|mando)|te envio|j[aá] te envio|te mando|te enviei|j[aá] te enviei|acabei de te (mandar|enviar)|pronto,\s*mandei|mandei (pra|a|para) voc[eê]|segue (o |a )?(arquivo|material|pdf|book|documento|cat[aá]logo)|envio (o |a )?(arquivo|material|pdf|book|documento)|em anexo|já te envio|já te mando|o arquivo está a caminho|te entrego|vou te passar (o |a )?(arquivo|material|pdf|book|documento|cat[aá]logo)|material completo.{0,40}(vou|posso|mando|envio)|(?:vou|posso).{0,24}material completo)/i;
+
+/** Testa texto completo (para validação pós-strip). */
+export function textHasMaterialDeliveryClaim(text: string): boolean {
+  return DELIVERY_PROMISE_RE.test((text || '').trim());
+}
+
+/**
+ * Remove frases que prometem/afirmam envio quando o envio NÃO foi confirmado pelo pipeline.
+ * Primeiro tenta cortar por pontuação; se ainda restar promessa numa frase única longa, remove o trecho.
+ */
+export function stripMaterialDeliveryClaims(text: string): string {
+  const raw = (text || '').trim();
+  if (!raw) return '';
+  const pieces = raw.split(/(?<=[.!?…])\s+/).map((s) => s.trim()).filter(Boolean);
+  const kept = pieces.filter((s) => !DELIVERY_PROMISE_RE.test(s));
+  let out = kept.join(' ').replace(/\s+/g, ' ').trim();
+  if (DELIVERY_PROMISE_RE.test(out)) {
+    out = raw.replace(DELIVERY_PROMISE_RE, ' ').replace(/\s+/g, ' ').replace(/^\s*[.,;:]\s*|\s*[.,;:]\s*$/g, '').trim();
+  }
+  return out;
+}
 
 const HONEST_FALLBACK_PURE = 'Claro. Posso te adiantar os principais pontos por aqui. Seu foco é morar ou investir?';
 const HONEST_FALLBACK_MARKER = 'Seu foco é morar ou investir?';

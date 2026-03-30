@@ -19,6 +19,8 @@ import {
 import { sendTextMessage, sendLocalMediaToWhatsApp } from './whatsappMetaService.js';
 import {
   buildHumanMaterialFallback,
+  stripMaterialDeliveryClaims,
+  textHasMaterialDeliveryClaim,
 } from '../utils/anaMaterialReply.js';
 import {
   tryMatchEnterpriseFromUserCorpus,
@@ -1148,11 +1150,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
-    let replyText = finalizeAnaReplyText(replyBody, {
-      userMessage: trimmed,
-      conversationMode: mode,
-    }).slice(0, 4000);
-
     const enterpriseIdForFile = ent != null ? Number(ent.id) : null;
     const willSendMediaFirst =
       preResolvedFileForAna != null &&
@@ -1180,62 +1177,28 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     const rowsBeforeSend = await getMessagesByConversationId(conversationId);
     const lastAsstDup = [...rowsBeforeSend].reverse().find((m) => m.role === 'assistant');
-    const lastContent = (lastAsstDup?.content || '').trim();
-    const ageDup = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
-    if (lastContent && lastContent === replyText.trim() && ageDup < 55_000) {
-      console.warn('[ANA_PIPELINE] duplicate_reply_unchanged', { conversationId, ageMs: ageDup });
-    }
-    if (usedHumanMaterialFallbackForNoFile) {
-      replyText = buildHumanMaterialFallback({
-        enterpriseName: ent?.name ?? null,
-        customerAskedForBook: true,
-        reply: replyText,
-        lastAssistantMessage: lastAsstDup?.content ?? null,
-      });
-      usedHumanMaterialFallbackForNoFile = false;
-    }
-    console.log('[ANA_PIPELINE] engine_reply_generated', {
-      conversationId,
-      inboundMetaMessageId,
-      replyPipelineToken: replyPipelineToken ?? null,
-      replyLen: replyText.length,
-      replySource,
-      fallbackReason,
-    });
-    console.log('[ANA_PIPELINE] engine_send_attempt', {
-      conversationId,
-      toPhoneTail: anaPhoneTail(toPhoneNumber),
-      inboundMetaMessageId,
-      replyPipelineToken: replyPipelineToken ?? null,
-      phase: willSendMediaFirst ? 'ana_media_then_text' : 'ana_main_reply',
-      replyLen: replyText.length,
-      willSendMediaFirst,
-    });
-    await sleepMs(randomAnaReplyDelayMs({ replyLength: replyText.length }));
-    if (isPipelineStale(conversationId, replyPipelineToken)) {
-      console.log('[ANA_PIPELINE] engine_cancelled_stale', {
-        conversationId,
-        replyPipelineToken: replyPipelineToken ?? null,
-        phase: 'after_reply_delay',
-        inboundMetaMessageId,
-      });
-      return;
-    }
 
-    if (
-      willSendMediaFirst &&
-      preResolvedFileForAna &&
-      effectiveSendCategory &&
-      ent &&
-      enterpriseIdForFile != null
-    ) {
+    let canClaimMaterialWasSent = false;
+    let mediaOutcome: AnaMediaFirstResult | null = null;
+
+    if (willSendMediaFirst && preResolvedFileForAna && effectiveSendCategory && ent && enterpriseIdForFile != null) {
       console.log('[ANA_PIPELINE] engine_media_first_start', {
         conversationId,
         enterpriseIdForFile,
         category: effectiveSendCategory,
         file: preResolvedFileForAna.originalName,
       });
-      const mediaOutcome = await sendAnaEnterpriseMediaFirst({
+      await sleepMs(randomAnaReplyDelayMs({ replyLength: 400 }));
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        console.log('[ANA_PIPELINE] engine_cancelled_stale', {
+          conversationId,
+          replyPipelineToken: replyPipelineToken ?? null,
+          phase: 'before_media_send',
+          inboundMetaMessageId,
+        });
+        return;
+      }
+      mediaOutcome = await sendAnaEnterpriseMediaFirst({
         conversationId,
         toPhoneNumber,
         ent,
@@ -1243,25 +1206,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         cat: effectiveSendCategory as FileCategory,
         preResolvedFile: preResolvedFileForAna,
       });
-      if (!mediaOutcome.ok) {
-        replyText = buildHumanMaterialFallback({
-          enterpriseName: ent?.name ?? null,
-          customerAskedForBook: true,
-          reply: replyText,
-          lastAssistantMessage: lastAsstDup?.content ?? null,
-        });
-        console.log('[ANA_PIPELINE] engine_media_failed_reply_replaced', {
-          conversationId,
-          fileName: mediaOutcome.fileName,
-          code: mediaOutcome.code ?? null,
-          replyLenAfterReplace: replyText.length,
-        });
-      } else {
-        replyText = pickPostMediaAckText(lastAsstDup?.content ?? null);
-        console.log('[ANA_PIPELINE] engine_post_media_short_ack', {
-          conversationId,
-          replyLen: replyText.length,
-        });
+      canClaimMaterialWasSent = mediaOutcome.ok === true;
+      console.log('[ANA_PIPELINE] engine_doc_send_outcome', {
+        conversationId,
+        canClaimMaterialWasSent,
+        fileName: mediaOutcome.ok ? preResolvedFileForAna.originalName : mediaOutcome.fileName,
+        ok: mediaOutcome.ok,
+      });
+      if (canClaimMaterialWasSent) {
         await sleepMs(ANA_MEDIA_THEN_TEXT_GAP_MS);
         if (isPipelineStale(conversationId, replyPipelineToken)) {
           console.log('[ANA_PIPELINE] engine_cancelled_stale', {
@@ -1273,6 +1225,83 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           return;
         }
       }
+    }
+
+    let replyText: string;
+    if (canClaimMaterialWasSent) {
+      replyText = pickPostMediaAckText(lastAsstDup?.content ?? null);
+      console.log('[ANA_PIPELINE] engine_post_media_short_ack', {
+        conversationId,
+        replyLen: replyText.length,
+        canClaimMaterialWasSent: true,
+      });
+    } else {
+      let rt = finalizeAnaReplyText(replyBody, {
+        userMessage: trimmed,
+        conversationMode: mode,
+      }).slice(0, 4000);
+      if (usedHumanMaterialFallbackForNoFile) {
+        rt = buildHumanMaterialFallback({
+          enterpriseName: ent?.name ?? null,
+          customerAskedForBook: true,
+          reply: rt,
+          lastAssistantMessage: lastAsstDup?.content ?? null,
+        });
+        usedHumanMaterialFallbackForNoFile = false;
+      }
+      if (shouldAttemptDocSend && !canClaimMaterialWasSent) {
+        rt = stripMaterialDeliveryClaims(rt);
+        if (!rt.trim() || textHasMaterialDeliveryClaim(rt)) {
+          rt = buildHumanMaterialFallback({
+            enterpriseName: ent?.name ?? null,
+            customerAskedForBook: true,
+            reply: '',
+            lastAssistantMessage: lastAsstDup?.content ?? null,
+          });
+        }
+        console.log('[ANA_PIPELINE] engine_material_reply_no_send_claim_stripped', {
+          conversationId,
+          hadResolvedPath: willSendMediaFirst,
+          mediaAttempted: mediaOutcome != null,
+          mediaOk: mediaOutcome?.ok ?? null,
+        });
+      }
+      replyText = rt;
+    }
+
+    const lastContent = (lastAsstDup?.content || '').trim();
+    const ageDup = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
+    if (lastContent && lastContent === replyText.trim() && ageDup < 55_000) {
+      console.warn('[ANA_PIPELINE] duplicate_reply_unchanged', { conversationId, ageMs: ageDup });
+    }
+    console.log('[ANA_PIPELINE] engine_reply_generated', {
+      conversationId,
+      inboundMetaMessageId,
+      replyPipelineToken: replyPipelineToken ?? null,
+      replyLen: replyText.length,
+      replySource,
+      fallbackReason,
+      canClaimMaterialWasSent,
+    });
+    console.log('[ANA_PIPELINE] engine_send_attempt', {
+      conversationId,
+      toPhoneTail: anaPhoneTail(toPhoneNumber),
+      inboundMetaMessageId,
+      replyPipelineToken: replyPipelineToken ?? null,
+      phase: willSendMediaFirst ? 'ana_media_then_text' : 'ana_main_reply',
+      replyLen: replyText.length,
+      willSendMediaFirst,
+      canClaimMaterialWasSent,
+    });
+    await sleepMs(randomAnaReplyDelayMs({ replyLength: replyText.length }));
+    if (isPipelineStale(conversationId, replyPipelineToken)) {
+      console.log('[ANA_PIPELINE] engine_cancelled_stale', {
+        conversationId,
+        replyPipelineToken: replyPipelineToken ?? null,
+        phase: 'after_reply_delay',
+        inboundMetaMessageId,
+      });
+      return;
     }
 
     const sendResult = await sendTextMessage(toPhoneNumber, replyText);

@@ -12,7 +12,7 @@ export function isBareGreetingOnly(text: string): boolean {
 
 /** Pedido explícito de material / arquivo (WhatsApp). */
 const MATERIAL_ASK_RE =
-  /\b(book|pdf|materia(l|is)|cat[aá]logo|brochure|dossi[eê]|apresenta(c|ç)(a|ã)o|planta|plantas|layout|tabela(\s+comercial)?|precifica(c|ç)(a|ã)o|pre(c|ç)os?|valores|planilha|anexo|arquivo|documento|mand(ar|a)(\s+o)?\s+pdf|envi(ar|a)(\s+o)?\s+pdf|me\s+(manda|envia)|quero(\s+o)?\s+(pdf|book|material))\b/i;
+  /\b(book|pdf|materia(l|is)|material\s+completo|cat[aá]logo|brochure|dossi[eê]|apresenta(c|ç)(a|ã)o|planta|plantas|layout|tabela(\s+comercial)?|precifica(c|ç)(a|ã)o|pre(c|ç)os?|valores|planilha|anexo|arquivo|documento|mand(ar|a)(\s+o)?\s+pdf|envi(ar|a)(\s+o)?\s+pdf|me\s+(manda|envia)|quero(\s+o)?\s+(pdf|book|material)|tem(\s+(o|a))?\s+(book|pdf|material|cat[aá]logo)|consegue(\s+te)?\s+(mandar|enviar))\b/i;
 
 export function userAskedForSendableMaterial(userText: string, fullUtterances: string): boolean {
   const blob = `${userText}\n${fullUtterances}`.slice(0, 12_000);
