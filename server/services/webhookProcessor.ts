@@ -327,7 +327,7 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           });
           continue;
         }
-        scheduleWhatsAppAiAfterUserMessage(conv.id, String(msg.from), mid);
+        scheduleWhatsAppAiAfterUserMessage(conv.id, String(msg.from));
         console.log('[ANA_PIPELINE] ai_schedule_called', {
           conversationId: conv.id,
           metaMessageId: mid,
