@@ -11,6 +11,7 @@ import { CorretoresPage } from './pages/CorretoresPage';
 import { AgendaPage } from './pages/AgendaPage';
 import { UsersPage } from './pages/UsersPage';
 import { LoginPage } from './pages/LoginPage';
+import { ContatosPage } from './pages/ContatosPage';
 
 function App() {
   return (
@@ -70,6 +71,14 @@ function App() {
             element={
               <ProtectedRoute roles={[...ROLES_ORG_ADMIN]}>
                 <UsersPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/contatos"
+            element={
+              <ProtectedRoute roles={[...ROLES_SETTINGS_ADMIN]}>
+                <ContatosPage />
               </ProtectedRoute>
             }
           />

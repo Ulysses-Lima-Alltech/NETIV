@@ -8,6 +8,7 @@ function isActive(pathname: string, to: string): boolean {
   if (to === '/settings/empreendimentos') return pathname.startsWith('/settings/empreendimentos');
   if (to === '/settings/corretores') return pathname.startsWith('/settings/corretores');
   if (to === '/settings/integrations/whatsapp') return pathname.startsWith('/settings/integrations');
+  if (to === '/contatos') return pathname.startsWith('/contatos');
   if (to === '/agenda') return pathname.startsWith('/agenda');
   if (to === '/users') return pathname.startsWith('/users');
   return pathname === to;

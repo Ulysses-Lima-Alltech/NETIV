@@ -79,12 +79,24 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
 }
 
 function mapApiMessageToMessage(m: MessageListItem, conversationId: string): Message {
+  const att = m.attachment;
   return {
     id: String(m.id),
     conversationId,
     sender: m.direction === 'inbound' ? 'LEAD' : 'AGENT',
     text: m.content || '',
     createdAt: m.createdAt,
+    messageType: m.type === 'document' || m.type === 'image' ? m.type : 'text',
+    attachment: att?.fileName
+      ? {
+          fileName: att.fileName,
+          mimeType: att.mimeType ?? 'application/octet-stream',
+          sizeBytes: att.sizeBytes,
+          whatsappMediaId: att.whatsappMediaId ?? null,
+          caption: att.caption ?? null,
+          enterpriseFileId: att.enterpriseFileId ?? null,
+        }
+      : null,
   };
 }
 
@@ -212,7 +224,7 @@ export function InboxPage() {
   }, [loadConversations, loadMessages, selectedId]);
 
   const handleSendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, file?: File | null) => {
       if (!selectedId) return;
       if (selectedWindow && !selectedWindow.isOpen) {
         setSendError(
@@ -222,14 +234,23 @@ export function InboxPage() {
       }
       const id = parseInt(selectedId, 10);
       if (Number.isNaN(id)) return;
+      if (!text.trim() && !file) return;
       setSendError(null);
       setSending(true);
+      const preview =
+        file != null
+          ? text.trim()
+            ? `${text.trim()}\n\n📎 ${file.name}`
+            : `📎 ${file.name}`
+          : text;
       const tempMessage: Message = {
         id: `temp-${Date.now()}`,
         conversationId: selectedId,
         sender: 'AGENT',
-        text,
+        text: preview,
         createdAt: new Date().toISOString(),
+        messageType: file ? 'document' : 'text',
+        attachment: file ? { fileName: file.name, mimeType: file.type || 'application/octet-stream' } : null,
       };
       const shouldScroll = isUserAtBottom();
       setMessages((prev) => [...prev, tempMessage]);
@@ -237,7 +258,7 @@ export function InboxPage() {
         setTimeout(() => scrollToBottom(), 0);
       }
       try {
-        await whatsappApi.sendToConversation(id, text);
+        await whatsappApi.sendToConversation(id, text, file ?? null);
         setMessages((prev) => prev.map((m) => (m.id === tempMessage.id ? { ...tempMessage, id: `sent-${Date.now()}` } : m)));
         loadConversations();
       } catch (e) {

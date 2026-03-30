@@ -94,7 +94,7 @@ interface ChatPanelProps {
   messages: Message[];
   isLoadingMessages: boolean;
   loadError: string | null;
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, file?: File | null) => void;
   onClassificationChange?: (updates: {
     projectId?: number | null;
     classificationStatus?: string;

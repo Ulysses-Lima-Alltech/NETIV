@@ -50,10 +50,22 @@ export interface Conversation {
 
 export type MessageSender = 'LEAD' | 'AGENT';
 
+export interface MessageAttachment {
+  fileName: string;
+  mimeType: string;
+  sizeBytes?: number;
+  whatsappMediaId?: string | null;
+  caption?: string | null;
+  enterpriseFileId?: number | null;
+}
+
 export interface Message {
   id: string;
   conversationId: string;
   sender: MessageSender;
   text: string;
   createdAt: string; // ISO date
+  /** document | image quando envio com arquivo */
+  messageType?: 'text' | 'document' | 'image';
+  attachment?: MessageAttachment | null;
 }

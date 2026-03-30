@@ -21,6 +21,7 @@ export function useAppNav(): NavItem[] {
       items.push({ to: '/users', label: 'Usuários' });
     }
     if (isAdmin) {
+      items.push({ to: '/contatos', label: 'Contatos' });
       items.push({ to: '/settings/integrations/whatsapp', label: 'Configurações' });
     }
     return items;

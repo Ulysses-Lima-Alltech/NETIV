@@ -58,6 +58,30 @@ async function request<T>(
   return data as T;
 }
 
+async function requestFormData<T>(path: string, formData: FormData): Promise<T> {
+  const token = getStoredAuthToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: formData,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error((data as { error?: string }).error ?? 'Sessão expirada. Faça login novamente.');
+  }
+  if (!res.ok) {
+    const payload = data as { error?: string; code?: string };
+    const err = new ApiError(payload.error ?? `Erro ${res.status}`);
+    err.code = payload.code;
+    err.status = res.status;
+    throw err;
+  }
+  return data as T;
+}
+
 /** Manter alinhado a `ALL_APP_USER_ROLES` em `server/constants/roles.ts`. */
 export type UserRole = 'ADMIN' | 'COLLABORATOR' | 'MANAGERIAL';
 
@@ -174,6 +198,15 @@ export interface ReserveSegmentationPatchBody {
   commercialNotes?: string | null;
 }
 
+export interface MessageAttachmentDto {
+  fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  whatsappMediaId?: string | null;
+  caption?: string | null;
+  enterpriseFileId?: number | null;
+}
+
 export interface MessageListItem {
   id: string;
   conversationId: number;
@@ -183,6 +216,7 @@ export interface MessageListItem {
   status: string;
   externalMessageId: string | null;
   createdAt: string;
+  attachment?: MessageAttachmentDto | null;
 }
 
 export interface WhatsAppWindowStatus {
@@ -288,17 +322,135 @@ export const whatsappApi = {
       reserveFollowUpMoment?: string | null;
       reserveCommercialNotes?: string | null;
     }>(`/whatsapp/conversations/${conversationId}/classification`, { method: 'PATCH', body }),
-  sendToConversation: (conversationId: number, message: string) =>
-    request<{ success: boolean; metaMessageId?: string }>(`/whatsapp/conversations/${conversationId}/send`, {
+  sendToConversation: (conversationId: number, message: string, file?: File | null) => {
+    if (file) {
+      const fd = new FormData();
+      if (message.trim()) fd.append('message', message.trim());
+      fd.append('file', file);
+      return requestFormData<{ success: boolean; metaMessageId?: string; messageKind?: string }>(
+        `/whatsapp/conversations/${conversationId}/send`,
+        fd
+      );
+    }
+    return request<{ success: boolean; metaMessageId?: string }>(`/whatsapp/conversations/${conversationId}/send`, {
       method: 'POST',
       body: { message },
-    }),
+    });
+  },
   deleteConversation: (conversationId: number) =>
     request<{ success: boolean }>(`/whatsapp/conversations/${conversationId}`, { method: 'DELETE' }),
   deleteAllByPhone: (phone: string) =>
     request<{ success: boolean; deletedCount: number }>(
       `/whatsapp/conversations/by-phone/${encodeURIComponent(phone)}`,
       { method: 'DELETE' }
+    ),
+};
+
+export interface ContactListItem {
+  id: number;
+  fullName: string | null;
+  firstName?: string | null;
+  phoneE164: string;
+  phoneDisplay?: string | null;
+  email?: string | null;
+  enterpriseInterest?: string | null;
+  notes?: string | null;
+  source?: string;
+  ownerUserId: number | null;
+  ownerName?: string | null;
+  status: 'assigned' | 'unassigned';
+  lastContactAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ContactImportPreview {
+  totalRows: number;
+  validRows: number;
+  invalidRows: number;
+  duplicateRows: number;
+  createdContacts: number;
+  updatedContacts: number;
+  claimedUnassignedContacts: number;
+  skippedOwnedContacts: number;
+  rows: Array<{
+    rowNumber: number;
+    action: string;
+    normalizedPhoneE164: string | null;
+    errorMessage: string | null;
+  }>;
+}
+
+export const contactsApi = {
+  list: (params?: {
+    search?: string;
+    enterprise?: string;
+    ownerUserId?: number;
+    status?: 'assigned' | 'unassigned';
+    limit?: number;
+    offset?: number;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.search?.trim()) q.set('search', params.search.trim());
+    if (params?.enterprise?.trim()) q.set('enterprise', params.enterprise.trim());
+    if (params?.ownerUserId != null) q.set('ownerUserId', String(params.ownerUserId));
+    if (params?.status) q.set('status', params.status);
+    if (params?.limit != null) q.set('limit', String(params.limit));
+    if (params?.offset != null) q.set('offset', String(params.offset));
+    return request<{ contacts: ContactListItem[] }>(`/contacts${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+  get: (id: number) => request<ContactListItem>(`/contacts/${id}`),
+  update: (
+    id: number,
+    body: { fullName?: string; email?: string; enterpriseInterest?: string; notes?: string; source?: string }
+  ) => request<{ success: boolean }>(`/contacts/${id}`, { method: 'PATCH', body }),
+  setOwner: (id: number, ownerUserId: number | null) =>
+    request<{ success: boolean }>(`/contacts/${id}/owner`, {
+      method: 'PATCH',
+      body: { ownerUserId },
+    }),
+  importPreview: async (file: File, ownerUserId?: number | null) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (ownerUserId != null) fd.append('ownerUserId', String(ownerUserId));
+    const token = getStoredAuthToken();
+    const res = await fetch(`${API_BASE}/contacts/import/preview`, {
+      method: 'POST',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new ApiError((data as { error?: string }).error ?? `Erro ${res.status}`);
+      err.status = res.status;
+      err.code = (data as { code?: string }).code;
+      throw err;
+    }
+    return data as ContactImportPreview;
+  },
+  importCommit: async (file: File, ownerUserId?: number | null) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (ownerUserId != null) fd.append('ownerUserId', String(ownerUserId));
+    const token = getStoredAuthToken();
+    const res = await fetch(`${API_BASE}/contacts/import/commit`, {
+      method: 'POST',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new ApiError((data as { error?: string }).error ?? `Erro ${res.status}`);
+      err.status = res.status;
+      err.code = (data as { code?: string }).code;
+      throw err;
+    }
+    return data as { batchId: number; summary: ContactImportPreview };
+  },
+  listImportBatches: () => request<{ batches: Array<Record<string, unknown>> }>('/contacts/import/batches'),
+  getBatchEligible: (batchId: number, ownerUserId: number) =>
+    request<{ ownerUserId: number; blockedCount: number; contacts: ContactListItem[] }>(
+      `/contacts/import/batches/${batchId}/eligible?ownerUserId=${ownerUserId}`
     ),
 };
 
