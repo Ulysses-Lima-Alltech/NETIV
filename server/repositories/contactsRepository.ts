@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { query } from '../db/pg.js';
+import { getActiveEnterpriseById } from './enterpriseRepository.js';
 import { toFirstName } from '../utils/phone.js';
 
 export interface ContactRow {
@@ -9,6 +10,7 @@ export interface ContactRow {
   phone_e164: string;
   phone_display: string | null;
   email: string | null;
+  enterprise_id: number | null;
   enterprise_interest: string | null;
   notes: string | null;
   source: string;
@@ -36,8 +38,46 @@ export async function findContactByPhoneE164(phoneE164: string, db?: Queryable):
 }
 
 export async function findContactById(id: number): Promise<ContactRow | null> {
-  const { rows } = await query<ContactRow>(`SELECT * FROM contacts WHERE id = $1 LIMIT 1`, [id]);
+  const { rows } = await query<ContactRow & { enterprise_display_name?: string | null }>(
+    `SELECT c.*, e.name AS enterprise_display_name
+     FROM contacts c
+     LEFT JOIN enterprises e ON e.id = c.enterprise_id
+     WHERE c.id = $1
+     LIMIT 1`,
+    [id]
+  );
   return rows[0] ?? null;
+}
+
+/**
+ * Se o contato ainda não tem enterprise_id, copia da conversa vinculada mais recente (apenas empreendimento ativo).
+ * Não sobrescreve contato que já tem empreendimento definido.
+ */
+export async function trySyncContactEnterpriseFromLinkedConversations(contactId: number): Promise<void> {
+  await query(
+    `UPDATE contacts c
+     SET enterprise_id = pick.enterprise_id,
+         enterprise_interest = e.name,
+         updated_at = NOW()
+     FROM (
+       SELECT DISTINCT ON (conv.contact_id)
+         conv.contact_id,
+         conv.enterprise_id
+       FROM conversations conv
+       WHERE conv.contact_id = $1
+         AND conv.enterprise_id IS NOT NULL
+       ORDER BY
+         conv.contact_id,
+         conv.last_message_at DESC NULLS LAST,
+         conv.updated_at DESC,
+         conv.id DESC
+     ) pick
+     JOIN enterprises e ON e.id = pick.enterprise_id AND e.status = 'ativo'
+     WHERE c.id = pick.contact_id
+       AND c.id = $1
+       AND c.enterprise_id IS NULL`,
+    [contactId]
+  );
 }
 
 export async function createContact(data: {
@@ -56,10 +96,10 @@ export async function createContact(data: {
   const fullName = (data.fullName || '').trim() || null;
   const { rows } = await q(db).query<ContactRow>(
     `INSERT INTO contacts (
-      full_name, first_name, phone_e164, phone_display, email, enterprise_interest, notes, source,
+      full_name, first_name, phone_e164, phone_display, email, enterprise_id, enterprise_interest, notes, source,
       owner_user_id, owner_assigned_at, owner_assignment_source, owner_assigned_by_user_id, updated_at
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
     RETURNING *`,
     [
       fullName,
@@ -67,6 +107,7 @@ export async function createContact(data: {
       data.phoneE164,
       data.phoneDisplay ?? null,
       data.email?.trim() || null,
+      null,
       data.enterpriseInterest?.trim() || null,
       data.notes?.trim() || null,
       data.source || 'manual',
@@ -122,6 +163,7 @@ export async function assignContactToConversation(conversationId: number, contac
      WHERE id = $1`,
     [conversationId, contactId]
   );
+  if (!db) await trySyncContactEnterpriseFromLinkedConversations(contactId);
 }
 
 export async function syncConversationOwnerFromContact(conversationId: number): Promise<void> {
@@ -207,7 +249,7 @@ export async function listContacts(params: {
   status?: 'assigned' | 'unassigned';
   limit?: number;
   offset?: number;
-}): Promise<ContactRow[]> {
+}): Promise<Array<ContactRow & { enterprise_display_name?: string | null }>> {
   const conds: string[] = ['archived_at IS NULL'];
   const vals: unknown[] = [];
   let idx = 1;
@@ -217,7 +259,9 @@ export async function listContacts(params: {
     idx++;
   }
   if (params.enterprise?.trim()) {
-    conds.push(`COALESCE(enterprise_interest,'') ILIKE $${idx}`);
+    conds.push(
+      `(COALESCE(e.name,'') ILIKE $${idx} OR COALESCE(c.enterprise_interest,'') ILIKE $${idx})`
+    );
     vals.push(`%${params.enterprise.trim()}%`);
     idx++;
   }
@@ -231,10 +275,12 @@ export async function listContacts(params: {
   const limit = Math.min(Math.max(params.limit ?? 100, 1), 500);
   const offset = Math.max(params.offset ?? 0, 0);
   vals.push(limit, offset);
-  const { rows } = await query<ContactRow>(
-    `SELECT * FROM contacts
+  const { rows } = await query<ContactRow & { enterprise_display_name?: string | null }>(
+    `SELECT c.*, e.name AS enterprise_display_name
+     FROM contacts c
+     LEFT JOIN enterprises e ON e.id = c.enterprise_id
      WHERE ${conds.join(' AND ')}
-     ORDER BY COALESCE(last_contact_at, created_at) DESC, id DESC
+     ORDER BY COALESCE(c.last_contact_at, c.created_at) DESC, c.id DESC
      LIMIT $${idx} OFFSET $${idx + 1}`,
     vals
   );
@@ -243,19 +289,46 @@ export async function listContacts(params: {
 
 export async function updateContactAdmin(
   id: number,
-  patch: { fullName?: string | null; email?: string | null; enterpriseInterest?: string | null; notes?: string | null; source?: string | null }
+  patch: {
+    fullName?: string | null;
+    email?: string | null;
+    enterpriseId?: number | null;
+    enterpriseInterest?: string | null;
+    notes?: string | null;
+    source?: string | null;
+  }
 ): Promise<ContactRow | null> {
   const cur = await findContactById(id);
   if (!cur) return null;
   const fullName = patch.fullName !== undefined ? (patch.fullName || '').trim() || null : cur.full_name;
+
+  let enterprise_id = cur.enterprise_id;
+  let enterprise_interest = cur.enterprise_interest;
+  if (patch.enterpriseId !== undefined) {
+    if (patch.enterpriseId === null) {
+      enterprise_id = null;
+      enterprise_interest = null;
+    } else {
+      const ent = await getActiveEnterpriseById(patch.enterpriseId);
+      if (ent) {
+        enterprise_id = ent.id;
+        enterprise_interest = ent.name;
+      }
+    }
+  } else if (patch.enterpriseInterest !== undefined) {
+    enterprise_interest = (patch.enterpriseInterest || '').trim() || null;
+    enterprise_id = null;
+  }
+
   const { rows } = await query<ContactRow>(
     `UPDATE contacts
      SET full_name = $2,
          first_name = $3,
          email = $4,
-         enterprise_interest = $5,
-         notes = $6,
-         source = $7,
+         enterprise_id = $5,
+         enterprise_interest = $6,
+         notes = $7,
+         source = $8,
          updated_at = NOW()
      WHERE id = $1
      RETURNING *`,
@@ -264,7 +337,8 @@ export async function updateContactAdmin(
       fullName,
       toFirstName(fullName),
       patch.email !== undefined ? (patch.email || '').trim() || null : cur.email,
-      patch.enterpriseInterest !== undefined ? (patch.enterpriseInterest || '').trim() || null : cur.enterprise_interest,
+      enterprise_id,
+      enterprise_interest,
       patch.notes !== undefined ? (patch.notes || '').trim() || null : cur.notes,
       patch.source !== undefined ? (patch.source || '').trim() || cur.source : cur.source,
     ]

@@ -278,10 +278,10 @@ export async function commitImportFromCsv(params: {
 
       const inserted = await client.query<ContactRow>(
         `INSERT INTO contacts (
-          full_name, first_name, phone_e164, phone_display, email, enterprise_interest, notes, source,
+          full_name, first_name, phone_e164, phone_display, email, enterprise_id, enterprise_interest, notes, source,
           owner_user_id, owner_assigned_at, owner_assignment_source, owner_assigned_by_user_id, updated_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,'csv_import',$8,CASE WHEN $8 IS NULL THEN NULL ELSE NOW() END,
+        VALUES ($1,$2,$3,$4,$5,NULL,$6,$7,'csv_import',$8,CASE WHEN $8 IS NULL THEN NULL ELSE NOW() END,
                 CASE WHEN $8 IS NULL THEN NULL ELSE 'first_import' END,$9,NOW())
         ON CONFLICT (phone_e164) DO NOTHING
         RETURNING *`,

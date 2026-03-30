@@ -17,6 +17,11 @@ import {
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+/** Express usa o nome do parâmetro `id` em runtime; tipos do pacote podem expor `id(\\d+)`. */
+function contactIdParam(req: { params: Record<string, string | undefined> }): string | undefined {
+  return req.params.id ?? req.params['id(\\d+)'];
+}
+
 router.get('/', async (req, res) => {
   try {
     const ownerUserId = req.query.ownerUserId != null ? parseInt(String(req.query.ownerUserId), 10) : undefined;
@@ -39,14 +44,17 @@ router.get('/', async (req, res) => {
       for (const b of brokers) ownerMap.set(b.id, b.full_name);
     }
     res.json({
-      contacts: rows.map((r) => ({
+      contacts: rows.map((r) => {
+        const displayName = r.enterprise_display_name ?? r.enterprise_interest;
+        return {
         id: r.id,
         fullName: r.full_name,
         firstName: r.first_name,
         phoneE164: r.phone_e164,
         phoneDisplay: r.phone_display,
         email: r.email,
-        enterpriseInterest: r.enterprise_interest,
+        enterpriseId: r.enterprise_id ?? null,
+        enterpriseInterest: displayName ?? null,
         notes: r.notes,
         source: r.source,
         ownerUserId: r.owner_user_id,
@@ -55,7 +63,8 @@ router.get('/', async (req, res) => {
         lastContactAt: r.last_contact_at?.toISOString() ?? null,
         createdAt: r.created_at.toISOString(),
         updatedAt: r.updated_at.toISOString(),
-      })),
+      };
+      }),
     });
   } catch (e) {
     console.error('[Contacts] GET /', e);
@@ -65,10 +74,12 @@ router.get('/', async (req, res) => {
 
 router.get('/:id(\\d+)', async (req, res) => {
   try {
-    const id = parseInt(req.params['id(\\d+)'], 10);
+    const id = parseInt(String(contactIdParam(req)), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
     const c = await findContactById(id);
     if (!c) return res.status(404).json({ error: 'Contato não encontrado.' });
+    const row = c as typeof c & { enterprise_display_name?: string | null };
+    const displayEnterprise = row.enterprise_display_name ?? row.enterprise_interest;
     const ownerName =
       c.owner_user_id != null
         ? (await query<{ full_name: string }>(`SELECT full_name FROM corretores WHERE id = $1`, [c.owner_user_id])).rows[0]
@@ -81,7 +92,8 @@ router.get('/:id(\\d+)', async (req, res) => {
       phoneE164: c.phone_e164,
       phoneDisplay: c.phone_display,
       email: c.email,
-      enterpriseInterest: c.enterprise_interest,
+      enterpriseId: row.enterprise_id ?? null,
+      enterpriseInterest: displayEnterprise ?? null,
       notes: c.notes,
       source: c.source,
       ownerUserId: c.owner_user_id,
@@ -102,15 +114,27 @@ router.get('/:id(\\d+)', async (req, res) => {
 
 router.patch('/:id(\\d+)', async (req, res) => {
   try {
-    const id = parseInt(req.params['id(\\d+)'], 10);
+    const id = parseInt(String(contactIdParam(req)), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
-    const c = await updateContactAdmin(id, {
-      fullName: typeof req.body?.fullName === 'string' ? req.body.fullName : undefined,
-      email: typeof req.body?.email === 'string' ? req.body.email : undefined,
-      enterpriseInterest: typeof req.body?.enterpriseInterest === 'string' ? req.body.enterpriseInterest : undefined,
-      notes: typeof req.body?.notes === 'string' ? req.body.notes : undefined,
-      source: typeof req.body?.source === 'string' ? req.body.source : undefined,
-    });
+    const body = req.body ?? {};
+    const patch: Parameters<typeof updateContactAdmin>[1] = {
+      fullName: typeof body.fullName === 'string' ? body.fullName : undefined,
+      email: typeof body.email === 'string' ? body.email : undefined,
+      notes: typeof body.notes === 'string' ? body.notes : undefined,
+      source: typeof body.source === 'string' ? body.source : undefined,
+    };
+    if ('enterpriseId' in body) {
+      const v = body.enterpriseId;
+      if (v === null || v === '') patch.enterpriseId = null;
+      else if (typeof v === 'number' && Number.isFinite(v)) patch.enterpriseId = Math.round(v);
+      else if (typeof v === 'string' && v.trim() !== '') {
+        const n = parseInt(v.trim(), 10);
+        if (!Number.isNaN(n)) patch.enterpriseId = n;
+      }
+    } else if (typeof body.enterpriseInterest === 'string') {
+      patch.enterpriseInterest = body.enterpriseInterest;
+    }
+    const c = await updateContactAdmin(id, patch);
     if (!c) return res.status(404).json({ error: 'Contato não encontrado.' });
     res.json({ success: true });
   } catch (e) {
@@ -121,7 +145,7 @@ router.patch('/:id(\\d+)', async (req, res) => {
 
 router.patch('/:id(\\d+)/owner', async (req, res) => {
   try {
-    const id = parseInt(req.params['id(\\d+)'], 10);
+    const id = parseInt(String(contactIdParam(req)), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
     if (!req.user?.id) return res.status(401).json({ error: 'Não autenticado.' });
     const ownerUserId =

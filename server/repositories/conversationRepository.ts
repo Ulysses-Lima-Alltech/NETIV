@@ -10,6 +10,7 @@ import {
   assignContactToConversation,
   findOrCreateContactByPhone,
   syncConversationOwnerFromContact,
+  trySyncContactEnterpriseFromLinkedConversations,
 } from './contactsRepository.js';
 
 export type { LeadOriginInput } from '../services/leadOriginResolver.js';
@@ -496,6 +497,7 @@ export async function updateClassification(
     const row = rows[0] ?? null;
     if (row) {
       if (handoff) await assignBrokerForHandoffConversation(conversationId);
+      if (row.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(row.contact_id);
     }
     return row;
   }
@@ -539,6 +541,7 @@ export async function updateClassification(
   const row = rows[0] ?? null;
   if (row) {
     if (handoff) await assignBrokerForHandoffConversation(conversationId);
+    if (row.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(row.contact_id);
   }
   return row;
 }
@@ -563,12 +566,15 @@ export async function setConversationEnterpriseId(
     leadTemperature: row.lead_temperature,
     handoff: row.handoff ?? false,
   });
-  if (promoted === toValidClassification(row.classification)) return row;
-  const { rows: r2 } = await query<ConversationRow>(
-    `UPDATE conversations SET classification = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-    [toValidClassification(promoted), conversationId]
-  );
-  return r2[0] ?? row;
+  const afterClass =
+    promoted === toValidClassification(row.classification)
+      ? row
+      : (await query<ConversationRow>(
+          `UPDATE conversations SET classification = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+          [toValidClassification(promoted), conversationId]
+        )).rows[0] ?? row;
+  if (afterClass.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(afterClass.contact_id);
+  return afterClass;
 }
 
 export async function applyAnaConversationUpdate(
