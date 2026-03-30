@@ -18,9 +18,7 @@ import {
 } from '../repositories/conversationRepository.js';
 import { sendTextMessage, sendLocalMediaToWhatsApp } from './whatsappMetaService.js';
 import {
-  mergeHonestMaterialFallbackWhenNoFile,
-  forceHonestMaterialFallbackWhenNoFile,
-  anaMediaDeliveryFailedReply,
+  buildHumanMaterialFallback,
 } from '../utils/anaMaterialReply.js';
 import {
   tryMatchEnterpriseFromUserCorpus,
@@ -956,6 +954,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let effectiveSendCategory: FileCategory | null = null;
     let requestedSendCategoryForLog: FileCategory | null = null;
     let fileResolutionSkipReason: string | null = null;
+    let usedHumanMaterialFallbackForNoFile = false;
 
     if (!hasSendableFiles) {
       fileResolutionSkipReason = 'no_sendable_files_in_enterprise_focus';
@@ -970,8 +969,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       structured = { ...structured, send_file_category: null };
       structured = {
         ...structured,
-        reply: forceHonestMaterialFallbackWhenNoFile(structured.reply),
+        reply: buildHumanMaterialFallback({
+          enterpriseName: ent?.name ?? null,
+          reply: structured.reply,
+          customerAskedForBook: true,
+          lastAssistantMessage: null,
+        }),
       };
+      usedHumanMaterialFallbackForNoFile = true;
     } else {
       effectiveSendCategory = structured.send_file_category as FileCategory | null;
       requestedSendCategoryForLog = effectiveSendCategory;
@@ -990,8 +995,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           structured = {
             ...structured,
             send_file_category: null,
-            reply: forceHonestMaterialFallbackWhenNoFile(structured.reply),
+            reply: buildHumanMaterialFallback({
+              enterpriseName: ent?.name ?? null,
+              reply: structured.reply,
+              customerAskedForBook: true,
+              lastAssistantMessage: null,
+            }),
           };
+          usedHumanMaterialFallbackForNoFile = true;
           console.log('[ANA_DOC_RESOLVE_SKIP]', {
             conversationId,
             enterpriseId: enterpriseIdForFileEarly,
@@ -1028,8 +1039,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         structured = {
           ...structured,
           send_file_category: null,
-          reply: forceHonestMaterialFallbackWhenNoFile(structured.reply),
+          reply: buildHumanMaterialFallback({
+            enterpriseName: ent?.name ?? null,
+            reply: structured.reply,
+            customerAskedForBook: true,
+            lastAssistantMessage: null,
+          }),
         };
+        usedHumanMaterialFallbackForNoFile = true;
       }
     }
     console.log('[ANA_PARSE_FLOW]', {
@@ -1118,6 +1135,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     if (lastContent && lastContent === replyText.trim() && ageDup < 55_000) {
       console.warn('[ANA_PIPELINE] duplicate_reply_unchanged', { conversationId, ageMs: ageDup });
     }
+    if (usedHumanMaterialFallbackForNoFile) {
+      replyText = buildHumanMaterialFallback({
+        enterpriseName: ent?.name ?? null,
+        customerAskedForBook: true,
+        reply: replyText,
+        lastAssistantMessage: lastAsstDup?.content ?? null,
+      });
+      usedHumanMaterialFallbackForNoFile = false;
+    }
     console.log('[ANA_PIPELINE] engine_reply_generated', {
       conversationId,
       inboundMetaMessageId,
@@ -1168,7 +1194,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         preResolvedFile: preResolvedFileForAna,
       });
       if (!mediaOutcome.ok) {
-        replyText = anaMediaDeliveryFailedReply(mediaOutcome.fileName, mediaOutcome.error);
+        replyText = buildHumanMaterialFallback({
+          enterpriseName: ent?.name ?? null,
+          customerAskedForBook: true,
+          reply: replyText,
+          lastAssistantMessage: lastAsstDup?.content ?? null,
+        });
         console.log('[ANA_PIPELINE] engine_media_failed_reply_replaced', {
           conversationId,
           fileName: mediaOutcome.fileName,
