@@ -217,6 +217,10 @@ export interface MessageListItem {
   externalMessageId: string | null;
   createdAt: string;
   attachment?: MessageAttachmentDto | null;
+  /** Soft delete interno NETIV */
+  deleted?: boolean;
+  deletedAt?: string | null;
+  deleteScope?: string | null;
 }
 
 export interface WhatsAppWindowStatus {
@@ -337,6 +341,16 @@ export const whatsappApi = {
       body: { message },
     });
   },
+  updateCustomerName: (conversationId: number, name: string | null) =>
+    request<{ success: boolean; conversationId: number; customerName: string | null }>(
+      `/whatsapp/conversations/${conversationId}/customer-name`,
+      { method: 'PATCH', body: { name } },
+    ),
+  deleteMessage: (conversationId: number, messageId: string) =>
+    request<{ success: boolean; messageId: string }>(
+      `/whatsapp/conversations/${conversationId}/messages/${messageId}`,
+      { method: 'DELETE' },
+    ),
   deleteConversation: (conversationId: number) =>
     request<{ success: boolean }>(`/whatsapp/conversations/${conversationId}`, { method: 'DELETE' }),
   deleteAllByPhone: (phone: string) =>

@@ -709,6 +709,25 @@ export async function incrementAnaCustomerNameMentions(conversationId: number, d
   );
 }
 
+/**
+ * Define (ou limpa) o nome do cliente na conversa.
+ * Diferente de mergeConfirmedCustomerNameIfEmpty: SEMPRE sobrescreve o valor existente.
+ * Usado pelo operador via edição manual na UI.
+ * Passar null ou string vazia limpa o nome (sem nome definido).
+ */
+export async function setConversationCustomerName(
+  conversationId: number,
+  name: string | null,
+): Promise<boolean> {
+  const trimmed = name != null ? name.trim().slice(0, 80) : null;
+  const value = trimmed && trimmed.length >= 1 ? trimmed : null;
+  const result = await query(
+    `UPDATE conversations SET customer_name = $1, updated_at = NOW() WHERE id = $2 RETURNING id`,
+    [value, conversationId],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
 /** Grava nome confirmado pelo cliente (texto da conversa); não sobrescreve se já houver nome. */
 export async function mergeConfirmedCustomerNameIfEmpty(conversationId: number, name: string): Promise<boolean> {
   const trimmed = name.trim();

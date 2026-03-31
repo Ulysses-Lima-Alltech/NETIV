@@ -25,12 +25,14 @@ import {
   deleteConversation,
   deleteAllConversationsByPhone,
   conversationReserveToPublic,
+  setConversationCustomerName,
 } from '../repositories/conversationRepository.js';
 import { reprocessLastUserMessage } from '../services/conversationEngine.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
 import {
   insertMessage,
   getMessagesByConversationId,
+  softDeleteMessage,
   type MessageAttachmentPayload,
 } from '../repositories/messageRepository.js';
 import { getCorretorById } from '../repositories/corretorRepository.js';
@@ -452,22 +454,73 @@ router.get('/conversations/:id/messages', async (req, res) => {
       messages: rows.map((m) => {
         const kind = (m.message_kind as string | undefined) || 'text';
         const hasAtt = kind === 'document' || kind === 'image' || kind === 'video';
+        const isDeleted = m.deleted_at != null;
         return {
           id: String(m.id),
           conversationId: id,
           direction: m.role === 'user' ? 'inbound' : 'outbound',
-          type: hasAtt ? kind : 'text',
-          content: m.content,
+          type: hasAtt && !isDeleted ? kind : 'text',
+          // Mensagens apagadas não expõem conteúdo nem anexo
+          content: isDeleted ? null : m.content,
           status: 'sent',
           externalMessageId: m.meta_message_id,
           createdAt: m.created_at.toISOString(),
-          attachment: hasAtt ? m.attachment_json : null,
+          attachment: hasAtt && !isDeleted ? m.attachment_json : null,
+          deleted: isDeleted,
+          deletedAt: m.deleted_at ? m.deleted_at.toISOString() : null,
+          deleteScope: m.delete_scope ?? null,
         };
       }),
     });
   } catch (e) {
     console.error('[WhatsApp] GET messages:', e);
     res.status(500).json({ error: 'Erro ao listar mensagens.' });
+  }
+});
+
+// PATCH /conversations/:id/customer-name — edição manual do nome do contato pelo operador
+router.patch('/conversations/:id/customer-name', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    const conv = await getConversationById(id);
+    if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
+
+    const raw = req.body?.name;
+    // Aceita string (novo nome) ou null/undefined (limpar nome)
+    if (raw !== undefined && raw !== null && typeof raw !== 'string') {
+      return res.status(400).json({ error: 'Campo "name" deve ser string ou null.' });
+    }
+    const name: string | null = typeof raw === 'string' ? raw.trim().slice(0, 80) || null : null;
+
+    await setConversationCustomerName(id, name);
+    return res.json({ success: true, conversationId: id, customerName: name });
+  } catch (e) {
+    console.error('[WhatsApp] PATCH customer-name:', e);
+    return res.status(500).json({ error: 'Erro ao atualizar nome do contato.' });
+  }
+});
+
+// DELETE /conversations/:convId/messages/:msgId — soft delete interno (não apaga no WhatsApp)
+router.delete('/conversations/:convId/messages/:msgId', async (req, res) => {
+  try {
+    const convId = parseInt(req.params.convId, 10);
+    const msgId = parseInt(req.params.msgId, 10);
+    if (Number.isNaN(convId) || Number.isNaN(msgId)) {
+      return res.status(400).json({ error: 'IDs inválidos.' });
+    }
+    const conv = await getConversationById(convId);
+    if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
+
+    const userId = (req as Request & { user?: { id: number } }).user?.id ?? 0;
+    const deleted = await softDeleteMessage(msgId, userId);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Mensagem não encontrada ou já apagada.' });
+    }
+    return res.json({ success: true, messageId: String(msgId) });
+  } catch (e) {
+    console.error('[WhatsApp] DELETE message:', e);
+    return res.status(500).json({ error: 'Erro ao apagar mensagem.' });
   }
 });
 

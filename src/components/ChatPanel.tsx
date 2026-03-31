@@ -104,6 +104,8 @@ interface ChatPanelProps {
     assignedBrokerId?: number | null;
   }) => void | Promise<void>;
   onClearPhoneHistory?: (phone: string) => void | Promise<void>;
+  onDeleteMessage?: (messageId: string) => void | Promise<void>;
+  onUpdateCustomerName?: (name: string | null) => Promise<void>;
   projects?: { id: number; name: string; active: boolean }[];
   isSending?: boolean;
   onScrollContainerRef?: (el: HTMLDivElement | null) => void;
@@ -119,6 +121,8 @@ export function ChatPanel({
   onSendMessage,
   onClassificationChange,
   onClearPhoneHistory,
+  onDeleteMessage,
+  onUpdateCustomerName,
   projects = [],
   isSending = false,
   onScrollContainerRef,
@@ -129,6 +133,11 @@ export function ChatPanel({
   const [reserveSaving, setReserveSaving] = useState(false);
   const [reserveErr, setReserveErr] = useState<string | null>(null);
   const [brokersForProject, setBrokersForProject] = useState<{ id: number; fullName: string }[]>([]);
+  // Edição inline do nome do contato
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState('');
+  const [nameSaving, setNameSaving] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
 
   const setRef = useCallback(
     (el: HTMLDivElement | null) => {
@@ -175,6 +184,32 @@ export function ChatPanel({
     (conversation.confirmedCustomerName ?? '').trim() ||
     conversation.leadPhone.trim() ||
     'Lead';
+
+  const handleStartEditName = () => {
+    setNameInput((conversation.confirmedCustomerName ?? '').trim());
+    setNameError(null);
+    setIsEditingName(true);
+  };
+
+  const handleCancelEditName = () => {
+    setIsEditingName(false);
+    setNameError(null);
+  };
+
+  const handleSaveName = async () => {
+    if (!onUpdateCustomerName || nameSaving) return;
+    setNameSaving(true);
+    setNameError(null);
+    try {
+      const value = nameInput.trim() || null;
+      await onUpdateCustomerName(value);
+      setIsEditingName(false);
+    } catch {
+      setNameError('Erro ao salvar. Tente novamente.');
+    } finally {
+      setNameSaving(false);
+    }
+  };
   let lastDate = '';
   const cls = conversation.classificationStatus ?? conversation.status ?? 'Novo';
   const showCarteiraBlock = cls === 'Carteira' && !conversation.handoff;
@@ -209,7 +244,64 @@ export function ChatPanel({
       <header className="shrink-0 px-5 py-4 border-b border-[#E5E7EB] bg-white">
         <div className="flex flex-wrap items-start gap-3">
           <div className="flex-1 min-w-0">
-            <h3 className="text-[15px] font-semibold text-[#111827] truncate leading-tight">{displayName}</h3>
+            {/* Nome do contato — visualização ou edição inline */}
+            {!isEditingName ? (
+              <div className="flex items-center gap-1.5 min-w-0">
+                <h3 className="text-[15px] font-semibold text-[#111827] truncate leading-tight">{displayName}</h3>
+                {onUpdateCustomerName && (
+                  <button
+                    type="button"
+                    onClick={handleStartEditName}
+                    className="shrink-0 text-[#CBD5E1] hover:text-[#3B82F6] transition-colors"
+                    title="Editar nome do contato"
+                    aria-label="Editar nome do contato"
+                  >
+                    <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5" aria-hidden>
+                      <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleSaveName(); if (e.key === 'Escape') handleCancelEditName(); }}
+                  maxLength={80}
+                  placeholder="Nome do contato"
+                  autoFocus
+                  disabled={nameSaving}
+                  className="text-[14px] font-semibold text-[#111827] border border-[#3B82F6] rounded-lg px-2 py-0.5 outline-none focus:ring-2 focus:ring-[rgba(59,130,246,0.2)] w-44 disabled:opacity-60"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveName}
+                  disabled={nameSaving}
+                  className="shrink-0 text-[#3B82F6] hover:text-[#2563EB] disabled:opacity-50 transition-colors"
+                  title="Salvar"
+                  aria-label="Salvar nome"
+                >
+                  <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4" aria-hidden>
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancelEditName}
+                  disabled={nameSaving}
+                  className="shrink-0 text-[#9CA3AF] hover:text-[#374151] disabled:opacity-50 transition-colors"
+                  title="Cancelar"
+                  aria-label="Cancelar edição"
+                >
+                  <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4" aria-hidden>
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+            )}
+            {nameError && <p className="text-[11px] text-[#EF4444] mt-0.5">{nameError}</p>}
             <div className="flex items-center gap-2 mt-0.5 min-w-0">
               {conversation.leadPhone ? (
                 <p className="text-[13px] text-[#6B7280] truncate min-w-0 flex-1">{conversation.leadPhone}</p>
@@ -613,7 +705,10 @@ export function ChatPanel({
                       </span>
                     </div>
                   )}
-                  <MessageBubble message={msg} />
+                  <MessageBubble
+                    message={msg}
+                    onDeleteMessage={onDeleteMessage}
+                  />
                 </div>
               );
             })}

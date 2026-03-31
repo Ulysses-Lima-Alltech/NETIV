@@ -1,31 +1,16 @@
 /** Palavras que não devem ser capturadas como nome próprio (token isolado). */
 const NAME_BLOCKLIST = new Set(
   [
-    'cliente',
-    'obrigado',
-    'obrigada',
-    'whatsapp',
-    'apartamento',
-    'loteamento',
-    'mcmv',
-    'empreendimento',
-    'visita',
-    'sim',
-    'nao',
-    'não',
-    'ok',
-    'oi',
-    'ola',
-    'olá',
-    'hey',
-    'bom',
-    'boa',
-    'dia',
-    'tarde',
-    'noite',
-    'e',
-    'ai',
-    'aí',
+    // Saudações e expressões de confirmação
+    'cliente', 'obrigado', 'obrigada', 'whatsapp', 'ok', 'oi', 'ola', 'olá', 'hey',
+    'bom', 'boa', 'dia', 'tarde', 'noite', 'e', 'ai', 'aí',
+    // Imóvel / produto
+    'apartamento', 'loteamento', 'mcmv', 'empreendimento', 'visita', 'imovel', 'imóvel',
+    'terreno', 'casa', 'lote', 'obra', 'obras', 'construcao', 'construção',
+    // Preposições e artigos comuns que nunca são nomes
+    'de', 'do', 'da', 'dos', 'das', 'no', 'na', 'nos', 'nas',
+    'ao', 'aos', 'pelo', 'pela', 'pelos', 'pelas', 'por', 'para', 'pra',
+    'um', 'uma', 'uns', 'umas', 'o', 'a', 'os', 'as',
   ].map((s) => s.toLowerCase())
 );
 
@@ -63,51 +48,41 @@ const SOU_LEADING_NON_NAME = new Set(
 
 /**
  * Resposta curta só com "aparência de nome" após pergunta da Ana — bloqueia intenção comercial/geo.
+ * Esta lista deve ser abrangente: qualquer substantivo comum, advérbio de tempo/lugar ou
+ * verbo que não seja um nome próprio precisa estar aqui.
  * (Sem fallback genérico de 2–3 palavras fora desse contexto.)
  */
 const SHORT_REPLY_NAME_FORBIDDEN = new Set(
   [
-    'quero',
-    'tenho',
-    'gostaria',
-    'preciso',
-    'interesse',
-    'interessado',
-    'interessada',
-    'detalhes',
-    'detalhe',
-    'lote',
-    'lotes',
-    'mais',
-    'sobre',
-    'em',
-    'para',
-    'pra',
-    'com',
-    'sem',
-    'sim',
-    'não',
-    'nao',
-    'cidade',
-    'bairro',
-    'montaresa',
-    'atibaia',
-    'apartamento',
-    'empreendimento',
-    'valor',
-    'valores',
-    'preço',
-    'preco',
-    'região',
-    'regiao',
-    'financiamento',
-    'informação',
-    'informacao',
-    'informações',
-    'informacoes',
-    'conhecer',
-    'visitar',
-    'agendar',
+    // Intenção / interesse
+    'quero', 'tenho', 'gostaria', 'preciso', 'interesse', 'interessado', 'interessada',
+    'detalhes', 'detalhe', 'mais', 'sobre', 'conhecer', 'visitar', 'agendar', 'saber',
+    // Preposições / conjunções (duplicadas aqui por segurança)
+    'em', 'para', 'pra', 'com', 'sem', 'por', 'de', 'do', 'da',
+    // Confirmação / negação
+    'sim', 'não', 'nao', 'ok', 'claro',
+    // Tempo — nunca são nomes
+    'tempo', 'prazo', 'data', 'hora', 'horas', 'quando', 'hoje', 'amanha', 'amanhã',
+    'semana', 'semanas', 'mes', 'mês', 'meses', 'ano', 'anos', 'dia', 'dias',
+    'periodo', 'período', 'duracao', 'duração', 'inicio', 'início', 'final', 'total',
+    'agora', 'logo', 'rapido', 'rápido', 'urgente',
+    // Processo / etapas
+    'entrega', 'fase', 'etapa', 'cronograma', 'andamento', 'obra', 'obras', 'construcao',
+    'construção', 'liberacao', 'liberação', 'implantacao', 'implantação', 'infraestrutura',
+    'infra', 'documentacao', 'documentação',
+    // Produto imobiliário
+    'lote', 'lotes', 'apartamento', 'empreendimento', 'imovel', 'imóvel',
+    'terreno', 'casa', 'casas', 'predio', 'prédio', 'condominio', 'condomínio',
+    // Localização
+    'cidade', 'bairro', 'regiao', 'região', 'endereco', 'endereço', 'localizacao',
+    'localização', 'atibaia', 'montaresa', 'campinas', 'paulinia', 'paulínia',
+    // Financeiro / comercial
+    'valor', 'valores', 'preco', 'preço', 'precos', 'preços', 'financiamento',
+    'parcela', 'parcelamento', 'entrada', 'fgts', 'desconto', 'oferta', 'tabela',
+    // Informação genérica
+    'informação', 'informacao', 'informações', 'informacoes', 'detalhes',
+    // Verbos e ações comuns
+    'aguardando', 'esperando', 'ligando', 'mandando', 'enviando', 'perguntando',
   ].map((s) => s.toLowerCase())
 );
 
