@@ -90,7 +90,7 @@ import {
 import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
 import {
   isBareGreetingOnly,
-  userAskedForSendableMaterial,
+  userExplicitlyAskedForMaterial,
   inferPreferredCategoryFromUserText,
   buildDocCategoryTryOrder,
   pickPostMediaAckText,
@@ -976,29 +976,41 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let requestedSendCategoryForLog: FileCategory | null = null;
     let fileResolutionSkipReason: string | null = null;
     const bareGreeting = isBareGreetingOnly(trimmed);
-    // Verifica apenas a mensagem atual (trimmed = rajada do turno).
-    // NÃO usa fullUserUtterances: isso causava shouldAttemptDocSend = true para todos
-    // os turnos depois de qualquer pedido de "book/material", bloqueando respostas normais.
-    const userMaterialAsk = userAskedForSendableMaterial(trimmed) && !bareGreeting;
-    const shouldAttemptDocSend =
-      !bareGreeting && (userMaterialAsk || structured.send_file_category != null);
 
-    console.log('[ANA_DOC_INTENT]', {
+    // ─── ANA DOC GATE ────────────────────────────────────────────────────────
+    // Regra: envio de arquivo SOMENTE quando a mensagem ATUAL do usuário contiver
+    // pedido explícito de material (verbo de envio + substantivo de documento).
+    // O campo send_file_category do LLM NÃO é usado como gatilho — ele pode
+    // disparar por sinais indiretos (preço, localização, "quero saber mais") e
+    // causaria envio não autorizado.
+    const { explicit: userExplicit, matchedPattern: materialMatchedPattern } =
+      userExplicitlyAskedForMaterial(trimmed);
+    const userMaterialAsk = userExplicit && !bareGreeting;
+    const shouldAttemptDocSend = !bareGreeting && userMaterialAsk;
+
+    console.log('[ANA_DOC_GATE]', {
       conversationId,
-      userMaterialAsk,
-      userMaterialAskSource: userMaterialAsk ? 'current_message' : 'none',
-      llmSendCategory: structured.send_file_category ?? null,
-      intent: structured.intent,
+      explicit: userMaterialAsk,
       bareGreeting,
       shouldAttemptDocSend,
       enterpriseId: ent?.id ?? null,
       sendableCategories: sendableAnaCategories,
       currentTrimmedPreview: trimmed.slice(0, 80),
     });
+    if (materialMatchedPattern) {
+      console.log('[ANA_DOC_GATE_REASON]', {
+        conversationId,
+        matched_pattern: materialMatchedPattern,
+      });
+    }
 
     if (!shouldAttemptDocSend) {
       structured = { ...structured, send_file_category: null };
       fileResolutionSkipReason = 'no_material_intent_this_turn';
+      console.log('[ANA_DOC_SEND_SKIPPED]', {
+        conversationId,
+        reason: 'no_explicit_request',
+      });
       console.log('[ANA_DOC_RESOLVE_SKIP]', {
         conversationId,
         enterpriseId: ent?.id ?? null,
@@ -1016,7 +1028,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
       structured = { ...structured, send_file_category: null };
     } else {
-      const userCatHint = inferPreferredCategoryFromUserText(trimmed, fullUserUtterances);
+      const userCatHint = inferPreferredCategoryFromUserText(trimmed);
       const llmCat = structured.send_file_category;
       requestedSendCategoryForLog = llmCat ?? userCatHint;
       const tryOrder = buildDocCategoryTryOrder(llmCat, userCatHint, sendableAnaCategories);
