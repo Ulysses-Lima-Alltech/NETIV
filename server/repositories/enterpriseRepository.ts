@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, existsSync, unlinkSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { config } from '../config.js';
 import { query } from '../db/pg.js';
@@ -380,13 +380,46 @@ export async function registerEnterpriseFile(
 ): Promise<number> {
   const fullPath = join(enterpriseDir(enterpriseId), storedFilename);
   const safeOriginal = sanitizeOriginalName(originalName);
+
+  console.log('[ENTERPRISE_FILE_UPLOAD_START]', {
+    enterpriseId,
+    storedFilename,
+    originalName: safeOriginal,
+    mime,
+    sizeBytes: size,
+    fullPath,
+  });
+
   const extracted = await extractText(fullPath, mime, safeOriginal);
+
+  // Lê os bytes do arquivo para persistir no PostgreSQL.
+  // Resolve o problema de FS efêmero (Render sem Persistent Disk): mesmo após
+  // restart/redeploy o arquivo pode ser restaurado automaticamente em disco.
+  let fileData: Buffer | null = null;
+  try {
+    fileData = readFileSync(fullPath);
+    console.log('[ENTERPRISE_FILE_UPLOAD_SAVED]', {
+      enterpriseId,
+      storedFilename,
+      fullPath,
+      bytes: fileData.length,
+      fileDataWillBePersisted: true,
+    });
+  } catch (readErr) {
+    console.error('[ENTERPRISE_FILE_UPLOAD_SAVED] falha ao ler bytes do arquivo para persistência no DB', {
+      enterpriseId,
+      storedFilename,
+      fullPath,
+      error: readErr instanceof Error ? readErr.message : String(readErr),
+    });
+  }
+
   const canBeUsedAsKnowledge = opts?.canBeUsedAsKnowledge !== false;
   const canBeSentByAna = opts?.canBeSentByAna === true;
   const { rows } = await query<{ id: number }>(
     `INSERT INTO enterprise_files (enterprise_id, category, original_name, storage_path, mime_type, size_bytes, extracted_text, is_active,
-      can_be_used_as_knowledge, can_be_sent_by_ana)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9) RETURNING id`,
+      can_be_used_as_knowledge, can_be_sent_by_ana, file_data)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, $10) RETURNING id`,
     [
       enterpriseId,
       category,
@@ -397,9 +430,19 @@ export async function registerEnterpriseFile(
       extracted || null,
       canBeUsedAsKnowledge,
       canBeSentByAna,
+      fileData,
     ]
   );
   const fileId = rows[0].id;
+  console.log('[ENTERPRISE_FILE_DB_SAVED]', {
+    enterpriseId,
+    fileId,
+    storedFilename,
+    category,
+    canBeSentByAna,
+    fileDataStored: fileData != null,
+    fileDataBytes: fileData?.length ?? 0,
+  });
   if (canBeUsedAsKnowledge && (extracted || '').trim()) {
     try {
       await replaceEnterpriseFileChunks(enterpriseId, fileId, extracted);
@@ -575,6 +618,7 @@ export async function getFileForSend(
     return null;
   }
 
+  console.log('[ENTERPRISE_FILE_RESOLVE_PATH]', { enterpriseId, category: catNorm });
   console.log('[ANA_DOC_LOOKUP_QUERY]', {
     enterpriseId,
     category: catNorm,
@@ -587,8 +631,14 @@ export async function getFileForSend(
     },
   });
 
-  const { rows } = await query<{ id: number; storage_path: string; original_name: string; mime_type: string }>(
-    `SELECT id, storage_path, original_name, mime_type FROM enterprise_files
+  const { rows } = await query<{
+    id: number;
+    storage_path: string;
+    original_name: string;
+    mime_type: string;
+    file_data: Buffer | null;
+  }>(
+    `SELECT id, storage_path, original_name, mime_type, file_data FROM enterprise_files
      WHERE enterprise_id = $1 AND category = $2 AND is_active = true AND can_be_sent_by_ana = true
      ORDER BY created_at DESC, id DESC
      LIMIT 1`,
@@ -639,19 +689,61 @@ export async function getFileForSend(
     console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
     return null;
   }
-  const path = join(enterpriseDir(enterpriseId), r.storage_path);
-  if (!existsSync(path)) {
-    console.log('[ANA_DOC_LOOKUP_MISS_REASON]', {
-      enterpriseId,
-      category: catNorm,
-      enterpriseFileId: r.id,
-      reason: 'row_ok_but_file_missing_on_disk',
-      relativeStoragePath: r.storage_path,
-      absolutePath: path,
-    });
-    console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
-    return null;
+
+  const resolvedPath = join(enterpriseDir(enterpriseId), r.storage_path);
+  const fileExistsOnDisk = existsSync(resolvedPath);
+
+  console.log('[ENTERPRISE_FILE_EXISTS_CHECK]', {
+    enterpriseId,
+    fileId: r.id,
+    relativeStoragePath: r.storage_path,
+    absolutePath: resolvedPath,
+    existsOnDisk: fileExistsOnDisk,
+    fileDataAvailable: r.file_data != null,
+    fileDataBytes: r.file_data?.length ?? 0,
+  });
+
+  if (!fileExistsOnDisk) {
+    if (r.file_data) {
+      // Arquivo não está no disco (FS efêmero após restart/redeploy).
+      // Restaura a partir dos bytes persistidos no PostgreSQL.
+      try {
+        writeFileSync(resolvedPath, r.file_data);
+        console.log('[ENTERPRISE_FILE_RESTORED_FROM_DB]', {
+          enterpriseId,
+          fileId: r.id,
+          relativeStoragePath: r.storage_path,
+          absolutePath: resolvedPath,
+          bytes: r.file_data.length,
+        });
+      } catch (restoreErr) {
+        console.error('[ENTERPRISE_FILE_RESTORE_FAILED]', {
+          enterpriseId,
+          fileId: r.id,
+          relativeStoragePath: r.storage_path,
+          absolutePath: resolvedPath,
+          error: restoreErr instanceof Error ? restoreErr.message : String(restoreErr),
+        });
+        console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
+        return null;
+      }
+    } else {
+      // Registro antigo (antes da migration 027) sem file_data: não é possível restaurar.
+      console.log('[ANA_DOC_LOOKUP_MISS_REASON]', {
+        enterpriseId,
+        category: catNorm,
+        enterpriseFileId: r.id,
+        reason: 'row_ok_but_file_missing_on_disk',
+        relativeStoragePath: r.storage_path,
+        absolutePath: resolvedPath,
+        fileDataAvailable: false,
+        hint: 'Registro anterior à migration 027 — sem file_data no banco. Reenvie o arquivo pelo admin para que fique persistente.',
+      });
+      console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
+      return null;
+    }
   }
+
   console.log('[ANA_DOC_LOOKUP_RESULT]', {
     enterpriseId,
     category: catNorm,
@@ -660,10 +752,11 @@ export async function getFileForSend(
     originalName: r.original_name,
     relativeStoragePath: r.storage_path,
     existsOnDisk: true,
+    restoredFromDb: !fileExistsOnDisk,
   });
   return {
     id: r.id,
-    path,
+    path: resolvedPath,
     originalName: r.original_name,
     mime: r.mime_type,
     relativeStoragePath: r.storage_path,

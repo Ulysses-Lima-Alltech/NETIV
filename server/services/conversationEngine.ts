@@ -1171,19 +1171,23 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let mediaOutcome: AnaMediaFirstResult | null = null;
 
     if (willSendMediaFirst && preResolvedFileForAna && effectiveSendCategory && ent && enterpriseIdForFile != null) {
+      console.log('[ANA_DOC_PIPELINE_START]', {
+        conversationId,
+        replyPipelineToken: replyPipelineToken ?? null,
+        phase: 'before_media_send',
+        file: preResolvedFileForAna.originalName,
+      });
       console.log('[ANA_PIPELINE] engine_media_first_start', {
         conversationId,
         enterpriseIdForFile,
         category: effectiveSendCategory,
         file: preResolvedFileForAna.originalName,
       });
-      await sleepMs(randomAnaReplyDelayMs({ replyLength: 400 }));
       if (isPipelineStale(conversationId, replyPipelineToken)) {
-        console.log('[ANA_PIPELINE] engine_cancelled_stale', {
+        console.log('[ANA_DOC_PIPELINE_STALE_ABORT]', {
           conversationId,
-          replyPipelineToken: replyPipelineToken ?? null,
           phase: 'before_media_send',
-          inboundMetaMessageId,
+          replyPipelineToken: replyPipelineToken ?? null,
         });
         return;
       }
@@ -1202,30 +1206,114 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         fileName: mediaOutcome.ok ? preResolvedFileForAna.originalName : mediaOutcome.fileName,
         ok: mediaOutcome.ok,
       });
-      if (canClaimMaterialWasSent) {
-        await sleepMs(ANA_MEDIA_THEN_TEXT_GAP_MS);
-        if (isPipelineStale(conversationId, replyPipelineToken)) {
-          console.log('[ANA_PIPELINE] engine_cancelled_stale', {
-            conversationId,
-            replyPipelineToken: replyPipelineToken ?? null,
-            phase: 'after_media_before_text',
-            inboundMetaMessageId,
-          });
-          return;
-        }
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        console.log('[ANA_DOC_PIPELINE_STALE_ABORT]', {
+          conversationId,
+          phase: 'immediately_after_sendAnaEnterpriseMediaFirst',
+          replyPipelineToken: replyPipelineToken ?? null,
+        });
+        return;
       }
+    }
+
+    /** Envio OK + ACK: um único texto e encerra o turno — sem delay longo nem pós-processamento duplicado. */
+    if (shouldAttemptDocSend && canClaimMaterialWasSent) {
+      console.log('[ANA_DOC_PIPELINE_START]', {
+        conversationId,
+        replyPipelineToken: replyPipelineToken ?? null,
+        phase: 'material_ack_only_turn_end',
+      });
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        console.log('[ANA_DOC_PIPELINE_STALE_ABORT]', {
+          conversationId,
+          phase: 'before_ack_text',
+          replyPipelineToken: replyPipelineToken ?? null,
+        });
+        return;
+      }
+      const ackText = pickPostMediaAckText(lastAsstDup?.content ?? null);
+      const lastContentPreAck = (lastAsstDup?.content || '').trim();
+      const ageDupPreAck = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
+      if (lastContentPreAck && lastContentPreAck === ackText.trim() && ageDupPreAck < 55_000) {
+        console.log('[ANA_DOC_DUPLICATE_SUPPRESSED]', {
+          conversationId,
+          reason: 'ack_would_duplicate_last_assistant',
+        });
+        return;
+      }
+      const sendAckResult = await sendTextMessage(toPhoneNumber, ackText);
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        console.log('[ANA_DOC_PIPELINE_STALE_ABORT]', {
+          conversationId,
+          phase: 'after_ack_sendTextMessage',
+          replyPipelineToken: replyPipelineToken ?? null,
+        });
+        return;
+      }
+      if (!sendAckResult.success || !sendAckResult.metaMessageId) {
+        console.log('[ANA_PIPELINE] engine_send_fail', {
+          conversationId,
+          phase: 'doc_ack_after_media',
+          error: sendAckResult.error ?? null,
+          code: sendAckResult.code ?? null,
+        });
+        return;
+      }
+      await insertMessage(conversationId, 'assistant', ackText, sendAckResult.metaMessageId);
+      console.log('[ANA_DOC_ACK_SENT]', {
+        conversationId,
+        outboundMetaMessageId: sendAckResult.metaMessageId,
+        replyLen: ackText.length,
+      });
+      const convAfterAck = await getConversationById(conversationId);
+      const nameConfirmedForCount = (convAfterAck?.customer_name || '').trim();
+      const deltaAck =
+        nameConfirmedForCount.length >= 2
+          ? countCustomerNameMentionsInText(ackText, nameConfirmedForCount)
+          : 0;
+      if (deltaAck > 0) await incrementAnaCustomerNameMentions(conversationId, deltaAck);
+      if (!nameConfirmedForCount && replyExplicitlyAsksCustomerName(ackText)) {
+        await markAnaAskedForCustomerName(conversationId);
+      }
+      const prevForFlowAck = parseCommercialFlowState(convAfterAck?.commercial_flow_state) ?? flowStateParsed;
+      const nextFlowAck = computeNextCommercialFlowState(prevForFlowAck, ackText, {
+        conversationPhase,
+        enterpriseIdResolved: effectiveConv.enterprise_id ?? null,
+        enterprises: allActiveEnterprises,
+        productTypeHint:
+          mode === 'scoped' && ent
+            ? ent.tipo
+            : triageRequestedProductType === 'INDEFINIDO'
+              ? undefined
+              : triageRequestedProductType,
+      });
+      await mergeConversationCommercialFlowState(conversationId, nextFlowAck);
+      console.log('[ANA_DOC_POST_SEND_STATE_CLEARED]', {
+        conversationId,
+        note: 'flow_state_merged_after_doc_ack_then_return',
+      });
+      console.log('[ANA_DOC_SEND_SUCCESS_RETURNING]', { conversationId });
+      console.log('[ANA_PIPELINE] engine_send_success', {
+        conversationId,
+        phase: 'ana_doc_ack_only',
+        inboundMetaMessageId,
+        outboundMetaMessageId: sendAckResult.metaMessageId,
+        replyLen: ackText.length,
+      });
+      if (structured.classification === 'Carteira' && prevClassification !== 'Carteira') {
+        const convRef = await getConversationById(conversationId);
+        void extractLeadDataFromConversation(
+          conversationId,
+          convRef?.customer_name ?? trustedCustomerName ?? null,
+          ent?.name ?? null
+        ).catch((e) => console.error('[Carteira extract]', e));
+      }
+      return;
     }
 
     let replyText: string;
     if (shouldAttemptDocSend) {
-      if (canClaimMaterialWasSent) {
-        replyText = pickPostMediaAckText(lastAsstDup?.content ?? null);
-        console.log('[ANA_PIPELINE] engine_post_media_short_ack', {
-          conversationId,
-          replyLen: replyText.length,
-          canClaimMaterialWasSent: true,
-        });
-      } else if (mediaOutcome != null && !mediaOutcome.ok) {
+      if (mediaOutcome != null && !mediaOutcome.ok) {
         replyText = pickMaterialSendFailedNeutralReply(lastAsstDup?.content ?? null);
         console.log('[ANA_DOC_HARD_FAIL_NO_FALLBACK]', {
           conversationId,
