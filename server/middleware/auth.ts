@@ -35,13 +35,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     next();
     return;
   }
-  const embedded = await findEmbeddedDefaultUser();
-  if (!embedded) {
-    res.status(401).json({ error: 'Não autenticado.' });
-    return;
-  }
-  req.user = embedded;
-  next();
+  // Sem Bearer token = não autenticado
+  res.status(401).json({ error: 'Não autenticado.' });
 }
 
 export function requireRole(...allowedRoles: UserRole[]) {

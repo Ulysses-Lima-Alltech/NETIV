@@ -2,6 +2,7 @@ import { query } from '../db/pg.js';
 import { getActiveEnterpriseById } from './enterpriseRepository.js';
 import { getCorretorById } from './corretorRepository.js';
 import { assignBrokerForHandoffConversation } from '../services/handoffQueueService.js';
+import { notifyDjango, buildLeadPayload } from '../services/djangoWebhook.js';
 import type { LeadOriginInput } from '../services/leadOriginResolver.js';
 import { resolveEnterpriseFromLeadSource } from '../services/leadOriginResolver.js';
 import { parseCommercialFlowState, type CommercialFlowState } from '../utils/commercialFlowState.js';
@@ -358,6 +359,7 @@ export interface ListConversationsFilters {
   status?: string;
   enterpriseId?: number;
   search?: string;
+  brokerId?: number;  // NOVO — filtra por assigned_broker_id
 }
 
 export async function listConversationsWithPreview(
@@ -395,6 +397,12 @@ export async function listConversationsWithPreview(
       ))`
     );
     params.push(searchTerm);
+    paramIndex += 1;
+  }
+
+  if (filters?.brokerId != null) {
+    conditions.push(`c.assigned_broker_id = $${paramIndex}`);
+    params.push(filters.brokerId);
     paramIndex += 1;
   }
 
@@ -496,7 +504,10 @@ export async function updateClassification(
     );
     const row = rows[0] ?? null;
     if (row) {
-      if (handoff) await assignBrokerForHandoffConversation(conversationId);
+      if (handoff) {
+        notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row));
+        await assignBrokerForHandoffConversation(conversationId);
+      }
       if (row.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(row.contact_id);
     }
     return row;
@@ -540,7 +551,10 @@ export async function updateClassification(
   );
   const row = rows[0] ?? null;
   if (row) {
-    if (handoff) await assignBrokerForHandoffConversation(conversationId);
+    if (handoff) {
+      notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row));
+      await assignBrokerForHandoffConversation(conversationId);
+    }
     if (row.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(row.contact_id);
   }
   return row;
@@ -625,7 +639,13 @@ export async function applyAnaConversationUpdate(
      updated_at = NOW() WHERE id = $5`,
     [classification, lead_temperature, handoff, cn ?? null, conversationId, saveBeforeHandoff ?? null]
   );
-  if (handoff) await assignBrokerForHandoffConversation(conversationId);
+  if (handoff) {
+    const updatedConv = await getConversationById(conversationId);
+    if (updatedConv) {
+      notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(updatedConv));
+    }
+    await assignBrokerForHandoffConversation(conversationId);
+  }
 }
 
 /** Persiste o JSON de estado comercial (objeto completo vindo de `computeNextCommercialFlowState`). */
@@ -698,6 +718,12 @@ export async function applyHandoffAfterAppointmentConfirmation(
     await query(`UPDATE corretores SET last_assigned_at = NOW(), updated_at = NOW() WHERE id = $1`, [brokerId]);
   } else {
     await assignBrokerForHandoffConversation(conversationId);
+  }
+  
+  // NOVO: Notificar Django sobre o lead
+  const updatedConv = await getConversationById(conversationId);
+  if (updatedConv) {
+    notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(updatedConv));
   }
 }
 
