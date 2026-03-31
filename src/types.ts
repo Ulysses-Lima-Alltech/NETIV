@@ -68,4 +68,7 @@ export interface Message {
   /** document | image quando envio com arquivo */
   messageType?: 'text' | 'document' | 'image';
   attachment?: MessageAttachment | null;
+  /** true quando a mensagem foi apagada internamente (soft delete NETIV) */
+  deleted?: boolean;
+  deletedAt?: string | null;
 }
