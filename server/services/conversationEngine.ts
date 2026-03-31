@@ -66,6 +66,7 @@ import {
   countCustomerNameMentionsInText,
   sleepMs,
   randomAnaReplyDelayMs,
+  buildGreetingSafeFallback,
 } from '../utils/anaReplyFinalize.js';
 import {
   extractCustomerNameFromUserUtterance,
@@ -872,6 +873,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       lastCatalogOfferedNames: flowStateParsed.lastCatalogOfferedNames ?? null,
       clearedAt: flowStateParsed.clearedAt ?? null,
     });
+    // [ANA_HISTORY_WINDOW] — rastreabilidade de quanto contexto chega ao modelo
+    console.log('[ANA_HISTORY_WINDOW]', {
+      conversationId,
+      totalDbRows: rows.length,
+      historyPassedToModel: historyCount,
+      maxHistory: MAX_HISTORY,
+      isGreeting: isBareGreetingOnly(trimmed),
+    });
 
     const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
     for (const h of history) {
@@ -936,17 +945,40 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           ? 'empty_content'
           : 'parse_rejected';
       replySource = 'technical_fallback';
-      console.log('[ANA_PIPELINE] technical_fallback_neutral', {
+
+      const isGreetingForFallback = isBareGreetingOnly(trimmed);
+
+      // [ANA_CONTINUATION_FALLBACK] — log centralizado para todo fallback técnico
+      console.log('[ANA_CONTINUATION_FALLBACK]', {
         conversationId,
         messageId: inboundMetaMessageId,
         reason: fallbackReason,
+        isGreeting: isGreetingForFallback,
+        userTextPreview: trimmed.slice(0, 60),
         ...(openAiApiError && { openAiApiError, openAiHttpStatus }),
       });
       console.log('[ANA_PARSE_FLOW]', {
         conversationId,
         technical_fallback_used: true,
       });
+
       structured = anaTechnicalFallbackStructured(effectiveConv.classification);
+
+      // ── GREETING BYPASS ────────────────────────────────────────────────────
+      // Saudações simples (oi, olá, bom dia, etc.) NUNCA devem receber a
+      // mensagem de erro técnico "Não consegui continuar daqui agora...".
+      // Se o pipeline falhou por qualquer razão técnica mas a mensagem atual
+      // é apenas uma saudação, substituímos por uma resposta neutra e humana.
+      if (isGreetingForFallback) {
+        const safeReply = buildGreetingSafeFallback(effectiveConv.customer_name);
+        structured = { ...structured, reply: safeReply };
+        console.log('[ANA_GREETING_BYPASS]', {
+          conversationId,
+          reason: 'technical_fallback_suppressed_for_bare_greeting',
+          fallbackReason,
+          safeReply: safeReply.slice(0, 100),
+        });
+      }
     }
 
     if (structured.project?.trim()) {
