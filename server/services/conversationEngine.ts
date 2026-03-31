@@ -976,20 +976,24 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let requestedSendCategoryForLog: FileCategory | null = null;
     let fileResolutionSkipReason: string | null = null;
     const bareGreeting = isBareGreetingOnly(trimmed);
-    const userMaterialAsk =
-      userAskedForSendableMaterial(trimmed, fullUserUtterances) && !bareGreeting;
+    // Verifica apenas a mensagem atual (trimmed = rajada do turno).
+    // NÃO usa fullUserUtterances: isso causava shouldAttemptDocSend = true para todos
+    // os turnos depois de qualquer pedido de "book/material", bloqueando respostas normais.
+    const userMaterialAsk = userAskedForSendableMaterial(trimmed) && !bareGreeting;
     const shouldAttemptDocSend =
       !bareGreeting && (userMaterialAsk || structured.send_file_category != null);
 
     console.log('[ANA_DOC_INTENT]', {
       conversationId,
       userMaterialAsk,
+      userMaterialAskSource: userMaterialAsk ? 'current_message' : 'none',
       llmSendCategory: structured.send_file_category ?? null,
       intent: structured.intent,
       bareGreeting,
       shouldAttemptDocSend,
       enterpriseId: ent?.id ?? null,
       sendableCategories: sendableAnaCategories,
+      currentTrimmedPreview: trimmed.slice(0, 80),
     });
 
     if (!shouldAttemptDocSend) {

@@ -14,9 +14,17 @@ export function isBareGreetingOnly(text: string): boolean {
 const MATERIAL_ASK_RE =
   /\b(book|pdf|materia(l|is)|material\s+completo|cat[aá]logo|brochure|dossi[eê]|apresenta(c|ç)(a|ã)o|planta|plantas|layout|tabela(\s+comercial)?|precifica(c|ç)(a|ã)o|pre(c|ç)os?|valores|planilha|anexo|arquivo|documento|mand(ar|a)(\s+o)?\s+pdf|envi(ar|a)(\s+o)?\s+pdf|me\s+(manda|envia)|quero(\s+o)?\s+(pdf|book|material)|tem(\s+(o|a))?\s+(book|pdf|material|cat[aá]logo)|consegue(\s+te)?\s+(mandar|enviar))\b/i;
 
-export function userAskedForSendableMaterial(userText: string, fullUtterances: string): boolean {
-  const blob = `${userText}\n${fullUtterances}`.slice(0, 12_000);
-  return MATERIAL_ASK_RE.test(blob);
+/**
+ * Detecta se a mensagem ATUAL do usuário pede explicitamente um material/arquivo.
+ *
+ * IMPORTANTE: verifica apenas `userText` (a rajada atual), não o histórico completo.
+ * Usar fullUtterances aqui causava falso positivo permanente: depois que o usuário
+ * escrevia "me manda o book" uma vez, toda mensagem seguinte ("vamos agendar?",
+ * "qual o preço?", etc.) também retornava true, fazendo shouldAttemptDocSend = true
+ * para sempre e bloqueando respostas normais da Ana.
+ */
+export function userAskedForSendableMaterial(userText: string): boolean {
+  return MATERIAL_ASK_RE.test((userText || '').trim());
 }
 
 function normBlob(userText: string, fullUtterances: string): string {
