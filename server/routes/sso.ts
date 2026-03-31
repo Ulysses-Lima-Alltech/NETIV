@@ -112,6 +112,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     const email = typeof payload.email === 'string' ? payload.email : '';
     const name = typeof payload.name === 'string' ? payload.name : '';
     const role = typeof payload.role === 'string' ? payload.role : '';
+    const brokerId = typeof payload.broker_id === 'number' ? payload.broker_id : null;
+    const djangoUserId = typeof payload.django_user_id === 'number' ? payload.django_user_id : null;
 
     if (!email) {
       res.status(400).json({ error: 'Email é obrigatório no JWT.' });
@@ -125,11 +127,13 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     let user: AppUser | null = await findByEmail(email);
 
     if (user) {
-      // Usuário já existe → atualizar nome e role (caso tenha mudado no Django)
+      // Usuário já existe → atualizar nome, role, broker_id e django_user_id
       await updateUser(user.id, {
         name: name || user.name,
         role: safeRole,
         active: true,
+        broker_id: brokerId,
+        django_user_id: djangoUserId,
       });
     } else {
       // Verificar se existe mas está inativo
@@ -140,6 +144,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
           name: name || inactive.name,
           role: safeRole,
           active: true,
+          broker_id: brokerId,
+          django_user_id: djangoUserId,
         });
         user = await findByEmail(email);
       } else {
@@ -151,6 +157,11 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
           password: randomPassword,
           role: safeRole,
           active: true,
+        });
+        // Após criar, atualizar broker_id e django_user_id
+        await updateUser(user.id, {
+          broker_id: brokerId,
+          django_user_id: djangoUserId,
         });
       }
     }
