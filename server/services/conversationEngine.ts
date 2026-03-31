@@ -95,6 +95,8 @@ import {
   buildDocCategoryTryOrder,
   pickPostMediaAckText,
 } from '../utils/anaDocSendIntent.js';
+import { applyOperationalFactGuard } from '../utils/anaOperationalFactGuard.js';
+import { resolveOperationalFactAnswer } from '../utils/anaOperationalFactResolver.js';
 
 function anaPhoneTail(raw: string | null | undefined, len = 6): string | null {
   const d = String(raw ?? '').replace(/\D/g, '');
@@ -1142,6 +1144,60 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         }
       } catch (e) {
         console.error('[ANA APPT]', e);
+      }
+    }
+
+    // ─── ANA OPERATIONAL FACT RESOLVER (camada determinística) ──────────────
+    // Para perguntas sobre entrega, obras, infraestrutura, liberação para
+    // construir e portaria/lazer, o pipeline busca a resposta nos dados
+    // oficiais (variablesMap + knowledgeText) ANTES de usar o reply do LLM.
+    // O LLM não tem liberdade de improvisar nesses tópicos.
+    let operationalResolverFired = false;
+    {
+      const resolution = resolveOperationalFactAnswer(trimmed, knowledgeText, vars);
+      if (resolution !== null) {
+        operationalResolverFired = true;
+        console.log('[ANA_OPERATIONAL_RESOLVER]', {
+          conversationId,
+          topic: resolution.topic,
+          dataFound: resolution.dataFound,
+          fragment: resolution.fragment?.slice(0, 100) ?? null,
+          answer_preview: resolution.answer.slice(0, 100),
+          original_llm_preview: replyBody.slice(0, 100),
+        });
+        replyBody = resolution.answer;
+      }
+    }
+
+    // ─── ANA OPERATIONAL FACT GUARD (segurança adicional) ────────────────────
+    // Só roda se o resolver não interceptou. Bloqueia claims operacionais
+    // inventados que tenham passado pelo resolver (ex.: tópico não detectado,
+    // mas o LLM ainda assim alucinouaaa).
+    if (!operationalResolverFired) {
+      const officialData = [
+        ...Object.values(vars),
+        knowledgeText.slice(0, 12_000),
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const guardResult = applyOperationalFactGuard(replyBody, trimmed, officialData);
+
+      if (guardResult.replaced) {
+        console.log('[ANA_OPERATIONAL_FACT_GUARD]', {
+          conversationId,
+          replaced: true,
+          unsupported_claims: guardResult.unsupportedClaims,
+          grounded_claims: guardResult.groundedClaims,
+          original_preview: replyBody.slice(0, 120),
+        });
+        replyBody = guardResult.text;
+      } else if (guardResult.groundedClaims.length > 0) {
+        console.log('[ANA_OPERATIONAL_FACT_GUARD]', {
+          conversationId,
+          replaced: false,
+          grounded_claims: guardResult.groundedClaims,
+        });
       }
     }
 
