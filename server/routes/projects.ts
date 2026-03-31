@@ -1,9 +1,10 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import { randomBytes } from 'crypto';
-import { mkdirSync } from 'fs';
+import { mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { config } from '../config.js';
+import { isR2Configured, uploadToR2 } from '../services/r2Storage.js';
 import {
   listEnterprises,
   createEnterprise,
@@ -61,20 +62,10 @@ function parseUploadBool(v: unknown, defaultVal: boolean): boolean {
   return defaultVal;
 }
 
+// memoryStorage: o buffer fica em RAM. O handler escreve em disco (cache local)
+// e, se R2 estiver configurado, faz upload para o R2 como fonte de verdade.
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, _file, cb) => {
-      const id = parseInt(String(req.params.id), 10);
-      if (Number.isNaN(id)) return cb(new Error('ID inválido'), '');
-      const dir = join(config.storageEmpreendimentos, String(id));
-      mkdirSync(dir, { recursive: true });
-      cb(null, dir);
-    },
-    filename: (_req, file, cb) => {
-      const ext = file.originalname.includes('.') ? file.originalname.slice(file.originalname.lastIndexOf('.')) : '';
-      cb(null, `${Date.now()}-${randomBytes(8).toString('hex')}${ext}`);
-    },
-  }),
+  storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
     const name = (file.originalname || '').toLowerCase();
     const isPdf = file.mimetype === 'application/pdf' || name.endsWith('.pdf');
@@ -278,12 +269,12 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
     if (!req.file) {
       return res.status(400).json({ error: fv || 'Envie o campo file.' });
     }
-    const filename = (req.file.originalname || '').toLowerCase();
+    const origName = (req.file.originalname || '').toLowerCase();
     const mime = req.file.mimetype || '';
-    const isPdf = mime.includes('pdf') || filename.endsWith('.pdf');
-    const isTxt = mime.startsWith('text/') || filename.endsWith('.txt') || filename.endsWith('.md');
+    const isPdf = mime.includes('pdf') || origName.endsWith('.pdf');
+    const isTxt = mime.startsWith('text/') || origName.endsWith('.txt') || origName.endsWith('.md');
     const isDocx =
-      mime.includes('wordprocessingml') || mime.includes('msword') || filename.endsWith('.docx');
+      mime.includes('wordprocessingml') || mime.includes('msword') || origName.endsWith('.docx');
     if (!isPdf && !isTxt && !isDocx) {
       return res.status(400).json({ error: 'Tipo inválido. Envie PDF, DOCX, TXT ou MD.' });
     }
@@ -297,14 +288,52 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
     }
     const canBeUsedAsKnowledge = parseUploadBool(req.body?.canBeUsedAsKnowledge, true);
     const canBeSentByAna = parseUploadBool(req.body?.canBeSentByAna, false);
+
+    // Gera nome do arquivo (mesmo padrão do diskStorage anterior).
+    const ext = req.file.originalname.includes('.')
+      ? req.file.originalname.slice(req.file.originalname.lastIndexOf('.'))
+      : '';
+    const storedFilename = `${Date.now()}-${randomBytes(8).toString('hex')}${ext}`;
+
+    // Grava em disco como cache local (necessário para extractText + fallback local).
+    const dir = join(config.storageEmpreendimentos, String(id));
+    mkdirSync(dir, { recursive: true });
+    const localPath = join(dir, storedFilename);
+    writeFileSync(localPath, req.file.buffer);
+
+    // Tenta upload para R2 se configurado.
+    let storageProvider: 'r2' | 'local' = 'local';
+    let storageKey: string | undefined;
+    let bucketName: string | undefined;
+    let publicUrl: string | null = null;
+
+    if (isR2Configured()) {
+      const r2Key = `empreendimentos/${id}/${storedFilename}`;
+      const r2Res = await uploadToR2(r2Key, req.file.buffer, mime || 'application/octet-stream');
+      if (r2Res.ok) {
+        storageProvider = 'r2';
+        storageKey = r2Res.key;
+        bucketName = r2Res.bucket;
+        publicUrl = r2Res.publicUrl;
+      } else {
+        // Fallback: R2 falhou, arquivo continua salvo apenas em disco local + BYTEA.
+        console.error('[R2_UPLOAD_FALLBACK]', {
+          enterpriseId: id,
+          storedFilename,
+          error: r2Res.error,
+          note: 'Arquivo salvo localmente como fallback',
+        });
+      }
+    }
+
     const fid = await registerEnterpriseFile(
       id,
       cat as FileCategory,
-      req.file.filename,
+      storedFilename,
       req.file.originalname,
-      req.file.mimetype || 'application/octet-stream',
+      mime || 'application/octet-stream',
       req.file.size,
-      { canBeUsedAsKnowledge, canBeSentByAna }
+      { canBeUsedAsKnowledge, canBeSentByAna, storageProvider, storageKey, bucketName, publicUrl }
     );
     const files = await listEnterpriseFiles(id);
     const f = files.find((x) => x.id === fid)!;

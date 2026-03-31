@@ -3,6 +3,7 @@ import { join } from 'path';
 import { config } from '../config.js';
 import { query } from '../db/pg.js';
 import { replaceEnterpriseFileChunks } from './enterpriseKnowledgeChunkRepository.js';
+import { downloadFromR2, deleteFromR2 } from '../services/r2Storage.js';
 
 export const FILE_CATEGORIES = ['book', 'unidades', 'tabela_comercial', 'outro'] as const;
 export type FileCategory = (typeof FILE_CATEGORIES)[number];
@@ -376,10 +377,22 @@ export async function registerEnterpriseFile(
   originalName: string,
   mime: string,
   size: number,
-  opts?: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean }
+  opts?: {
+    canBeUsedAsKnowledge?: boolean;
+    canBeSentByAna?: boolean;
+    /** 'r2' para uploads novos via Cloudflare R2; 'local' para armazenamento local. */
+    storageProvider?: 'r2' | 'local';
+    /** Chave do objeto no bucket R2 (ex.: empreendimentos/7/1735-abc.pdf). */
+    storageKey?: string;
+    /** Nome do bucket R2. */
+    bucketName?: string;
+    /** URL pública do objeto (se bucket público ou custom domain). */
+    publicUrl?: string | null;
+  }
 ): Promise<number> {
   const fullPath = join(enterpriseDir(enterpriseId), storedFilename);
   const safeOriginal = sanitizeOriginalName(originalName);
+  const storageProvider = opts?.storageProvider ?? 'local';
 
   console.log('[ENTERPRISE_FILE_UPLOAD_START]', {
     enterpriseId,
@@ -387,39 +400,52 @@ export async function registerEnterpriseFile(
     originalName: safeOriginal,
     mime,
     sizeBytes: size,
+    storageProvider,
+    storageKey: opts?.storageKey ?? null,
     fullPath,
   });
 
   const extracted = await extractText(fullPath, mime, safeOriginal);
 
-  // Lê os bytes do arquivo para persistir no PostgreSQL.
-  // Resolve o problema de FS efêmero (Render sem Persistent Disk): mesmo após
-  // restart/redeploy o arquivo pode ser restaurado automaticamente em disco.
+  // Para R2: bytes já estão no bucket; não duplicar em BYTEA.
+  // Para local: guarda BYTEA como fallback para FS efêmero.
   let fileData: Buffer | null = null;
-  try {
-    fileData = readFileSync(fullPath);
+  if (storageProvider !== 'r2') {
+    try {
+      fileData = readFileSync(fullPath);
+      console.log('[ENTERPRISE_FILE_UPLOAD_SAVED]', {
+        enterpriseId,
+        storedFilename,
+        bytes: fileData.length,
+        fileDataWillBePersisted: true,
+        storageProvider,
+      });
+    } catch (readErr) {
+      console.error('[ENTERPRISE_FILE_UPLOAD_SAVED] falha ao ler bytes para BYTEA', {
+        enterpriseId,
+        storedFilename,
+        error: readErr instanceof Error ? readErr.message : String(readErr),
+      });
+    }
+  } else {
     console.log('[ENTERPRISE_FILE_UPLOAD_SAVED]', {
       enterpriseId,
       storedFilename,
-      fullPath,
-      bytes: fileData.length,
-      fileDataWillBePersisted: true,
-    });
-  } catch (readErr) {
-    console.error('[ENTERPRISE_FILE_UPLOAD_SAVED] falha ao ler bytes do arquivo para persistência no DB', {
-      enterpriseId,
-      storedFilename,
-      fullPath,
-      error: readErr instanceof Error ? readErr.message : String(readErr),
+      storageProvider: 'r2',
+      storageKey: opts?.storageKey,
+      note: 'R2 é fonte de verdade — BYTEA omitido',
     });
   }
 
   const canBeUsedAsKnowledge = opts?.canBeUsedAsKnowledge !== false;
   const canBeSentByAna = opts?.canBeSentByAna === true;
   const { rows } = await query<{ id: number }>(
-    `INSERT INTO enterprise_files (enterprise_id, category, original_name, storage_path, mime_type, size_bytes, extracted_text, is_active,
-      can_be_used_as_knowledge, can_be_sent_by_ana, file_data)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, $10) RETURNING id`,
+    `INSERT INTO enterprise_files
+       (enterprise_id, category, original_name, storage_path, mime_type, size_bytes,
+        extracted_text, is_active, can_be_used_as_knowledge, can_be_sent_by_ana,
+        file_data, storage_provider, storage_key, bucket_name, public_url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, $10, $11, $12, $13, $14)
+     RETURNING id`,
     [
       enterpriseId,
       category,
@@ -431,6 +457,10 @@ export async function registerEnterpriseFile(
       canBeUsedAsKnowledge,
       canBeSentByAna,
       fileData,
+      storageProvider,
+      opts?.storageKey ?? null,
+      opts?.bucketName ?? null,
+      opts?.publicUrl ?? null,
     ]
   );
   const fileId = rows[0].id;
@@ -440,6 +470,8 @@ export async function registerEnterpriseFile(
     storedFilename,
     category,
     canBeSentByAna,
+    storageProvider,
+    storageKey: opts?.storageKey ?? null,
     fileDataStored: fileData != null,
     fileDataBytes: fileData?.length ?? 0,
   });
@@ -500,8 +532,12 @@ export async function deleteEnterpriseFile(
   enterpriseId: number,
   fileId: number
 ): Promise<DeleteEnterpriseFileResult> {
-  const { rows } = await query<{ storage_path: string }>(
-    `SELECT storage_path FROM enterprise_files WHERE id = $1 AND enterprise_id = $2`,
+  const { rows } = await query<{
+    storage_path: string;
+    storage_provider: string | null;
+    storage_key: string | null;
+  }>(
+    `SELECT storage_path, storage_provider, storage_key FROM enterprise_files WHERE id = $1 AND enterprise_id = $2`,
     [fileId, enterpriseId]
   );
   if (!rows[0]) return { ok: false, reason: 'not_found' };
@@ -520,6 +556,11 @@ export async function deleteEnterpriseFile(
     return { ok: true, mode: 'deactivated', message: MSG_DEACTIVATED_HISTORICO };
   }
 
+  // Remove do R2 se for o provider.
+  if (rows[0].storage_provider === 'r2' && rows[0].storage_key) {
+    await deleteFromR2(rows[0].storage_key);
+  }
+  // Remove cache local (pode não existir em FS efêmero — ok ignorar).
   const p = join(enterpriseDir(enterpriseId), rows[0].storage_path);
   if (existsSync(p)) unlinkSync(p);
   await query(`DELETE FROM enterprise_files WHERE id = $1`, [fileId]);
@@ -637,8 +678,11 @@ export async function getFileForSend(
     original_name: string;
     mime_type: string;
     file_data: Buffer | null;
+    storage_provider: string | null;
+    storage_key: string | null;
   }>(
-    `SELECT id, storage_path, original_name, mime_type, file_data FROM enterprise_files
+    `SELECT id, storage_path, original_name, mime_type, file_data, storage_provider, storage_key
+     FROM enterprise_files
      WHERE enterprise_id = $1 AND category = $2 AND is_active = true AND can_be_sent_by_ana = true
      ORDER BY created_at DESC, id DESC
      LIMIT 1`,
@@ -696,6 +740,8 @@ export async function getFileForSend(
   console.log('[ENTERPRISE_FILE_EXISTS_CHECK]', {
     enterpriseId,
     fileId: r.id,
+    storageProvider: r.storage_provider,
+    storageKey: r.storage_key,
     relativeStoragePath: r.storage_path,
     absolutePath: resolvedPath,
     existsOnDisk: fileExistsOnDisk,
@@ -704,40 +750,76 @@ export async function getFileForSend(
   });
 
   if (!fileExistsOnDisk) {
-    if (r.file_data) {
-      // Arquivo não está no disco (FS efêmero após restart/redeploy).
-      // Restaura a partir dos bytes persistidos no PostgreSQL.
+    if (r.storage_provider === 'r2' && r.storage_key) {
+      // ── Caminho 1: arquivo está no R2 → baixar e cachear em disco ─────────
+      const buf = await downloadFromR2(r.storage_key);
+      if (!buf) {
+        console.log('[ANA_DOC_LOOKUP_MISS_REASON]', {
+          enterpriseId,
+          category: catNorm,
+          enterpriseFileId: r.id,
+          reason: 'r2_download_failed',
+          storageKey: r.storage_key,
+        });
+        console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
+        return null;
+      }
+      try {
+        writeFileSync(resolvedPath, buf);
+        console.log('[ENTERPRISE_FILE_RESTORED_FROM_DB]', {
+          enterpriseId,
+          fileId: r.id,
+          source: 'r2',
+          storageKey: r.storage_key,
+          bytes: buf.length,
+          cachedAt: resolvedPath,
+        });
+      } catch (writeErr) {
+        console.error('[ENTERPRISE_FILE_RESTORE_FAILED]', {
+          enterpriseId,
+          fileId: r.id,
+          source: 'r2',
+          error: writeErr instanceof Error ? writeErr.message : String(writeErr),
+        });
+        console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
+        return null;
+      }
+    } else if (r.file_data) {
+      // ── Caminho 2: fallback BYTEA (registros locais pré-R2) ─────────────
       try {
         writeFileSync(resolvedPath, r.file_data);
         console.log('[ENTERPRISE_FILE_RESTORED_FROM_DB]', {
           enterpriseId,
           fileId: r.id,
-          relativeStoragePath: r.storage_path,
-          absolutePath: resolvedPath,
+          source: 'bytea',
           bytes: r.file_data.length,
+          cachedAt: resolvedPath,
         });
-      } catch (restoreErr) {
+      } catch (writeErr) {
         console.error('[ENTERPRISE_FILE_RESTORE_FAILED]', {
           enterpriseId,
           fileId: r.id,
-          relativeStoragePath: r.storage_path,
-          absolutePath: resolvedPath,
-          error: restoreErr instanceof Error ? restoreErr.message : String(restoreErr),
+          source: 'bytea',
+          error: writeErr instanceof Error ? writeErr.message : String(writeErr),
         });
         console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
         return null;
       }
     } else {
-      // Registro antigo (antes da migration 027) sem file_data: não é possível restaurar.
+      // ── Caminho 3: sem R2 e sem BYTEA → miss definitivo ─────────────────
       console.log('[ANA_DOC_LOOKUP_MISS_REASON]', {
         enterpriseId,
         category: catNorm,
         enterpriseFileId: r.id,
         reason: 'row_ok_but_file_missing_on_disk',
+        storageProvider: r.storage_provider,
         relativeStoragePath: r.storage_path,
         absolutePath: resolvedPath,
         fileDataAvailable: false,
-        hint: 'Registro anterior à migration 027 — sem file_data no banco. Reenvie o arquivo pelo admin para que fique persistente.',
+        hint:
+          r.storage_provider === 'r2'
+            ? 'storage_key ausente — registro R2 corrompido. Reenvie o arquivo.'
+            : 'Registro sem file_data (pré-migration 027). Reenvie o arquivo pelo admin.',
       });
       console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
       return null;
