@@ -172,6 +172,139 @@ export function finalizeAnaReplyText(text: string, _opts?: FinalizeAnaReplyOptio
   return s.slice(0, 4000);
 }
 
+/**
+ * Guard leve da primeira resposta: remove apenas trechos de preço/parcelamento/entrada
+ * quando o cliente não pediu isso explicitamente.
+ */
+export function sanitizeFirstReplyCommercialLeak(reply: string): {
+  text: string;
+  removedCommercialSentences: number;
+} {
+  const base = normalizeWhitespacePreservingLines(stripMarkdownArtifactsForWhatsApp((reply || '').trim()));
+  if (!base) return { text: base, removedCommercialSentences: 0 };
+
+  const norm = (s: string) =>
+    s
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/\p{M}/gu, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const hasCommercialLeak = (sentence: string): boolean => {
+    const raw = sentence.trim();
+    const n = norm(raw);
+    if (!n) return false;
+
+    const strongPatterns: RegExp[] = [
+      /r\$\s*\d/,
+      /\bpreco(?:s)?\b/,
+      /\bquanto\s+(?:custa|fica|sai)\b/,
+      /\bparcela(?:s)?\b/,
+      /\bentrada\b/,
+      /\bfinanciamento\b/,
+      /\bdesconto\b/,
+      /\bcondic(?:ao|oes)\s+de\s+pagamento\b/,
+      /\bpagamento\s+facilitado\b/,
+      /\bparcelado\b/,
+      /\bsinal\s+de\s+entrada\b/,
+      /\bqual\s+o\s+valor\b/,
+      /\bvalor\s+do\s+(?:lote|terreno|imovel|apartamento|empreendimento)\b/,
+      /\bvalor\s+da\s+entrada\b/,
+      /\bme\s+passa\s+o\s+valor\b/,
+      /\bvalores?\s+a\s+partir\s+de\b/,
+    ];
+    return strongPatterns.some((re) => re.test(n));
+  };
+
+  const splitSentences = (text: string): string[] => {
+    const out: string[] = [];
+    const simpleAbbrev = new Set([
+      'sr',
+      'sra',
+      'srta',
+      'dr',
+      'dra',
+      'av',
+      'al',
+      'apt',
+      'bl',
+      'cj',
+      'etc',
+    ]);
+    let buf = '';
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]!;
+      if (ch === '\n') {
+        const t = buf.trim();
+        if (t) out.push(t);
+        buf = '';
+        continue;
+      }
+      buf += ch;
+
+      if (ch === '!' || ch === '?') {
+        const t = buf.trim();
+        if (t) out.push(t);
+        buf = '';
+        continue;
+      }
+
+      if (ch === '.') {
+        const prev = text[i - 1] ?? '';
+        const next = text[i + 1] ?? '';
+
+        // Não quebra ponto dentro de número: 279.000,00 / 3.500 m²
+        if (/\d/.test(prev) && /\d/.test(next)) continue;
+
+        // Não quebra abreviações comuns.
+        const beforeDot = buf.slice(0, -1).trim();
+        const token = beforeDot.match(/([A-Za-zÀ-ÿ]{1,5})$/)?.[1]?.toLowerCase() ?? '';
+        if (simpleAbbrev.has(token)) continue;
+
+        // Acrônimo simples no padrão "S.A." / "U.S.A.".
+        if (/[A-Za-z]\.[A-Za-z]$/.test(beforeDot)) continue;
+
+        // Se não há espaço após ".", pode ser token interno, não fim de frase.
+        if (next && !/\s/.test(next)) continue;
+
+        const t = buf.trim();
+        if (t) out.push(t);
+        buf = '';
+      }
+    }
+    const tail = buf.trim();
+    if (tail) out.push(tail);
+    return out;
+  };
+
+  const sentences = splitSentences(base);
+  const kept: string[] = [];
+  let removed = 0;
+  for (const s of sentences) {
+    if (hasCommercialLeak(s)) {
+      removed += 1;
+      continue;
+    }
+    kept.push(s.trim());
+  }
+
+  if (removed === 0) return { text: base, removedCommercialSentences: 0 };
+
+  if (kept.length === 0) {
+    return {
+      text: 'Posso te passar um resumo rápido do empreendimento e te orientar no próximo passo.',
+      removedCommercialSentences: removed,
+    };
+  }
+  const rebuilt = kept
+    .join(' ')
+    .replace(/\s+([,.;!?])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return { text: rebuilt.slice(0, 4000), removedCommercialSentences: removed };
+}
+
 function normGreeting(s: string): string {
   return s
     .toLowerCase()

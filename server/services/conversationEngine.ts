@@ -67,6 +67,7 @@ import {
   sleepMs,
   randomAnaReplyDelayMs,
   buildGreetingSafeFallback,
+  sanitizeFirstReplyCommercialLeak,
 } from '../utils/anaReplyFinalize.js';
 import {
   extractCustomerNameFromUserUtterance,
@@ -253,6 +254,31 @@ function normText(s: string): string {
 
 function hasExplicitHandoffIntent(message: string): boolean {
   return HANDOFF_INTENT_PATTERNS.some((p) => normText(message).includes(p));
+}
+
+function userExplicitlyAskedPriceInCurrentTurn(message: string): boolean {
+  const n = normText(message);
+  if (!n) return false;
+  if (/^(valores?|precos?)\??$/.test(n)) return true;
+  const explicitAskPatterns: RegExp[] = [
+    /\btem\s+valor\b/,
+    /\bqual\s+o\s+preco\b/,
+    /\bqual\s+o\s+valor\b/,
+    /\bquanto\s+(?:sai|fica|custa)\b/,
+    /\bme\s+passa\s+o\s+valor\b/,
+    /\btem\s+entrada\b/,
+    /\bcomo\s+fica\s+o\s+pagamento\b/,
+    /\btem\s+parcela\b/,
+    /\btem\s+parcelas\b/,
+    /\bqual\s+o\s+investimento\b/,
+    /\bcondic(?:ao|oes)\b/,
+    /\bcondic(?:ao|oes)\s+de\s+pagamento\b/,
+    /\bentrada\b/,
+    /\bfinanciamento\b/,
+    /\bdesconto\b/,
+    /\bparcela(?:s)?\b/,
+  ];
+  return explicitAskPatterns.some((re) => re.test(n));
 }
 
 /** Intervalo curto entre mídia confirmada e texto complementar (naturalidade no WhatsApp). */
@@ -777,6 +803,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? rowsToHistory(rows, null, trailingUserBubbles)
         : rowsToHistory(rows, trimmed);
     const historyCount = history.length;
+    const isFirstAnaReply = !rows.some((m) => m.role === 'assistant');
+    const explicitPriceAskedThisTurn = userExplicitlyAskedPriceInCurrentTurn(trimmed);
 
     if (historyCount === 0) {
       console.log('[CLEAR_HISTORY_AFTER]', {
@@ -826,6 +854,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         mode === 'scoped' && ent ? undefined : (locationQueryContext ?? undefined),
       commercialSnapshots: commercialSnapshots.length > 0 ? commercialSnapshots : undefined,
       persistedContextBlock,
+      isFirstAnaReply,
+      explicitPriceAskedThisTurn,
     };
 
     const rawModels = await getIntegrationModelStringsRaw();
@@ -1176,6 +1206,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         }
       } catch (e) {
         console.error('[ANA APPT]', e);
+      }
+    }
+
+    // Guard leve de abertura comercial: só na primeira resposta da Ana e somente
+    // quando o cliente NÃO pediu preço/valor/condições explicitamente.
+    if (isFirstAnaReply && !explicitPriceAskedThisTurn) {
+      const before = replyBody;
+      const sanitized = sanitizeFirstReplyCommercialLeak(replyBody);
+      if (sanitized.removedCommercialSentences > 0) {
+        replyBody = sanitized.text;
+        console.log('[ANA_FIRST_REPLY_COMMERCIAL_GUARD]', {
+          conversationId,
+          removedCommercialSentences: sanitized.removedCommercialSentences,
+          beforePreview: before.slice(0, 120),
+          afterPreview: replyBody.slice(0, 120),
+        });
       }
     }
 
