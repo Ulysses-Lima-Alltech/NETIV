@@ -416,6 +416,44 @@ export const contactsApi = {
     if (params?.offset != null) q.set('offset', String(params.offset));
     return request<{ contacts: ContactListItem[] }>(`/contacts${q.toString() ? `?${q.toString()}` : ''}`);
   },
+  exportCsv: async (params?: {
+    search?: string;
+    enterprise?: string;
+    ownerUserId?: number;
+    status?: 'assigned' | 'unassigned';
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.search?.trim()) q.set('search', params.search.trim());
+    if (params?.enterprise?.trim()) q.set('enterprise', params.enterprise.trim());
+    if (params?.ownerUserId != null) q.set('ownerUserId', String(params.ownerUserId));
+    if (params?.status) q.set('status', params.status);
+    const token = getStoredAuthToken();
+    const res = await fetch(`${API_BASE}/contacts/export${q.toString() ? `?${q.toString()}` : ''}`, {
+      method: 'GET',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (res.status === 401) {
+      handleUnauthorized();
+      throw new Error('Sessão expirada. Faça login novamente.');
+    }
+    if (!res.ok) {
+      let msg = `Erro ${res.status}`;
+      try {
+        const data = await res.json();
+        msg = (data as { error?: string }).error ?? msg;
+      } catch {
+        // noop
+      }
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get('content-disposition') ?? '';
+    const filenameMatch = disposition.match(/filename="([^"]+)"/i);
+    const filename = filenameMatch?.[1] ?? 'leads_netiv.csv';
+    return { blob, filename };
+  },
   get: (id: number) => request<ContactListItem>(`/contacts/${id}`),
   update: (
     id: number,

@@ -72,6 +72,266 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.get('/export', async (req, res) => {
+  try {
+    const ownerUserId = req.query.ownerUserId != null ? parseInt(String(req.query.ownerUserId), 10) : undefined;
+    const status = req.query.status === 'assigned' || req.query.status === 'unassigned' ? req.query.status : undefined;
+
+    // Exporta todos os resultados do filtro (sem paginação visual)
+    const allRows: Awaited<ReturnType<typeof listContacts>> = [];
+    const pageSize = 500;
+    let offset = 0;
+    for (;;) {
+      const chunk = await listContacts({
+        search: typeof req.query.search === 'string' ? req.query.search : undefined,
+        enterprise: typeof req.query.enterprise === 'string' ? req.query.enterprise : undefined,
+        ownerUserId: ownerUserId != null && !Number.isNaN(ownerUserId) ? ownerUserId : undefined,
+        status,
+        limit: pageSize,
+        offset,
+      });
+      allRows.push(...chunk);
+      if (chunk.length < pageSize) break;
+      offset += pageSize;
+    }
+
+    const contactIds = allRows.map((r) => r.id);
+    const ownerIds = [...new Set(allRows.map((r) => r.owner_user_id).filter((x): x is number => x != null))];
+
+    const ownerMap = new Map<number, string>();
+    if (ownerIds.length > 0) {
+      const { rows: brokers } = await query<{ id: number; full_name: string }>(
+        `SELECT id, full_name FROM corretores WHERE id = ANY($1::int[])`,
+        [ownerIds]
+      );
+      for (const b of brokers) ownerMap.set(b.id, b.full_name);
+    }
+
+    const convMetaMap = new Map<number, {
+      whatsapp_display_name: string | null;
+      lead_temperature: string | null;
+      classification: string | null;
+      handoff: boolean | null;
+    }>();
+    const convCountMap = new Map<number, number>();
+    const msgMetaMap = new Map<number, {
+      last_message: string | null;
+      last_user_message: string | null;
+      last_assistant_message: string | null;
+      last_message_at: Date | null;
+      last_user_message_at: Date | null;
+      last_assistant_message_at: Date | null;
+      message_count: number;
+    }>();
+
+    if (contactIds.length > 0) {
+      const { rows: convRows } = await query<{
+        contact_id: number;
+        whatsapp_display_name: string | null;
+        lead_temperature: string | null;
+        classification: string | null;
+        handoff: boolean | null;
+      }>(
+        `SELECT DISTINCT ON (c.contact_id)
+           c.contact_id,
+           c.whatsapp_display_name,
+           c.lead_temperature,
+           c.classification,
+           c.handoff
+         FROM conversations c
+         WHERE c.contact_id = ANY($1::bigint[])
+         ORDER BY c.contact_id, c.last_message_at DESC NULLS LAST, c.updated_at DESC, c.id DESC`,
+        [contactIds]
+      );
+      for (const row of convRows) {
+        convMetaMap.set(row.contact_id, {
+          whatsapp_display_name: row.whatsapp_display_name,
+          lead_temperature: row.lead_temperature,
+          classification: row.classification,
+          handoff: row.handoff,
+        });
+      }
+
+      const { rows: convCountRows } = await query<{ contact_id: number; qty: string }>(
+        `SELECT c.contact_id, COUNT(*)::text AS qty
+         FROM conversations c
+         WHERE c.contact_id = ANY($1::bigint[])
+         GROUP BY c.contact_id`,
+        [contactIds]
+      );
+      for (const row of convCountRows) convCountMap.set(row.contact_id, parseInt(row.qty, 10) || 0);
+
+      const { rows: msgRows } = await query<{
+        contact_id: number;
+        last_message: string | null;
+        last_user_message: string | null;
+        last_assistant_message: string | null;
+        last_message_at: Date | null;
+        last_user_message_at: Date | null;
+        last_assistant_message_at: Date | null;
+        message_count: string;
+      }>(
+        `WITH msgs AS (
+           SELECT
+             conv.contact_id,
+             m.id,
+             m.role,
+             m.content,
+             m.created_at
+           FROM messages m
+           JOIN conversations conv ON conv.id = m.conversation_id
+           WHERE conv.contact_id = ANY($1::bigint[])
+         ),
+         ranked AS (
+           SELECT
+             contact_id,
+             role,
+             content,
+             created_at,
+             ROW_NUMBER() OVER (PARTITION BY contact_id ORDER BY created_at DESC, id DESC) AS rn_all,
+             ROW_NUMBER() OVER (PARTITION BY contact_id, role ORDER BY created_at DESC, id DESC) AS rn_role
+           FROM msgs
+         )
+         SELECT
+           contact_id,
+           MAX(CASE WHEN rn_all = 1 THEN content END) AS last_message,
+           MAX(CASE WHEN role = 'user' AND rn_role = 1 THEN content END) AS last_user_message,
+           MAX(CASE WHEN role = 'assistant' AND rn_role = 1 THEN content END) AS last_assistant_message,
+           MAX(CASE WHEN rn_all = 1 THEN created_at END) AS last_message_at,
+           MAX(CASE WHEN role = 'user' AND rn_role = 1 THEN created_at END) AS last_user_message_at,
+           MAX(CASE WHEN role = 'assistant' AND rn_role = 1 THEN created_at END) AS last_assistant_message_at,
+           COUNT(*)::text AS message_count
+         FROM ranked
+         GROUP BY contact_id`,
+        [contactIds]
+      );
+      for (const row of msgRows) {
+        msgMetaMap.set(row.contact_id, {
+          last_message: row.last_message,
+          last_user_message: row.last_user_message,
+          last_assistant_message: row.last_assistant_message,
+          last_message_at: row.last_message_at,
+          last_user_message_at: row.last_user_message_at,
+          last_assistant_message_at: row.last_assistant_message_at,
+          message_count: parseInt(row.message_count, 10) || 0,
+        });
+      }
+    }
+
+    const headers = [
+      'id_contato',
+      'nome',
+      'nome_exibicao_whatsapp',
+      'telefone',
+      'telefone_e164',
+      'empreendimento_interesse',
+      'tipo_interesse',
+      'temperatura_lead',
+      'status_funil',
+      'modo_atendimento',
+      'corretor_responsavel',
+      'origem',
+      'cidade',
+      'estado',
+      'localizacao_livre',
+      'idade',
+      'estado_civil',
+      'tem_filhos',
+      'quantidade_filhos',
+      'orcamento',
+      'forma_pagamento',
+      'observacoes',
+      'ultima_mensagem',
+      'ultima_mensagem_cliente',
+      'ultima_mensagem_sistema',
+      'data_ultima_mensagem',
+      'data_ultima_mensagem_cliente',
+      'data_ultima_resposta_ana',
+      'data_criacao_contato',
+      'data_ultima_interacao',
+      'quantidade_conversas',
+      'quantidade_mensagens',
+    ];
+
+    const escapeCsv = (value: unknown): string => {
+      if (value == null) return '';
+      const raw = String(value).replace(/\r?\n/g, ' ').trim();
+      const escaped = raw.replace(/"/g, '""');
+      if (/[;"\n\r]/.test(escaped)) return `"${escaped}"`;
+      return escaped;
+    };
+
+    const fmtDate = (d: Date | string | null | undefined): string => {
+      if (!d) return '';
+      const dt = d instanceof Date ? d : new Date(d);
+      if (Number.isNaN(dt.getTime())) return '';
+      return dt.toISOString();
+    };
+
+    const lines: string[] = [];
+    lines.push(headers.join(';'));
+    for (const r of allRows) {
+      const convMeta = convMetaMap.get(r.id);
+      const msgMeta = msgMetaMap.get(r.id);
+      const displayEnterprise = r.enterprise_display_name ?? r.enterprise_interest ?? '';
+      const ownerName = r.owner_user_id != null ? ownerMap.get(r.owner_user_id) ?? '' : '';
+      const mode = convMeta?.handoff == null ? '' : convMeta.handoff ? 'handoff' : 'ana';
+      const row = [
+        r.id,
+        r.full_name ?? '',
+        convMeta?.whatsapp_display_name ?? '',
+        r.phone_display ?? r.phone_e164,
+        r.phone_e164,
+        displayEnterprise,
+        '', // tipo_interesse (não há campo estruturado confiável no módulo contatos)
+        convMeta?.lead_temperature ?? '',
+        convMeta?.classification ?? '',
+        mode,
+        ownerName,
+        r.source ?? '',
+        '', // cidade
+        '', // estado
+        '', // localizacao_livre
+        '', // idade
+        '', // estado_civil
+        '', // tem_filhos
+        '', // quantidade_filhos
+        '', // orcamento
+        '', // forma_pagamento
+        r.notes ?? '',
+        msgMeta?.last_message ?? '',
+        msgMeta?.last_user_message ?? '',
+        msgMeta?.last_assistant_message ?? '',
+        fmtDate(msgMeta?.last_message_at),
+        fmtDate(msgMeta?.last_user_message_at),
+        fmtDate(msgMeta?.last_assistant_message_at),
+        fmtDate(r.created_at),
+        fmtDate(r.last_contact_at),
+        convCountMap.get(r.id) ?? 0,
+        msgMeta?.message_count ?? 0,
+      ];
+      lines.push(row.map(escapeCsv).join(';'));
+    }
+
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mi = String(now.getMinutes()).padStart(2, '0');
+    const filename = `leads_netiv_${yyyy}-${mm}-${dd}_${hh}-${mi}.csv`;
+
+    const csvWithBom = `\uFEFF${lines.join('\r\n')}`;
+    const buffer = Buffer.from(csvWithBom, 'utf8');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.status(200).send(buffer);
+  } catch (e) {
+    console.error('[Contacts] GET /export', e);
+    return res.status(500).json({ error: 'Erro ao exportar contatos em CSV.' });
+  }
+});
+
 router.get('/:id(\\d+)', async (req, res) => {
   try {
     const id = parseInt(String(contactIdParam(req)), 10);

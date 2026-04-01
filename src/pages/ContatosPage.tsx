@@ -29,6 +29,8 @@ export function ContatosPage() {
   const [modalError, setModalError] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importOwnerId, setImportOwnerId] = useState<string>('');
@@ -51,6 +53,31 @@ export function ContatosPage() {
       setError(e instanceof Error ? e.message : 'Erro ao carregar contatos.');
     } finally {
       setLoading(false);
+    }
+  }, [search, enterprise, status, ownerUserId]);
+
+  const handleExportCsv = useCallback(async () => {
+    setExportLoading(true);
+    setExportError(null);
+    try {
+      const { blob, filename } = await contactsApi.exportCsv({
+        search: search || undefined,
+        enterprise: enterprise || undefined,
+        status: status || undefined,
+        ownerUserId: ownerUserId ? parseInt(ownerUserId, 10) : undefined,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : 'Erro ao exportar CSV.');
+    } finally {
+      setExportLoading(false);
     }
   }, [search, enterprise, status, ownerUserId]);
 
@@ -83,7 +110,7 @@ export function ContatosPage() {
       <div className="max-w-[1280px] mx-auto px-6 py-6 space-y-5">
         <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
           <h2 className="text-[14px] font-semibold">Filtros</h2>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
             <input className={inputCls} placeholder="Buscar por nome ou número" value={search} onChange={(e) => setSearch(e.target.value)} />
             <input className={inputCls} placeholder="Empreendimento" value={enterprise} onChange={(e) => setEnterprise(e.target.value)} />
             <select className={inputCls} value={ownerUserId} onChange={(e) => setOwnerUserId(e.target.value)}>
@@ -106,7 +133,16 @@ export function ContatosPage() {
             >
               Filtrar
             </button>
+            <button
+              type="button"
+              onClick={() => void handleExportCsv()}
+              disabled={exportLoading}
+              className="px-4 py-2 rounded-[10px] bg-[#0F766E] text-white text-[13px] font-semibold hover:bg-[#0E6962] disabled:opacity-60"
+            >
+              {exportLoading ? 'Exportando…' : 'Exportar CSV'}
+            </button>
           </div>
+          {exportError && <p className="text-[12px] text-red-700">{exportError}</p>}
         </section>
 
         <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
