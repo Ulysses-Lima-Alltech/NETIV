@@ -484,6 +484,10 @@ export interface BuildAnaSystemPromptOpts {
     | 'triage';
   /** Contexto persistido (IDs, JSON de estado) — só orientação; a Ana redige a resposta. */
   persistedContextBlock?: string | null;
+  /** true quando esta será a primeira resposta da Ana nesta conversa. */
+  isFirstAnaReply?: boolean;
+  /** true quando o cliente pediu explicitamente preço/valor/parcela/entrada nesta mensagem atual. */
+  explicitPriceAskedThisTurn?: boolean;
 }
 
 /** Dados de apoio para pergunta de localização (sem impor “fases” de motor). */
@@ -533,6 +537,34 @@ Você já pediu o nome antes; continue com naturalidade e, se couber, reforce se
 `;
 }
 
+/**
+ * Regras de abertura comercial da PRIMEIRA resposta da Ana.
+ * Contextual: restringe abertura espontânea de preço, mas permite quando o cliente pede explicitamente.
+ */
+function buildFirstReplyCommercialOpeningInstructions(opts: BuildAnaSystemPromptOpts): string {
+  if (!opts.isFirstAnaReply) return '';
+  if (opts.explicitPriceAskedThisTurn) {
+    return `--- ABERTURA COMERCIAL (PRIMEIRA RESPOSTA DESTA CONVERSA) ---
+Esta é a primeira resposta da Ana nesta conversa e o cliente pediu preço/valor explicitamente nesta mensagem.
+Seja breve, natural e comercial: no máximo 3 frases curtas e no máximo 1 pergunta simples.
+Nesta exceção, você pode informar preço/valor/parcela/entrada/financiamento/desconto/condições de pagamento.
+Priorize visão geral curta do empreendimento, localização e proposta de valor. Evite listas longas.
+`;
+  }
+  return `--- ABERTURA COMERCIAL (PRIMEIRA RESPOSTA DESTA CONVERSA) ---
+Esta é a primeira resposta da Ana nesta conversa.
+Seja breve, natural e comercial.
+- No máximo 3 frases curtas.
+- No máximo 1 pergunta simples.
+- Não informe espontaneamente preço, valor, parcela, entrada, financiamento, desconto ou condições de pagamento.
+- Só informe esses dados na primeira resposta se o cliente tiver perguntado explicitamente por preço/valor/parcela/entrada/condições nesta mensagem.
+- Priorize uma visão geral curta do empreendimento, localização e proposta de valor.
+- Evite listas longas de lazer, características ou diferenciais.
+- Conduza o cliente para o próximo passo com uma pergunta simples.
+A partir da segunda resposta da Ana, os detalhes comerciais podem ser informados normalmente quando úteis para avançar a conversa.
+`;
+}
+
 /** Prompt único: só a OpenAI redige a resposta; o backend só junta dados e contexto. */
 export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
   const base = COMPORTAMENTO;
@@ -565,6 +597,7 @@ export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
 
 ${persisted}--- EMPREENDIMENTO VINCULADO INATIVO ---
 O cadastro associado a esta conversa não está ativo. Informe com cordialidade; não invente dados. send_file_category: null.
+${buildFirstReplyCommercialOpeningInstructions(opts)}
 ${buildCustomerNameInstructions(opts)}`;
   }
 
@@ -578,6 +611,7 @@ ${buildCustomerNameInstructions(opts)}`;
 ${persisted}${locationHint ? `${locationHint}\n\n` : ''}${commercialBlock ? `${commercialBlock}\n\n` : ''}PORTFÓLIO (nomes permitidos neste contexto — tipo de interesse: ${triageType}): ${namesList}
 Classificação (referência): "${cls}".
 ${openCtx}${appointmentHint}
+${buildFirstReplyCommercialOpeningInstructions(opts)}
 ${buildCustomerNameInstructions(opts)}
 - Você conduz a conversa; use o histórico e os dados acima.`;
   }
@@ -605,6 +639,7 @@ ${ap.reschedule ? '- Remarcação.\n' : ''}${ap.dateContestation ? '- Contestaç
 ${persisted}${locationHint ? `${locationHint}\n\n` : ''}${commercialBlock ? `${commercialBlock}\n\n` : ''}--- FOCO DO CADASTRO ATUAL ---
 Empreendimento: "${e.name}" (${e.tipo}).
 ${buildScopedEnterpriseLocationBlock(e)}
+${buildFirstReplyCommercialOpeningInstructions(opts)}
 ${buildCustomerNameInstructions(opts)}
 ${openScoped}${appointmentScoped}
 ${matBlock}
