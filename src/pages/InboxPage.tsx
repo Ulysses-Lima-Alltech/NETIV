@@ -84,19 +84,23 @@ function mapApiMessageToMessage(m: MessageListItem, conversationId: string): Mes
     id: String(m.id),
     conversationId,
     sender: m.direction === 'inbound' ? 'LEAD' : 'AGENT',
-    text: m.content || '',
+    text: m.deleted ? '' : (m.content || ''),
     createdAt: m.createdAt,
     messageType: m.type === 'document' || m.type === 'image' ? m.type : 'text',
-    attachment: att?.fileName
-      ? {
-          fileName: att.fileName,
-          mimeType: att.mimeType ?? 'application/octet-stream',
-          sizeBytes: att.sizeBytes,
-          whatsappMediaId: att.whatsappMediaId ?? null,
-          caption: att.caption ?? null,
-          enterpriseFileId: att.enterpriseFileId ?? null,
-        }
-      : null,
+    attachment: m.deleted
+      ? null
+      : att?.fileName
+        ? {
+            fileName: att.fileName,
+            mimeType: att.mimeType ?? 'application/octet-stream',
+            sizeBytes: att.sizeBytes,
+            whatsappMediaId: att.whatsappMediaId ?? null,
+            caption: att.caption ?? null,
+            enterpriseFileId: att.enterpriseFileId ?? null,
+          }
+        : null,
+    deleted: m.deleted ?? false,
+    deletedAt: m.deletedAt ?? null,
   };
 }
 
@@ -329,6 +333,56 @@ export function InboxPage() {
     []
   );
 
+  const handleUpdateCustomerName = useCallback(
+    async (name: string | null) => {
+      if (!selectedId) return;
+      const convId = parseInt(selectedId, 10);
+      if (Number.isNaN(convId)) return;
+      await whatsappApi.updateCustomerName(convId, name);
+      const trimmed = name?.trim() || null;
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id !== selectedId) return c;
+          // Atualiza confirmedCustomerName e recalcula leadName
+          // (leadName mostra WA display name se houver; caso contrário, o nome editado)
+          const oldConfirmed = (c.confirmedCustomerName ?? '').trim();
+          const leadNameWasConfirmed =
+            !oldConfirmed || c.leadName === oldConfirmed;
+          return {
+            ...c,
+            confirmedCustomerName: trimmed,
+            leadName: leadNameWasConfirmed
+              ? (trimmed || c.leadPhone || 'Sem nome')
+              : c.leadName,
+          };
+        })
+      );
+    },
+    [selectedId]
+  );
+
+  const handleDeleteMessage = useCallback(
+    async (messageId: string) => {
+      if (!selectedId) return;
+      const convId = parseInt(selectedId, 10);
+      if (Number.isNaN(convId)) return;
+      try {
+        await whatsappApi.deleteMessage(convId, messageId);
+        // Atualização otimista: marca mensagem como deletada localmente
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId
+              ? { ...m, deleted: true, deletedAt: new Date().toISOString(), text: '', attachment: null }
+              : m
+          )
+        );
+      } catch (e) {
+        console.error('[InboxPage] deleteMessage:', e);
+      }
+    },
+    [selectedId]
+  );
+
   const handleClassificationChange = useCallback(
     async (updates: {
       projectId?: number | null;
@@ -451,6 +505,8 @@ export function InboxPage() {
             isSending={sending}
             onClassificationChange={handleClassificationChange}
             onClearPhoneHistory={handleClearPhoneHistory}
+            onDeleteMessage={handleDeleteMessage}
+            onUpdateCustomerName={handleUpdateCustomerName}
             projects={projects}
             onScrollContainerRef={(el) => { chatScrollRef.current = el; }}
           />

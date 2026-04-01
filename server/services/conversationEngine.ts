@@ -66,6 +66,7 @@ import {
   countCustomerNameMentionsInText,
   sleepMs,
   randomAnaReplyDelayMs,
+  buildGreetingSafeFallback,
 } from '../utils/anaReplyFinalize.js';
 import {
   extractCustomerNameFromUserUtterance,
@@ -90,11 +91,13 @@ import {
 import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
 import {
   isBareGreetingOnly,
-  userAskedForSendableMaterial,
+  userExplicitlyAskedForMaterial,
   inferPreferredCategoryFromUserText,
   buildDocCategoryTryOrder,
   pickPostMediaAckText,
 } from '../utils/anaDocSendIntent.js';
+import { applyOperationalFactGuard } from '../utils/anaOperationalFactGuard.js';
+import { resolveOperationalFactAnswer } from '../utils/anaOperationalFactResolver.js';
 
 function anaPhoneTail(raw: string | null | undefined, len = 6): string | null {
   const d = String(raw ?? '').replace(/\D/g, '');
@@ -870,6 +873,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       lastCatalogOfferedNames: flowStateParsed.lastCatalogOfferedNames ?? null,
       clearedAt: flowStateParsed.clearedAt ?? null,
     });
+    // [ANA_HISTORY_WINDOW] — rastreabilidade de quanto contexto chega ao modelo
+    console.log('[ANA_HISTORY_WINDOW]', {
+      conversationId,
+      totalDbRows: rows.length,
+      historyPassedToModel: historyCount,
+      maxHistory: MAX_HISTORY,
+      isGreeting: isBareGreetingOnly(trimmed),
+    });
 
     const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
     for (const h of history) {
@@ -934,17 +945,40 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           ? 'empty_content'
           : 'parse_rejected';
       replySource = 'technical_fallback';
-      console.log('[ANA_PIPELINE] technical_fallback_neutral', {
+
+      const isGreetingForFallback = isBareGreetingOnly(trimmed);
+
+      // [ANA_CONTINUATION_FALLBACK] — log centralizado para todo fallback técnico
+      console.log('[ANA_CONTINUATION_FALLBACK]', {
         conversationId,
         messageId: inboundMetaMessageId,
         reason: fallbackReason,
+        isGreeting: isGreetingForFallback,
+        userTextPreview: trimmed.slice(0, 60),
         ...(openAiApiError && { openAiApiError, openAiHttpStatus }),
       });
       console.log('[ANA_PARSE_FLOW]', {
         conversationId,
         technical_fallback_used: true,
       });
+
       structured = anaTechnicalFallbackStructured(effectiveConv.classification);
+
+      // ── GREETING BYPASS ────────────────────────────────────────────────────
+      // Saudações simples (oi, olá, bom dia, etc.) NUNCA devem receber a
+      // mensagem de erro técnico "Não consegui continuar daqui agora...".
+      // Se o pipeline falhou por qualquer razão técnica mas a mensagem atual
+      // é apenas uma saudação, substituímos por uma resposta neutra e humana.
+      if (isGreetingForFallback) {
+        const safeReply = buildGreetingSafeFallback(effectiveConv.customer_name);
+        structured = { ...structured, reply: safeReply };
+        console.log('[ANA_GREETING_BYPASS]', {
+          conversationId,
+          reason: 'technical_fallback_suppressed_for_bare_greeting',
+          fallbackReason,
+          safeReply: safeReply.slice(0, 100),
+        });
+      }
     }
 
     if (structured.project?.trim()) {
@@ -976,29 +1010,41 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let requestedSendCategoryForLog: FileCategory | null = null;
     let fileResolutionSkipReason: string | null = null;
     const bareGreeting = isBareGreetingOnly(trimmed);
-    // Verifica apenas a mensagem atual (trimmed = rajada do turno).
-    // NÃO usa fullUserUtterances: isso causava shouldAttemptDocSend = true para todos
-    // os turnos depois de qualquer pedido de "book/material", bloqueando respostas normais.
-    const userMaterialAsk = userAskedForSendableMaterial(trimmed) && !bareGreeting;
-    const shouldAttemptDocSend =
-      !bareGreeting && (userMaterialAsk || structured.send_file_category != null);
 
-    console.log('[ANA_DOC_INTENT]', {
+    // ─── ANA DOC GATE ────────────────────────────────────────────────────────
+    // Regra: envio de arquivo SOMENTE quando a mensagem ATUAL do usuário contiver
+    // pedido explícito de material (verbo de envio + substantivo de documento).
+    // O campo send_file_category do LLM NÃO é usado como gatilho — ele pode
+    // disparar por sinais indiretos (preço, localização, "quero saber mais") e
+    // causaria envio não autorizado.
+    const { explicit: userExplicit, matchedPattern: materialMatchedPattern } =
+      userExplicitlyAskedForMaterial(trimmed);
+    const userMaterialAsk = userExplicit && !bareGreeting;
+    const shouldAttemptDocSend = !bareGreeting && userMaterialAsk;
+
+    console.log('[ANA_DOC_GATE]', {
       conversationId,
-      userMaterialAsk,
-      userMaterialAskSource: userMaterialAsk ? 'current_message' : 'none',
-      llmSendCategory: structured.send_file_category ?? null,
-      intent: structured.intent,
+      explicit: userMaterialAsk,
       bareGreeting,
       shouldAttemptDocSend,
       enterpriseId: ent?.id ?? null,
       sendableCategories: sendableAnaCategories,
       currentTrimmedPreview: trimmed.slice(0, 80),
     });
+    if (materialMatchedPattern) {
+      console.log('[ANA_DOC_GATE_REASON]', {
+        conversationId,
+        matched_pattern: materialMatchedPattern,
+      });
+    }
 
     if (!shouldAttemptDocSend) {
       structured = { ...structured, send_file_category: null };
       fileResolutionSkipReason = 'no_material_intent_this_turn';
+      console.log('[ANA_DOC_SEND_SKIPPED]', {
+        conversationId,
+        reason: 'no_explicit_request',
+      });
       console.log('[ANA_DOC_RESOLVE_SKIP]', {
         conversationId,
         enterpriseId: ent?.id ?? null,
@@ -1016,7 +1062,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
       structured = { ...structured, send_file_category: null };
     } else {
-      const userCatHint = inferPreferredCategoryFromUserText(trimmed, fullUserUtterances);
+      const userCatHint = inferPreferredCategoryFromUserText(trimmed);
       const llmCat = structured.send_file_category;
       requestedSendCategoryForLog = llmCat ?? userCatHint;
       const tryOrder = buildDocCategoryTryOrder(llmCat, userCatHint, sendableAnaCategories);
@@ -1130,6 +1176,60 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         }
       } catch (e) {
         console.error('[ANA APPT]', e);
+      }
+    }
+
+    // ─── ANA OPERATIONAL FACT RESOLVER (camada determinística) ──────────────
+    // Para perguntas sobre entrega, obras, infraestrutura, liberação para
+    // construir e portaria/lazer, o pipeline busca a resposta nos dados
+    // oficiais (variablesMap + knowledgeText) ANTES de usar o reply do LLM.
+    // O LLM não tem liberdade de improvisar nesses tópicos.
+    let operationalResolverFired = false;
+    {
+      const resolution = resolveOperationalFactAnswer(trimmed, knowledgeText, vars);
+      if (resolution !== null) {
+        operationalResolverFired = true;
+        console.log('[ANA_OPERATIONAL_RESOLVER]', {
+          conversationId,
+          topic: resolution.topic,
+          dataFound: resolution.dataFound,
+          fragment: resolution.fragment?.slice(0, 100) ?? null,
+          answer_preview: resolution.answer.slice(0, 100),
+          original_llm_preview: replyBody.slice(0, 100),
+        });
+        replyBody = resolution.answer;
+      }
+    }
+
+    // ─── ANA OPERATIONAL FACT GUARD (segurança adicional) ────────────────────
+    // Só roda se o resolver não interceptou. Bloqueia claims operacionais
+    // inventados que tenham passado pelo resolver (ex.: tópico não detectado,
+    // mas o LLM ainda assim alucinouaaa).
+    if (!operationalResolverFired) {
+      const officialData = [
+        ...Object.values(vars),
+        knowledgeText.slice(0, 12_000),
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const guardResult = applyOperationalFactGuard(replyBody, trimmed, officialData);
+
+      if (guardResult.replaced) {
+        console.log('[ANA_OPERATIONAL_FACT_GUARD]', {
+          conversationId,
+          replaced: true,
+          unsupported_claims: guardResult.unsupportedClaims,
+          grounded_claims: guardResult.groundedClaims,
+          original_preview: replyBody.slice(0, 120),
+        });
+        replyBody = guardResult.text;
+      } else if (guardResult.groundedClaims.length > 0) {
+        console.log('[ANA_OPERATIONAL_FACT_GUARD]', {
+          conversationId,
+          replaced: false,
+          grounded_claims: guardResult.groundedClaims,
+        });
       }
     }
 

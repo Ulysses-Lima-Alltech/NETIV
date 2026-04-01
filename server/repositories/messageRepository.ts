@@ -21,6 +21,12 @@ export interface MessageRow {
   message_kind?: MessageKindDb;
   attachment_json?: unknown | null;
   created_at: Date;
+  /** Soft delete: timestamp em que foi apagada internamente (NULL = não apagada) */
+  deleted_at?: Date | null;
+  /** ID do usuário que executou o soft delete */
+  deleted_by_user_id?: number | null;
+  /** Escopo da exclusão: 'internal' = apenas no NETIV, nunca no WhatsApp do cliente */
+  delete_scope?: string | null;
 }
 
 export async function insertMessage(
@@ -102,6 +108,27 @@ export async function getTrailingUserMessageBurst(conversationId: number): Promi
     }
   }
   return burst;
+}
+
+/**
+ * Soft delete de mensagem: marca como apagada internamente (NETIV).
+ * NÃO remove do banco; NÃO toca no WhatsApp do cliente.
+ * Retorna null se a mensagem não existir ou já estiver apagada.
+ */
+export async function softDeleteMessage(
+  messageId: number,
+  deletedByUserId: number,
+): Promise<MessageRow | null> {
+  const { rows } = await query<MessageRow>(
+    `UPDATE messages
+     SET deleted_at = NOW(),
+         deleted_by_user_id = $1,
+         delete_scope = 'internal'
+     WHERE id = $2 AND deleted_at IS NULL
+     RETURNING *`,
+    [deletedByUserId, messageId],
+  );
+  return rows[0] ?? null;
 }
 
 export async function getLastUserMessageNeedingReply(conversationId: number): Promise<MessageRow | null> {
