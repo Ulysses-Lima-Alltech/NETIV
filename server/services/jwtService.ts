@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 
 // Reutiliza a mesma lógica de sso.ts para consistência
-const JWT_EXPIRY_SECONDS = 30; // 30 segundos para chamadas de serviço
+const JWT_EXPIRY_SECONDS = 60; // 60 segundos para chamadas de serviço (aumentado de 30s)
 
 function base64UrlEncode(data: string | Uint8Array): string {
   if (typeof data === 'string') {
