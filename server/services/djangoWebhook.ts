@@ -53,5 +53,6 @@ export function buildLeadPayload(conv: ConversationRow): Record<string, unknown>
     classification: conv.classification,
     temperature: conv.lead_temperature,
     netiv_conversation_id: conv.id,
+    contact_id: conv.contact_id,  // NOVO: ID do contato no Netiv
   };
 }

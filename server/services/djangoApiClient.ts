@@ -151,9 +151,20 @@ class DjangoApiClient {
     notes?: string;
     responsible_id?: number;
   }) {
-    return this.request('/schedules/', {
+    // Montar publish_at no formato ISO 8601 esperado pelo Django
+    const publish_at = `${data.date}T${data.time}:00`;
+    
+    const payload = {
+      lead_id: data.lead_id,
+      publish_at,
+      ...(data.status && { status: data.status }),
+      ...(data.notes && { notes: data.notes }),
+      ...(data.responsible_id && { responsible_id: data.responsible_id }),
+    };
+    
+    return this.request(`/leads/${data.lead_id}/schedules`, {
       method: 'POST',
-      body: data,
+      body: payload,
     });
   }
 

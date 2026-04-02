@@ -115,19 +115,22 @@ router.get('/conversations', requireServiceJwt(['django']), async (req: JwtReque
     const pageSize = Math.min(100, Math.max(1, parseInt(page_size as string) || 50));
     const offset = (pageNum - 1) * pageSize;
 
-    // Build filters
-    const filters: any = {};
-    if (enterprise_id) filters.enterprise_id = parseInt(enterprise_id as string);
-    if (classification) filters.classification = classification as string;
-    if (lead_temperature) filters.lead_temperature = lead_temperature as string;
-    if (handoff !== undefined) filters.handoff = handoff === 'true';
+    // Build filters - traduzir snake_case para camelCase esperado pelos repositórios
+    const filters: any = {
+      limit: pageSize,
+      offset,
+    };
+    if (enterprise_id) filters.enterpriseId = parseInt(enterprise_id as string);
+    if (classification) filters.status = classification as string;  // classification → status
+    if (lead_temperature) filters.leadTemperature = lead_temperature as string;  // lead_temperature → leadTemperature
+    if (handoff !== undefined) filters.mode = handoff === 'true' ? 'handoff' : 'all';  // handoff → mode
 
-    // Get conversations
-    const conversations = await listConversationsWithPreview('whatsapp', pageSize, {
+    // Get conversations - buscar total real para paginação correta
+    const allConversations = await listConversationsWithPreview('whatsapp', 99999, {
       ...filters,
     });
-
-    const total = conversations.length; // Note: listConversations doesn't return total, using length for now
+    const total = allConversations.length;
+    const conversations = allConversations.slice(offset, offset + pageSize);
 
     res.json({
       conversations: conversations.map(serializeConversation),
@@ -180,20 +183,33 @@ router.get('/appointments', requireServiceJwt(['django']), async (req: JwtReques
     const pageSize = Math.min(100, Math.max(1, parseInt(page_size as string) || 50));
     const offset = (pageNum - 1) * pageSize;
 
-    // Build filters
+    // Build filters - traduzir snake_case para camelCase esperado pelos repositórios
     const filters: any = {
       limit: pageSize,
       offset,
     };
-    if (enterprise_id) filters.enterprise_id = parseInt(enterprise_id as string);
-    if (broker_id) filters.broker_id = parseInt(broker_id as string);
+    if (enterprise_id) filters.enterpriseId = parseInt(enterprise_id as string);
+    if (broker_id) filters.brokerId = parseInt(broker_id as string);
     if (status) filters.status = status as string;
-    if (date_from) filters.date_from = new Date(date_from as string);
-    if (date_to) filters.date_to = new Date(date_to as string);
+    if (date_from || date_to) {
+      // Se houver range de datas, usar o formato esperado pelo repositório
+      if (date_from && date_to) {
+        filters.date = `${date_from}:${date_to}`;
+      } else if (date_from) {
+        filters.date = `${date_from}:`;
+      } else if (date_to) {
+        filters.date = `:${date_to}`;
+      }
+    }
 
-    // Get appointments
-    const appointments = await listAppointments(filters);
-    const total = appointments.length; // Note: listAppointments doesn't return total
+    // Get appointments - buscar total real para paginação correta
+    const allAppointments = await listAppointments({
+      ...filters,
+      limit: 99999,  // Buscar todos para contar
+      offset: 0,
+    });
+    const total = allAppointments.length;
+    const appointments = allAppointments.slice(offset, offset + pageSize);
 
     res.json({
       appointments: appointments.map(serializeAppointment),
