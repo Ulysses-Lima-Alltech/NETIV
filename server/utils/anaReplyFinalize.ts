@@ -305,6 +305,201 @@ export function sanitizeFirstReplyCommercialLeak(reply: string): {
   return { text: rebuilt.slice(0, 4000), removedCommercialSentences: removed };
 }
 
+/**
+ * Guard comercial-financeiro: impede que a Ana simule/negocie condições.
+ * Remove/substitui apenas sentenças indevidas, preservando o restante do texto.
+ */
+export function sanitizeFinancialNegotiationOverreach(reply: string): {
+  text: string;
+  replacedFinancialSentences: number;
+} {
+  const base = normalizeWhitespacePreservingLines(stripMarkdownArtifactsForWhatsApp((reply || '').trim()));
+  if (!base) return { text: base, replacedFinancialSentences: 0 };
+
+  const norm = (s: string) =>
+    s
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/\p{M}/gu, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const splitSentences = (text: string): string[] => {
+    const out: string[] = [];
+    const simpleAbbrev = new Set([
+      'sr',
+      'sra',
+      'srta',
+      'dr',
+      'dra',
+      'av',
+      'al',
+      'apt',
+      'bl',
+      'cj',
+      'etc',
+    ]);
+    let buf = '';
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]!;
+      if (ch === '\n') {
+        const t = buf.trim();
+        if (t) out.push(t);
+        buf = '';
+        continue;
+      }
+      buf += ch;
+
+      if (ch === '!' || ch === '?') {
+        const t = buf.trim();
+        if (t) out.push(t);
+        buf = '';
+        continue;
+      }
+
+      if (ch === '.') {
+        const prev = text[i - 1] ?? '';
+        const next = text[i + 1] ?? '';
+        if (/\d/.test(prev) && /\d/.test(next)) continue;
+        const beforeDot = buf.slice(0, -1).trim();
+        const token = beforeDot.match(/([A-Za-zÀ-ÿ]{1,5})$/)?.[1]?.toLowerCase() ?? '';
+        if (simpleAbbrev.has(token)) continue;
+        if (/[A-Za-z]\.[A-Za-z]$/.test(beforeDot)) continue;
+        if (next && !/\s/.test(next)) continue;
+        const t = buf.trim();
+        if (t) out.push(t);
+        buf = '';
+      }
+    }
+    const tail = buf.trim();
+    if (tail) out.push(tail);
+    return out;
+  };
+
+  const isAlreadyBrokerRedirect = (n: string): boolean =>
+    /\b(corretor|corretora)\b/.test(n) &&
+    /\b(entrada|parcela|parcelas|prazo|simulac|pagamento|juros|correcao|desconto|condic)\b/.test(n);
+
+  const prohibitedPatterns: RegExp[] = [
+    /\b(consigo|posso|vou|deixa\s+eu|deixe\s+eu)\s+(?:te\s+)?(?:montar|simular|ajustar|calcular)\b/,
+    /\b(simulac(?:ao|oes)|pre-?simulac(?:ao|oes)|simulacao\s+personalizada)\b/,
+    /\b(cenario\s+financeiro|plano\s+de\s+pagamento|fluxo\s+de\s+pagamento)\b/,
+    /\bquanto\s+pode\s+dar\s+de\s+entrada\b/,
+    /\bqual\s+(?:valor\s+de\s+)?parcela\b/,
+    /\bqual\s+parcela\s+voce\s+quer\s+pagar\b/,
+    /\bem\s+quantas?\s+vezes\b/,
+    /\bprefere\s+o\s+prazo\s+mais\s+(?:longo|curto)\b/,
+    /\bprazo\s+mais\s+longo\s+possivel\b/,
+    /\bcom\s+entrada\s+de\s*r?\$?\s*\d/,
+    /\bsem\s+entrada\b/,
+    /\bquitar\s+em\s+menos\s+tempo\b/,
+    /\bassim\s+eu\s+ajusto\b/,
+    /\bvou\s+montar\s+(?:esse\s+)?cenario\b/,
+  ];
+
+  const safeRedirect =
+    'Sobre entrada, parcelas, prazo e simulação, isso precisa ser validado diretamente com o corretor.';
+
+  const sentences = splitSentences(base);
+  const kept: string[] = [];
+  let replaced = 0;
+  let redirectInserted = false;
+  for (const s of sentences) {
+    const n = norm(s);
+    if (!n) continue;
+    const prohibited = prohibitedPatterns.some((re) => re.test(n));
+    if (prohibited && !isAlreadyBrokerRedirect(n)) {
+      replaced += 1;
+      if (!redirectInserted) {
+        kept.push(safeRedirect);
+        redirectInserted = true;
+      }
+      continue;
+    }
+    kept.push(s.trim());
+  }
+
+  if (replaced === 0) return { text: base, replacedFinancialSentences: 0 };
+  if (kept.length === 0) {
+    return {
+      text: safeRedirect,
+      replacedFinancialSentences: replaced,
+    };
+  }
+  const rebuilt = kept
+    .join(' ')
+    .replace(/\s+([,.;!?])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return { text: rebuilt.slice(0, 4000), replacedFinancialSentences: replaced };
+}
+
+/**
+ * Guard estrutural para a PRIMEIRA resposta de lead de campanha:
+ * - mantém no máximo 3 frases
+ * - mantém no máximo 1 pergunta
+ * - remove excesso sem reescrever o conteúdo-base
+ */
+export function sanitizeFirstCampaignReplyShape(reply: string): {
+  text: string;
+  trimmedSentences: number;
+  removedQuestions: number;
+} {
+  const base = normalizeWhitespacePreservingLines(stripMarkdownArtifactsForWhatsApp((reply || '').trim()));
+  if (!base) return { text: base, trimmedSentences: 0, removedQuestions: 0 };
+
+  const splitSentences = (text: string): string[] => {
+    const out: string[] = [];
+    let buf = '';
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]!;
+      buf += ch;
+      if (ch === '\n') {
+        const t = buf.trim();
+        if (t) out.push(t);
+        buf = '';
+        continue;
+      }
+      if (ch === '!' || ch === '?' || ch === '.') {
+        const next = text[i + 1] ?? '';
+        if (ch === '.' && next && !/\s/.test(next)) continue;
+        const t = buf.trim();
+        if (t) out.push(t);
+        buf = '';
+      }
+    }
+    const tail = buf.trim();
+    if (tail) out.push(tail);
+    return out;
+  };
+
+  const parts = splitSentences(base).filter(Boolean);
+  const kept: string[] = [];
+  let questionCount = 0;
+  let removedQuestions = 0;
+
+  for (const p of parts) {
+    const hasQuestion = p.includes('?');
+    if (hasQuestion) {
+      if (questionCount >= 1) {
+        removedQuestions += 1;
+        continue;
+      }
+      questionCount += 1;
+    }
+    kept.push(p.trim());
+    if (kept.length >= 3) break;
+  }
+
+  const trimmedSentences = Math.max(0, parts.length - kept.length);
+  const rebuilt = kept.join(' ').replace(/\s{2,}/g, ' ').trim();
+  return {
+    text: rebuilt.slice(0, 4000),
+    trimmedSentences,
+    removedQuestions,
+  };
+}
+
 function normGreeting(s: string): string {
   return s
     .toLowerCase()

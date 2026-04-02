@@ -68,6 +68,8 @@ import {
   randomAnaReplyDelayMs,
   buildGreetingSafeFallback,
   sanitizeFirstReplyCommercialLeak,
+  sanitizeFirstCampaignReplyShape,
+  sanitizeFinancialNegotiationOverreach,
 } from '../utils/anaReplyFinalize.js';
 import {
   extractCustomerNameFromUserUtterance,
@@ -1225,6 +1227,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
+    // Guard estrutural da primeira resposta para reduzir atrito em leads de campanha.
+    if (isFirstAnaReply) {
+      const shaped = sanitizeFirstCampaignReplyShape(replyBody);
+      if (shaped.trimmedSentences > 0 || shaped.removedQuestions > 0) {
+        console.log('[ANA_FIRST_REPLY_SHAPE_GUARD]', {
+          conversationId,
+          trimmedSentences: shaped.trimmedSentences,
+          removedQuestions: shaped.removedQuestions,
+          beforePreview: replyBody.slice(0, 120),
+          afterPreview: shaped.text.slice(0, 120),
+        });
+        replyBody = shaped.text;
+      }
+    }
+
     // ─── ANA OPERATIONAL FACT RESOLVER (camada determinística) ──────────────
     // Para perguntas sobre entrega, obras, infraestrutura, liberação para
     // construir e portaria/lazer, o pipeline busca a resposta nos dados
@@ -1276,6 +1293,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           replaced: false,
           grounded_claims: guardResult.groundedClaims,
         });
+      }
+    }
+
+    // Guard financeiro: impede simulação/negociação indevida pela Ana e
+    // conduz para validação com corretor, sem trocar a resposta inteira.
+    {
+      const financialGuard = sanitizeFinancialNegotiationOverreach(replyBody);
+      if (financialGuard.replacedFinancialSentences > 0) {
+        console.log('[ANA_FINANCIAL_NEGOTIATION_GUARD]', {
+          conversationId,
+          replacedFinancialSentences: financialGuard.replacedFinancialSentences,
+          beforePreview: replyBody.slice(0, 120),
+          afterPreview: financialGuard.text.slice(0, 120),
+        });
+        replyBody = financialGuard.text;
       }
     }
 
