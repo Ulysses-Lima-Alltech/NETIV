@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
-import { dashboardApi, projectsApi, type DashboardOverview, type DashboardPeriod } from '../api/client';
+import {
+  dashboardApi,
+  projectsApi,
+  type DashboardAttentionType,
+  type DashboardOverview,
+  type DashboardPeriod,
+} from '../api/client';
 import { formatDurationSeconds } from '../utils/format';
 
 const card =
@@ -15,6 +21,13 @@ const PERIOD_OPTIONS: { value: DashboardPeriod; label: string }[] = [
   { value: 'today', label: 'Hoje' },
   { value: '7d', label: 'Últimos 7 dias' },
   { value: '30d', label: 'Últimos 30 dias' },
+];
+
+const ATTENTION_OPTIONS: { value: DashboardAttentionType; label: string }[] = [
+  { value: 'all', label: 'Todos' },
+  { value: 'no_first_response', label: 'Sem primeira resposta' },
+  { value: 'novo_sem_projeto', label: 'Novo sem projeto' },
+  { value: 'inactive_12_24h', label: 'Sem atividade 12h–24h' },
 ];
 
 /** Parte 9: azul volume, verde qualificado, laranja (handoff/transição), roxo carteira */
@@ -91,6 +104,7 @@ function TimelineChart({ data }: { data: DashboardOverview['timeline'] }) {
 
 export function DashboardPage() {
   const [period, setPeriod] = useState<DashboardPeriod>('7d');
+  const [attentionType, setAttentionType] = useState<DashboardAttentionType>('all');
   const [enterpriseId, setEnterpriseId] = useState<number | ''>('');
   const [projects, setProjects] = useState<{ id: number; name: string }[]>([]);
   const [data, setData] = useState<DashboardOverview | null>(null);
@@ -113,11 +127,12 @@ export function DashboardPage() {
       .overview({
         period,
         enterpriseId: enterpriseId === '' ? undefined : enterpriseId,
+        attentionType,
       })
       .then(setData)
       .catch((e) => setErr(e instanceof Error ? e.message : 'Erro ao carregar'))
       .finally(() => setLoading(false));
-  }, [period, enterpriseId]);
+  }, [period, enterpriseId, attentionType]);
 
   useEffect(() => {
     loadProjects();
@@ -134,6 +149,7 @@ export function DashboardPage() {
       const { blob, filename } = await dashboardApi.downloadCsv({
         period,
         enterpriseId: enterpriseId === '' ? undefined : enterpriseId,
+        attentionType,
       });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -148,7 +164,7 @@ export function DashboardPage() {
     } finally {
       setCsvLoading(false);
     }
-  }, [period, enterpriseId]);
+  }, [period, enterpriseId, attentionType]);
 
   const classMax = useMemo(
     () => Math.max(1, ...(data?.classification.map((c) => c.count) ?? [1])),
@@ -195,6 +211,20 @@ export function DashboardPage() {
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block sm:min-w-[220px]">
+              <span className="block text-[12px] font-medium text-[#6B7280] mb-1">Atuação</span>
+              <select
+                className={`${selectField} w-full sm:w-auto min-w-[200px]`}
+                value={attentionType}
+                onChange={(e) => setAttentionType(e.target.value as DashboardAttentionType)}
+              >
+                {ATTENTION_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
                   </option>
                 ))}
               </select>
@@ -342,7 +372,7 @@ export function DashboardPage() {
               <h2 className={heading}>Itens que exigem atenção</h2>
               <p className={sub}>
                 Calculadas sempre no backend; com filtro por empreendimento, &quot;Novo sem projeto&quot; deixa de aparecer naturalmente (sem
-                enterprise). Inclui: sem primeira resposta, novo sem projeto, conversas paradas (Novo/Qualificado, última atividade &gt; 24h).
+                enterprise). Inclui: sem primeira resposta, novo sem projeto, e Novo/Qualificado sem atividade entre 12h e 24h (referência: última mensagem ou criação da conversa).
               </p>
               {data.attentionItems.length === 0 ? (
                 <p className="text-[13px] text-[#9CA3AF]">Nenhum item listado no momento.</p>

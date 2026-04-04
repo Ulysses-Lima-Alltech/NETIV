@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getDashboardOverview,
   getDashboardCsvRows,
+  parseDashboardAttentionType,
   type DashboardPeriod,
   type DashboardCsvRow,
 } from '../repositories/dashboardRepository.js';
@@ -35,7 +36,7 @@ function buildDashboardCsv(rows: DashboardCsvRow[]): string {
     'last_message_at',
     'no_first_response',
     'is_novo_sem_projeto',
-    'is_stalled_24h',
+    'is_inactive_12_24h',
     'attention_reason',
   ] as const;
   const lines = [headers.join(',')];
@@ -53,7 +54,7 @@ function buildDashboardCsv(rows: DashboardCsvRow[]): string {
         csvEscape(r.last_message_at),
         csvEscape(r.no_first_response),
         csvEscape(r.is_novo_sem_projeto),
-        csvEscape(r.is_stalled_24h),
+        csvEscape(r.is_inactive_12_24h),
         csvEscape(r.attention_reason),
       ].join(',')
     );
@@ -70,7 +71,10 @@ router.get('/overview', async (req, res) => {
       const n = parseInt(String(req.query.enterpriseId), 10);
       if (!Number.isNaN(n)) enterpriseId = n;
     }
-    const overview = await getDashboardOverview(period, enterpriseId);
+    const attentionType = parseDashboardAttentionType(
+      typeof req.query.attentionType === 'string' ? req.query.attentionType : undefined
+    );
+    const overview = await getDashboardOverview(period, enterpriseId, attentionType);
     res.json(overview);
   } catch (e) {
     console.error('[Dashboard] GET /overview:', e);
@@ -87,7 +91,10 @@ router.get('/export.csv', async (req, res) => {
       const n = parseInt(String(req.query.enterpriseId), 10);
       if (!Number.isNaN(n)) enterpriseId = n;
     }
-    const rows = await getDashboardCsvRows(period, enterpriseId);
+    const attentionType = parseDashboardAttentionType(
+      typeof req.query.attentionType === 'string' ? req.query.attentionType : undefined
+    );
+    const rows = await getDashboardCsvRows(period, enterpriseId, attentionType);
     const body = `\uFEFF${buildDashboardCsv(rows)}`;
     const dateStr = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/Sao_Paulo',

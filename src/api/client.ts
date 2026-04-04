@@ -797,6 +797,13 @@ export const leadApi = {
 
 export type DashboardPeriod = 'today' | '7d' | '30d';
 
+/** Query `attentionType` no overview/CSV do dashboard. */
+export type DashboardAttentionType =
+  | 'all'
+  | 'no_first_response'
+  | 'novo_sem_projeto'
+  | 'inactive_12_24h';
+
 export interface DashboardOverview {
   period: DashboardPeriod;
   periodStart: string;
@@ -827,23 +834,38 @@ export interface DashboardOverview {
     reason: string;
     enterpriseName: string | null;
   }[];
+  attentionType: DashboardAttentionType;
 }
 
 export const dashboardApi = {
-  overview: (params: { period?: DashboardPeriod; enterpriseId?: number | null }) => {
+  overview: (params: {
+    period?: DashboardPeriod;
+    enterpriseId?: number | null;
+    attentionType?: DashboardAttentionType;
+  }) => {
     const q = new URLSearchParams();
     if (params.period) q.set('period', params.period);
     if (params.enterpriseId != null && params.enterpriseId !== undefined) {
       q.set('enterpriseId', String(params.enterpriseId));
     }
+    if (params.attentionType && params.attentionType !== 'all') {
+      q.set('attentionType', params.attentionType);
+    }
     const qs = q.toString();
     return request<DashboardOverview>(`/dashboard/overview${qs ? `?${qs}` : ''}`);
   },
-  downloadCsv: async (params: { period?: DashboardPeriod; enterpriseId?: number | null }) => {
+  downloadCsv: async (params: {
+    period?: DashboardPeriod;
+    enterpriseId?: number | null;
+    attentionType?: DashboardAttentionType;
+  }) => {
     const q = new URLSearchParams();
     if (params.period) q.set('period', params.period);
     if (params.enterpriseId != null && params.enterpriseId !== undefined) {
       q.set('enterpriseId', String(params.enterpriseId));
+    }
+    if (params.attentionType && params.attentionType !== 'all') {
+      q.set('attentionType', params.attentionType);
     }
     const qs = q.toString();
     const token = getStoredAuthToken();
