@@ -244,13 +244,24 @@ export async function getDashboardOverview(
     paramsE
   );
 
-  const { rows: attnNoFirst } = await query<{
+  /** Nome confirmado; senão telefone/canal; último fallback para UI. */
+  const attnLeadLabelSql = `COALESCE(
+    NULLIF(TRIM(c.customer_name), ''),
+    NULLIF(TRIM(c.contact_phone), ''),
+    NULLIF(TRIM(c.external_contact_id), ''),
+    'Lead sem nome'
+  )`;
+
+  type AttnRow = {
     id: number;
-    customer_name: string | null;
     contact_phone: string | null;
     enterprise_name: string | null;
-  }>(
-    `SELECT c.id, c.customer_name, c.contact_phone, e.name AS enterprise_name
+    attention_lead_label: string;
+  };
+
+  const { rows: attnNoFirst } = await query<AttnRow>(
+    `SELECT c.id, c.contact_phone, e.name AS enterprise_name,
+      ${attnLeadLabelSql} AS attention_lead_label
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
      WHERE EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user')
@@ -260,15 +271,9 @@ export async function getDashboardOverview(
     paramsE
   );
 
-  type AttnRow = {
-    id: number;
-    customer_name: string | null;
-    contact_phone: string | null;
-    enterprise_name: string | null;
-  };
-
   const { rows: attnNovoSemProjetoRows } = await query<AttnRow>(
-    `SELECT c.id, c.customer_name, c.contact_phone, e.name AS enterprise_name
+    `SELECT c.id, c.contact_phone, e.name AS enterprise_name,
+      ${attnLeadLabelSql} AS attention_lead_label
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
      WHERE c.classification = 'Novo' AND c.enterprise_id IS NULL
@@ -278,7 +283,8 @@ export async function getDashboardOverview(
   );
 
   const { rows: attnStalled24h } = await query<AttnRow>(
-    `SELECT c.id, c.customer_name, c.contact_phone, e.name AS enterprise_name
+    `SELECT c.id, c.contact_phone, e.name AS enterprise_name,
+      ${attnLeadLabelSql} AS attention_lead_label
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
      WHERE c.classification IN ('Novo', 'Qualificado')
@@ -294,7 +300,7 @@ export async function getDashboardOverview(
     if (attentionById.has(row.id)) return;
     attentionById.set(row.id, {
       id: row.id,
-      customerName: row.customer_name,
+      customerName: row.attention_lead_label,
       contactPhone: row.contact_phone,
       reason,
       enterpriseName: row.enterprise_name,
