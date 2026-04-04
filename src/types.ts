@@ -46,6 +46,12 @@ export interface Conversation {
     closesAt: string | null;
     reason: 'open' | 'no_inbound' | 'expired';
   };
+  /** Encerramento manual pelo inbox — bloqueia reengajamento automático da Ana. */
+  manualClosedAt?: string | null;
+  manualClosedByUserId?: number | null;
+  manualClosedReason?: string | null;
+  /** Contador de reengajamentos automáticos (backend). */
+  reengagementCount?: number;
 }
 
 export type MessageSender = 'LEAD' | 'AGENT';
