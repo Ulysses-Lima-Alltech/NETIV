@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getDashboardOverview,
   getDashboardCsvRows,
+  getDashboardAttentionItems,
   parseDashboardAttentionType,
   type DashboardPeriod,
   type DashboardCsvRow,
@@ -71,10 +72,7 @@ router.get('/overview', async (req, res) => {
       const n = parseInt(String(req.query.enterpriseId), 10);
       if (!Number.isNaN(n)) enterpriseId = n;
     }
-    const attentionType = parseDashboardAttentionType(
-      typeof req.query.attentionType === 'string' ? req.query.attentionType : undefined
-    );
-    const overview = await getDashboardOverview(period, enterpriseId, attentionType);
+    const overview = await getDashboardOverview(period, enterpriseId);
     res.json(overview);
   } catch (e) {
     console.error('[Dashboard] GET /overview:', e);
@@ -91,10 +89,7 @@ router.get('/export.csv', async (req, res) => {
       const n = parseInt(String(req.query.enterpriseId), 10);
       if (!Number.isNaN(n)) enterpriseId = n;
     }
-    const attentionType = parseDashboardAttentionType(
-      typeof req.query.attentionType === 'string' ? req.query.attentionType : undefined
-    );
-    const rows = await getDashboardCsvRows(period, enterpriseId, attentionType);
+    const rows = await getDashboardCsvRows(period, enterpriseId);
     const body = `\uFEFF${buildDashboardCsv(rows)}`;
     const dateStr = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/Sao_Paulo',
@@ -108,6 +103,25 @@ router.get('/export.csv', async (req, res) => {
   } catch (e) {
     console.error('[Dashboard] GET /export.csv:', e);
     res.status(500).json({ error: 'Erro ao exportar CSV.' });
+  }
+});
+
+/** Filtro local da seção "Itens que exigem atenção" (não altera o overview). */
+router.get('/attention-items', async (req, res) => {
+  try {
+    let enterpriseId: number | null = null;
+    if (req.query.enterpriseId != null && String(req.query.enterpriseId).trim() !== '') {
+      const n = parseInt(String(req.query.enterpriseId), 10);
+      if (!Number.isNaN(n)) enterpriseId = n;
+    }
+    const attentionType = parseDashboardAttentionType(
+      typeof req.query.attentionType === 'string' ? req.query.attentionType : undefined
+    );
+    const payload = await getDashboardAttentionItems(enterpriseId, attentionType);
+    res.json(payload);
+  } catch (e) {
+    console.error('[Dashboard] GET /attention-items:', e);
+    res.status(500).json({ error: 'Erro ao carregar itens de atenção.' });
   }
 });
 

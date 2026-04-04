@@ -15,27 +15,6 @@ export function parseDashboardAttentionType(raw: string | undefined | null): Das
   return 'all';
 }
 
-/** `AND ...` extra em alias `c` (conversations) para recorte por atuação no CSV. */
-function attentionTypeSqlFilter(attentionType: DashboardAttentionType): string {
-  switch (attentionType) {
-    case 'all':
-      return '';
-    case 'no_first_response':
-      return ` AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user')
-       AND NOT EXISTS (SELECT 1 FROM messages m2 WHERE m2.conversation_id = c.id AND m2.role = 'assistant')`;
-    case 'novo_sem_projeto':
-      return ` AND c.classification = 'Novo' AND c.enterprise_id IS NULL`;
-    case 'inactive_12_24h':
-      return ` AND c.classification IN ('Novo', 'Qualificado')
-       AND COALESCE(c.last_message_at, c.created_at) <= NOW() - INTERVAL '12 hours'
-       AND COALESCE(c.last_message_at, c.created_at) > NOW() - INTERVAL '24 hours'`;
-    default: {
-      const _exhaustive: never = attentionType;
-      return _exhaustive;
-    }
-  }
-}
-
 function periodDaysBack(period: DashboardPeriod): number {
   if (period === 'today') return 0;
   if (period === '30d') return 29;
@@ -81,14 +60,18 @@ export interface DashboardOverview {
     handoffs: number;
     carteiras: number;
   }[];
-  attentionItems: {
-    id: number;
-    customerName: string | null;
-    contactPhone: string | null;
-    reason: string;
-    enterpriseName: string | null;
-  }[];
-  /** Eco do filtro de atuação aplicado à lista de atenção. */
+}
+
+export type DashboardAttentionItem = {
+  id: number;
+  customerName: string | null;
+  contactPhone: string | null;
+  reason: string;
+  enterpriseName: string | null;
+};
+
+export interface DashboardAttentionItemsResponse {
+  attentionItems: DashboardAttentionItem[];
   attentionType: DashboardAttentionType;
 }
 
@@ -115,15 +98,14 @@ export interface DashboardCsvRow {
 }
 
 /** Conversas com `created_at` no período (America/São Paulo), mesmo critério do gráfico do overview. */
+/** Export global do dashboard: recorte por período + empreendimento (sem filtro de atuação). */
 export async function getDashboardCsvRows(
   period: DashboardPeriod,
-  enterpriseId: number | null,
-  attentionType: DashboardAttentionType = 'all'
+  enterpriseId: number | null
 ): Promise<DashboardCsvRow[]> {
   const eid = enterpriseId != null && !Number.isNaN(enterpriseId) ? enterpriseId : null;
   const daysBack = periodDaysBack(period);
   const ent = entClause(2);
-  const attnExtra = attentionTypeSqlFilter(attentionType);
   const { rows } = await query<DashboardCsvRow>(
     `SELECT
        c.id AS conversation_id,
@@ -159,7 +141,6 @@ export async function getDashboardCsvRows(
      WHERE (c.created_at AT TIME ZONE '${TZ}')::date >= (CURRENT_TIMESTAMP AT TIME ZONE '${TZ}')::date - $1::int
        AND (c.created_at AT TIME ZONE '${TZ}')::date <= (CURRENT_TIMESTAMP AT TIME ZONE '${TZ}')::date
        ${ent}
-       ${attnExtra}
      ORDER BY c.created_at DESC`,
     [daysBack, eid]
   );
@@ -169,7 +150,7 @@ export async function getDashboardCsvRows(
 function mapAttnRowToItem(
   row: { id: number; contact_phone: string | null; enterprise_name: string | null; attention_lead_label: string },
   reason: string
-): DashboardOverview['attentionItems'][0] {
+): DashboardAttentionItem {
   return {
     id: row.id,
     customerName: row.attention_lead_label,
@@ -179,11 +160,98 @@ function mapAttnRowToItem(
   };
 }
 
-export async function getDashboardOverview(
-  period: DashboardPeriod,
+/** Lista da seção "Itens que exigem atenção" (filtro local por `attentionType`; usa só empreendimento). */
+export async function getDashboardAttentionItems(
   enterpriseId: number | null,
-  attentionType: DashboardAttentionType = 'all'
-): Promise<DashboardOverview> {
+  attentionType: DashboardAttentionType
+): Promise<DashboardAttentionItemsResponse> {
+  const eid = enterpriseId != null && !Number.isNaN(enterpriseId) ? enterpriseId : null;
+  const ent = entClause(1);
+  const paramsE: unknown[] = [eid];
+
+  type AttnRow = {
+    id: number;
+    contact_phone: string | null;
+    enterprise_name: string | null;
+    attention_lead_label: string;
+  };
+
+  const needNoFirst = attentionType === 'all' || attentionType === 'no_first_response';
+  const needNovo = attentionType === 'all' || attentionType === 'novo_sem_projeto';
+  const needInactive = attentionType === 'all' || attentionType === 'inactive_12_24h';
+
+  let attnNoFirst: AttnRow[] = [];
+  let attnNovoSemProjetoRows: AttnRow[] = [];
+  let attnStalled12to24h: AttnRow[] = [];
+
+  if (needNoFirst) {
+    const { rows } = await query<AttnRow>(
+      `SELECT c.id, c.contact_phone, e.name AS enterprise_name,
+        ${LEAD_DISPLAY_LABEL_SQL} AS attention_lead_label
+       FROM conversations c
+       LEFT JOIN enterprises e ON e.id = c.enterprise_id
+       WHERE EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user')
+         AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.role = 'assistant')
+       ${ent}
+       ORDER BY c.created_at DESC NULLS LAST LIMIT 12`,
+      paramsE
+    );
+    attnNoFirst = rows;
+  }
+
+  if (needNovo) {
+    const { rows } = await query<AttnRow>(
+      `SELECT c.id, c.contact_phone, e.name AS enterprise_name,
+        ${LEAD_DISPLAY_LABEL_SQL} AS attention_lead_label
+       FROM conversations c
+       LEFT JOIN enterprises e ON e.id = c.enterprise_id
+       WHERE c.classification = 'Novo' AND c.enterprise_id IS NULL
+       ${ent}
+       ORDER BY c.last_message_at DESC NULLS LAST, c.created_at DESC LIMIT 12`,
+      paramsE
+    );
+    attnNovoSemProjetoRows = rows;
+  }
+
+  if (needInactive) {
+    const { rows } = await query<AttnRow>(
+      `SELECT c.id, c.contact_phone, e.name AS enterprise_name,
+        ${LEAD_DISPLAY_LABEL_SQL} AS attention_lead_label
+       FROM conversations c
+       LEFT JOIN enterprises e ON e.id = c.enterprise_id
+       WHERE c.classification IN ('Novo', 'Qualificado')
+         AND COALESCE(c.last_message_at, c.created_at) <= NOW() - INTERVAL '12 hours'
+         AND COALESCE(c.last_message_at, c.created_at) > NOW() - INTERVAL '24 hours'
+       ${ent}
+       ORDER BY COALESCE(c.last_message_at, c.created_at) ASC LIMIT 12`,
+      paramsE
+    );
+    attnStalled12to24h = rows;
+  }
+
+  let attentionItems: DashboardAttentionItem[];
+  if (attentionType === 'all') {
+    const attentionById = new Map<number, DashboardAttentionItem>();
+    const pushAttn = (row: AttnRow, reason: string) => {
+      if (attentionById.has(row.id)) return;
+      attentionById.set(row.id, mapAttnRowToItem(row, reason));
+    };
+    for (const r of attnNoFirst) pushAttn(r, 'Sem primeira resposta');
+    for (const r of attnNovoSemProjetoRows) pushAttn(r, 'Novo sem projeto');
+    for (const r of attnStalled12to24h) pushAttn(r, 'Sem atividade entre 12h e 24h');
+    attentionItems = [...attentionById.values()];
+  } else if (attentionType === 'no_first_response') {
+    attentionItems = attnNoFirst.map((r) => mapAttnRowToItem(r, 'Sem primeira resposta'));
+  } else if (attentionType === 'novo_sem_projeto') {
+    attentionItems = attnNovoSemProjetoRows.map((r) => mapAttnRowToItem(r, 'Novo sem projeto'));
+  } else {
+    attentionItems = attnStalled12to24h.map((r) => mapAttnRowToItem(r, 'Sem atividade entre 12h e 24h'));
+  }
+
+  return { attentionItems, attentionType };
+}
+
+export async function getDashboardOverview(period: DashboardPeriod, enterpriseId: number | null): Promise<DashboardOverview> {
   const eid = enterpriseId != null && !Number.isNaN(enterpriseId) ? enterpriseId : null;
   const daysBack = periodDaysBack(period);
   const ent = entClause(1);
@@ -310,85 +378,6 @@ export async function getDashboardOverview(
     paramsE
   );
 
-  type AttnRow = {
-    id: number;
-    contact_phone: string | null;
-    enterprise_name: string | null;
-    attention_lead_label: string;
-  };
-
-  const needNoFirst = attentionType === 'all' || attentionType === 'no_first_response';
-  const needNovo = attentionType === 'all' || attentionType === 'novo_sem_projeto';
-  const needInactive = attentionType === 'all' || attentionType === 'inactive_12_24h';
-
-  let attnNoFirst: AttnRow[] = [];
-  let attnNovoSemProjetoRows: AttnRow[] = [];
-  let attnStalled12to24h: AttnRow[] = [];
-
-  if (needNoFirst) {
-    const { rows } = await query<AttnRow>(
-      `SELECT c.id, c.contact_phone, e.name AS enterprise_name,
-        ${LEAD_DISPLAY_LABEL_SQL} AS attention_lead_label
-       FROM conversations c
-       LEFT JOIN enterprises e ON e.id = c.enterprise_id
-       WHERE EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user')
-         AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.role = 'assistant')
-       ${ent}
-       ORDER BY c.created_at DESC NULLS LAST LIMIT 12`,
-      paramsE
-    );
-    attnNoFirst = rows;
-  }
-
-  if (needNovo) {
-    const { rows } = await query<AttnRow>(
-      `SELECT c.id, c.contact_phone, e.name AS enterprise_name,
-        ${LEAD_DISPLAY_LABEL_SQL} AS attention_lead_label
-       FROM conversations c
-       LEFT JOIN enterprises e ON e.id = c.enterprise_id
-       WHERE c.classification = 'Novo' AND c.enterprise_id IS NULL
-       ${ent}
-       ORDER BY c.last_message_at DESC NULLS LAST, c.created_at DESC LIMIT 12`,
-      paramsE
-    );
-    attnNovoSemProjetoRows = rows;
-  }
-
-  if (needInactive) {
-    const { rows } = await query<AttnRow>(
-      `SELECT c.id, c.contact_phone, e.name AS enterprise_name,
-        ${LEAD_DISPLAY_LABEL_SQL} AS attention_lead_label
-       FROM conversations c
-       LEFT JOIN enterprises e ON e.id = c.enterprise_id
-       WHERE c.classification IN ('Novo', 'Qualificado')
-         AND COALESCE(c.last_message_at, c.created_at) <= NOW() - INTERVAL '12 hours'
-         AND COALESCE(c.last_message_at, c.created_at) > NOW() - INTERVAL '24 hours'
-       ${ent}
-       ORDER BY COALESCE(c.last_message_at, c.created_at) ASC LIMIT 12`,
-      paramsE
-    );
-    attnStalled12to24h = rows;
-  }
-
-  let attentionItems: DashboardOverview['attentionItems'];
-  if (attentionType === 'all') {
-    const attentionById = new Map<number, DashboardOverview['attentionItems'][0]>();
-    const pushAttn = (row: AttnRow, reason: string) => {
-      if (attentionById.has(row.id)) return;
-      attentionById.set(row.id, mapAttnRowToItem(row, reason));
-    };
-    for (const r of attnNoFirst) pushAttn(r, 'Sem primeira resposta');
-    for (const r of attnNovoSemProjetoRows) pushAttn(r, 'Novo sem projeto');
-    for (const r of attnStalled12to24h) pushAttn(r, 'Sem atividade entre 12h e 24h');
-    attentionItems = [...attentionById.values()];
-  } else if (attentionType === 'no_first_response') {
-    attentionItems = attnNoFirst.map((r) => mapAttnRowToItem(r, 'Sem primeira resposta'));
-  } else if (attentionType === 'novo_sem_projeto') {
-    attentionItems = attnNovoSemProjetoRows.map((r) => mapAttnRowToItem(r, 'Novo sem projeto'));
-  } else {
-    attentionItems = attnStalled12to24h.map((r) => mapAttnRowToItem(r, 'Sem atividade entre 12h e 24h'));
-  }
-
   const periodStartIso = new Date(Date.now() - daysBack * 86400000).toISOString();
 
   return {
@@ -422,7 +411,5 @@ export async function getDashboardOverview(
       handoffs: parseInt(row.handoffs, 10) || 0,
       carteiras: parseInt(row.carteiras, 10) || 0,
     })),
-    attentionItems,
-    attentionType,
   };
 }

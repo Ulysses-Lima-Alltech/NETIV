@@ -797,12 +797,25 @@ export const leadApi = {
 
 export type DashboardPeriod = 'today' | '7d' | '30d';
 
-/** Query `attentionType` no overview/CSV do dashboard. */
+/** Filtro local da seção "Itens que exigem atenção" (`GET /dashboard/attention-items`). */
 export type DashboardAttentionType =
   | 'all'
   | 'no_first_response'
   | 'novo_sem_projeto'
   | 'inactive_12_24h';
+
+export interface DashboardAttentionItem {
+  id: number;
+  customerName: string | null;
+  contactPhone: string | null;
+  reason: string;
+  enterpriseName: string | null;
+}
+
+export interface DashboardAttentionItemsResponse {
+  attentionItems: DashboardAttentionItem[];
+  attentionType: DashboardAttentionType;
+}
 
 export interface DashboardOverview {
   period: DashboardPeriod;
@@ -827,24 +840,20 @@ export interface DashboardOverview {
     handoffs: number;
     carteiras: number;
   }[];
-  attentionItems: {
-    id: number;
-    customerName: string | null;
-    contactPhone: string | null;
-    reason: string;
-    enterpriseName: string | null;
-  }[];
-  attentionType: DashboardAttentionType;
 }
 
 export const dashboardApi = {
-  overview: (params: {
-    period?: DashboardPeriod;
-    enterpriseId?: number | null;
-    attentionType?: DashboardAttentionType;
-  }) => {
+  overview: (params: { period?: DashboardPeriod; enterpriseId?: number | null }) => {
     const q = new URLSearchParams();
     if (params.period) q.set('period', params.period);
+    if (params.enterpriseId != null && params.enterpriseId !== undefined) {
+      q.set('enterpriseId', String(params.enterpriseId));
+    }
+    const qs = q.toString();
+    return request<DashboardOverview>(`/dashboard/overview${qs ? `?${qs}` : ''}`);
+  },
+  attentionItems: (params: { enterpriseId?: number | null; attentionType?: DashboardAttentionType }) => {
+    const q = new URLSearchParams();
     if (params.enterpriseId != null && params.enterpriseId !== undefined) {
       q.set('enterpriseId', String(params.enterpriseId));
     }
@@ -852,20 +861,13 @@ export const dashboardApi = {
       q.set('attentionType', params.attentionType);
     }
     const qs = q.toString();
-    return request<DashboardOverview>(`/dashboard/overview${qs ? `?${qs}` : ''}`);
+    return request<DashboardAttentionItemsResponse>(`/dashboard/attention-items${qs ? `?${qs}` : ''}`);
   },
-  downloadCsv: async (params: {
-    period?: DashboardPeriod;
-    enterpriseId?: number | null;
-    attentionType?: DashboardAttentionType;
-  }) => {
+  downloadCsv: async (params: { period?: DashboardPeriod; enterpriseId?: number | null }) => {
     const q = new URLSearchParams();
     if (params.period) q.set('period', params.period);
     if (params.enterpriseId != null && params.enterpriseId !== undefined) {
       q.set('enterpriseId', String(params.enterpriseId));
-    }
-    if (params.attentionType && params.attentionType !== 'all') {
-      q.set('attentionType', params.attentionType);
     }
     const qs = q.toString();
     const token = getStoredAuthToken();

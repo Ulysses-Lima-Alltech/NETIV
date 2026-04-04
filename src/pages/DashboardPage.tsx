@@ -4,6 +4,7 @@ import { AppNav } from '../components/AppNav';
 import {
   dashboardApi,
   projectsApi,
+  type DashboardAttentionItem,
   type DashboardAttentionType,
   type DashboardOverview,
   type DashboardPeriod,
@@ -108,6 +109,9 @@ export function DashboardPage() {
   const [enterpriseId, setEnterpriseId] = useState<number | ''>('');
   const [projects, setProjects] = useState<{ id: number; name: string }[]>([]);
   const [data, setData] = useState<DashboardOverview | null>(null);
+  const [attentionItems, setAttentionItems] = useState<DashboardAttentionItem[]>([]);
+  const [attentionLoading, setAttentionLoading] = useState(true);
+  const [attentionErr, setAttentionErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [csvLoading, setCsvLoading] = useState(false);
@@ -127,12 +131,26 @@ export function DashboardPage() {
       .overview({
         period,
         enterpriseId: enterpriseId === '' ? undefined : enterpriseId,
-        attentionType,
       })
       .then(setData)
       .catch((e) => setErr(e instanceof Error ? e.message : 'Erro ao carregar'))
       .finally(() => setLoading(false));
-  }, [period, enterpriseId, attentionType]);
+  }, [period, enterpriseId]);
+
+  const loadAttentionItems = useCallback(() => {
+    setAttentionLoading(true);
+    setAttentionErr(null);
+    dashboardApi
+      .attentionItems({
+        enterpriseId: enterpriseId === '' ? undefined : enterpriseId,
+        attentionType,
+      })
+      .then((r) => setAttentionItems(r.attentionItems))
+      .catch((e) =>
+        setAttentionErr(e instanceof Error ? e.message : 'Erro ao carregar itens de atenção')
+      )
+      .finally(() => setAttentionLoading(false));
+  }, [enterpriseId, attentionType]);
 
   useEffect(() => {
     loadProjects();
@@ -142,6 +160,10 @@ export function DashboardPage() {
     loadOverview();
   }, [loadOverview]);
 
+  useEffect(() => {
+    loadAttentionItems();
+  }, [loadAttentionItems]);
+
   const handleExportCsv = useCallback(async () => {
     setCsvLoading(true);
     setCsvErr(null);
@@ -149,7 +171,6 @@ export function DashboardPage() {
       const { blob, filename } = await dashboardApi.downloadCsv({
         period,
         enterpriseId: enterpriseId === '' ? undefined : enterpriseId,
-        attentionType,
       });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -164,7 +185,7 @@ export function DashboardPage() {
     } finally {
       setCsvLoading(false);
     }
-  }, [period, enterpriseId, attentionType]);
+  }, [period, enterpriseId]);
 
   const classMax = useMemo(
     () => Math.max(1, ...(data?.classification.map((c) => c.count) ?? [1])),
@@ -215,20 +236,6 @@ export function DashboardPage() {
                 ))}
               </select>
             </label>
-            <label className="block sm:min-w-[220px]">
-              <span className="block text-[12px] font-medium text-[#6B7280] mb-1">Atuação</span>
-              <select
-                className={`${selectField} w-full sm:w-auto min-w-[200px]`}
-                value={attentionType}
-                onChange={(e) => setAttentionType(e.target.value as DashboardAttentionType)}
-              >
-                {ATTENTION_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
             <div className="flex flex-col gap-2 sm:self-end">
               <button
                 type="button"
@@ -249,6 +256,11 @@ export function DashboardPage() {
             </div>
           </div>
           <p className="text-[12px] text-[#9CA3AF] mt-3 leading-relaxed">
+            <strong className="text-[#6B7280] font-medium">Exportar CSV:</strong> conversas com{' '}
+            <code className="text-[11px]">created_at</code> no período e empreendimento acima (recorte global). As colunas incluem sinais
+            operacionais de atenção, mas o arquivo não é filtrado pelo campo &quot;Atuação&quot; da seção abaixo.
+          </p>
+          <p className="text-[12px] text-[#9CA3AF] mt-2 leading-relaxed">
             <strong className="text-[#6B7280] font-medium">Carteira:</strong> contato sem avanço no momento, mas com potencial de retomada
             futura — não indica descarte ou spam.
           </p>
@@ -369,16 +381,48 @@ export function DashboardPage() {
             </section>
 
             <section className={card}>
-              <h2 className={heading}>Itens que exigem atenção</h2>
-              <p className={sub}>
-                Calculadas sempre no backend; com filtro por empreendimento, &quot;Novo sem projeto&quot; deixa de aparecer naturalmente (sem
-                enterprise). Inclui: sem primeira resposta, novo sem projeto, e Novo/Qualificado sem atividade entre 12h e 24h (referência: última mensagem ou criação da conversa).
-              </p>
-              {data.attentionItems.length === 0 ? (
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-5">
+                <div className="min-w-0 flex-1">
+                  <h2 className={heading}>Itens que exigem atenção</h2>
+                  <p className={`${sub} !mb-0`}>
+                    Filtro <strong className="text-[#6B7280] font-medium">Atuação</strong> vale só para esta lista (não altera os indicadores
+                    acima). Com empreendimento selecionado no topo, &quot;Novo sem projeto&quot; tende a sumir (sem vínculo de projeto). Critérios:
+                    sem primeira resposta; novo sem projeto; Novo/Qualificado sem atividade entre 12h e 24h (última mensagem ou criação).
+                  </p>
+                </div>
+                <label className="block shrink-0 w-full sm:w-auto sm:min-w-[220px]">
+                  <span className="block text-[12px] font-medium text-[#6B7280] mb-1">Atuação (esta seção)</span>
+                  <select
+                    className={`${selectField} w-full min-w-[200px]`}
+                    value={attentionType}
+                    onChange={(e) => setAttentionType(e.target.value as DashboardAttentionType)}
+                  >
+                    {ATTENTION_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              {attentionErr && (
+                <div className="rounded-[10px] border border-red-100 bg-red-50 text-[13px] text-red-700 px-4 py-3 mb-4">
+                  {attentionErr}
+                </div>
+              )}
+              {attentionLoading && attentionItems.length > 0 && (
+                <p className="text-[12px] text-[#9CA3AF] mb-3">Atualizando lista…</p>
+              )}
+              {attentionLoading && attentionItems.length === 0 ? (
+                <div className="flex items-center justify-center gap-3 py-10">
+                  <div className="h-5 w-5 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin" />
+                  <span className="text-[#6B7280] text-[13px]">Carregando itens…</span>
+                </div>
+              ) : attentionItems.length === 0 ? (
                 <p className="text-[13px] text-[#9CA3AF]">Nenhum item listado no momento.</p>
               ) : (
-                <ul className="divide-y divide-[#F3F4F6]">
-                  {data.attentionItems.map((item) => (
+                <ul className={`divide-y divide-[#F3F4F6] ${attentionLoading ? 'opacity-70' : ''}`}>
+                  {attentionItems.map((item) => (
                     <li key={`${item.id}-${item.reason}`} className="py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                       <div>
                         <p className="text-[14px] font-medium text-[#111827]">
