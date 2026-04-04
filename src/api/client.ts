@@ -183,6 +183,10 @@ export interface ConversationListItem {
   reserveCommercialNotes?: string | null;
   assignedBrokerName?: string | null;
   assignedBrokerId?: number | null;
+  manualClosedAt?: string | null;
+  manualClosedByUserId?: number | null;
+  manualClosedReason?: string | null;
+  reengagementCount?: number;
 }
 
 /** Corpo parcial para PATCH de classificação + segmentação Carteira. */
@@ -289,6 +293,9 @@ export const whatsappApi = {
     const query = q.toString();
     return request<{ conversations: ConversationListItem[] }>(`/whatsapp/conversations${query ? `?${query}` : ''}`);
   },
+  /** Detalhe de uma conversa (mesmo formato de um item da listagem) — deep link / inbox. */
+  getConversation: (conversationId: number) =>
+    request<ConversationListItem>(`/whatsapp/conversations/${conversationId}`),
   getConversationMessages: (conversationId: number) =>
     request<{ conversationId: number; window?: WhatsAppWindowStatus; messages: MessageListItem[] }>(
       `/whatsapp/conversations/${conversationId}/messages`
@@ -357,6 +364,21 @@ export const whatsappApi = {
     request<{ success: boolean; deletedCount: number }>(
       `/whatsapp/conversations/by-phone/${encodeURIComponent(phone)}`,
       { method: 'DELETE' }
+    ),
+  resetConversation: (conversationId: number) =>
+    request<{ success: boolean; conversationId: number }>(
+      `/whatsapp/conversations/${conversationId}/reset`,
+      { method: 'POST' }
+    ),
+  closeConversation: (conversationId: number, body?: { reason?: string | null }) =>
+    request<{ success: boolean; conversationId: number; manualClosedAt: string | null }>(
+      `/whatsapp/conversations/${conversationId}/close`,
+      { method: 'PATCH', body: body ?? {} }
+    ),
+  reopenConversation: (conversationId: number) =>
+    request<{ success: boolean; conversationId: number; manualClosedAt: null }>(
+      `/whatsapp/conversations/${conversationId}/reopen`,
+      { method: 'PATCH', body: {} }
     ),
 };
 
@@ -816,6 +838,40 @@ export const dashboardApi = {
     }
     const qs = q.toString();
     return request<DashboardOverview>(`/dashboard/overview${qs ? `?${qs}` : ''}`);
+  },
+  downloadCsv: async (params: { period?: DashboardPeriod; enterpriseId?: number | null }) => {
+    const q = new URLSearchParams();
+    if (params.period) q.set('period', params.period);
+    if (params.enterpriseId != null && params.enterpriseId !== undefined) {
+      q.set('enterpriseId', String(params.enterpriseId));
+    }
+    const qs = q.toString();
+    const token = getStoredAuthToken();
+    const res = await fetch(`${API_BASE}/dashboard/export.csv${qs ? `?${qs}` : ''}`, {
+      method: 'GET',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (res.status === 401) {
+      handleUnauthorized();
+      throw new Error('Sessão expirada. Faça login novamente.');
+    }
+    if (!res.ok) {
+      let msg = `Erro ${res.status}`;
+      try {
+        const data = await res.json();
+        msg = (data as { error?: string }).error ?? msg;
+      } catch {
+        // noop
+      }
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get('content-disposition') ?? '';
+    const filenameMatch = disposition.match(/filename="([^"]+)"/i);
+    const filename = filenameMatch?.[1] ?? 'dashboard.csv';
+    return { blob, filename };
   },
 };
 

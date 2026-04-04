@@ -48,6 +48,27 @@ export function parseCommercialFlowState(raw: unknown): CommercialFlowState | nu
   return null;
 }
 
+/** Chaves só de metadado — não indicam escopo comercial ativo (ex.: após `resetCommercialScopeHints`). */
+const COMMERCIAL_FLOW_META_KEYS = new Set(['updatedAt', 'clearedAt']);
+
+/**
+ * `commercial_flow_state` no banco é NOT NULL e o reset grava `'{}'::jsonb`.
+ * Trata objeto vazio ou só com metadados como ausência de estado comercial persistido.
+ */
+export function isEmptyCommercialFlowState(raw: unknown): boolean {
+  const st = parseCommercialFlowState(raw);
+  if (st == null) return true;
+  for (const key of Object.keys(st)) {
+    if (COMMERCIAL_FLOW_META_KEYS.has(key)) continue;
+    const v = (st as Record<string, unknown>)[key];
+    if (v === undefined || v === null) continue;
+    if (Array.isArray(v) && v.length === 0) continue;
+    if (typeof v === 'string' && (v as string).trim() === '') continue;
+    return false;
+  }
+  return true;
+}
+
 function norm(s: string): string {
   return s
     .toLowerCase()
@@ -116,11 +137,13 @@ export function tryRecoverEnterpriseIdFromFlowState(args: {
   if (!isShortCommercialContinuation(args.trimmedUser, args.explicitSwitch)) return null;
 
   const st = args.flowState;
-  if (st?.lastSingleCatalogEnterpriseId != null && Number.isFinite(st.lastSingleCatalogEnterpriseId)) {
-    return { enterpriseId: st.lastSingleCatalogEnterpriseId, source: 'persisted_last_single_catalog' };
-  }
-  if (st?.lastInferredEnterpriseId != null && Number.isFinite(st.lastInferredEnterpriseId)) {
-    return { enterpriseId: st.lastInferredEnterpriseId, source: 'persisted_last_inferred' };
+  if (st != null && !isEmptyCommercialFlowState(st)) {
+    if (st.lastSingleCatalogEnterpriseId != null && Number.isFinite(st.lastSingleCatalogEnterpriseId)) {
+      return { enterpriseId: st.lastSingleCatalogEnterpriseId, source: 'persisted_last_single_catalog' };
+    }
+    if (st.lastInferredEnterpriseId != null && Number.isFinite(st.lastInferredEnterpriseId)) {
+      return { enterpriseId: st.lastInferredEnterpriseId, source: 'persisted_last_inferred' };
+    }
   }
 
   const listed = extractCatalogEnterpriseNamesFromAssistantReply(args.lastAssistantText);

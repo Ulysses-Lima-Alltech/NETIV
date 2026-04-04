@@ -51,6 +51,69 @@ function entClause(paramIndex: number): string {
   return ` AND ($${paramIndex}::int IS NULL OR c.enterprise_id = $${paramIndex}::int)`;
 }
 
+export interface DashboardCsvRow {
+  conversation_id: number;
+  customer_name: string | null;
+  contact_phone: string | null;
+  enterprise_name: string | null;
+  classification: string;
+  lead_temperature: string | null;
+  assigned_broker_id: number | null;
+  created_at: Date;
+  last_message_at: Date | null;
+  no_first_response: boolean;
+  is_novo_sem_projeto: boolean;
+  is_stalled_24h: boolean;
+  attention_reason: string;
+}
+
+/** Conversas com `created_at` no período (America/São Paulo), mesmo critério do gráfico do overview. */
+export async function getDashboardCsvRows(
+  period: DashboardPeriod,
+  enterpriseId: number | null
+): Promise<DashboardCsvRow[]> {
+  const eid = enterpriseId != null && !Number.isNaN(enterpriseId) ? enterpriseId : null;
+  const daysBack = periodDaysBack(period);
+  const ent = entClause(2);
+  const { rows } = await query<DashboardCsvRow>(
+    `SELECT
+       c.id AS conversation_id,
+       c.customer_name,
+       c.contact_phone,
+       COALESCE(e.name, '') AS enterprise_name,
+       c.classification,
+       c.lead_temperature,
+       c.assigned_broker_id,
+       c.created_at,
+       c.last_message_at,
+       (EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user')
+         AND NOT EXISTS (SELECT 1 FROM messages m2 WHERE m2.conversation_id = c.id AND m2.role = 'assistant')
+       ) AS no_first_response,
+       (c.classification = 'Novo' AND c.enterprise_id IS NULL) AS is_novo_sem_projeto,
+       (c.classification IN ('Novo', 'Qualificado')
+         AND COALESCE(c.last_message_at, c.created_at) < NOW() - INTERVAL '24 hours'
+       ) AS is_stalled_24h,
+       CASE
+         WHEN EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user')
+              AND NOT EXISTS (SELECT 1 FROM messages m2 WHERE m2.conversation_id = c.id AND m2.role = 'assistant')
+           THEN 'Sem primeira resposta'
+         WHEN c.classification = 'Novo' AND c.enterprise_id IS NULL THEN 'Novo sem projeto'
+         WHEN c.classification IN ('Novo', 'Qualificado')
+              AND COALESCE(c.last_message_at, c.created_at) < NOW() - INTERVAL '24 hours'
+           THEN 'Conversas paradas'
+         ELSE ''
+       END AS attention_reason
+     FROM conversations c
+     LEFT JOIN enterprises e ON e.id = c.enterprise_id
+     WHERE (c.created_at AT TIME ZONE '${TZ}')::date >= (CURRENT_TIMESTAMP AT TIME ZONE '${TZ}')::date - $1::int
+       AND (c.created_at AT TIME ZONE '${TZ}')::date <= (CURRENT_TIMESTAMP AT TIME ZONE '${TZ}')::date
+       ${ent}
+     ORDER BY c.created_at DESC`,
+    [daysBack, eid]
+  );
+  return rows;
+}
+
 export async function getDashboardOverview(
   period: DashboardPeriod,
   enterpriseId: number | null

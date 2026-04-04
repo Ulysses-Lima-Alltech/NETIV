@@ -103,7 +103,9 @@ interface ChatPanelProps {
     reserve?: ReserveSegmentationPatchBody;
     assignedBrokerId?: number | null;
   }) => void | Promise<void>;
-  onClearPhoneHistory?: (phone: string) => void | Promise<void>;
+  onResetConversation?: (conversationId: string) => void | Promise<void>;
+  onCloseConversation?: () => void | Promise<void>;
+  onReopenConversation?: () => void | Promise<void>;
   onDeleteMessage?: (messageId: string) => void | Promise<void>;
   onUpdateCustomerName?: (name: string | null) => Promise<void>;
   projects?: { id: number; name: string; active: boolean }[];
@@ -120,7 +122,9 @@ export function ChatPanel({
   loadError,
   onSendMessage,
   onClassificationChange,
-  onClearPhoneHistory,
+  onResetConversation,
+  onCloseConversation: _onCloseConversation,
+  onReopenConversation: _onReopenConversation,
   onDeleteMessage,
   onUpdateCustomerName,
   projects = [],
@@ -308,15 +312,15 @@ export function ChatPanel({
               ) : (
                 <p className="text-[13px] text-[#9CA3AF] italic flex-1">Sem telefone</p>
               )}
-              {onClearPhoneHistory && conversation.leadPhone && (
+              {onResetConversation && (
                 <button
                   type="button"
-                  onClick={() => onClearPhoneHistory(conversation.leadPhone)}
-                  title="Excluir todo o histórico deste número"
-                  className="shrink-0 inline-flex items-center gap-1 text-[11px] font-medium text-[#6B7280] border border-[#E5E7EB] hover:text-red-600 hover:border-red-200 hover:bg-red-50 rounded-[6px] px-2 py-0.5 transition-colors"
+                  onClick={() => onResetConversation(conversation.id)}
+                  title="Limpa dados comerciais e operacionais; as mensagens permanecem no histórico"
+                  className="shrink-0 inline-flex items-center gap-1 text-[11px] font-medium text-[#6B7280] border border-[#E5E7EB] hover:text-amber-700 hover:border-amber-200 hover:bg-amber-50 rounded-[6px] px-2 py-0.5 transition-colors"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-                  Limpar histórico
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                  Resetar conversa
                 </button>
               )}
             </div>

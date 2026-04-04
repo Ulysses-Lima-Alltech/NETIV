@@ -56,6 +56,13 @@ export interface ConversationRow {
   handoff_deferred_broker_id?: number | null;
   /** JSON: etapa comercial, última listagem, inferência de foco (continuidade em mensagens curtas). */
   commercial_flow_state?: unknown;
+  /** Encerramento manual pelo inbox — bloqueia reengajamento automático. */
+  manual_closed_at?: Date | null;
+  manual_closed_by_user_id?: number | null;
+  manual_closed_reason?: string | null;
+  reengagement_sent_at?: Date | null;
+  reengagement_for_user_message_id?: number | null;
+  reengagement_count?: number;
 }
 
 export interface ReserveSegmentationPatch {
@@ -239,6 +246,47 @@ export async function deleteConversation(id: number): Promise<boolean> {
  * Mensagens e logs são removidos via CASCADE.
  * Retorna a quantidade de conversas removidas.
  */
+/**
+ * Zera apenas dados operacionais/comerciais da conversa; mantém mensagens, anexos e identidade do canal.
+ * `commercial_flow_state` volta ao objeto vazio (coluna NOT NULL no banco).
+ */
+export async function resetConversationState(id: number): Promise<boolean> {
+  const result = await query(
+    `UPDATE conversations SET
+       customer_name = NULL,
+       ana_asked_customer_name = false,
+       enterprise_id = NULL,
+       classification = 'Novo',
+       classification_before_handoff = NULL,
+       lead_temperature = NULL,
+       handoff = false,
+       reserve_reason = NULL,
+       reserve_desired_city = NULL,
+       reserve_price_min = NULL,
+       reserve_price_max = NULL,
+       reserve_property_type = NULL,
+       reserve_bedrooms = NULL,
+       reserve_interest_type = NULL,
+       reserve_follow_up_moment = NULL,
+       reserve_commercial_notes = NULL,
+       assigned_broker_id = NULL,
+       ana_customer_name_mentions = 0,
+       handoff_deferred_until = NULL,
+       handoff_deferred_broker_id = NULL,
+       commercial_flow_state = '{}'::jsonb,
+       manual_closed_at = NULL,
+       manual_closed_by_user_id = NULL,
+       manual_closed_reason = NULL,
+       reengagement_sent_at = NULL,
+       reengagement_for_user_message_id = NULL,
+       reengagement_count = 0,
+       updated_at = NOW()
+     WHERE id = $1`,
+    [id]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
 export async function deleteAllConversationsByPhone(phone: string): Promise<number> {
   const digits = phone.replace(/\D/g, '');
   if (digits.length < 8) return 0;
@@ -415,6 +463,24 @@ export async function listConversationsWithPreview(
     params
   );
   return rows;
+}
+
+/** Uma linha no mesmo formato da listagem (preview + JOINs), por id. */
+export async function getConversationWithPreviewById(id: number): Promise<ConversationWithPreview | null> {
+  await syncConversationOwnerFromContact(id);
+  const { rows } = await query<ConversationWithPreview>(
+    `SELECT c.*,
+      (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_preview,
+      e.name AS enterprise_name,
+      br.full_name AS assigned_broker_name
+     FROM conversations c
+     LEFT JOIN enterprises e ON e.id = c.enterprise_id
+     LEFT JOIN corretores br ON br.id = c.assigned_broker_id
+     WHERE c.id = $1
+     LIMIT 1`,
+    [id]
+  );
+  return rows[0] ?? null;
 }
 
 export async function updateClassification(
@@ -751,4 +817,54 @@ export async function markAnaAskedForCustomerName(conversationId: number): Promi
      WHERE id = $1 AND (customer_name IS NULL OR trim(customer_name) = '')`,
     [conversationId]
   );
+}
+
+/**
+ * Novo inbound do cliente: reabre conversa encerrada manualmente e inicia novo ciclo de reengajamento.
+ */
+export async function applyInboundUserMessageResets(conversationId: number): Promise<void> {
+  await query(
+    `UPDATE conversations SET
+       manual_closed_at = NULL,
+       manual_closed_by_user_id = NULL,
+       manual_closed_reason = NULL,
+       reengagement_sent_at = NULL,
+       reengagement_for_user_message_id = NULL,
+       updated_at = NOW()
+     WHERE id = $1`,
+    [conversationId]
+  );
+}
+
+export async function closeConversationManual(
+  conversationId: number,
+  byUserId: number,
+  reason: string | null
+): Promise<ConversationRow | null> {
+  const reasonTrim = reason != null && reason.trim() ? reason.trim().slice(0, 500) : null;
+  const { rows } = await query<ConversationRow>(
+    `UPDATE conversations SET
+       manual_closed_at = NOW(),
+       manual_closed_by_user_id = $1,
+       manual_closed_reason = $2,
+       updated_at = NOW()
+     WHERE id = $3 AND manual_closed_at IS NULL
+     RETURNING *`,
+    [byUserId, reasonTrim, conversationId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function reopenConversationManual(conversationId: number): Promise<ConversationRow | null> {
+  const { rows } = await query<ConversationRow>(
+    `UPDATE conversations SET
+       manual_closed_at = NULL,
+       manual_closed_by_user_id = NULL,
+       manual_closed_reason = NULL,
+       updated_at = NOW()
+     WHERE id = $1 AND manual_closed_at IS NOT NULL
+     RETURNING *`,
+    [conversationId]
+  );
+  return rows[0] ?? null;
 }

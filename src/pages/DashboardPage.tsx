@@ -96,6 +96,8 @@ export function DashboardPage() {
   const [data, setData] = useState<DashboardOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [csvLoading, setCsvLoading] = useState(false);
+  const [csvErr, setCsvErr] = useState<string | null>(null);
 
   const loadProjects = useCallback(() => {
     projectsApi
@@ -124,6 +126,29 @@ export function DashboardPage() {
   useEffect(() => {
     loadOverview();
   }, [loadOverview]);
+
+  const handleExportCsv = useCallback(async () => {
+    setCsvLoading(true);
+    setCsvErr(null);
+    try {
+      const { blob, filename } = await dashboardApi.downloadCsv({
+        period,
+        enterpriseId: enterpriseId === '' ? undefined : enterpriseId,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setCsvErr(e instanceof Error ? e.message : 'Não foi possível exportar o CSV. Tente de novo.');
+    } finally {
+      setCsvLoading(false);
+    }
+  }, [period, enterpriseId]);
 
   const classMax = useMemo(
     () => Math.max(1, ...(data?.classification.map((c) => c.count) ?? [1])),
@@ -174,6 +199,24 @@ export function DashboardPage() {
                 ))}
               </select>
             </label>
+            <div className="flex flex-col gap-2 sm:self-end">
+              <button
+                type="button"
+                onClick={() => void handleExportCsv()}
+                disabled={csvLoading}
+                className="inline-flex items-center justify-center gap-2 min-h-[42px] px-4 rounded-[10px] text-[14px] font-semibold bg-[#111827] text-white hover:bg-[#1F2937] disabled:opacity-50 disabled:pointer-events-none transition-colors"
+              >
+                {csvLoading ? (
+                  <>
+                    <span className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                    Exportando…
+                  </>
+                ) : (
+                  'Exportar CSV'
+                )}
+              </button>
+              {csvErr && <p className="text-[12px] text-red-600 max-w-xs">{csvErr}</p>}
+            </div>
           </div>
           <p className="text-[12px] text-[#9CA3AF] mt-3 leading-relaxed">
             <strong className="text-[#6B7280] font-medium">Carteira:</strong> contato sem avanço no momento, mas com potencial de retomada
@@ -318,7 +361,7 @@ export function DashboardPage() {
                         )}
                       </div>
                       <Link
-                        to="/inbox"
+                        to={`/inbox?conversationId=${item.id}`}
                         className="shrink-0 text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8]"
                       >
                         Ir à Inbox →

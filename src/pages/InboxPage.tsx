@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import type { Conversation, LeadTemperatura, Message } from '../types';
 import {
@@ -75,6 +76,7 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     reserveInterestType: c.reserveInterestType ?? null,
     reserveFollowUpMoment: c.reserveFollowUpMoment ?? null,
     reserveCommercialNotes: c.reserveCommercialNotes ?? null,
+    manualClosedAt: c.manualClosedAt ?? null,
   };
 }
 
@@ -105,6 +107,7 @@ function mapApiMessageToMessage(m: MessageListItem, conversationId: string): Mes
 }
 
 export function InboxPage() {
+  const [searchParams] = useSearchParams();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -119,6 +122,16 @@ export function InboxPage() {
   const [filters, setFilters] = useState<InboxFilters>(DEFAULT_INBOX_FILTERS);
   const [searchDebounced, setSearchDebounced] = useState(filters.search);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  /** Evita reprocessar o mesmo `conversationId` da URL (sucesso ou falha) em loop. */
+  const deepLinkConsumedParamRef = useRef<string | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+
+  const rawConversationParam = searchParams.get('conversationId')?.trim() ?? '';
+  const parsedConversationId = useMemo(() => {
+    if (!rawConversationParam) return null;
+    const n = parseInt(rawConversationParam, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [rawConversationParam]);
 
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounced(filters.search), 400);
@@ -141,13 +154,25 @@ export function InboxPage() {
     : null;
   const selectedWindow = selectedConversation?.whatsappWindow ?? null;
 
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
   const loadConversations = useCallback((silent?: boolean) => {
     if (!silent) setConversationsLoading(true);
     const params = inboxFiltersToApiParams({ ...filters, search: searchDebounced });
-    whatsappApi
+    return whatsappApi
       .getConversations({ ...params, limit: 200 })
       .then((data) => {
-        setConversations(data.conversations.map(mapApiConversationToConversation));
+        const mapped = data.conversations.map(mapApiConversationToConversation);
+        setConversations((prev) => {
+          const sid = selectedIdRef.current;
+          if (!sid) return mapped;
+          if (mapped.some((c) => c.id === sid)) return mapped;
+          const orphan = prev.find((c) => c.id === sid);
+          if (orphan) return [orphan, ...mapped];
+          return mapped;
+        });
       })
       .catch(() => setConversations([]))
       .finally(() => { if (!silent) setConversationsLoading(false); });
@@ -201,6 +226,37 @@ export function InboxPage() {
   }, [isUserAtBottom, scrollToBottom]);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
+
+  useEffect(() => {
+    if (!rawConversationParam) {
+      deepLinkConsumedParamRef.current = null;
+      return;
+    }
+    if (parsedConversationId == null) {
+      deepLinkConsumedParamRef.current = rawConversationParam;
+      return;
+    }
+    if (deepLinkConsumedParamRef.current === rawConversationParam) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const item = await whatsappApi.getConversation(parsedConversationId);
+        if (cancelled) return;
+        const mapped = mapApiConversationToConversation(item);
+        setConversations((prev) => {
+          if (prev.some((c) => c.id === mapped.id)) return prev;
+          return [mapped, ...prev];
+        });
+        setSelectedId(mapped.id);
+        deepLinkConsumedParamRef.current = rawConversationParam;
+      } catch {
+        if (cancelled) return;
+        deepLinkConsumedParamRef.current = rawConversationParam;
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [rawConversationParam, parsedConversationId]);
 
   const clearFilters = useCallback(() => setFilters(DEFAULT_INBOX_FILTERS), []);
 
@@ -290,6 +346,34 @@ export function InboxPage() {
     [loadConversations]
   );
 
+  const handleCloseConversation = useCallback(async () => {
+    if (!selectedId) return;
+    const numId = parseInt(selectedId, 10);
+    if (Number.isNaN(numId)) return;
+    try {
+      await whatsappApi.closeConversation(numId);
+      setConversations((prev) =>
+        prev.map((c) => (c.id === selectedId ? { ...c, manualClosedAt: new Date().toISOString() } : c))
+      );
+    } catch (e) {
+      console.error('[InboxPage] closeConversation:', e);
+    }
+  }, [selectedId]);
+
+  const handleReopenConversation = useCallback(async () => {
+    if (!selectedId) return;
+    const numId = parseInt(selectedId, 10);
+    if (Number.isNaN(numId)) return;
+    try {
+      await whatsappApi.reopenConversation(numId);
+      setConversations((prev) =>
+        prev.map((c) => (c.id === selectedId ? { ...c, manualClosedAt: null } : c))
+      );
+    } catch (e) {
+      console.error('[InboxPage] reopenConversation:', e);
+    }
+  }, [selectedId]);
+
   const handleDeleteConversation = useCallback(
     async (id: string) => {
       if (!confirm('Deseja excluir esta conversa?')) return;
@@ -310,27 +394,27 @@ export function InboxPage() {
     [selectedId]
   );
 
-  const handleClearPhoneHistory = useCallback(
-    async (phone: string) => {
-      const digits = phone.replace(/\D/g, '');
-      if (!digits || digits.length < 8) return;
-      if (!confirm(`Excluir TODO o histórico do número ${phone}? Esta ação é irreversível.`)) return;
+  const handleResetConversation = useCallback(
+    async (conversationIdStr: string) => {
+      if (
+        !confirm(
+          'Resetar esta conversa? As mensagens permanecem no histórico; só os dados comerciais e operacionais serão limpos.'
+        )
+      )
+        return;
+      const numId = parseInt(conversationIdStr, 10);
+      if (Number.isNaN(numId)) return;
       try {
-        const res = await whatsappApi.deleteAllByPhone(digits);
-        if (res.deletedCount > 0) {
-          setConversations((prev) => prev.filter((c) => {
-            const cp = (c.leadPhone || '').replace(/\D/g, '');
-            return cp !== digits;
-          }));
-          setSelectedId(null);
-          setMessages([]);
-          setMessagesError(null);
+        await whatsappApi.resetConversation(numId);
+        await loadConversations(true);
+        if (selectedIdRef.current === conversationIdStr) {
+          loadMessages(conversationIdStr, true);
         }
       } catch (e) {
-        console.error('[InboxPage] clearPhoneHistory:', e);
+        console.error('[InboxPage] resetConversation:', e);
       }
     },
-    []
+    [loadConversations, loadMessages]
   );
 
   const handleUpdateCustomerName = useCallback(
@@ -504,9 +588,11 @@ export function InboxPage() {
             onSendMessage={handleSendMessage}
             isSending={sending}
             onClassificationChange={handleClassificationChange}
-            onClearPhoneHistory={handleClearPhoneHistory}
+            onResetConversation={handleResetConversation}
             onDeleteMessage={handleDeleteMessage}
             onUpdateCustomerName={handleUpdateCustomerName}
+            onCloseConversation={handleCloseConversation}
+            onReopenConversation={handleReopenConversation}
             projects={projects}
             onScrollContainerRef={(el) => { chatScrollRef.current = el; }}
           />

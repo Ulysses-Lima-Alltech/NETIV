@@ -89,6 +89,7 @@ import {
   parseCommercialFlowState,
   computeNextCommercialFlowState,
   resetCommercialScopeHints,
+  isEmptyCommercialFlowState,
   type CommercialFlowState,
 } from '../utils/commercialFlowState.js';
 import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
@@ -793,7 +794,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     const persistedContextBlock = [
       `enterprise_id_conversa: ${effectiveConv.enterprise_id ?? 'null'}`,
-      `estado_comercial_json: ${JSON.stringify(flowStateParsed)}`,
+      `estado_comercial_json: ${
+        isEmptyCommercialFlowState(effectiveConv.commercial_flow_state) ? 'null' : JSON.stringify(flowStateParsed)
+      }`,
       `tipo_interesse_inferido_hint: ${triageRequestedProductType}`,
     ].join('\n');
 

@@ -20,13 +20,19 @@ import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import {
   findOrCreateConversation,
   listConversationsWithPreview,
+  getConversationWithPreviewById,
   getConversationById,
   updateClassification,
   deleteConversation,
   deleteAllConversationsByPhone,
+  resetConversationState,
   conversationReserveToPublic,
   setConversationCustomerName,
+  closeConversationManual,
+  reopenConversationManual,
+  type ConversationWithPreview,
 } from '../repositories/conversationRepository.js';
+import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { reprocessLastUserMessage } from '../services/conversationEngine.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
 import {
@@ -74,6 +80,42 @@ function tempToStage(t: string | null | undefined): string | null {
   if (x === 'morno') return 'WARM';
   if (x === 'frio') return 'COLD';
   return null;
+}
+
+function mapConversationWithPreviewRow(r: ConversationWithPreview) {
+  return {
+    id: String(r.id),
+    channel: r.channel,
+    externalContactId: r.external_contact_id,
+    contactPhone: r.contact_phone,
+    contactName:
+      (r.whatsapp_display_name ?? '').trim() ||
+      (r.customer_name ?? '').trim() ||
+      null,
+    whatsappDisplayName: r.whatsapp_display_name ?? null,
+    customerName: r.customer_name ?? null,
+    status: 'open',
+    lastMessageAt: r.last_message_at?.toISOString() ?? null,
+    lastMessagePreview: r.last_message_preview ?? null,
+    projectId: r.enterprise_id ?? null,
+    projectName: r.enterprise_name ?? null,
+    enterpriseId: r.enterprise_id ?? null,
+    enterpriseName: r.enterprise_name ?? null,
+    classificationStatus: r.classification ?? 'Novo',
+    handoff: r.handoff ?? false,
+    leadStage: tempToStage(r.lead_temperature),
+    enterpriseOriginId: r.enterprise_origin_id ?? null,
+    leadSourceRaw: r.lead_source_raw ?? null,
+    createdAt: r.created_at.toISOString(),
+    updatedAt: r.updated_at.toISOString(),
+    assignedBrokerName: (r as { assigned_broker_name?: string | null }).assigned_broker_name ?? null,
+    assignedBrokerId: (r as { assigned_broker_id?: number | null }).assigned_broker_id ?? null,
+    manualClosedAt: (r as { manual_closed_at?: Date | null }).manual_closed_at?.toISOString() ?? null,
+    manualClosedByUserId: (r as { manual_closed_by_user_id?: number | null }).manual_closed_by_user_id ?? null,
+    manualClosedReason: (r as { manual_closed_reason?: string | null }).manual_closed_reason ?? null,
+    reengagementCount: (r as { reengagement_count?: number }).reengagement_count ?? 0,
+    ...conversationReserveToPublic(r),
+  };
 }
 
 router.post('/send', async (req, res) => {
@@ -187,39 +229,31 @@ router.get('/conversations', async (req, res) => {
     const hasFilters = Object.keys(filters).length > 0;
     const rows = await listConversationsWithPreview(channel, limit, hasFilters ? filters : undefined);
     res.json({
-      conversations: rows.map((r) => ({
-        id: String(r.id),
-        channel: r.channel,
-        externalContactId: r.external_contact_id,
-        contactPhone: r.contact_phone,
-        contactName:
-          (r.whatsapp_display_name ?? '').trim() ||
-          (r.customer_name ?? '').trim() ||
-          null,
-        whatsappDisplayName: r.whatsapp_display_name ?? null,
-        customerName: r.customer_name ?? null,
-        status: 'open',
-        lastMessageAt: r.last_message_at?.toISOString() ?? null,
-        lastMessagePreview: r.last_message_preview ?? null,
-        projectId: r.enterprise_id ?? null,
-        projectName: r.enterprise_name ?? null,
-        enterpriseId: r.enterprise_id ?? null,
-        enterpriseName: r.enterprise_name ?? null,
-        classificationStatus: r.classification ?? 'Novo',
-        handoff: r.handoff ?? false,
-        leadStage: tempToStage(r.lead_temperature),
-        enterpriseOriginId: r.enterprise_origin_id ?? null,
-        leadSourceRaw: r.lead_source_raw ?? null,
-        createdAt: r.created_at.toISOString(),
-        updatedAt: r.updated_at.toISOString(),
-        assignedBrokerName: (r as { assigned_broker_name?: string | null }).assigned_broker_name ?? null,
-        assignedBrokerId: (r as { assigned_broker_id?: number | null }).assigned_broker_id ?? null,
-        ...conversationReserveToPublic(r),
-      })),
+      conversations: rows.map((r) => mapConversationWithPreviewRow(r)),
     });
   } catch (e) {
     console.error('[WhatsApp] GET conversations:', e);
     res.status(500).json({ error: 'Erro ao listar.' });
+  }
+});
+
+router.get('/conversations/:id', async (req, res) => {
+  try {
+    const idRaw = req.params['id'];
+    const id = parseInt(Array.isArray(idRaw) ? idRaw[0]! : String(idRaw), 10);
+    if (Number.isNaN(id)) {
+      res.status(400).json({ error: 'ID inválido.' });
+      return;
+    }
+    const row = await getConversationWithPreviewById(id);
+    if (!row) {
+      res.status(404).json({ error: 'Conversa não encontrada.' });
+      return;
+    }
+    res.json(mapConversationWithPreviewRow(row));
+  } catch (e) {
+    console.error('[WhatsApp] GET conversation:', e);
+    res.status(500).json({ error: 'Erro ao carregar conversa.' });
   }
 });
 
@@ -248,6 +282,19 @@ router.delete('/conversations/:id', async (req, res) => {
   } catch (e) {
     console.error('[WhatsApp] DELETE conversation:', e);
     res.status(500).json({ error: 'Erro ao excluir.' });
+  }
+});
+
+router.post('/conversations/:id/reset', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    const ok = await resetConversationState(id);
+    if (!ok) return res.status(404).json({ error: 'Conversa não encontrada.' });
+    res.json({ success: true, conversationId: id });
+  } catch (e) {
+    console.error('[WhatsApp] POST reset:', e);
+    res.status(500).json({ error: 'Erro ao resetar conversa.' });
   }
 });
 
@@ -475,6 +522,61 @@ router.get('/conversations/:id/messages', async (req, res) => {
   } catch (e) {
     console.error('[WhatsApp] GET messages:', e);
     res.status(500).json({ error: 'Erro ao listar mensagens.' });
+  }
+});
+
+/** Encerrar conversa manualmente — bloqueia reengajamento automático. */
+router.patch('/conversations/:id/close', async (req, res) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const idRaw = authReq.params['id'];
+    const id = parseInt(Array.isArray(idRaw) ? idRaw[0]! : String(idRaw), 10);
+    if (Number.isNaN(id)) {
+      res.status(400).json({ error: 'ID inválido.' });
+      return;
+    }
+    const reason = typeof authReq.body?.reason === 'string' ? authReq.body.reason.trim().slice(0, 500) : null;
+    const updated = await closeConversationManual(id, authReq.user.id, reason || null);
+    if (!updated) {
+      res.status(404).json({ error: 'Conversa não encontrada ou já encerrada.' });
+      return;
+    }
+    console.log('[CONVERSATION_CLOSE]', { conversationId: id, userId: authReq.user.id });
+    res.json({
+      success: true,
+      conversationId: id,
+      manualClosedAt: updated.manual_closed_at?.toISOString() ?? null,
+    });
+  } catch (e) {
+    console.error('[WhatsApp] PATCH close:', e);
+    res.status(500).json({ error: 'Erro ao encerrar conversa.' });
+  }
+});
+
+/** Reabrir conversa encerrada manualmente. */
+router.patch('/conversations/:id/reopen', async (req, res) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const idRaw = authReq.params['id'];
+    const id = parseInt(Array.isArray(idRaw) ? idRaw[0]! : String(idRaw), 10);
+    if (Number.isNaN(id)) {
+      res.status(400).json({ error: 'ID inválido.' });
+      return;
+    }
+    const updated = await reopenConversationManual(id);
+    if (!updated) {
+      res.status(404).json({ error: 'Conversa não encontrada ou não estava encerrada.' });
+      return;
+    }
+    console.log('[CONVERSATION_REOPEN]', { conversationId: id, userId: authReq.user.id });
+    res.json({
+      success: true,
+      conversationId: id,
+      manualClosedAt: null,
+    });
+  } catch (e) {
+    console.error('[WhatsApp] PATCH reopen:', e);
+    res.status(500).json({ error: 'Erro ao reabrir conversa.' });
   }
 });
 
