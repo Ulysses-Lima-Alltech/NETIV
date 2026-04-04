@@ -352,7 +352,7 @@ export function DashboardPage() {
                     <li key={`${item.id}-${item.reason}`} className="py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                       <div>
                         <p className="text-[14px] font-medium text-[#111827]">
-                          {item.customerName?.trim() || 'Lead sem nome'}
+                          {item.customerName?.trim() || 'Sem nome'}
                           <span className="text-[12px] font-normal text-[#9CA3AF] ml-2">#{item.id}</span>
                         </p>
                         <p className="text-[12px] text-[#6B7280] mt-0.5">{item.reason}</p>

@@ -244,12 +244,17 @@ export async function getDashboardOverview(
     paramsE
   );
 
-  /** Nome confirmado; senão telefone/canal; último fallback para UI. */
+  /**
+   * Mesma ordem visual da lista da Inbox (`mapApiConversationToConversation` → `leadName`):
+   * whatsappDisplayName → customerName → contactPhone → externalContactId → "Sem nome".
+   * Não altera persistência; só o rótulo dos attention items no dashboard.
+   */
   const attnLeadLabelSql = `COALESCE(
+    NULLIF(TRIM(c.whatsapp_display_name), ''),
     NULLIF(TRIM(c.customer_name), ''),
     NULLIF(TRIM(c.contact_phone), ''),
     NULLIF(TRIM(c.external_contact_id), ''),
-    'Lead sem nome'
+    'Sem nome'
   )`;
 
   type AttnRow = {
