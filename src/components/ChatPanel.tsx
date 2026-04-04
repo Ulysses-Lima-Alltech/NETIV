@@ -87,7 +87,7 @@ function draftToPatch(d: ReserveDraft): ReserveSegmentationPatchBody {
   };
 }
 
-interface ChatPanelProps {
+export interface ChatPanelProps {
   conversation: Conversation | null;
   windowStatus?: Conversation['whatsappWindow'] | null;
   sendError?: string | null;
@@ -103,6 +103,7 @@ interface ChatPanelProps {
     reserve?: ReserveSegmentationPatchBody;
     assignedBrokerId?: number | null;
   }) => void | Promise<void>;
+  /** Limpa dados comerciais/operacionais; mensagens permanecem. */
   onResetConversation?: (conversationId: string) => void | Promise<void>;
   onCloseConversation?: () => void | Promise<void>;
   onReopenConversation?: () => void | Promise<void>;
@@ -123,6 +124,7 @@ export function ChatPanel({
   onSendMessage,
   onClassificationChange,
   onResetConversation,
+  // Handlers repassados pela InboxPage (encerrar/reabrir); reservados para UI futura.
   onCloseConversation: _onCloseConversation,
   onReopenConversation: _onReopenConversation,
   onDeleteMessage,
