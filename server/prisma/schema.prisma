@@ -90,6 +90,12 @@ model Conversation {
   last_message_at       DateTime?
   /// Estado comercial (etapa, última listagem 📍, inferência de foco) — JSON
   commercial_flow_state Json      @default("{}")
+  manual_closed_at              DateTime?
+  manual_closed_by_user_id      Int?
+  manual_closed_reason          String?
+  reengagement_sent_at          DateTime?
+  reengagement_for_user_message_id Int?
+  reengagement_count            Int       @default(0)
   created_at            DateTime  @default(now())
   updated_at            DateTime  @updatedAt
 

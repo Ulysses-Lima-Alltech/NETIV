@@ -746,7 +746,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     for (const eid of knowledgeIds) {
       const row = allActiveEnterprises.find((x) => x.id === eid);
       if (!row) continue;
-      const chunk = await loadRankedKnowledgeChunksForPrompt(eid, `${row.name}\n${chunkHint}`);
+      const cityPriority = muni?.n ?? row.city ?? null;
+      const chunk = await loadRankedKnowledgeChunksForPrompt(eid, `${row.name}\n${chunkHint}`, {
+        targetCity: cityPriority,
+      });
       const kb = await loadAgentKnowledgeText(eid);
       const merged = [chunk, kb].filter(Boolean).join('\n\n');
       if (merged.trim()) knowledgeParts.push(`--- ${row.name} ---\n${merged}`);

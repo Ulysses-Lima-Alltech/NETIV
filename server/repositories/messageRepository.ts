@@ -79,12 +79,43 @@ export async function getLastInboundUserMessageAt(conversationId: number): Promi
   const { rows } = await query<{ created_at: Date }>(
     `SELECT created_at
      FROM messages
-     WHERE conversation_id = $1 AND role = 'user'
+     WHERE conversation_id = $1 AND role = 'user' AND deleted_at IS NULL
      ORDER BY created_at DESC
      LIMIT 1`,
     [conversationId]
   );
   return rows[0]?.created_at ?? null;
+}
+
+/** Última mensagem visível (não apagada internamente) da conversa — papel e id. */
+export async function getLastVisibleMessageRoleAndId(
+  conversationId: number
+): Promise<{ role: 'user' | 'assistant'; id: number } | null> {
+  const { rows } = await query<{ role: string; id: number }>(
+    `SELECT role, id
+     FROM messages
+     WHERE conversation_id = $1 AND deleted_at IS NULL
+     ORDER BY created_at DESC, id DESC
+     LIMIT 1`,
+    [conversationId]
+  );
+  const r = rows[0];
+  if (!r) return null;
+  const role = r.role === 'user' ? 'user' : 'assistant';
+  return { role, id: r.id };
+}
+
+/** Última mensagem inbound do cliente (não apagada). */
+export async function getLastUserMessageRow(conversationId: number): Promise<MessageRow | null> {
+  const { rows } = await query<MessageRow>(
+    `SELECT *
+     FROM messages
+     WHERE conversation_id = $1 AND role = 'user' AND deleted_at IS NULL
+     ORDER BY created_at DESC, id DESC
+     LIMIT 1`,
+    [conversationId]
+  );
+  return rows[0] ?? null;
 }
 
 /**

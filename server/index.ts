@@ -10,6 +10,7 @@ import { getWhatsAppConfig } from './repositories/whatsappConfigRepository.js';
 import { getOpenAIConfig } from './repositories/openaiConfigRepository.js';
 import { bootstrapFirstAdmin } from './bootstrap/adminBootstrap.js';
 import { processDueDeferredHandoffs } from './repositories/conversationRepository.js';
+import { processAnaReengagementScan } from './services/anaReengagementService.js';
 import { syncAllConversationOwnersFromContacts } from './repositories/contactsRepository.js';
 
 const app = express();
@@ -69,6 +70,9 @@ initPostgres()
     setInterval(() => {
       void processDueDeferredHandoffs().catch((err) => console.error('[handoff defer]', err));
     }, 15_000);
+    setInterval(() => {
+      void processAnaReengagementScan().catch((err) => console.error('[ana reengage]', err));
+    }, 300_000);
   })
   .catch((e) => {
     console.error('[startup]', e);

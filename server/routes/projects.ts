@@ -26,6 +26,7 @@ import {
 } from '../repositories/enterpriseRepository.js';
 import { createProjectSchema, updateProjectSchema, patchKnowledgeFileSchema } from '../validators/projects.js';
 import { insertPromptAddonsHistory, listPromptAddonsHistory } from '../repositories/promptAddonsHistoryRepository.js';
+import { getKnowledgeBackfillJob, startKnowledgeBackfill } from '../services/knowledgeBackfillService.js';
 
 const router = Router();
 
@@ -104,6 +105,97 @@ router.get('/', async (req, res) => {
   } catch (e) {
     console.error('[Projects] GET:', e);
     res.status(500).json({ error: 'Erro ao listar.' });
+  }
+});
+
+router.post('/knowledge/backfill', async (req, res) => {
+  try {
+    const dryRun = req.body?.dryRun === true;
+    const includeInactive = req.body?.includeInactive === true;
+    const enterpriseIdRaw = req.body?.enterpriseId;
+    const fileIdRaw = req.body?.fileId;
+    const maxFilesRaw = req.body?.maxFiles;
+    const enterpriseId =
+      enterpriseIdRaw == null || enterpriseIdRaw === ''
+        ? undefined
+        : Number.isFinite(Number(enterpriseIdRaw))
+          ? Number(enterpriseIdRaw)
+          : NaN;
+    const fileId =
+      fileIdRaw == null || fileIdRaw === ''
+        ? undefined
+        : Number.isFinite(Number(fileIdRaw))
+          ? Number(fileIdRaw)
+          : NaN;
+    const maxFiles =
+      maxFilesRaw == null || maxFilesRaw === ''
+        ? undefined
+        : Number.isFinite(Number(maxFilesRaw))
+          ? Number(maxFilesRaw)
+          : NaN;
+
+    if (enterpriseId !== undefined && (!Number.isFinite(enterpriseId) || enterpriseId <= 0)) {
+      return res.status(400).json({ error: 'enterpriseId inválido.' });
+    }
+    if (fileId !== undefined && (!Number.isFinite(fileId) || fileId <= 0)) {
+      return res.status(400).json({ error: 'fileId inválido.' });
+    }
+    if (maxFiles !== undefined && (!Number.isFinite(maxFiles) || maxFiles <= 0)) {
+      return res.status(400).json({ error: 'maxFiles inválido.' });
+    }
+
+    const job = startKnowledgeBackfill({
+      dryRun,
+      includeInactive,
+      enterpriseId: enterpriseId !== undefined ? Math.trunc(enterpriseId) : undefined,
+      fileId: fileId !== undefined ? Math.trunc(fileId) : undefined,
+      maxFiles: maxFiles !== undefined ? Math.trunc(maxFiles) : undefined,
+    });
+
+    res.status(202).json({
+      ok: true,
+      jobId: job.id,
+      status: job.status,
+      startedAt: job.startedAt,
+      dryRun: job.dryRun,
+      includeInactive: job.includeInactive,
+      enterpriseId: job.filterEnterpriseId,
+      fileId: job.filterFileId,
+      maxFiles: job.maxFiles,
+    });
+  } catch (e) {
+    console.error('[Projects] POST knowledge/backfill:', e);
+    res.status(500).json({ error: 'Erro ao iniciar backfill.' });
+  }
+});
+
+router.get('/knowledge/backfill/:jobId', async (req, res) => {
+  try {
+    const jobId = String(req.params.jobId || '').trim();
+    if (!jobId) return res.status(400).json({ error: 'jobId inválido.' });
+    const job = getKnowledgeBackfillJob(jobId);
+    if (!job) return res.status(404).json({ error: 'Job não encontrado.' });
+    res.json({
+      id: job.id,
+      status: job.status,
+      startedAt: job.startedAt,
+      finishedAt: job.finishedAt,
+      dryRun: job.dryRun,
+      includeInactive: job.includeInactive,
+      filterEnterpriseId: job.filterEnterpriseId,
+      filterFileId: job.filterFileId,
+      maxFiles: job.maxFiles,
+      scannedFiles: job.scannedFiles,
+      successFiles: job.successFiles,
+      failedFiles: job.failedFiles,
+      emptyExtractedTextFiles: job.emptyExtractedTextFiles,
+      totalChunksGenerated: job.totalChunksGenerated,
+      error: job.error ?? null,
+      logs: job.logs,
+    });
+  } catch (e) {
+    console.error('[Projects] GET knowledge/backfill/:jobId:', e);
+    res.status(500).json({ error: 'Erro ao consultar job.' });
   }
 });
 

@@ -1,6 +1,6 @@
 import type { WebhookPayload, WebhookMessage } from '../types/webhook.js';
 import { logWebhookEvent } from '../repositories/webhookEventRepository.js';
-import { findOrCreateConversation } from '../repositories/conversationRepository.js';
+import { findOrCreateConversation, applyInboundUserMessageResets } from '../repositories/conversationRepository.js';
 import { insertMessage, findMessageByMetaId } from '../repositories/messageRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
@@ -296,6 +296,7 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
         const text = bodyText.trim();
         try {
           await insertMessage(conv.id, 'user', text, mid);
+          await applyInboundUserMessageResets(conv.id);
         } catch (e) {
           const code = e && typeof e === 'object' && 'code' in e ? String((e as { code: unknown }).code) : '';
           console.log('[ANA_PIPELINE] inbound_skip', {

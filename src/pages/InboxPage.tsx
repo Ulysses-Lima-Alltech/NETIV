@@ -77,6 +77,9 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     reserveFollowUpMoment: c.reserveFollowUpMoment ?? null,
     reserveCommercialNotes: c.reserveCommercialNotes ?? null,
     manualClosedAt: c.manualClosedAt ?? null,
+    manualClosedByUserId: c.manualClosedByUserId ?? null,
+    manualClosedReason: c.manualClosedReason ?? null,
+    reengagementCount: c.reengagementCount ?? 0,
   };
 }
 

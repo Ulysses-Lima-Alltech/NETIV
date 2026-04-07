@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from '
 import { join } from 'path';
 import { config } from '../config.js';
 import { query } from '../db/pg.js';
-import { replaceEnterpriseFileChunks } from './enterpriseKnowledgeChunkRepository.js';
+import { replaceEnterpriseFileChunks, splitTextIntoChunks } from './enterpriseKnowledgeChunkRepository.js';
 import { downloadFromR2, deleteFromR2 } from '../services/r2Storage.js';
 
 export const FILE_CATEGORIES = ['book', 'unidades', 'tabela_comercial', 'outro'] as const;
@@ -345,6 +345,14 @@ export async function listEnterpriseFiles(enterpriseId: number): Promise<
 async function extractText(filePath: string, mime: string, originalName: string): Promise<string> {
   try {
     const buf = readFileSync(filePath);
+    return await extractTextFromBuffer(buf, mime, originalName);
+  } catch {
+    return '';
+  }
+}
+
+async function extractTextFromBuffer(buf: Buffer, mime: string, originalName: string): Promise<string> {
+  try {
     const lower = originalName.toLowerCase();
     if (mime.includes('text') || lower.endsWith('.txt') || lower.endsWith('.md')) {
       return normalizeExtractedText(buf.toString('utf-8')).slice(0, 500_000);
@@ -366,6 +374,238 @@ async function extractText(filePath: string, mime: string, originalName: string)
     return '';
   } catch {
     return '';
+  }
+}
+
+type KnowledgeFileBackfillRow = {
+  enterprise_id: number;
+  enterprise_name: string;
+  enterprise_city: string | null;
+  file_id: number;
+  original_name: string;
+  storage_path: string;
+  mime_type: string;
+  can_be_used_as_knowledge: boolean;
+  is_active: boolean;
+  storage_provider: string | null;
+  storage_key: string | null;
+  file_data: Buffer | null;
+};
+
+export interface KnowledgeFileBackfillTarget {
+  enterpriseId: number;
+  enterpriseName: string;
+  enterpriseCity: string | null;
+  fileId: number;
+  originalName: string;
+  mimeType: string;
+  storagePath: string;
+  isActive: boolean;
+}
+
+export interface ReindexKnowledgeBackfillResult {
+  enterpriseId: number;
+  enterpriseName: string;
+  fileId: number;
+  originalName: string;
+  success: boolean;
+  dryRun: boolean;
+  chunksGenerated: number;
+  extractedChars: number;
+  reason?: string;
+}
+
+async function loadKnowledgeFileBufferForBackfill(
+  row: KnowledgeFileBackfillRow
+): Promise<{ ok: true; buffer: Buffer } | { ok: false; reason: string }> {
+  const abs = join(enterpriseDir(row.enterprise_id), row.storage_path);
+  if (existsSync(abs)) {
+    try {
+      return { ok: true, buffer: readFileSync(abs) };
+    } catch (e) {
+      return {
+        ok: false,
+        reason: `read_local_failed: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+  }
+  if (row.storage_provider === 'r2' && row.storage_key) {
+    const buf = await downloadFromR2(row.storage_key);
+    if (buf) {
+      try {
+        writeFileSync(abs, buf);
+      } catch {
+        // cache local opcional; segue com o buffer em memória
+      }
+      return { ok: true, buffer: buf };
+    }
+    return { ok: false, reason: 'r2_download_failed' };
+  }
+  if (row.file_data) {
+    try {
+      writeFileSync(abs, row.file_data);
+    } catch {
+      // cache local opcional
+    }
+    return { ok: true, buffer: row.file_data };
+  }
+  return { ok: false, reason: 'file_missing_local_r2_and_bytea' };
+}
+
+export async function listKnowledgeFilesForBackfill(opts?: {
+  enterpriseId?: number;
+  fileId?: number;
+  includeInactive?: boolean;
+}): Promise<KnowledgeFileBackfillTarget[]> {
+  const params: unknown[] = [];
+  let i = 1;
+  const where: string[] = [`f.can_be_used_as_knowledge = true`];
+  if (!opts?.includeInactive) where.push(`f.is_active = true`);
+  if (opts?.enterpriseId != null) {
+    where.push(`f.enterprise_id = $${i++}`);
+    params.push(opts.enterpriseId);
+  }
+  if (opts?.fileId != null) {
+    where.push(`f.id = $${i++}`);
+    params.push(opts.fileId);
+  }
+  const { rows } = await query<KnowledgeFileBackfillRow>(
+    `SELECT
+        f.enterprise_id,
+        e.name AS enterprise_name,
+        e.city AS enterprise_city,
+        f.id AS file_id,
+        f.original_name,
+        f.storage_path,
+        f.mime_type,
+        f.can_be_used_as_knowledge,
+        f.is_active,
+        f.storage_provider,
+        f.storage_key,
+        f.file_data
+     FROM enterprise_files f
+     INNER JOIN enterprises e ON e.id = f.enterprise_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY f.enterprise_id, f.id`,
+    params
+  );
+  return rows.map((r) => ({
+    enterpriseId: r.enterprise_id,
+    enterpriseName: r.enterprise_name,
+    enterpriseCity: r.enterprise_city,
+    fileId: r.file_id,
+    originalName: r.original_name,
+    mimeType: r.mime_type,
+    storagePath: r.storage_path,
+    isActive: r.is_active,
+  }));
+}
+
+export async function reindexKnowledgeFileForBackfill(
+  fileId: number,
+  opts?: { dryRun?: boolean }
+): Promise<ReindexKnowledgeBackfillResult> {
+  const { rows } = await query<KnowledgeFileBackfillRow>(
+    `SELECT
+        f.enterprise_id,
+        e.name AS enterprise_name,
+        e.city AS enterprise_city,
+        f.id AS file_id,
+        f.original_name,
+        f.storage_path,
+        f.mime_type,
+        f.can_be_used_as_knowledge,
+        f.is_active,
+        f.storage_provider,
+        f.storage_key,
+        f.file_data
+     FROM enterprise_files f
+     INNER JOIN enterprises e ON e.id = f.enterprise_id
+     WHERE f.id = $1
+       AND f.can_be_used_as_knowledge = true
+     LIMIT 1`,
+    [fileId]
+  );
+  const row = rows[0];
+  if (!row) {
+    return {
+      enterpriseId: 0,
+      enterpriseName: '',
+      fileId,
+      originalName: '',
+      success: false,
+      dryRun: opts?.dryRun === true,
+      chunksGenerated: 0,
+      extractedChars: 0,
+      reason: 'file_not_found_or_knowledge_disabled',
+    };
+  }
+
+  const loaded = await loadKnowledgeFileBufferForBackfill(row);
+  if (!loaded.ok) {
+    return {
+      enterpriseId: row.enterprise_id,
+      enterpriseName: row.enterprise_name,
+      fileId: row.file_id,
+      originalName: row.original_name,
+      success: false,
+      dryRun: opts?.dryRun === true,
+      chunksGenerated: 0,
+      extractedChars: 0,
+      reason: loaded.reason,
+    };
+  }
+
+  const extracted = await extractTextFromBuffer(loaded.buffer, row.mime_type, row.original_name);
+  const chunks = splitTextIntoChunks((extracted || '').trim(), 1800);
+  if (opts?.dryRun === true) {
+    return {
+      enterpriseId: row.enterprise_id,
+      enterpriseName: row.enterprise_name,
+      fileId: row.file_id,
+      originalName: row.original_name,
+      success: true,
+      dryRun: true,
+      chunksGenerated: chunks.length,
+      extractedChars: extracted.length,
+      reason: extracted.trim() ? undefined : 'empty_extracted_text',
+    };
+  }
+
+  try {
+    await query(
+      `UPDATE enterprise_files
+       SET extracted_text = $1
+       WHERE id = $2`,
+      [extracted || null, row.file_id]
+    );
+    await replaceEnterpriseFileChunks(row.enterprise_id, row.file_id, extracted, {
+      enterpriseName: row.enterprise_name,
+      enterpriseCity: row.enterprise_city,
+    });
+    return {
+      enterpriseId: row.enterprise_id,
+      enterpriseName: row.enterprise_name,
+      fileId: row.file_id,
+      originalName: row.original_name,
+      success: true,
+      dryRun: false,
+      chunksGenerated: chunks.length,
+      extractedChars: extracted.length,
+      reason: extracted.trim() ? undefined : 'empty_extracted_text',
+    };
+  } catch (e) {
+    return {
+      enterpriseId: row.enterprise_id,
+      enterpriseName: row.enterprise_name,
+      fileId: row.file_id,
+      originalName: row.original_name,
+      success: false,
+      dryRun: false,
+      chunksGenerated: chunks.length,
+      extractedChars: extracted.length,
+      reason: e instanceof Error ? e.message : String(e),
+    };
   }
 }
 
@@ -477,7 +717,11 @@ export async function registerEnterpriseFile(
   });
   if (canBeUsedAsKnowledge && (extracted || '').trim()) {
     try {
-      await replaceEnterpriseFileChunks(enterpriseId, fileId, extracted);
+      const enterprise = await getEnterpriseById(enterpriseId);
+      await replaceEnterpriseFileChunks(enterpriseId, fileId, extracted, {
+        enterpriseName: enterprise?.name ?? null,
+        enterpriseCity: enterprise?.city ?? null,
+      });
     } catch (e) {
       console.error('[knowledge_chunks] falha ao indexar arquivo', {
         enterpriseId,
