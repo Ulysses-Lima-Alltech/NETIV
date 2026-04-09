@@ -270,8 +270,8 @@ async function applyBatchOwnershipAndContextByPhone(params: {
            jsonb_build_object(
              'source', 'batch_template_send',
              'sourceKey', $3::text,
-             'rowNumber', $4,
-             'brokerId', $5
+            'rowNumber', $4::integer,
+            'brokerId', $5::integer
            )
          ),
          updated_at = NOW()
