@@ -1,3 +1,12 @@
+import type {
+  BatchParseResponse,
+  BatchPreviewResponse,
+  BatchSendResponse,
+  BatchTemplateCatalogItem,
+  BatchTestResponse,
+  BatchMappingConfig,
+} from '../types/whatsappBatch';
+
 const API_BASE =
   import.meta.env.VITE_API_URL != null && String(import.meta.env.VITE_API_URL).trim() !== ''
     ? `${String(import.meta.env.VITE_API_URL).replace(/\/$/, '')}/api`
@@ -380,6 +389,51 @@ export const whatsappApi = {
       `/whatsapp/conversations/${conversationId}/reopen`,
       { method: 'PATCH', body: {} }
     ),
+};
+
+async function postBatchFormData<T>(path: string, file: File, payload: unknown): Promise<T> {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('payload', JSON.stringify(payload));
+  const token = getStoredAuthToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: fd,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error((data as { error?: string }).error ?? 'Sessão expirada. Faça login novamente.');
+  }
+  if (!res.ok) {
+    const payloadData = data as { error?: string; code?: string };
+    const err = new ApiError(payloadData.error ?? `Erro ${res.status}`);
+    err.code = payloadData.code;
+    err.status = res.status;
+    throw err;
+  }
+  return data as T;
+}
+
+export const whatsappBatchApi = {
+  listTemplates: () => request<{ templates: BatchTemplateCatalogItem[] }>('/whatsapp/templates'),
+  parseSpreadsheet: (file: File, config?: { templateKey?: string }) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (config) fd.append('config', JSON.stringify(config));
+    return requestFormData<BatchParseResponse>('/whatsapp/templates/batch/parse', fd);
+  },
+  preview: (file: File, body: { mapping: BatchMappingConfig }) =>
+    postBatchFormData<BatchPreviewResponse>('/whatsapp/templates/batch/preview', file, body),
+  sendTest: (
+    file: File,
+    body: { mapping: BatchMappingConfig; testPhone: string; sampleRowIndex?: number }
+  ) => postBatchFormData<BatchTestResponse>('/whatsapp/templates/batch/test', file, body),
+  sendBatch: (file: File, body: { mapping: BatchMappingConfig }) =>
+    postBatchFormData<BatchSendResponse>('/whatsapp/templates/batch/send', file, body),
 };
 
 export interface ContactListItem {

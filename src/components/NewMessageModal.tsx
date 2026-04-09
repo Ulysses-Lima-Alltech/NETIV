@@ -13,7 +13,9 @@ const field =
 export function NewMessageModal({ open, onClose, onSent }: NewMessageModalProps) {
   const [phone, setPhone] = useState('');
   const [message, setMessage] = useState('');
-  const [templateKey, setTemplateKey] = useState<'reengage_default'>('reengage_default');
+  const [templateKey, setTemplateKey] = useState<'primeiro_contato_cliente' | 'novo_agendamento_corretor'>(
+    'primeiro_contato_cliente'
+  );
   const [windowClosed, setWindowClosed] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,10 +116,13 @@ export function NewMessageModal({ open, onClose, onSent }: NewMessageModalProps)
               <p className="text-[12px] text-[#374151]">Envio por template (permitido fora da janela):</p>
               <select
                 value={templateKey}
-                onChange={(e) => setTemplateKey(e.target.value as 'reengage_default')}
+                onChange={(e) =>
+                  setTemplateKey(e.target.value as 'primeiro_contato_cliente' | 'novo_agendamento_corretor')
+                }
                 className={field}
               >
-                <option value="reengage_default">reengage_default (pt_BR)</option>
+                <option value="primeiro_contato_cliente">primeiro_contato_cliente (pt_BR)</option>
+                <option value="novo_agendamento_corretor">novo_agendamento_corretor (pt_BR)</option>
               </select>
               <button
                 type="button"

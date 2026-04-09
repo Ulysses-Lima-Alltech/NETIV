@@ -12,6 +12,7 @@ import { AgendaPage } from './pages/AgendaPage';
 import { UsersPage } from './pages/UsersPage';
 import { LoginPage } from './pages/LoginPage';
 import { ContatosPage } from './pages/ContatosPage';
+import { WhatsAppBatchTemplatePage } from './pages/WhatsAppBatchTemplatePage';
 
 function App() {
   return (
@@ -79,6 +80,14 @@ function App() {
             element={
               <ProtectedRoute roles={[...ROLES_SETTINGS_ADMIN]}>
                 <ContatosPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/contatos/disparo-template-lote"
+            element={
+              <ProtectedRoute roles={[...ROLES_SETTINGS_ADMIN]}>
+                <WhatsAppBatchTemplatePage />
               </ProtectedRoute>
             }
           />

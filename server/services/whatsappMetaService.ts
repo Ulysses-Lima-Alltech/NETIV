@@ -3,6 +3,7 @@ import type { MetaSendMessageResponse, MetaErrorResponse } from '../types/whatsa
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { readFile } from 'fs/promises';
 import { classifyManualMediaKind } from '../utils/manualWhatsappAttachment.js';
+import { getWhatsAppTemplateByKey } from '../catalogs/whatsappTemplates.js';
 
 const META_GRAPH_BASE = 'https://graph.facebook.com';
 const REQUEST_TIMEOUT_MS = 120000;
@@ -21,20 +22,21 @@ export interface SendTextResult {
   messageKind?: 'text' | 'document' | 'image' | 'video';
   error?: string;
   code?: number;
+  httpStatus?: number;
+  metaErrorCode?: number;
+  metaErrorType?: string;
+  metaErrorSubcode?: number;
+  metaFbTraceId?: string;
 }
 
 type TemplateParamKey = 'customerName' | 'enterpriseName' | 'agentName' | 'city' | 'productType';
 
 interface ManualTemplateDef {
+  key: string;
   name: string;
   languageCode: string;
   bodyParamKeys?: TemplateParamKey[];
 }
-
-const MANUAL_WHATSAPP_TEMPLATES: Record<string, ManualTemplateDef> = {
-  // Base inicial: sem variáveis obrigatórias para reduzir risco de rejeição enquanto o template é ajustado na Meta.
-  reengage_default: { name: 'reengage_default', languageCode: 'pt_BR', bodyParamKeys: [] },
-};
 
 export function isMetaWindowClosedError(params: { code?: number; message?: string }): boolean {
   const code = params.code;
@@ -47,7 +49,14 @@ export function isMetaWindowClosedError(params: { code?: number; message?: strin
 }
 
 export function resolveManualTemplate(templateKey: string): ManualTemplateDef | null {
-  return MANUAL_WHATSAPP_TEMPLATES[templateKey] ?? null;
+  const catalogTemplate = getWhatsAppTemplateByKey(templateKey);
+  if (!catalogTemplate) return null;
+  return {
+    key: catalogTemplate.key,
+    name: catalogTemplate.name,
+    languageCode: catalogTemplate.languageCode,
+    bodyParamKeys: [],
+  };
 }
 
 export interface TemplateParamsContext {
@@ -56,12 +65,16 @@ export interface TemplateParamsContext {
   agentName?: string | null;
   city?: string | null;
   productType?: string | null;
+  parameters?: string[];
 }
 
 export function buildTemplateParams(
   template: ManualTemplateDef,
   ctx?: TemplateParamsContext
 ): Array<{ type: 'text'; text: string }> {
+  if (ctx?.parameters && ctx.parameters.length > 0) {
+    return ctx.parameters.map((value) => ({ type: 'text', text: String(value ?? '') }));
+  }
   const map: Record<TemplateParamKey, string> = {
     customerName: (ctx?.customerName || '').trim() || 'cliente',
     enterpriseName: (ctx?.enterpriseName || '').trim() || 'nosso empreendimento',
@@ -191,7 +204,16 @@ export async function sendTemplateMessage(
     const data = (await res.json()) as MetaSendMessageResponse | MetaErrorResponse;
     if (!res.ok) {
       const err = (data as MetaErrorResponse).error;
-      return { success: false, error: err?.message ?? `HTTP ${res.status}`, code: err?.code };
+      return {
+        success: false,
+        error: err?.message ?? `HTTP ${res.status}`,
+        code: err?.code,
+        httpStatus: res.status,
+        metaErrorCode: err?.code,
+        metaErrorType: err?.type,
+        metaErrorSubcode: err?.error_subcode,
+        metaFbTraceId: err?.fbtrace_id,
+      };
     }
     const mid = (data as MetaSendMessageResponse).messages?.[0]?.id;
     if (!mid || typeof mid !== 'string') return { success: false, error: 'Meta não retornou o ID da mensagem.' };

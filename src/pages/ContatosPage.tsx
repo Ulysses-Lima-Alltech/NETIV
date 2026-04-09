@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import {
   contactsApi,
@@ -147,6 +147,14 @@ export function ContatosPage() {
 
         <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
           <h2 className="text-[14px] font-semibold">Importar CSV</h2>
+          <div>
+            <Link
+              to="/contatos/disparo-template-lote"
+              className="inline-flex items-center px-3 py-2 rounded-[10px] bg-[#7C3AED] text-white text-[12px] font-semibold hover:bg-[#6D28D9]"
+            >
+              Ir para disparo de templates em lote
+            </Link>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
             <input type="file" accept=".csv,text/csv" onChange={(e) => setImportFile(e.target.files?.[0] ?? null)} className={inputCls} />
             <select className={inputCls} value={importOwnerId} onChange={(e) => setImportOwnerId(e.target.value)}>

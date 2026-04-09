@@ -10,6 +10,19 @@ import {
   isMetaWindowClosedError,
   sendLocalMediaToWhatsApp,
 } from '../services/whatsappMetaService.js';
+import { listWhatsAppTemplatesCatalog } from '../catalogs/whatsappTemplates.js';
+import { parseSpreadsheet } from '../services/spreadsheetParseService.js';
+import {
+  parseBatchConfigSchema,
+  batchSendSchema,
+  batchTestSchema,
+} from '../validators/whatsappBatch.js';
+import {
+  buildBatchSuggestions,
+  buildBatchPreview,
+  sendBatchTemplate,
+  sendBatchTemplateTest,
+} from '../services/whatsappBatchTemplateService.js';
 import {
   normalizeManualAttachmentMime,
   isManualAttachmentAllowed,
@@ -53,6 +66,10 @@ const router = Router();
 const manualAttachmentUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MANUAL_UPLOAD_BODY_LIMIT_BYTES },
+});
+const batchUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 },
 });
 
 function conditionalManualFileUpload(req: Request, res: Response, next: NextFunction) {
@@ -117,6 +134,116 @@ function mapConversationWithPreviewRow(r: ConversationWithPreview) {
     ...conversationReserveToPublic(r),
   };
 }
+
+function parseBatchPayload(raw: unknown): unknown {
+  if (typeof raw !== 'string') return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function ensureBatchFile(req: Request, res: Response): Express.Multer.File | null {
+  if (!req.file?.buffer) {
+    res.status(400).json({ success: false, error: 'Arquivo CSV/XLSX é obrigatório.' });
+    return null;
+  }
+  return req.file;
+}
+
+router.get('/templates', async (_req, res) => {
+  res.json({ templates: listWhatsAppTemplatesCatalog() });
+});
+
+router.post('/templates/batch/parse', batchUpload.single('file'), async (req, res) => {
+  try {
+    const file = ensureBatchFile(req, res);
+    if (!file) return;
+    const parsedCfg = parseBatchConfigSchema.safeParse(parseBatchPayload(req.body?.config) ?? {});
+    if (!parsedCfg.success) {
+      const msg = parsedCfg.error.issues.map((e) => e.message).join('; ') || 'Configuração inválida.';
+      return res.status(400).json({ success: false, error: msg });
+    }
+    const parsed = parseSpreadsheet(file.buffer, file.originalname, file.mimetype);
+    const suggestions = buildBatchSuggestions(parsed.headers);
+    res.json({
+      headers: parsed.headers,
+      rowCount: parsed.rowCount,
+      sampleRows: parsed.sampleRows,
+      suggestions,
+      templateKey: parsedCfg.data.templateKey ?? null,
+    });
+  } catch (e) {
+    console.error('[WhatsApp] POST /templates/batch/parse:', e);
+    res.status(500).json({ success: false, error: 'Erro ao processar planilha.' });
+  }
+});
+
+router.post('/templates/batch/preview', batchUpload.single('file'), async (req, res) => {
+  try {
+    const file = ensureBatchFile(req, res);
+    if (!file) return;
+    const parsedBody = batchSendSchema.safeParse(parseBatchPayload(req.body?.payload));
+    if (!parsedBody.success) {
+      const msg = parsedBody.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
+      return res.status(400).json({ success: false, error: msg });
+    }
+    const parsed = parseSpreadsheet(file.buffer, file.originalname, file.mimetype);
+    const preview = await buildBatchPreview({ rows: parsed.rows, mapping: parsedBody.data.mapping });
+    res.json(preview);
+  } catch (e) {
+    console.error('[WhatsApp] POST /templates/batch/preview:', e);
+    res.status(500).json({ success: false, error: e instanceof Error ? e.message : 'Erro no preview.' });
+  }
+});
+
+router.post('/templates/batch/test', batchUpload.single('file'), async (req, res) => {
+  try {
+    const file = ensureBatchFile(req, res);
+    if (!file) return;
+    const parsedBody = batchTestSchema.safeParse(parseBatchPayload(req.body?.payload));
+    if (!parsedBody.success) {
+      const msg = parsedBody.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
+      return res.status(400).json({ success: false, error: msg });
+    }
+    const parsed = parseSpreadsheet(file.buffer, file.originalname, file.mimetype);
+    const result = await sendBatchTemplateTest({
+      rows: parsed.rows,
+      mapping: parsedBody.data.mapping,
+      testPhone: parsedBody.data.testPhone,
+      sampleRowIndex: parsedBody.data.sampleRowIndex,
+    });
+    if (!result.success) {
+      const status = result.httpStatus && result.httpStatus >= 400 ? result.httpStatus : 502;
+      return res.status(status).json(result);
+    }
+    res.json(result);
+  } catch (e) {
+    console.error('[WhatsApp] POST /templates/batch/test:', e);
+    res.status(500).json({ success: false, error: e instanceof Error ? e.message : 'Erro no envio de teste.' });
+  }
+});
+
+router.post('/templates/batch/send', batchUpload.single('file'), async (req, res) => {
+  try {
+    const file = ensureBatchFile(req, res);
+    if (!file) return;
+    const parsedBody = batchSendSchema.safeParse(parseBatchPayload(req.body?.payload));
+    if (!parsedBody.success) {
+      const msg = parsedBody.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
+      return res.status(400).json({ success: false, error: msg });
+    }
+    const parsed = parseSpreadsheet(file.buffer, file.originalname, file.mimetype);
+    const result = await sendBatchTemplate({ rows: parsed.rows, mapping: parsedBody.data.mapping });
+    res.json(result);
+  } catch (e) {
+    console.error('[WhatsApp] POST /templates/batch/send:', e);
+    const message = e instanceof Error ? e.message : 'Erro no envio em lote.';
+    const status = message === 'Nenhum número válido para envio.' ? 400 : 500;
+    res.status(status).json({ success: false, error: message });
+  }
+});
 
 router.post('/send', async (req, res) => {
   try {
