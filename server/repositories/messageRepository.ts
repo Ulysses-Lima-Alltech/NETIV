@@ -181,3 +181,23 @@ export async function getLastUserMessageNeedingReply(conversationId: number): Pr
   const assistantTime = new Date(lastAssistant.created_at).getTime();
   return userTime > assistantTime ? lastUser : null;
 }
+
+export async function getLastUserMessageRow(conversationId: number): Promise<MessageRow | null> {
+  const { rows } = await query<MessageRow>(
+    `SELECT * FROM messages 
+     WHERE conversation_id = $1 AND role = 'user' AND deleted_at IS NULL
+     ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [conversationId]
+  );
+  return rows[0] ?? null;
+}
+
+export async function getLastVisibleMessageRoleAndId(conversationId: number): Promise<{ role: string; id: number } | null> {
+  const { rows } = await query<{ role: string; id: number }>(
+    `SELECT role, id FROM messages 
+     WHERE conversation_id = $1 AND deleted_at IS NULL
+     ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [conversationId]
+  );
+  return rows[0] ?? null;
+}

@@ -57,7 +57,7 @@ export interface ConversationRow {
   handoff_deferred_broker_id?: number | null;
   /** JSON: etapa comercial, última listagem, inferência de foco (continuidade em mensagens curtas). */
   commercial_flow_state?: unknown;
-  /** Encerramento manual pelo inbox — bloqueia reengajamento automático. */
+  /** Campos de reengajamento manual e automático */
   manual_closed_at?: Date | null;
   manual_closed_by_user_id?: number | null;
   manual_closed_reason?: string | null;

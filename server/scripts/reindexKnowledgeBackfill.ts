@@ -1,107 +1,107 @@
-import 'dotenv/config';
-import { getPool } from '../db/pg.js';
-import {
-  listKnowledgeFilesForBackfill,
-  reindexKnowledgeFileForBackfill,
-} from '../repositories/enterpriseRepository.js';
+#!/usr/bin/env tsx
 
-function parseArgs(argv: string[]): {
-  dryRun: boolean;
-  enterpriseId: number | undefined;
-  fileId: number | undefined;
-  includeInactive: boolean;
-} {
-  const out = {
-    dryRun: false,
-    enterpriseId: undefined as number | undefined,
-    fileId: undefined as number | undefined,
-    includeInactive: false,
-  };
-  for (const raw of argv) {
-    const a = String(raw || '').trim();
-    if (!a) continue;
-    if (a === '--dry-run') out.dryRun = true;
-    else if (a === '--include-inactive') out.includeInactive = true;
-    else if (a.startsWith('--enterprise-id=')) {
-      const n = Number(a.split('=')[1]);
-      if (Number.isFinite(n) && n > 0) out.enterpriseId = Math.trunc(n);
-    } else if (a.startsWith('--file-id=')) {
-      const n = Number(a.split('=')[1]);
-      if (Number.isFinite(n) && n > 0) out.fileId = Math.trunc(n);
+import { startKnowledgeBackfill, listKnowledgeBackfillJobs, deleteKnowledgeBackfillJob } from '../services/knowledgeBackfillService.js';
+import { listKnowledgeFilesForBackfill } from '../repositories/enterpriseRepository.js';
+
+const args = process.argv.slice(2);
+const command = args[0];
+
+async function main(): Promise<void> {
+  switch (command) {
+    case 'start': {
+      const dryRun = args.includes('--dry-run');
+      const enterpriseId = (() => {
+        const idx = args.findIndex(a => a === '--enterprise');
+        return idx >= 0 && idx + 1 < args.length ? parseInt(args[idx + 1], 10) : undefined;
+      })();
+      const fileId = (() => {
+        const idx = args.findIndex(a => a === '--file');
+        return idx >= 0 && idx + 1 < args.length ? parseInt(args[idx + 1], 10) : undefined;
+      })();
+      const maxFiles = (() => {
+        const idx = args.findIndex(a => a === '--max');
+        return idx >= 0 && idx + 1 < args.length ? parseInt(args[idx + 1], 10) : undefined;
+      })();
+
+      console.log('Iniciando reindexação de conhecimento...');
+      console.log({ dryRun, enterpriseId, fileId, maxFiles });
+
+      const jobId = startKnowledgeBackfill({
+        dryRun,
+        enterpriseId,
+        fileId,
+        maxFiles,
+        includeInactive: false,
+      });
+
+      console.log(`Job iniciado com ID: ${jobId}`);
+      console.log('Para acompanhar o progresso, use: npm run kb:reindex status');
+      break;
     }
+
+    case 'status': {
+      const jobs = listKnowledgeBackfillJobs();
+      if (jobs.length === 0) {
+        console.log('Nenhum job de reindexação encontrado.');
+        break;
+      }
+
+      console.log(`\n=== Jobs de Reindexação (${jobs.length}) ===\n`);
+      for (const job of jobs.sort((a, b) => b.startedAt.localeCompare(a.startedAt))) {
+        console.log(`Job ID: ${job.id}`);
+        console.log(`Status: ${job.status}`);
+        console.log(`Iniciado: ${job.startedAt}`);
+        if (job.finishedAt) console.log(`Finalizado: ${job.finishedAt}`);
+        console.log(`Dry Run: ${job.dryRun ? 'Sim' : 'Não'}`);
+        console.log(`Arquivos escaneados: ${job.scannedFiles}`);
+        console.log(`Sucesso: ${job.successFiles}`);
+        console.log(`Falha: ${job.failedFiles}`);
+        console.log(`Textos vazios: ${job.emptyExtractedTextFiles}`);
+        console.log(`Chunks gerados: ${job.totalChunksGenerated}`);
+        if (job.error) console.log(`Erro: ${job.error}`);
+        console.log('---');
+      }
+      break;
+    }
+
+    case 'list': {
+      const files = await listKnowledgeFilesForBackfill({ includeInactive: false });
+      console.log(`\n=== Arquivos para Reindexação (${files.length}) ===\n`);
+      for (const file of files) {
+        console.log(`ID: ${file.fileId} | Enterprise: ${file.enterpriseName} (${file.enterpriseId})`);
+        console.log(`   Arquivo: ${file.originalName} | Ativo: ${file.isActive ? 'Sim' : 'Não'}`);
+        console.log(`   Texto extraído: ${file.extractedText ? 'Sim' : 'Não'}`);
+        console.log('---');
+      }
+      break;
+    }
+
+    case 'clean': {
+      const jobs = listKnowledgeBackfillJobs();
+      const completedJobs = jobs.filter(j => j.status === 'completed' || j.status === 'failed');
+      let deleted = 0;
+      
+      for (const job of completedJobs) {
+        if (deleteKnowledgeBackfillJob(job.id)) {
+          deleted++;
+        }
+      }
+      
+      console.log(`Limpados ${deleted} jobs finalizados.`);
+      break;
+    }
+
+    default:
+      console.log('Uso:');
+      console.log('  npm run kb:reindex start [--dry-run] [--enterprise ID] [--file ID] [--max N]');
+      console.log('  npm run kb:reindex status');
+      console.log('  npm run kb:reindex list');
+      console.log('  npm run kb:reindex clean');
+      break;
   }
-  return out;
 }
 
-async function run(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
-  const startedAt = Date.now();
-  console.log('[KB_BACKFILL] start', args);
-
-  const targets = await listKnowledgeFilesForBackfill({
-    enterpriseId: args.enterpriseId,
-    fileId: args.fileId,
-    includeInactive: args.includeInactive,
-  });
-  console.log('[KB_BACKFILL] targets', { total: targets.length });
-
-  let ok = 0;
-  let fail = 0;
-  let emptyText = 0;
-  let chunksTotal = 0;
-
-  for (const t of targets) {
-    const r = await reindexKnowledgeFileForBackfill(t.fileId, { dryRun: args.dryRun });
-    if (r.success) {
-      ok++;
-      chunksTotal += r.chunksGenerated;
-      if (r.reason === 'empty_extracted_text') emptyText++;
-      console.log('[KB_BACKFILL_FILE_OK]', {
-        enterprise_id: r.enterpriseId,
-        enterprise_name: r.enterpriseName,
-        file_id: r.fileId,
-        original_name: r.originalName,
-        dry_run: r.dryRun,
-        chunks_generated: r.chunksGenerated,
-        extracted_chars: r.extractedChars,
-        note: r.reason ?? null,
-      });
-    } else {
-      fail++;
-      console.error('[KB_BACKFILL_FILE_FAIL]', {
-        enterprise_id: r.enterpriseId || t.enterpriseId,
-        enterprise_name: r.enterpriseName || t.enterpriseName,
-        file_id: r.fileId || t.fileId,
-        original_name: r.originalName || t.originalName,
-        dry_run: r.dryRun,
-        chunks_generated: r.chunksGenerated,
-        extracted_chars: r.extractedChars,
-        reason: r.reason ?? 'unknown_error',
-      });
-    }
-  }
-
-  console.log('[KB_BACKFILL] done', {
-    dry_run: args.dryRun,
-    scanned_files: targets.length,
-    success_files: ok,
-    failed_files: fail,
-    empty_extracted_text_files: emptyText,
-    total_chunks_generated: chunksTotal,
-    elapsed_ms: Date.now() - startedAt,
-  });
-}
-
-run()
-  .catch((e) => {
-    console.error('[KB_BACKFILL] fatal', e);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    try {
-      await getPool().end();
-    } catch {
-      // ignore
-    }
-  });
-
+main().catch(err => {
+  console.error('Erro:', err);
+  process.exit(1);
+});

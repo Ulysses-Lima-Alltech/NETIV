@@ -1,16 +1,15 @@
-/** Delay fixo antes do envio da mensagem da Ana ao WhatsApp (humanização; sem faixa aleatória). */
+/** Sem delay artificial — resposta enviada imediatamente após geração. */
 export function randomAnaReplyDelayMs(_opts?: {
   burstCount?: number;
   replyLength?: number;
 }): number {
-  return 7000;
+  return 0;
 }
 
 export function sleepMs(ms: number): Promise<void> {
   if (ms <= 0) return Promise.resolve();
   return new Promise((r) => setTimeout(r, ms));
 }
-
 import { buildCatalogListMessage } from './anaCatalogMessages.js';
 
 const DUPLICATE_FALLBACKS_GENERIC = [
@@ -594,33 +593,6 @@ export function pickRandomGreetingReply(knownCustomerName: string | null | undef
     return pool[Math.floor(Math.random() * pool.length)]!;
   }
   return GREETING_REPLY_NO_NAME[Math.floor(Math.random() * GREETING_REPLY_NO_NAME.length)]!;
-}
-
-/**
- * Resposta segura para saudação quando o pipeline técnico falhou.
- * Diferente de pickRandomGreetingReply, não pede nome — funciona tanto para
- * primeiro contato quanto para cliente que retorna no dia seguinte.
- * Nunca inclui tom de erro nem "me manda novamente".
- */
-const GREETING_SAFE_FALLBACK_NO_NAME: readonly string[] = [
-  'Oi! Tudo bem? Me diz o que você quer saber sobre o empreendimento e eu te ajudo.',
-  'Olá! Como posso te ajudar hoje?',
-  'Oi! Me conta o que você precisa que eu te respondo.',
-];
-
-const GREETING_SAFE_FALLBACK_WITH_NAME = (name: string): readonly string[] => [
-  `Oi, ${name}! Tudo bem? Me conta o que você quer saber.`,
-  `Olá, ${name}! Como posso te ajudar?`,
-  `Oi, ${name}! Me diz o que você precisa.`,
-];
-
-export function buildGreetingSafeFallback(customerName?: string | null): string {
-  const nm = (customerName || '').trim();
-  if (nm.length >= 2) {
-    const pool = GREETING_SAFE_FALLBACK_WITH_NAME(nm);
-    return pool[Math.floor(Math.random() * pool.length)]!;
-  }
-  return GREETING_SAFE_FALLBACK_NO_NAME[Math.floor(Math.random() * GREETING_SAFE_FALLBACK_NO_NAME.length)]!;
 }
 
 /** Conta menções ao nome do cliente no texto (normalizado, trechos curtos). */

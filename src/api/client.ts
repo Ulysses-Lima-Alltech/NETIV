@@ -1,10 +1,9 @@
 import type {
+  BatchTemplateCatalogItem,
   BatchParseResponse,
   BatchPreviewResponse,
-  BatchSendResponse,
-  BatchTemplateCatalogItem,
-  BatchTestResponse,
-  BatchMappingConfig,
+  BatchTestResult,
+  BatchSendResult,
 } from '../types/whatsappBatch';
 
 const API_BASE =
@@ -418,29 +417,6 @@ async function postBatchFormData<T>(path: string, file: File, payload: unknown):
   return data as T;
 }
 
-export const whatsappBatchApi = {
-  listTemplates: () => request<{ templates: BatchTemplateCatalogItem[] }>('/whatsapp/templates'),
-  parseSpreadsheet: (file: File, config?: { templateKey?: string }) => {
-    const fd = new FormData();
-    fd.append('file', file);
-    if (config) fd.append('config', JSON.stringify(config));
-    return requestFormData<BatchParseResponse>('/whatsapp/templates/batch/parse', fd);
-  },
-  preview: (file: File, body: { mapping: BatchMappingConfig }) =>
-    postBatchFormData<BatchPreviewResponse>('/whatsapp/templates/batch/preview', file, body),
-  sendTest: (
-    file: File,
-    body: {
-      mapping: BatchMappingConfig;
-      testPhone: string;
-      mode: 'row' | 'manual';
-      sampleRowIndex?: number;
-      manualVariables?: Record<string, string>;
-    }
-  ) => postBatchFormData<BatchTestResponse>('/whatsapp/templates/batch/test', file, body),
-  sendBatch: (file: File, body: { mapping: BatchMappingConfig }) =>
-    postBatchFormData<BatchSendResponse>('/whatsapp/templates/batch/send', file, body),
-};
 
 export interface ContactListItem {
   id: number;
@@ -977,4 +953,65 @@ export const usersApi = {
     request<{ user: UserListItem }>(`/users/${id}`, { method: 'PATCH', body }),
   updatePassword: (id: number, newPassword: string) =>
     request<{ ok: boolean }>(`/users/${id}/password`, { method: 'PATCH', body: { newPassword } }),
+};
+
+// WhatsApp Batch API
+export const whatsappBatchApi = {
+  listTemplates: () => request<{ templates: BatchTemplateCatalogItem[] }>('/whatsapp-batch/templates'),
+  parseSpreadsheet: (file: File, opts?: { templateKey?: string }) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (opts?.templateKey) formData.append('templateKey', opts.templateKey);
+    return request<BatchParseResponse>('/whatsapp-batch/preview', {
+      method: 'POST',
+      body: formData,
+      headers: {}, // Let browser set Content-Type for FormData
+    });
+  },
+  buildPreview: (spreadsheet: BatchParseResponse['spreadsheet'], mapping: any) =>
+    request<BatchPreviewResponse>('/whatsapp-batch/preview', {
+      method: 'POST',
+      body: { spreadsheet, mapping },
+    }),
+  sendTest: (params: {
+    mapping: any;
+    testPhone: string;
+    mode: 'row' | 'manual';
+    sampleRowIndex?: number;
+    manualVariables?: Record<string, string>;
+  }) =>
+    request<BatchTestResult>('/whatsapp-batch/test', {
+      method: 'POST',
+      body: params,
+    }),
+  sendBatch: (spreadsheet: BatchParseResponse['spreadsheet'], mapping: any) =>
+    request<BatchSendResult>('/whatsapp-batch/send', {
+      method: 'POST',
+      body: { spreadsheet, mapping },
+    }),
+};
+
+// Knowledge API
+export const knowledgeApi = {
+  listJobs: () => request<{ success: boolean; jobs: any[] }>('/knowledge/reindex/jobs'),
+  getJob: (jobId: string) => request<{ success: boolean; job: any }>(`/knowledge/reindex/jobs/${jobId}`),
+  deleteJob: (jobId: string) => request<{ success: boolean; message: string }>(`/knowledge/reindex/jobs/${jobId}`, { method: 'DELETE' }),
+  startReindex: (params: { dryRun?: boolean; enterpriseId?: number; fileId?: number; maxFiles?: number }) =>
+    request<{ success: boolean; jobId: string; message: string }>('/knowledge/reindex/start', {
+      method: 'POST',
+      body: params,
+    }),
+  listFiles: (params?: { enterpriseId?: number; includeInactive?: boolean }) => {
+    const q = new URLSearchParams();
+    if (params?.enterpriseId) q.set('enterpriseId', String(params.enterpriseId));
+    if (params?.includeInactive) q.set('includeInactive', 'true');
+    const qs = q.toString();
+    return request<{ success: boolean; files: any[] }>(`/knowledge/files${qs ? `?${qs}` : ''}`);
+  },
+};
+
+// Reengagement API
+export const reengagementApi = {
+  getStatus: () => request<{ active: boolean; service: string; timestamp: string }>('/reengagement/status'),
+  triggerScan: () => request<{ success: boolean; message: string; timestamp: string }>('/reengagement/scan', { method: 'POST' }),
 };

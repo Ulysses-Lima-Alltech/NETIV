@@ -43,6 +43,7 @@ model Enterprise {
   variables     EnterpriseVariable[]
   files         EnterpriseFile[]
   conversations Conversation[]
+  knowledgeChunks EnterpriseKnowledgeChunk[]
 }
 
 model EnterpriseVariable {
@@ -70,6 +71,7 @@ model EnterpriseFile {
 
   enterprise    Enterprise @relation(fields: [enterprise_id], references: [id], onDelete: Cascade)
   sent_logs     SentFileLog[]
+  knowledgeChunks EnterpriseKnowledgeChunk[]
 }
 
 model Conversation {
@@ -125,6 +127,29 @@ model SentFileLog {
 
   conversation   Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
   enterprise_file EnterpriseFile @relation(fields: [enterprise_file_id], references: [id], onDelete: Cascade)
+}
+
+model EnterpriseKnowledgeChunk {
+  id                Int       @id @default(autoincrement())
+  enterprise_id     Int
+  enterprise_file_id Int
+  chunk_index       Int
+  content           String
+  knowledge_block   String    @default("facts")
+  block_priority    Int       @default(50)
+  city_hint         String?
+  enterprise_hint   String?
+  intent_tags       String[]
+  temporal_status   String    @default("atemporal")
+  source_confidence Int       @default(0)
+  created_at        DateTime  @default(now())
+
+  enterprise Enterprise @relation(fields: [enterprise_id], references: [id], onDelete: Cascade)
+  enterpriseFile EnterpriseFile @relation(fields: [enterprise_file_id], references: [id], onDelete: Cascade)
+
+  @@unique([enterprise_file_id, chunk_index])
+  @@index([enterprise_id, knowledge_block, chunk_index])
+  @@index([enterprise_id, city_hint])
 }
 
 model WebhookEvent {

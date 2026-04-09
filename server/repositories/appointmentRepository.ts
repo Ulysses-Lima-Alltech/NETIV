@@ -215,17 +215,15 @@ export async function deleteAppointment(id: number): Promise<boolean> {
 }
 
 /** Reengajamento automático inadequado quando há agendamento ativo na conversa. */
-export async function conversationHasActiveAppointmentForReengageBlock(
-  conversationId: number
-): Promise<boolean> {
+export async function conversationHasActiveAppointmentForReengageBlock(conversationId: number): Promise<boolean> {
   const { rows } = await query<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1 FROM appointments
-       WHERE conversation_id = $1
-         AND status IN ('CONFIRMADO', 'PENDENTE_CONFIRMACAO', 'PENDENTE_DISTRIBUICAO')
-     ) AS exists`,
+    `SELECT EXISTS(
+       SELECT 1 FROM appointments 
+       WHERE conversation_id = $1 
+         AND status IN ('CONFIRMADO', 'PENDENTE_CONFIRMACAO')
+         AND start_at > NOW()
+    ) AS exists`,
     [conversationId]
   );
-  return rows[0]?.exists === true;
+  return rows[0]?.exists ?? false;
 }
-

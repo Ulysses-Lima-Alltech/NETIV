@@ -269,7 +269,7 @@ async function applyBatchOwnershipAndContextByPhone(params: {
            c.lead_source_raw,
            jsonb_build_object(
              'source', 'batch_template_send',
-             'sourceKey', $3::text,
+             'sourceKey', $3,
              'rowNumber', $4,
              'brokerId', $5
            )

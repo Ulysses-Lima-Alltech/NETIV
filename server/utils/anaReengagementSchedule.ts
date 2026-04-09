@@ -27,7 +27,7 @@ function spHourMinute(utcMs: number): { h: number; m: number } {
   return { h: parseInt(hp ?? '0', 10), m: parseInt(mp ?? '0', 10) };
 }
 
-/** 22:00–06:59:59 local SP = proibido; 07:00+ permitido até antes de 22:00. */
+/** 22:00-06:59:59 local SP = proibido; 07:00+ permitido até antes de 22:00. */
 export function isForbiddenNightWindowSp(utcMs: number): boolean {
   const { h } = spHourMinute(utcMs);
   return h >= 22 || h < 7;
@@ -50,11 +50,9 @@ export function computeEligibleReengagementAtUtc(lastUserMessageAt: Date): Date 
   for (let t = earliest; t < deadline; t += MINUTE_MS) {
     if (isForbiddenNightWindowSp(t)) continue;
     const dist = Math.abs(t - target);
-    if (dist < bestDist) {
+    if (dist < bestDist || (dist === bestDist && t > bestT!)) {
+      bestT = t;
       bestDist = dist;
-      bestT = t;
-    } else if (dist === bestDist && bestT !== null && t > bestT) {
-      bestT = t;
     }
   }
 
@@ -62,15 +60,22 @@ export function computeEligibleReengagementAtUtc(lastUserMessageAt: Date): Date 
 }
 
 /**
- * true se `now` já passou do instante elegível e ainda estamos dentro da janela de 24h para enviar.
+ * Verifica se o reengajamento deve ser enviado agora (respeitando janela de 24h e horários permitidos).
  */
-export function isReengagementDueNow(
-  lastUserMessageAt: Date,
-  now: Date,
-  eligibleAt: Date
-): boolean {
-  const last = lastUserMessageAt.getTime();
-  const deadline = last + 24 * HOUR_MS;
-  const n = now.getTime();
-  return n >= eligibleAt.getTime() && n < deadline;
+export function isReengagementDueNow(lastUserMessageAt: Date, now: Date, eligibleAt: Date | null): boolean {
+  if (!eligibleAt) return false;
+  const nowMs = now.getTime();
+  const lastMs = lastUserMessageAt.getTime();
+  const deadlineMs = lastMs + 24 * HOUR_MS;
+  
+  // Não enviar se já passou do deadline (24h)
+  if (nowMs >= deadlineMs) return false;
+  
+  // Não enviar se ainda não atingiu o horário elegível
+  if (nowMs < eligibleAt.getTime()) return false;
+  
+  // Não enviar se estiver em janela noturna proibida
+  if (isForbiddenNightWindowSp(nowMs)) return false;
+  
+  return true;
 }

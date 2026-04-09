@@ -41,3 +41,7 @@ export function listWhatsAppTemplatesCatalog(): WhatsAppTemplateCatalogItem[] {
 export function getWhatsAppTemplateByKey(key: string): WhatsAppTemplateCatalogItem | null {
   return WHATSAPP_TEMPLATES_CATALOG.find((item) => item.key === key) ?? null;
 }
+
+export function getWhatsAppTemplates(): WhatsAppTemplateCatalogItem[] {
+  return WHATSAPP_TEMPLATES_CATALOG;
+}

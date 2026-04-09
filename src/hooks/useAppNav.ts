@@ -22,7 +22,7 @@ export function useAppNav(): NavItem[] {
     }
     if (isAdmin) {
       items.push({ to: '/contatos', label: 'Contatos' });
-      items.push({ to: '/contatos/disparo-template-lote', label: 'Disparo em Lote' });
+      items.push({ to: '/settings/whatsapp-batch', label: 'WhatsApp Batch' });
       items.push({ to: '/settings/integrations/whatsapp', label: 'Configurações' });
     }
     return items;

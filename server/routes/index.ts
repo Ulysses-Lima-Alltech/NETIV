@@ -15,6 +15,9 @@ import aiChatRouter from './aiChat.js';
 import dashboardRouter from './dashboard.js';
 import contactsRouter from './contacts.js';
 import apiDjangoRouter from './apiDjango.js';
+import whatsappBatchRouter from './whatsappBatch.js';
+import reengagementRouter from './reengagement.js';
+import knowledgeRouter from './knowledge.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { ROLES_ORG_ADMIN, ROLES_SETTINGS_ADMIN } from '../constants/roles.js';
 
@@ -43,5 +46,8 @@ router.use('/appointments', appointmentsRouter);
 router.use('/openai', openaiTestRouter);
 router.use('/ai', aiChatRouter);
 router.use('/contacts', requireRole(...ROLES_SETTINGS_ADMIN), contactsRouter);
+router.use('/whatsapp-batch', requireRole(...ROLES_SETTINGS_ADMIN), whatsappBatchRouter);
+router.use('/reengagement', reengagementRouter);
+router.use('/knowledge', requireRole(...ROLES_SETTINGS_ADMIN), knowledgeRouter);
 
 export default router;
