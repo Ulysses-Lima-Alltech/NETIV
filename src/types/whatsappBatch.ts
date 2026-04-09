@@ -20,6 +20,7 @@ export interface BatchMappingConfig {
   templateKey: string;
   phoneColumn: string;
   selectedEnterpriseId?: number | null;
+  selectedBrokerId?: number | null;
   variableMappings: Record<string, TemplateVariableSource>;
 }
 

@@ -1,4 +1,4 @@
-import type { ProjectListItem } from '../../api/client';
+import type { Corretor, ProjectListItem } from '../../api/client';
 import type { BatchTemplateCatalogItem, TemplateVariableSource } from '../../types/whatsappBatch';
 
 interface Props {
@@ -10,9 +10,12 @@ interface Props {
   phoneColumn: string;
   selectedEnterpriseId: string;
   projects: ProjectListItem[];
+  brokers: Corretor[];
   variableMappings: Record<string, TemplateVariableSource>;
   onPhoneColumnChange: (value: string) => void;
   onEnterpriseChange: (value: string) => void;
+  selectedBrokerId: string;
+  onBrokerChange: (value: string) => void;
   onVariableMappingChange: (variableId: string, value: TemplateVariableSource) => void;
 }
 
@@ -27,9 +30,12 @@ export function ColumnMappingPanel(props: Props) {
     phoneColumn,
     selectedEnterpriseId,
     projects,
+    brokers,
     variableMappings,
     onPhoneColumnChange,
     onEnterpriseChange,
+    selectedBrokerId,
+    onBrokerChange,
     onVariableMappingChange,
   } = props;
 
@@ -44,7 +50,7 @@ export function ColumnMappingPanel(props: Props) {
   return (
     <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-4">
       <h2 className="text-[14px] font-semibold">Mapeamento de dados</h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
           <label className="block text-[12px] text-[#374151] mb-1">Coluna de telefone</label>
           <select className={inputCls} value={phoneColumn} onChange={(e) => onPhoneColumnChange(e.target.value)}>
@@ -68,6 +74,19 @@ export function ColumnMappingPanel(props: Props) {
                 {p.name}
               </option>
             ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[12px] text-[#374151] mb-1">Corretor responsável pela base</label>
+          <select className={inputCls} value={selectedBrokerId} onChange={(e) => onBrokerChange(e.target.value)}>
+            <option value="">Nenhum</option>
+            {brokers
+              .filter((b) => b.active)
+              .map((b) => (
+                <option key={b.id} value={String(b.id)}>
+                  {b.fullName}
+                </option>
+              ))}
           </select>
         </div>
       </div>

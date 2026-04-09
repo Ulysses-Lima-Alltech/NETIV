@@ -7,6 +7,7 @@ import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
 import { findOrCreateConversation } from '../repositories/conversationRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { sendTemplateMessage } from './whatsappMetaService.js';
+import { getCorretorById } from '../repositories/corretorRepository.js';
 
 export interface BatchPreviewRow {
   rowNumber: number;
@@ -67,6 +68,13 @@ async function resolveEnterprise(selectedEnterpriseId: number | null | undefined
   const ent = await getEnterpriseById(selectedEnterpriseId);
   if (!ent || ent.status !== 'ativo') throw new Error('Empreendimento selecionado é inválido ou inativo.');
   return { id: ent.id, name: ent.name };
+}
+
+async function resolveBroker(selectedBrokerId: number | null | undefined): Promise<{ id: number; fullName: string } | null> {
+  if (selectedBrokerId == null) return null;
+  const broker = await getCorretorById(selectedBrokerId);
+  if (!broker || !broker.active) throw new Error('Corretor selecionado é inválido ou inativo.');
+  return { id: broker.id, fullName: broker.full_name };
 }
 
 function resolveVariablesForRow(params: {
@@ -221,38 +229,54 @@ export async function buildBatchPreview(params: {
   };
 }
 
-async function applyEnterpriseLinkByPhone(params: {
+async function applyBatchOwnershipAndContextByPhone(params: {
   phoneE164: string;
-  enterpriseId: number;
+  enterpriseId: number | null;
+  brokerId: number | null;
   sourceKey: string;
   sourceRowNumber: number;
 }): Promise<void> {
   await query(
-    `UPDATE contacts c
-     SET enterprise_id = $2,
-         enterprise_interest = e.name,
+    `UPDATE contacts
+     SET owner_user_id = COALESCE($2, owner_user_id),
+         owner_assigned_at = CASE WHEN $2 IS NULL THEN owner_assigned_at ELSE NOW() END,
+         owner_assignment_source = CASE WHEN $2 IS NULL THEN owner_assignment_source ELSE 'whatsapp_batch_base' END,
+         owner_assigned_by_user_id = NULL,
          updated_at = NOW()
-     FROM enterprises e
-     WHERE c.phone_e164 = $1
-       AND e.id = $2`,
-    [params.phoneE164, params.enterpriseId]
+     WHERE phone_e164 = $1`,
+    [params.phoneE164, params.brokerId]
   );
+
+  if (params.enterpriseId != null) {
+    await query(
+      `UPDATE contacts c
+       SET enterprise_id = $2,
+           enterprise_interest = e.name,
+           updated_at = NOW()
+       FROM enterprises e
+       WHERE c.phone_e164 = $1
+         AND e.id = $2`,
+      [params.phoneE164, params.enterpriseId]
+    );
+  }
 
   await query(
     `UPDATE conversations c
      SET enterprise_id = COALESCE(c.enterprise_id, $2),
          enterprise_origin_id = COALESCE(c.enterprise_origin_id, $2),
+         assigned_broker_id = COALESCE($5, c.assigned_broker_id),
          lead_source_raw = COALESCE(
            c.lead_source_raw,
            jsonb_build_object(
              'source', 'batch_template_send',
              'sourceKey', $3,
-             'rowNumber', $4
+             'rowNumber', $4,
+             'brokerId', $5
            )
          ),
          updated_at = NOW()
-     WHERE regexp_replace(COALESCE(c.contact_phone, c.external_contact_id, ''), '\D', '', 'g') = $1`,
-    [params.phoneE164, params.enterpriseId, params.sourceKey, params.sourceRowNumber]
+     WHERE regexp_replace(COALESCE(c.contact_phone, c.external_contact_id, ''), '\\D', '', 'g') = $1`,
+    [params.phoneE164, params.enterpriseId, params.sourceKey, params.sourceRowNumber, params.brokerId]
   );
 }
 
@@ -262,6 +286,7 @@ export async function sendBatchTemplate(params: {
 }): Promise<BatchExecutionResult> {
   const template = getTemplateOrThrow(params.mapping.templateKey);
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
+  const broker = await resolveBroker(params.mapping.selectedBrokerId);
   const config = await getWhatsAppConfig();
   const details: BatchExecutionResult['details'] = [];
   let success = 0;
@@ -360,14 +385,13 @@ export async function sendBatchTemplate(params: {
         null
       );
     }
-    if (enterprise) {
-      await applyEnterpriseLinkByPhone({
-        phoneE164: normalizedPhone,
-        enterpriseId: enterprise.id,
-        sourceKey: `batch:${template.key}`,
-        sourceRowNumber: rowNumber,
-      });
-    }
+    await applyBatchOwnershipAndContextByPhone({
+      phoneE164: normalizedPhone,
+      enterpriseId: enterprise?.id ?? null,
+      brokerId: broker?.id ?? null,
+      sourceKey: `batch:${template.key}`,
+      sourceRowNumber: rowNumber,
+    });
   }
 
   if (validCandidates === 0) {

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import { useAuth } from '../contexts/AuthContext';
-import { projectsApi, whatsappBatchApi, type ProjectListItem } from '../api/client';
+import { corretoresApi, projectsApi, whatsappBatchApi, type Corretor, type ProjectListItem } from '../api/client';
 import { SpreadsheetUploadPanel } from '../components/whatsapp-batch/SpreadsheetUploadPanel';
 import { TemplateSelector } from '../components/whatsapp-batch/TemplateSelector';
 import { ColumnMappingPanel } from '../components/whatsapp-batch/ColumnMappingPanel';
@@ -20,10 +20,12 @@ export function WhatsAppBatchTemplatePage() {
   const [file, setFile] = useState<File | null>(null);
   const [templates, setTemplates] = useState<BatchTemplateCatalogItem[]>([]);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
+  const [brokers, setBrokers] = useState<Corretor[]>([]);
   const [selectedTemplateKey, setSelectedTemplateKey] = useState('');
   const [parseData, setParseData] = useState<BatchParseResponse | null>(null);
   const [phoneColumn, setPhoneColumn] = useState('');
   const [selectedEnterpriseId, setSelectedEnterpriseId] = useState('');
+  const [selectedBrokerId, setSelectedBrokerId] = useState('');
   const [variableMappings, setVariableMappings] = useState<Record<string, TemplateVariableSource>>({});
   const [preview, setPreview] = useState<BatchPreviewResponse | null>(null);
   const [testPhone, setTestPhone] = useState('');
@@ -44,6 +46,7 @@ export function WhatsAppBatchTemplatePage() {
       .list(true)
       .then((d) => setProjects(d.projects.filter((p) => p.status === 'ativo')))
       .catch(() => setProjects([]));
+    void corretoresApi.list().then((d) => setBrokers(d.corretores)).catch(() => setBrokers([]));
   }, []);
 
   const selectedTemplate = templates.find((tpl) => tpl.key === selectedTemplateKey) ?? null;
@@ -55,6 +58,7 @@ export function WhatsAppBatchTemplatePage() {
     templateKey: selectedTemplateKey,
     phoneColumn,
     selectedEnterpriseId: selectedEnterpriseId ? parseInt(selectedEnterpriseId, 10) : null,
+    selectedBrokerId: selectedBrokerId ? parseInt(selectedBrokerId, 10) : null,
     variableMappings,
   });
 
@@ -209,10 +213,13 @@ export function WhatsAppBatchTemplatePage() {
           template={selectedTemplate}
           phoneColumn={phoneColumn}
           selectedEnterpriseId={selectedEnterpriseId}
+          selectedBrokerId={selectedBrokerId}
           projects={projects}
+          brokers={brokers}
           variableMappings={variableMappings}
           onPhoneColumnChange={setPhoneColumn}
           onEnterpriseChange={setSelectedEnterpriseId}
+          onBrokerChange={setSelectedBrokerId}
           onVariableMappingChange={(variableId, value) => setVariableMappings((prev) => ({ ...prev, [variableId]: value }))}
         />
         <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4">
