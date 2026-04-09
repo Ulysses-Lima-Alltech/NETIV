@@ -430,7 +430,13 @@ export const whatsappBatchApi = {
     postBatchFormData<BatchPreviewResponse>('/whatsapp/templates/batch/preview', file, body),
   sendTest: (
     file: File,
-    body: { mapping: BatchMappingConfig; testPhone: string; sampleRowIndex?: number }
+    body: {
+      mapping: BatchMappingConfig;
+      testPhone: string;
+      mode: 'row' | 'manual';
+      sampleRowIndex?: number;
+      manualVariables?: Record<string, string>;
+    }
   ) => postBatchFormData<BatchTestResponse>('/whatsapp/templates/batch/test', file, body),
   sendBatch: (file: File, body: { mapping: BatchMappingConfig }) =>
     postBatchFormData<BatchSendResponse>('/whatsapp/templates/batch/send', file, body),

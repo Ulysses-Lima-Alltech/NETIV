@@ -212,7 +212,9 @@ router.post('/templates/batch/test', batchUpload.single('file'), async (req, res
       rows: parsed.rows,
       mapping: parsedBody.data.mapping,
       testPhone: parsedBody.data.testPhone,
+      mode: parsedBody.data.mode,
       sampleRowIndex: parsedBody.data.sampleRowIndex,
+      manualVariables: parsedBody.data.manualVariables,
     });
     if (!result.success) {
       const status = result.httpStatus && result.httpStatus >= 400 ? result.httpStatus : 502;

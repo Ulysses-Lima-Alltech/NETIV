@@ -386,13 +386,18 @@ export async function sendBatchTemplateTest(params: {
   rows: Record<string, string>[];
   mapping: BatchMappingDto;
   testPhone: string;
+  mode: 'row' | 'manual';
   sampleRowIndex?: number;
+  manualVariables?: Record<string, string>;
 }): Promise<{
   success: boolean;
   phoneOriginal: string;
   phoneNormalized: string | null;
   error: string | null;
   templateKey: string;
+  mode: 'row' | 'manual';
+  sampleRowNumber?: number;
+  resolvedVariables: BatchPreviewRow['resolvedVariables'];
   errorCode?: number;
   errorType?: string;
   httpStatus?: number;
@@ -400,14 +405,62 @@ export async function sendBatchTemplateTest(params: {
 }> {
   const template = getTemplateOrThrow(params.mapping.templateKey);
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
-  const idx = params.sampleRowIndex ?? 0;
-  const sampleRow = params.rows[idx] ?? params.rows[0] ?? {};
-  const resolved = resolveVariablesForRow({
-    row: sampleRow,
-    template,
-    mapping: params.mapping,
-    enterprise,
-  });
+  let resolved: ReturnType<typeof resolveVariablesForRow>;
+  let sampleRowNumber: number | undefined;
+
+  if (params.mode === 'row') {
+    if (params.sampleRowIndex == null) {
+      return {
+        success: false,
+        phoneOriginal: params.testPhone,
+        phoneNormalized: null,
+        error: 'Selecione uma linha válida para o envio de teste.',
+        templateKey: template.key,
+        mode: 'row',
+        resolvedVariables: [],
+      };
+    }
+    const sampleRow = params.rows[params.sampleRowIndex];
+    if (!sampleRow) {
+      return {
+        success: false,
+        phoneOriginal: params.testPhone,
+        phoneNormalized: null,
+        error: 'Linha de teste inválida para a planilha atual.',
+        templateKey: template.key,
+        mode: 'row',
+        resolvedVariables: [],
+      };
+    }
+    resolved = resolveVariablesForRow({
+      row: sampleRow,
+      template,
+      mapping: params.mapping,
+      enterprise,
+    });
+    sampleRowNumber = params.sampleRowIndex + 2;
+  } else {
+    const details: BatchPreviewRow['resolvedVariables'] = [];
+    const values: string[] = [];
+    let missingRequired = false;
+    const manualVariables = params.manualVariables ?? {};
+
+    for (const variable of template.variables) {
+      const value = normalizeValue(manualVariables[String(variable.id)]);
+      if (!value && variable.required) missingRequired = true;
+      details.push({
+        variableId: variable.id,
+        label: variable.label,
+        value,
+        sourceType: 'fixed',
+        sourceLabel: 'preenchimento manual',
+      });
+      values.push(value ?? '');
+    }
+
+    resolved = { values, details, missingRequired };
+  }
+
   if (resolved.missingRequired) {
     return {
       success: false,
@@ -415,6 +468,9 @@ export async function sendBatchTemplateTest(params: {
       phoneNormalized: null,
       error: 'Variáveis obrigatórias não resolvidas para envio de teste.',
       templateKey: template.key,
+      mode: params.mode,
+      sampleRowNumber,
+      resolvedVariables: resolved.details,
     };
   }
   const phone = normalizePhoneStrict(params.testPhone);
@@ -425,6 +481,9 @@ export async function sendBatchTemplateTest(params: {
       phoneNormalized: null,
       error: phone.error ?? 'Telefone inválido.',
       templateKey: template.key,
+      mode: params.mode,
+      sampleRowNumber,
+      resolvedVariables: resolved.details,
     };
   }
   const result = await sendTemplateMessage(phone.phoneNormalized, template.key, {
@@ -436,6 +495,9 @@ export async function sendBatchTemplateTest(params: {
     phoneNormalized: phone.phoneNormalized,
     error: result.success ? null : result.error ?? 'Falha no envio de teste.',
     templateKey: template.key,
+    mode: params.mode,
+    sampleRowNumber,
+    resolvedVariables: resolved.details,
     errorCode: result.metaErrorCode ?? result.code,
     errorType: result.metaErrorType,
     httpStatus: result.httpStatus,

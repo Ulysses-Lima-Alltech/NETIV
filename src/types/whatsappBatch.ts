@@ -64,6 +64,15 @@ export interface BatchTestResponse {
   phoneOriginal: string;
   phoneNormalized: string | null;
   error: string | null;
+  mode: 'row' | 'manual';
+  sampleRowNumber?: number;
+  resolvedVariables: Array<{
+    variableId: number;
+    label: string;
+    value: string | null;
+    sourceType: 'column' | 'fixed' | 'enterprise';
+    sourceLabel: string;
+  }>;
   metaMessageId?: string;
 }
 

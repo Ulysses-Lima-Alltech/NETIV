@@ -29,7 +29,24 @@ export const parseBatchConfigSchema = z.object({
 export const batchTestSchema = z.object({
   mapping: batchMappingSchema,
   testPhone: z.string().min(1),
+  mode: z.enum(['row', 'manual']),
   sampleRowIndex: z.number().int().min(0).optional(),
+  manualVariables: z.record(z.string(), z.string()).optional(),
+}).superRefine((data, ctx) => {
+  if (data.mode === 'row' && data.sampleRowIndex == null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'sampleRowIndex é obrigatório quando mode=row',
+      path: ['sampleRowIndex'],
+    });
+  }
+  if (data.mode === 'manual' && !data.manualVariables) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'manualVariables é obrigatório quando mode=manual',
+      path: ['manualVariables'],
+    });
+  }
 });
 
 export const batchSendSchema = z.object({

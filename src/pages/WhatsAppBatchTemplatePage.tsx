@@ -27,6 +27,9 @@ export function WhatsAppBatchTemplatePage() {
   const [variableMappings, setVariableMappings] = useState<Record<string, TemplateVariableSource>>({});
   const [preview, setPreview] = useState<BatchPreviewResponse | null>(null);
   const [testPhone, setTestPhone] = useState('');
+  const [testMode, setTestMode] = useState<'row' | 'manual'>('row');
+  const [testRowNumber, setTestRowNumber] = useState<number | null>(null);
+  const [manualTestVariables, setManualTestVariables] = useState<Record<string, string>>({});
   const [testResult, setTestResult] = useState<string | null>(null);
   const [sendResult, setSendResult] = useState<string | null>(null);
   const [loadingParse, setLoadingParse] = useState(false);
@@ -44,6 +47,9 @@ export function WhatsAppBatchTemplatePage() {
   }, []);
 
   const selectedTemplate = templates.find((tpl) => tpl.key === selectedTemplateKey) ?? null;
+  const validPreviewRows = (preview?.rows ?? []).filter((row) => row.status === 'valid');
+  const canUseRowMode = validPreviewRows.length > 0;
+  const selectedPreviewRow = testRowNumber == null ? null : validPreviewRows.find((row) => row.rowNumber === testRowNumber) ?? null;
 
   const buildMappingPayload = () => ({
     templateKey: selectedTemplateKey,
@@ -83,6 +89,7 @@ export function WhatsAppBatchTemplatePage() {
         });
       }
       setPreview(null);
+      setTestRowNumber(null);
       setSendResult(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao ler planilha.');
@@ -98,6 +105,8 @@ export function WhatsAppBatchTemplatePage() {
     try {
       const data = await whatsappBatchApi.preview(file, { mapping: buildMappingPayload() });
       setPreview(data);
+      const firstValidRow = data.rows.find((row) => row.status === 'valid') ?? null;
+      setTestRowNumber(firstValidRow?.rowNumber ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao gerar preview.');
     } finally {
@@ -107,12 +116,20 @@ export function WhatsAppBatchTemplatePage() {
 
   const handleTest = async () => {
     if (!file) return;
+    if (testMode === 'row' && testRowNumber == null) {
+      setTestResult('Selecione uma linha válida do preview para enviar o teste.');
+      return;
+    }
     setLoadingTest(true);
     setError(null);
     try {
+      const sampleRowIndex = testMode === 'row' && testRowNumber != null ? testRowNumber - 2 : undefined;
       const result = await whatsappBatchApi.sendTest(file, {
         mapping: buildMappingPayload(),
         testPhone,
+        mode: testMode,
+        sampleRowIndex,
+        manualVariables: testMode === 'manual' ? manualTestVariables : undefined,
       });
       setTestResult(result.success ? `Teste enviado com sucesso (${result.metaMessageId ?? 'sem id'}).` : result.error || 'Falha no teste.');
     } catch (e) {
@@ -135,6 +152,39 @@ export function WhatsAppBatchTemplatePage() {
       setLoadingSend(false);
     }
   };
+
+  useEffect(() => {
+    if (!canUseRowMode && testMode === 'row') setTestMode('manual');
+  }, [canUseRowMode, testMode]);
+
+  useEffect(() => {
+    if (!selectedTemplate) {
+      setManualTestVariables({});
+      return;
+    }
+    setManualTestVariables((prev) => {
+      const next: Record<string, string> = {};
+      for (const variable of selectedTemplate.variables) {
+        next[String(variable.id)] = prev[String(variable.id)] ?? '';
+      }
+      return next;
+    });
+  }, [selectedTemplate]);
+
+  const previewVariablesForTest =
+    testMode === 'row'
+      ? (selectedPreviewRow?.resolvedVariables ?? []).map((v) => ({
+          variableId: v.variableId,
+          label: v.label,
+          value: v.value,
+          sourceType: v.sourceType,
+        }))
+      : (selectedTemplate?.variables ?? []).map((variable) => ({
+          variableId: variable.id,
+          label: variable.label,
+          value: (manualTestVariables[String(variable.id)] ?? '').trim() || null,
+          sourceType: 'manual',
+        }));
 
   if (!isAdmin) return <Navigate to="/inbox" replace />;
 
@@ -178,9 +228,27 @@ export function WhatsAppBatchTemplatePage() {
         <BatchPreviewTable preview={preview} />
         <TestSendPanel
           testPhone={testPhone}
+          mode={testMode}
+          canUseRowMode={canUseRowMode}
+          selectedRowNumber={testRowNumber}
+          rowOptions={validPreviewRows.map((row) => ({
+            rowNumber: row.rowNumber,
+            label: `Linha ${row.rowNumber} - ${row.phoneOriginal ?? 'sem telefone'}`,
+          }))}
+          manualVariables={(selectedTemplate?.variables ?? []).map((variable) => ({
+            variableId: variable.id,
+            label: variable.label,
+            value: manualTestVariables[String(variable.id)] ?? '',
+          }))}
+          previewVariables={previewVariablesForTest}
           loading={loadingTest}
           result={testResult}
           onTestPhoneChange={setTestPhone}
+          onModeChange={setTestMode}
+          onSelectedRowNumberChange={setTestRowNumber}
+          onManualVariableChange={(variableId, value) =>
+            setManualTestVariables((prev) => ({ ...prev, [String(variableId)]: value }))
+          }
           onSendTest={handleTest}
         />
         <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
