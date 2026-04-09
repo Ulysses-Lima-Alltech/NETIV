@@ -7,6 +7,7 @@ function isActive(pathname: string, to: string): boolean {
   if (to === '/dashboard') return pathname === '/dashboard';
   if (to === '/settings/empreendimentos') return pathname.startsWith('/settings/empreendimentos');
   if (to === '/settings/corretores') return pathname.startsWith('/settings/corretores');
+  if (to === '/settings/whatsapp-batch') return pathname.startsWith('/settings/whatsapp-batch');
   if (to === '/settings/integrations/whatsapp') return pathname.startsWith('/settings/integrations');
   if (to === '/contatos/disparo-template-lote') return pathname.startsWith('/contatos/disparo-template-lote');
   if (to === '/contatos') return pathname.startsWith('/contatos');

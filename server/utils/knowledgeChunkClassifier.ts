@@ -1,178 +1,147 @@
-export type KnowledgeBlock = 'facts' | 'commercial_intent' | 'variable_data' | 'ana_rules';
-
-export type TemporalStatus = 'atemporal' | 'current' | 'time_sensitive' | 'expired';
-
-export interface ChunkClassification {
-  block: KnowledgeBlock;
-  blockPriority: number;
-  cityHint: string | null;
-  enterpriseHint: string | null;
-  intentTags: string[];
-  temporalStatus: TemporalStatus;
-  sourceConfidence: number;
+export interface ClassificationResult {
+  knowledge_block: 'facts' | 'commercial_intent' | 'variable_data' | 'ana_rules';
+  block_priority: number;
+  city_hint?: string | null;
+  enterprise_hint?: string | null;
+  intent_tags: string[];
+  temporal_status: 'atemporal' | 'current' | 'time_sensitive' | 'expired';
+  source_confidence: number;
 }
 
-export interface ChunkClassificationContext {
-  enterpriseName?: string | null;
-  enterpriseCity?: string | null;
-}
+const COMMERCIAL_KEYWORDS = [
+  'preço', 'valor', 'valor de', 'custo', 'investimento', 'financiamento',
+  'entrada', 'parcela', 'condições', 'pagamento', 'desconto', 'promocional',
+  'oferta', 'venda', 'comprar', 'adquirir', 'negociar', 'comercial',
+  'vendedor', 'corretor', 'brokers', 'comissão', 'tabela', 'preços',
+];
 
-function normalizeText(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+const VARIABLE_KEYWORDS = [
+  'atualizado em', 'data de', 'em', 'ano de', 'mês de', 'dia',
+  'disponível', 'estoque', 'unidades', 'lotes', 'apartamentos',
+  'casas', 'salas', 'dormitórios', 'suítes', 'vagas', 'área',
+];
 
-function hasAny(norm: string, terms: readonly string[]): boolean {
-  return terms.some((t) => norm.includes(t));
-}
+const ANA_RULES_KEYWORDS = [
+  'ana deve', 'ana não deve', 'ana pode', 'ana precisa', 'ana deve informar',
+  'ana deve perguntar', 'ana deve responder', 'regra para ana', 'instrução',
+  'orientação', 'protocolo', 'procedimento', 'fluxo', 'atendimento',
+];
 
-function unique(arr: string[]): string[] {
-  return [...new Set(arr)];
-}
+const TIME_SENSITIVE_KEYWORDS = [
+  'oferta válida até', 'promocional até', 'desconto por tempo limitado',
+  'lançamento', 'breve', 'em breve', 'em construção', 'obra em andamento',
+  'entrega', 'previsão', 'previsão de entrega', 'prazo', 'validade',
+];
 
-const RULE_TERMS = [
-  'nao pode',
-  'não pode',
-  'proibido',
-  'restricao',
-  'restrição',
-  'handoff',
-  'corretor',
-  'negociar',
-  'nao negociar',
-  'não negociar',
-  'juros',
-  'nao inventar',
-  'não inventar',
-  'nao prometer',
-  'não prometer',
-] as const;
+const CITY_PATTERNS = [
+  /\b(são paulo|sp|s\.p\.|são paulo\/sp)\b/i,
+  /\b(rio de janeiro|rj|r\.j\.|rio\/rj)\b/i,
+  /\b(belo horizonte|bh|b\.h\.|belo horizonte\/mg)\b/i,
+  /\b(brasília|df|d\.f\.|brasília\/df)\b/i,
+  /\b(salvador|ba|salvador\/ba)\b/i,
+  /\b(fortaleza|ce|fortaleza\/ce)\b/i,
+  /\b(belém|pa|belém\/pa)\b/i,
+  /\b(curitiba|pr|curitiba\/pr)\b/i,
+  /\b(porto alegre|rs|porto alegre\/rs)\b/i,
+  /\b(recife|pe|recife\/pe)\b/i,
+];
 
-const VARIABLE_TERMS = [
-  'valor',
-  'valores',
-  'preco',
-  'preços',
-  'preco',
-  'condicoes',
-  'condições',
-  'pagamento',
-  'disponibilidade',
-  'campanha',
-  'vigente',
-  'validade',
-  'horario',
-  'horário',
-  'plantao',
-  'plantão',
-] as const;
+const ENTERPRISE_PATTERNS = [
+  /\b([A-Z][a-z]+ (Residencial|Park|Garden|Village|Square|Center|Plaza|Tower|Building))\b/g,
+  /\b(Condomínio (Residencial|Park|Garden|Village|Square|Center|Plaza))\b/g,
+  /\b(Empreendimento (Residencial|Park|Garden|Village|Square|Center|Plaza))\b/g,
+];
 
-const COMMERCIAL_INTENT_TERMS = [
-  'morar',
-  'investir',
-  'investimento',
-  'valorizacao',
-  'valorização',
-  'diferencial comercial',
-  'argumento',
-  'visita',
-  'agendamento',
-  'book',
-  'catalogo',
-  'catálogo',
-  'material',
-] as const;
-
-const FACT_TERMS = [
-  'empreendimento',
-  'cidade',
-  'metragem',
-  'lazer',
-  'infraestrutura',
-  'diferenciais',
-  'seguranca',
-  'segurança',
-  'mobilidade',
-  'unidades',
-  'lotes',
-  'condominio',
-  'condomínio',
-] as const;
-
-export function classifyKnowledgeChunk(
-  chunk: string,
-  context?: ChunkClassificationContext
-): ChunkClassification {
-  const norm = normalizeText(chunk);
-  const enterpriseNameNorm = normalizeText(context?.enterpriseName || '');
-  const enterpriseCityNorm = normalizeText(context?.enterpriseCity || '');
-
-  const isRule = hasAny(norm, RULE_TERMS);
-  const isVariable = hasAny(norm, VARIABLE_TERMS);
-  const isCommercialIntent = hasAny(norm, COMMERCIAL_INTENT_TERMS);
-  const isFact = hasAny(norm, FACT_TERMS);
-
-  let block: KnowledgeBlock = 'facts';
-  let blockPriority = 60;
-  if (isRule) {
-    block = 'ana_rules';
-    blockPriority = 100;
-  } else if (isVariable) {
-    block = 'variable_data';
-    blockPriority = 85;
-  } else if (isCommercialIntent) {
-    block = 'commercial_intent';
-    blockPriority = 70;
-  } else if (isFact) {
-    block = 'facts';
-    blockPriority = 65;
+function extractCityHint(text: string): string | null {
+  for (const pattern of CITY_PATTERNS) {
+    const match = text.match(pattern);
+    if (match) return match[0];
   }
+  return null;
+}
 
-  const intentTags: string[] = [];
-  if (norm.includes('morar')) intentTags.push('morar');
-  if (norm.includes('invest') || norm.includes('valoriz')) intentTags.push('investir');
-  if (norm.includes('visita') || norm.includes('agend')) intentTags.push('visita');
-  if (norm.includes('book') || norm.includes('material') || norm.includes('catalog')) intentTags.push('material');
-  if (hasAny(norm, ['valor', 'preco', 'condic', 'juros', 'parcela', 'entrada'])) intentTags.push('financeiro');
-  if (hasAny(norm, ['cidade', 'localizacao', 'localização', 'endereco', 'endereço', 'mapa'])) {
-    intentTags.push('localizacao');
+function extractEnterpriseHint(text: string): string | null {
+  const matches = [];
+  for (const pattern of ENTERPRISE_PATTERNS) {
+    const found = text.match(pattern);
+    if (found) matches.push(...found);
   }
+  return matches.length > 0 ? matches[0] : null;
+}
 
-  let temporalStatus: TemporalStatus = 'atemporal';
-  if (hasAny(norm, ['encerrad', 'expirad', 'nao vigente', 'não vigente'])) {
-    temporalStatus = 'expired';
-  } else if (hasAny(norm, ['vigente', 'valido ate', 'válido até', 'ate', 'até'])) {
-    temporalStatus = block === 'variable_data' ? 'current' : 'time_sensitive';
-  } else if (block === 'variable_data') {
-    temporalStatus = 'time_sensitive';
+function extractIntentTags(text: string): string[] {
+  const tags: string[] = [];
+  const lower = text.toLowerCase();
+  
+  if (COMMERCIAL_KEYWORDS.some(kw => lower.includes(kw))) {
+    tags.push('preço', 'comercial');
   }
+  if (VARIABLE_KEYWORDS.some(kw => lower.includes(kw))) {
+    tags.push('disponibilidade', 'estoque');
+  }
+  if (TIME_SENSITIVE_KEYWORDS.some(kw => lower.includes(kw))) {
+    tags.push('urgente', 'promocional');
+  }
+  
+  if (/\b\d+\s*(apartamentos|casas|lotes|unidades|salas|suítes|dormitórios|vagas)\b/i.test(text)) {
+    tags.push('quantidade');
+  }
+  if (/\bR\$\s*\d+/i.test(text) || /\b\d+\s*(reais|r\$|mil|milhões)/i.test(text)) {
+    tags.push('valor');
+  }
+  if (/\b\d+\s*(m²|m2|metros|metros quadrados)\b/i.test(text)) {
+    tags.push('área');
+  }
+  
+  return [...new Set(tags)];
+}
 
-  const mentionsEnterprise = enterpriseNameNorm.length >= 3 && norm.includes(enterpriseNameNorm);
-  const mentionsCity = enterpriseCityNorm.length >= 3 && norm.includes(enterpriseCityNorm);
-  const sourceConfidence = Math.max(
-    10,
-    Math.min(
-      100,
-      (mentionsEnterprise ? 45 : 0) +
-        (mentionsCity ? 35 : 0) +
-        (block === 'ana_rules' ? 15 : 0) +
-        (intentTags.length > 0 ? 10 : 0)
-    )
-  );
-
+export function classifyKnowledgeChunk(content: string, fileName?: string): ClassificationResult {
+  const text = content.toLowerCase();
+  let knowledge_block: ClassificationResult['knowledge_block'] = 'facts';
+  let block_priority = 50;
+  let temporal_status: ClassificationResult['temporal_status'] = 'atemporal';
+  
+  const hasCommercial = COMMERCIAL_KEYWORDS.some(kw => text.includes(kw));
+  const hasVariable = VARIABLE_KEYWORDS.some(kw => text.includes(kw));
+  const hasAnaRules = ANA_RULES_KEYWORDS.some(kw => text.includes(kw));
+  const hasTimeSensitive = TIME_SENSITIVE_KEYWORDS.some(kw => text.includes(kw));
+  
+  if (hasAnaRules) {
+    knowledge_block = 'ana_rules';
+    block_priority = 90;
+  } else if (hasCommercial) {
+    knowledge_block = 'commercial_intent';
+    block_priority = 80;
+  } else if (hasVariable) {
+    knowledge_block = 'variable_data';
+    block_priority = 60;
+  }
+  
+  if (hasTimeSensitive) {
+    temporal_status = 'time_sensitive';
+  } else if (hasVariable) {
+    temporal_status = 'current';
+  }
+  
+  const cityHint = extractCityHint(content);
+  const enterpriseHint = extractEnterpriseHint(content);
+  const intentTags = extractIntentTags(content);
+  
+  let source_confidence = 50;
+  if (fileName && (fileName.includes('.pdf') || fileName.includes('.doc'))) {
+    source_confidence = 70;
+  } else if (fileName && fileName.includes('.txt')) {
+    source_confidence = 60;
+  }
+  
   return {
-    block,
-    blockPriority,
-    cityHint: mentionsCity ? context?.enterpriseCity?.trim() || null : null,
-    enterpriseHint: mentionsEnterprise ? context?.enterpriseName?.trim() || null : null,
-    intentTags: unique(intentTags),
-    temporalStatus,
-    sourceConfidence,
+    knowledge_block,
+    block_priority,
+    city_hint: cityHint,
+    enterprise_hint: enterpriseHint,
+    intent_tags,
+    temporal_status,
+    source_confidence,
   };
 }
-
