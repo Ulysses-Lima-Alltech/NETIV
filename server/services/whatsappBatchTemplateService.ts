@@ -5,6 +5,7 @@ import { normalizePhoneE164 } from '../utils/phone.js';
 import type { BatchMappingDto } from '../validators/whatsappBatch.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
 import { findOrCreateConversation } from '../repositories/conversationRepository.js';
+import { insertMessage } from '../repositories/messageRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { sendTemplateMessage } from './whatsappMetaService.js';
 import { getCorretorById } from '../repositories/corretorRepository.js';
@@ -376,7 +377,7 @@ export async function sendBatchTemplate(params: {
     });
 
     if (config?.whatsappPhoneNumberId) {
-      await findOrCreateConversation(
+      const conversation = await findOrCreateConversation(
         'whatsapp',
         normalizedPhone,
         normalizedPhone,
@@ -384,6 +385,9 @@ export async function sendBatchTemplate(params: {
         null,
         null
       );
+      if (result.metaMessageId) {
+        await insertMessage(conversation.id, 'assistant', `[template:${template.key}]`, result.metaMessageId);
+      }
     }
     await applyBatchOwnershipAndContextByPhone({
       phoneE164: normalizedPhone,
