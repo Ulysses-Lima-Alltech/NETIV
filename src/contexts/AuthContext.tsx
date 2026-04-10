@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import { getStoredAuthToken, setStoredAuthToken, authApi, type AuthUser } from '../api/client';
+import { AUTH_BYPASS_MOCK_USER, setStoredAuthToken, authApi, type AuthUser } from '../api/client';
 
 interface AuthState {
   user: AuthUser | null;
@@ -38,10 +38,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const finalizeUnauthenticated = useCallback(() => {
+  // Função para ativar bypass (fallback temporário)
+  const activateBypass = useCallback(() => {
+    console.log('[Auth] Ativando bypass mock user');
     setStoredAuthToken(null);
-    setUser(null);
-    setError('Não autenticado.');
+    setUser(AUTH_BYPASS_MOCK_USER);
+    setError(null);
     setLoading(false);
   }, []);
 
@@ -61,24 +63,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Adicionar listener
     window.addEventListener('message', handleMessage);
 
-    const token = getStoredAuthToken();
-    if (token) {
-      void loadRealUser();
-    } else {
-      // Aguarda uma janela curta para possível SSO via postMessage.
-      const timeoutId = setTimeout(() => {
-        if (!user && loading) finalizeUnauthenticated();
-      }, 3000);
-      return () => {
-        window.removeEventListener('message', handleMessage);
-        clearTimeout(timeoutId);
-      };
-    }
+    // Timeout para fallback (se não receber SSO em 3 segundos)
+    const timeoutId = setTimeout(() => {
+      if (!user && loading) {
+        activateBypass();
+      }
+    }, 3000);
 
     return () => {
       window.removeEventListener('message', handleMessage);
+      clearTimeout(timeoutId);
     };
-  }, [user, loading, loadRealUser, finalizeUnauthenticated]);
+  }, [user, loading, loadRealUser, activateBypass]);
 
   // Login normal (formulário)
   const login = useCallback(async (email: string, password: string) => {

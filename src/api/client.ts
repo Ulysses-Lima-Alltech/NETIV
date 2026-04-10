@@ -116,14 +116,19 @@ export interface AuthUser {
   role: UserRole;
 }
 
+/** Usuário mock estável para bypass temporário de auth (sem chamadas à API de login). */
+export const AUTH_BYPASS_MOCK_USER: AuthUser = {
+  id: 0,
+  name: 'Dev (bypass)',
+  email: 'dev@local',
+  role: 'ADMIN',
+};
+
 export const authApi = {
-  login: (email: string, password: string) =>
-    request<{ token: string; user: AuthUser }>('/auth/login', {
-      method: 'POST',
-      body: { email, password },
-    }),
-  me: () => request<{ user: AuthUser }>('/auth/me'),
-  logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
+  login: (_email: string, _password: string) =>
+    Promise.resolve({ token: '', user: AUTH_BYPASS_MOCK_USER }),
+  me: () => Promise.resolve({ user: AUTH_BYPASS_MOCK_USER }),
+  logout: () => Promise.resolve({ ok: true as const }),
 };
 
 export interface WhatsAppConfigPublic {
