@@ -9,6 +9,11 @@ import {
 /** Requisição já autenticada (`user` garantido pelos middlewares `requireAuth` + `requireRole`). */
 export type AuthenticatedRequest = Request & { user: AppUser };
 
+function isAuthBypassEnabled(): boolean {
+  const raw = String(process.env.AUTH_BYPASS_ENABLED ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
 function getToken(req: Request): string | null {
   const auth = req.headers.authorization;
   if (auth && auth.startsWith('Bearer ')) {
@@ -24,17 +29,34 @@ function getToken(req: Request): string | null {
  * Bearer inválido/expirado: 401 (não faz fallback embutido).
  */
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const bypassEnabled = isAuthBypassEnabled();
   const token = getToken(req);
   if (token) {
     const user = await getSessionUser(token);
-    if (!user) {
+    if (user) {
+      req.user = user;
+      next();
+      return;
+    }
+    if (!bypassEnabled) {
       res.status(401).json({ error: 'Sessão inválida ou expirada.' });
       return;
     }
-    req.user = user;
+  }
+
+  if (bypassEnabled) {
+    const embeddedUser = await findEmbeddedDefaultUser();
+    if (!embeddedUser) {
+      res.status(503).json({
+        error: 'AUTH_BYPASS_ENABLED ativo, mas nenhum usuário ativo foi encontrado para contexto padrão.',
+      });
+      return;
+    }
+    req.user = embeddedUser;
     next();
     return;
   }
+
   // Sem Bearer token = não autenticado
   res.status(401).json({ error: 'Não autenticado.' });
 }
