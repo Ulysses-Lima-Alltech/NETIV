@@ -20,18 +20,12 @@ app.use(express.json());
 app.use('/webhook', webhookMetaRouter);
 app.use('/api', apiRouter);
 
-app.get('/health', async (_req, res) => {
-  try {
-    const wa = await getWhatsAppConfig();
-    const ai = await getOpenAIConfig();
-    res.json({
-      status: 'ok',
-      whatsapp: { enabled: !!wa?.enabled, hasToken: !!wa?.metaAccessToken?.trim() },
-      ai: { enabled: !!ai?.aiEnabled, hasKey: !!ai?.openaiApiKey?.trim() },
-    });
-  } catch {
-    res.json({ status: 'ok' });
-  }
+/** Health checks ALB/ECS: corpo fixo, sem dependência de banco ou auth */
+app.get('/', (_req, res) => {
+  res.type('text/plain').status(200).send('ok');
+});
+app.get('/health', (_req, res) => {
+  res.type('text/plain').status(200).send('ok');
 });
 
 initPostgres()

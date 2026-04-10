@@ -391,31 +391,11 @@ export const whatsappApi = {
     ),
 };
 
-async function postBatchFormData<T>(path: string, file: File, payload: unknown): Promise<T> {
+function batchFormDataWithPayload(file: File, payload: unknown): FormData {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('payload', JSON.stringify(payload));
-  const token = getStoredAuthToken();
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: fd,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (res.status === 401) {
-    handleUnauthorized();
-    throw new Error((data as { error?: string }).error ?? 'Sessão expirada. Faça login novamente.');
-  }
-  if (!res.ok) {
-    const payloadData = data as { error?: string; code?: string };
-    const err = new ApiError(payloadData.error ?? `Erro ${res.status}`);
-    err.code = payloadData.code;
-    err.status = res.status;
-    throw err;
-  }
-  return data as T;
+  return fd;
 }
 
 export const whatsappBatchApi = {
@@ -427,7 +407,10 @@ export const whatsappBatchApi = {
     return requestFormData<BatchParseResponse>('/whatsapp/templates/batch/parse', fd);
   },
   preview: (file: File, body: { mapping: BatchMappingConfig }) =>
-    postBatchFormData<BatchPreviewResponse>('/whatsapp/templates/batch/preview', file, body),
+    requestFormData<BatchPreviewResponse>(
+      '/whatsapp/templates/batch/preview',
+      batchFormDataWithPayload(file, body)
+    ),
   sendTest: (
     file: File,
     body: {
@@ -437,9 +420,10 @@ export const whatsappBatchApi = {
       sampleRowIndex?: number;
       manualVariables?: Record<string, string>;
     }
-  ) => postBatchFormData<BatchTestResponse>('/whatsapp/templates/batch/test', file, body),
+  ) =>
+    requestFormData<BatchTestResponse>('/whatsapp/templates/batch/test', batchFormDataWithPayload(file, body)),
   sendBatch: (file: File, body: { mapping: BatchMappingConfig }) =>
-    postBatchFormData<BatchSendResponse>('/whatsapp/templates/batch/send', file, body),
+    requestFormData<BatchSendResponse>('/whatsapp/templates/batch/send', batchFormDataWithPayload(file, body)),
 };
 
 export interface ContactListItem {

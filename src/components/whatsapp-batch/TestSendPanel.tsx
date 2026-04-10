@@ -44,12 +44,16 @@ export function TestSendPanel({
             className={inputCls}
             value={testPhone}
             placeholder="Número para teste (com DDD)"
-            onChange={(e) => onTestPhoneChange(e.target.value)}
+            onChange={({ target }) => onTestPhoneChange(target.value)}
           />
         </div>
         <div>
           <label className="block text-[12px] text-[#374151] mb-1">Modo do teste</label>
-          <select className={inputCls} value={mode} onChange={(e) => onModeChange(e.target.value as 'row' | 'manual')}>
+          <select
+            className={inputCls}
+            value={mode}
+            onChange={({ target }) => onModeChange(target.value as 'row' | 'manual')}
+          >
             <option value="row" disabled={!canUseRowMode}>
               Usar uma linha da planilha
             </option>
@@ -64,7 +68,9 @@ export function TestSendPanel({
           <select
             className={inputCls}
             value={selectedRowNumber == null ? '' : String(selectedRowNumber)}
-            onChange={(e) => onSelectedRowNumberChange(e.target.value ? parseInt(e.target.value, 10) : null)}
+            onChange={({ target }) =>
+              onSelectedRowNumberChange(target.value ? parseInt(target.value, 10) : null)
+            }
             disabled={!canUseRowMode}
           >
             <option value="">Selecione uma linha válida</option>
@@ -90,7 +96,7 @@ export function TestSendPanel({
               <input
                 className={inputCls}
                 value={item.value}
-                onChange={(e) => onManualVariableChange(item.variableId, e.target.value)}
+                onChange={({ target }) => onManualVariableChange(item.variableId, target.value)}
                 placeholder="Digite o valor manual"
               />
             </div>
