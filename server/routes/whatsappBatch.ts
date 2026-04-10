@@ -7,12 +7,15 @@ import {
   buildBatchSuggestions,
 } from '../services/whatsappBatchTemplateService.js';
 import { parseSpreadsheet } from '../services/spreadsheetParseService.js';
+import { listWhatsAppTemplatesCatalog } from '../catalogs/whatsappTemplates.js';
 import { BatchMappingDtoSchema } from '../validators/whatsappBatch.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-/** GET /templates está em `routes/index.ts` (mock, antes do auth). Este router cobre preview/send/test. */
+router.get('/templates', (_req, res) => {
+  res.json({ templates: listWhatsAppTemplatesCatalog() });
+});
 
 router.post('/suggestions', (req, res) => {
   const { headers } = req.body;

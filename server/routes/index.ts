@@ -30,39 +30,6 @@ router.use('/auth/sso', ssoRouter);
 // API service endpoints for Django (protected by JWT, not session auth)
 router.use('/api/service', apiDjangoRouter);
 
-/**
- * GET /api/whatsapp-batch/templates — mock estático para o select de disparo em lote.
- * Registrado antes de requireAuth para: (1) evitar 404 em ambientes/proxies, (2) teste no navegador, (3) UI sem depender de sessão só para listar nomes.
- * Integração real com Meta fica para depois; envio continua protegido nas outras rotas de /whatsapp-batch.
- */
-router.get('/whatsapp-batch/templates', (_req, res) => {
-  console.log('[whatsapp-batch] templates route hit');
-  res.json({
-    templates: [
-      {
-        key: 'primeiro_contato_cliente',
-        name: 'Primeiro Contato Cliente',
-        languageCode: 'pt_BR',
-        variables: [
-          { id: 1, label: 'Nome Cliente', required: true },
-          { id: 2, label: 'Empreendimento', required: true },
-        ],
-      },
-      {
-        key: 'novo_agendamento_corretor',
-        name: 'Novo Agendamento Corretor',
-        languageCode: 'pt_BR',
-        variables: [
-          { id: 1, label: 'Nome Corretor', required: true },
-          { id: 2, label: 'Nome Cliente', required: true },
-          { id: 3, label: 'Data e Hora', required: true },
-          { id: 4, label: 'Empreendimento', required: true },
-        ],
-      },
-    ],
-  });
-});
-
 router.use(requireAuth);
 
 router.use('/users', requireRole(...ROLES_ORG_ADMIN), usersRouter);

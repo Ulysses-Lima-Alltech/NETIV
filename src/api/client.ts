@@ -6,6 +6,7 @@ import type {
   BatchSendResult,
 } from '../types/whatsappBatch';
 
+/** Base da API: com VITE_API_URL (ex.: https://api.exemplo.com) → `${VITE_API_URL}/api`; sem variável → `/api` (mesmo host; em dev o Vite proxy encaminha para o backend). */
 const API_BASE =
   import.meta.env.VITE_API_URL != null && String(import.meta.env.VITE_API_URL).trim() !== ''
     ? `${String(import.meta.env.VITE_API_URL).replace(/\/$/, '')}/api`
@@ -115,19 +116,14 @@ export interface AuthUser {
   role: UserRole;
 }
 
-/** Usuário mock estável para bypass temporário de auth (sem chamadas à API de login). */
-export const AUTH_BYPASS_MOCK_USER: AuthUser = {
-  id: 0,
-  name: 'Dev (bypass)',
-  email: 'dev@local',
-  role: 'ADMIN',
-};
-
 export const authApi = {
-  login: (_email: string, _password: string) =>
-    Promise.resolve({ token: '', user: AUTH_BYPASS_MOCK_USER }),
-  me: () => Promise.resolve({ user: AUTH_BYPASS_MOCK_USER }),
-  logout: () => Promise.resolve({ ok: true as const }),
+  login: (email: string, password: string) =>
+    request<{ token: string; user: AuthUser }>('/auth/login', {
+      method: 'POST',
+      body: { email, password },
+    }),
+  me: () => request<{ user: AuthUser }>('/auth/me'),
+  logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
 };
 
 export interface WhatsAppConfigPublic {

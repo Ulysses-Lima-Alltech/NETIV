@@ -25,7 +25,19 @@ app.get('/', (_req, res) => {
   res.type('text/plain').status(200).send('ok');
 });
 app.get('/health', (_req, res) => {
-  res.type('text/plain').status(200).send('ok');
+  const providerRaw = String(process.env.BACKEND_PROVIDER ?? '').trim().toLowerCase();
+  const provider = providerRaw === 'aws' ? 'aws' : providerRaw === 'render' ? 'render' : 'unknown';
+  const environment = String(process.env.APP_ENVIRONMENT ?? process.env.NODE_ENV ?? 'unknown').trim() || 'unknown';
+  const version = String(process.env.APP_VERSION ?? process.env.npm_package_version ?? '0.0.0').trim() || '0.0.0';
+  const commit = String(process.env.APP_COMMIT ?? process.env.COMMIT_SHA ?? process.env.RENDER_GIT_COMMIT ?? 'unknown').trim() || 'unknown';
+
+  res.status(200).json({
+    status: 'ok',
+    provider,
+    environment,
+    version,
+    commit,
+  });
 });
 
 initPostgres()
