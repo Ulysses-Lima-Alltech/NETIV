@@ -2,7 +2,14 @@ import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import { useAuth } from '../contexts/AuthContext';
-import { corretoresApi, projectsApi, whatsappBatchApi, type Corretor, type ProjectListItem } from '../api/client';
+import {
+  ApiError,
+  corretoresApi,
+  projectsApi,
+  whatsappBatchApi,
+  type Corretor,
+  type ProjectListItem,
+} from '../api/client';
 import { SpreadsheetUploadPanel } from '../components/whatsapp-batch/SpreadsheetUploadPanel';
 import { TemplateSelector } from '../components/whatsapp-batch/TemplateSelector';
 import { ColumnMappingPanel } from '../components/whatsapp-batch/ColumnMappingPanel';
@@ -50,11 +57,22 @@ export function WhatsAppBatchTemplatePage() {
       .then((r) => {
         setTemplates(r.templates ?? []);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         setTemplates([]);
-        setTemplatesLoadError(
-          'Não foi possível carregar os templates do WhatsApp. Verifique a API/configuração.',
-        );
+        const base = 'Não foi possível carregar a lista de templates.';
+        if (err instanceof ApiError) {
+          let msg = `${base} ${err.message}`;
+          if (err.status != null) msg += ` (HTTP ${err.status})`;
+          if (err.status === 401) msg += ' Faça login novamente (sessão inválida ou expirada).';
+          if (err.status === 403) msg += ' A rota exige perfil ADMIN (integrações).';
+          setTemplatesLoadError(msg);
+        } else if (err instanceof Error) {
+          setTemplatesLoadError(`${base} ${err.message}`);
+        } else {
+          setTemplatesLoadError(
+            `${base} Verifique rede, VITE_API_URL e se o backend está no ar.`,
+          );
+        }
       })
       .finally(() => setTemplatesLoading(false));
 

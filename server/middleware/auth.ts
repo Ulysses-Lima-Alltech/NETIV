@@ -47,6 +47,13 @@ export function requireRole(...allowedRoles: UserRole[]) {
       return;
     }
     if (!allowedRoles.includes(user.role)) {
+      console.warn('[auth] requireRole: acesso negado', {
+        path: req.path,
+        method: req.method,
+        userId: user.id,
+        role: user.role,
+        allowedRoles,
+      });
       res.status(403).json({ error: 'Acesso negado.' });
       return;
     }
