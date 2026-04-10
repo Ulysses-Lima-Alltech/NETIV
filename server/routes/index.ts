@@ -20,6 +20,7 @@ import reengagementRouter from './reengagement.js';
 import knowledgeRouter from './knowledge.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { ROLES_ORG_ADMIN, ROLES_SETTINGS_ADMIN } from '../constants/roles.js';
+import { listWhatsAppTemplatesCatalog } from '../catalogs/whatsappTemplates.js';
 
 const router = Router();
 
@@ -29,6 +30,14 @@ router.use('/auth/sso', ssoRouter);
 
 // API service endpoints for Django (protected by JWT, not session auth)
 router.use('/api/service', apiDjangoRouter);
+
+/**
+ * Compatibilidade explícita para a URL pública usada pelo frontend:
+ * GET /api/whatsapp-batch/templates
+ */
+router.get('/whatsapp-batch/templates', (_req, res) => {
+  res.json({ templates: listWhatsAppTemplatesCatalog() });
+});
 
 router.use(requireAuth);
 

@@ -935,11 +935,7 @@ export const whatsappBatchApi = {
     const formData = new FormData();
     formData.append('file', file);
     if (opts?.templateKey) formData.append('templateKey', opts.templateKey);
-    return request<BatchParseResponse>('/whatsapp-batch/preview', {
-      method: 'POST',
-      body: formData,
-      headers: {}, // Let browser set Content-Type for FormData
-    });
+    return requestFormData<BatchParseResponse>('/whatsapp-batch/parse', formData);
   },
   buildPreview: (spreadsheet: BatchParseResponse['spreadsheet'], mapping: any) =>
     request<BatchPreviewResponse>('/whatsapp-batch/preview', {

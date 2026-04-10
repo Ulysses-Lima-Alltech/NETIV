@@ -30,6 +30,8 @@ export interface BatchParseResponse {
     headers: string[];
     rowCount: number;
     sampleRows: Record<string, string>[];
+    /** Linhas completas (necessárias para preview/envio no servidor). */
+    rows: Record<string, string>[];
   };
   suggestions: {
     phoneColumn: string;

@@ -96,6 +96,16 @@ export function WhatsAppBatchTemplatePage() {
     variableMappings,
   });
 
+  const handleFileChange = (next: File | null) => {
+    setFile(next);
+    setError(null);
+    setParseData(null);
+    setPreview(null);
+    setTestRowNumber(null);
+    setSendResult(null);
+    setTestResult(null);
+  };
+
   const handleSelectedTemplateKeyChange = (key: string) => {
     setSelectedTemplateKey(key);
     setPreview(null);
@@ -171,6 +181,11 @@ export function WhatsAppBatchTemplatePage() {
 
   const handlePreview = async () => {
     if (!parseData) return;
+    const rows = parseData.spreadsheet.rows;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      setError('Processe a planilha com "Ler colunas" antes de gerar o preview.');
+      return;
+    }
     if (!selectedTemplateKey) {
       setError('Selecione um template para configurar o mapeamento e gerar o preview.');
       return;
@@ -278,7 +293,7 @@ export function WhatsAppBatchTemplatePage() {
         <div className="space-y-6">
           <SpreadsheetUploadPanel
             file={file}
-            onFileChange={setFile}
+            onFileChange={handleFileChange}
             onParse={handleParse}
             loading={loadingParse}
           />

@@ -8,7 +8,7 @@ import {
 } from '../services/whatsappBatchTemplateService.js';
 import { parseSpreadsheet } from '../services/spreadsheetParseService.js';
 import { listWhatsAppTemplatesCatalog } from '../catalogs/whatsappTemplates.js';
-import { BatchMappingDtoSchema } from '../validators/whatsappBatch.js';
+import { BatchMappingDtoSchema, BatchSpreadsheetOperationSchema } from '../validators/whatsappBatch.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -26,52 +26,72 @@ router.post('/suggestions', (req, res) => {
   res.json({ suggestions });
 });
 
-router.post('/preview', upload.single('file'), async (req, res) => {
+/**
+ * Upload multipart: apenas leitura da planilha + sugestões de colunas (sem mapping completo).
+ */
+router.post('/parse', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Arquivo é obrigatório' });
     }
 
-    const mappingResult = BatchMappingDtoSchema.safeParse(req.body);
-    if (!mappingResult.success) {
-      return res.status(400).json({ error: 'Mapping inválido', details: mappingResult.error.issues });
-    }
-
     const spreadsheet = parseSpreadsheet(req.file.buffer, req.file.originalname, req.file.mimetype);
-    const preview = await buildBatchPreview({
-      rows: spreadsheet.rows,
-      mapping: mappingResult.data,
-    });
+    const rawSuggestions = buildBatchSuggestions(spreadsheet.headers);
+    const suggestions = {
+      phoneColumn: rawSuggestions.phone[0] ?? '',
+      ...(rawSuggestions.name[0] ? { customerNameColumn: rawSuggestions.name[0] } : {}),
+      ...(rawSuggestions.enterprise[0] ? { enterpriseColumn: rawSuggestions.enterprise[0] } : {}),
+    };
 
     res.json({
       spreadsheet: {
         headers: spreadsheet.headers,
         rowCount: spreadsheet.rowCount,
         sampleRows: spreadsheet.sampleRows,
+        rows: spreadsheet.rows,
       },
-      preview,
+      suggestions,
     });
+  } catch (e) {
+    console.error('[WHATSAPP_BATCH_PARSE_ERROR]', e);
+    res.status(500).json({ error: 'Erro ao ler planilha' });
+  }
+});
+
+/**
+ * JSON: planilha já parseada (inclui rows) + mapping — gera preview sem reenviar o arquivo.
+ */
+router.post('/preview', async (req, res) => {
+  try {
+    const bodyResult = BatchSpreadsheetOperationSchema.safeParse(req.body);
+    if (!bodyResult.success) {
+      return res.status(400).json({ error: 'Payload inválido', details: bodyResult.error.issues });
+    }
+
+    const { spreadsheet, mapping } = bodyResult.data;
+    const preview = await buildBatchPreview({
+      rows: spreadsheet.rows,
+      mapping,
+    });
+
+    res.json(preview);
   } catch (e) {
     console.error('[WHATSAPP_BATCH_PREVIEW_ERROR]', e);
     res.status(500).json({ error: 'Erro ao processar preview' });
   }
 });
 
-router.post('/send', upload.single('file'), async (req, res) => {
+router.post('/send', async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'Arquivo é obrigatório' });
+    const bodyResult = BatchSpreadsheetOperationSchema.safeParse(req.body);
+    if (!bodyResult.success) {
+      return res.status(400).json({ error: 'Payload inválido', details: bodyResult.error.issues });
     }
 
-    const mappingResult = BatchMappingDtoSchema.safeParse(req.body);
-    if (!mappingResult.success) {
-      return res.status(400).json({ error: 'Mapping inválido', details: mappingResult.error.issues });
-    }
-
-    const spreadsheet = parseSpreadsheet(req.file.buffer, req.file.originalname, req.file.mimetype);
+    const { spreadsheet, mapping } = bodyResult.data;
     const result = await sendBatchTemplate({
       rows: spreadsheet.rows,
-      mapping: mappingResult.data,
+      mapping,
     });
 
     res.json(result);

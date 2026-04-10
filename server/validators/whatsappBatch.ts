@@ -23,6 +23,19 @@ export const batchSendSchema = z.object({
   mapping: BatchMappingDtoSchema,
 });
 
+/** Planilha já parseada (inclui todas as linhas para preview/envio). */
+export const SpreadsheetPayloadSchema = z.object({
+  headers: z.array(z.string()),
+  rowCount: z.number().int().nonnegative().optional(),
+  sampleRows: z.array(z.record(z.string(), z.string())).optional(),
+  rows: z.array(z.record(z.string(), z.string())).min(1, 'Planilha sem linhas'),
+});
+
+export const BatchSpreadsheetOperationSchema = z.object({
+  spreadsheet: SpreadsheetPayloadSchema,
+  mapping: BatchMappingDtoSchema,
+});
+
 export const batchTestSchema = z.object({
   mapping: BatchMappingDtoSchema,
   testPhone: z.string().min(1, 'Telefone de teste é obrigatório'),
