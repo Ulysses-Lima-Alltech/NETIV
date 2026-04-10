@@ -929,26 +929,9 @@ export const usersApi = {
 };
 
 // API de disparo em lote (templates WhatsApp; rotas /whatsapp-batch no servidor)
-function getBatchAuthError(): ApiError | null {
-  const token = getStoredAuthToken();
-  if (token && token.trim() !== '') return null;
-  const err = new ApiError(
-    'Disparo em lote indisponível no modo bypass. Faça login real para usar templates, preview, teste e envio.'
-  );
-  err.status = 401;
-  err.code = 'BATCH_AUTH_REQUIRED';
-  return err;
-}
-
 export const whatsappBatchApi = {
-  listTemplates: () => {
-    const authErr = getBatchAuthError();
-    if (authErr) return Promise.reject(authErr);
-    return request<{ templates: BatchTemplateCatalogItem[] }>('/whatsapp-batch/templates');
-  },
+  listTemplates: () => request<{ templates: BatchTemplateCatalogItem[] }>('/whatsapp-batch/templates'),
   parseSpreadsheet: (file: File, opts?: { templateKey?: string }) => {
-    const authErr = getBatchAuthError();
-    if (authErr) return Promise.reject(authErr);
     const formData = new FormData();
     formData.append('file', file);
     if (opts?.templateKey) formData.append('templateKey', opts.templateKey);
@@ -958,36 +941,27 @@ export const whatsappBatchApi = {
       headers: {}, // Let browser set Content-Type for FormData
     });
   },
-  buildPreview: (spreadsheet: BatchParseResponse['spreadsheet'], mapping: any) => {
-    const authErr = getBatchAuthError();
-    if (authErr) return Promise.reject(authErr);
-    return request<BatchPreviewResponse>('/whatsapp-batch/preview', {
+  buildPreview: (spreadsheet: BatchParseResponse['spreadsheet'], mapping: any) =>
+    request<BatchPreviewResponse>('/whatsapp-batch/preview', {
       method: 'POST',
       body: { spreadsheet, mapping },
-    });
-  },
+    }),
   sendTest: (params: {
     mapping: any;
     testPhone: string;
     mode: 'row' | 'manual';
     sampleRowIndex?: number;
     manualVariables?: Record<string, string>;
-  }) => {
-    const authErr = getBatchAuthError();
-    if (authErr) return Promise.reject(authErr);
-    return request<BatchTestResult>('/whatsapp-batch/test', {
+  }) =>
+    request<BatchTestResult>('/whatsapp-batch/test', {
       method: 'POST',
       body: params,
-    });
-  },
-  sendBatch: (spreadsheet: BatchParseResponse['spreadsheet'], mapping: any) => {
-    const authErr = getBatchAuthError();
-    if (authErr) return Promise.reject(authErr);
-    return request<BatchSendResult>('/whatsapp-batch/send', {
+    }),
+  sendBatch: (spreadsheet: BatchParseResponse['spreadsheet'], mapping: any) =>
+    request<BatchSendResult>('/whatsapp-batch/send', {
       method: 'POST',
       body: { spreadsheet, mapping },
-    });
-  },
+    }),
 };
 
 // Knowledge API
