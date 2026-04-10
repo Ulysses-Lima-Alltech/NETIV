@@ -98,23 +98,23 @@ async function runJob(jobId: string): Promise<void> {
     job.finishedAt = new Date().toISOString();
   } catch (e) {
     job.status = 'failed';
-    job.finishedAt = new Date().toISOString();
     job.error = e instanceof Error ? e.message : String(e);
+    job.finishedAt = new Date().toISOString();
   }
 }
 
-export function startKnowledgeBackfill(opts?: StartKnowledgeBackfillOpts): KnowledgeBackfillJob {
-  const id = randomUUID();
+export function startKnowledgeBackfill(opts: StartKnowledgeBackfillOpts = {}): string {
+  const jobId = randomUUID();
   const job: KnowledgeBackfillJob = {
-    id,
+    id: jobId,
     startedAt: new Date().toISOString(),
     finishedAt: null,
     status: 'running',
-    dryRun: opts?.dryRun === true,
-    filterEnterpriseId: opts?.enterpriseId ?? null,
-    filterFileId: opts?.fileId ?? null,
-    includeInactive: opts?.includeInactive === true,
-    maxFiles: opts?.maxFiles != null && opts.maxFiles > 0 ? Math.trunc(opts.maxFiles) : null,
+    dryRun: !!opts.dryRun,
+    filterEnterpriseId: opts.enterpriseId ?? null,
+    filterFileId: opts.fileId ?? null,
+    includeInactive: !!opts.includeInactive,
+    maxFiles: opts.maxFiles ?? null,
     scannedFiles: 0,
     successFiles: 0,
     failedFiles: 0,
@@ -122,12 +122,19 @@ export function startKnowledgeBackfill(opts?: StartKnowledgeBackfillOpts): Knowl
     totalChunksGenerated: 0,
     logs: [],
   };
-  jobs.set(id, job);
-  void runJob(id);
-  return job;
+  jobs.set(jobId, job);
+  runJob(jobId).catch(() => {});
+  return jobId;
 }
 
 export function getKnowledgeBackfillJob(jobId: string): KnowledgeBackfillJob | null {
   return jobs.get(jobId) ?? null;
 }
 
+export function listKnowledgeBackfillJobs(): KnowledgeBackfillJob[] {
+  return Array.from(jobs.values());
+}
+
+export function deleteKnowledgeBackfillJob(jobId: string): boolean {
+  return jobs.delete(jobId);
+}

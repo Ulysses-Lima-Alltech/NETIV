@@ -1,4 +1,4 @@
-export interface BatchTemplateVariableDef {
+export interface WhatsAppTemplateVariableDef {
   id: number;
   label: string;
   required: boolean;
@@ -8,13 +8,14 @@ export interface BatchTemplateCatalogItem {
   key: string;
   name: string;
   languageCode: 'pt_BR';
-  variables: BatchTemplateVariableDef[];
+  variables: WhatsAppTemplateVariableDef[];
 }
 
-export type TemplateVariableSource =
-  | { type: 'column'; columnName: string }
-  | { type: 'fixed'; fixedValue: string }
-  | { type: 'enterprise'; enterpriseField: 'name' };
+export interface TemplateVariableSource {
+  type: 'column' | 'fixed' | 'enterprise';
+  columnName?: string;
+  fixedValue?: string;
+}
 
 export interface BatchMappingConfig {
   templateKey: string;
@@ -25,15 +26,16 @@ export interface BatchMappingConfig {
 }
 
 export interface BatchParseResponse {
-  headers: string[];
-  rowCount: number;
-  sampleRows: Record<string, string>[];
-  suggestions: {
-    phoneColumn: string | null;
-    customerNameColumn: string | null;
-    enterpriseColumn: string | null;
+  spreadsheet: {
+    headers: string[];
+    rowCount: number;
+    sampleRows: Record<string, string>[];
   };
-  templateKey: string | null;
+  suggestions: {
+    phoneColumn: string;
+    customerNameColumn?: string;
+    enterpriseColumn?: string;
+  };
 }
 
 export interface BatchPreviewRow {
@@ -60,24 +62,7 @@ export interface BatchPreviewResponse {
   rows: BatchPreviewRow[];
 }
 
-export interface BatchTestResponse {
-  success: boolean;
-  phoneOriginal: string;
-  phoneNormalized: string | null;
-  error: string | null;
-  mode: 'row' | 'manual';
-  sampleRowNumber?: number;
-  resolvedVariables: Array<{
-    variableId: number;
-    label: string;
-    value: string | null;
-    sourceType: 'column' | 'fixed' | 'enterprise';
-    sourceLabel: string;
-  }>;
-  metaMessageId?: string;
-}
-
-export interface BatchSendResponse {
+export interface BatchSendResult {
   total: number;
   success: number;
   failed: number;
@@ -87,6 +72,25 @@ export interface BatchSendResponse {
     phoneNormalized: string | null;
     status: 'sent' | 'blocked' | 'error';
     error: string | null;
+    errorCode?: number;
+    errorType?: string;
+    httpStatus?: number;
+    templateKey: string;
     metaMessageId?: string;
   }>;
+}
+
+export interface BatchTestResult {
+  success: boolean;
+  phoneOriginal: string;
+  phoneNormalized: string | null;
+  error: string | null;
+  templateKey: string;
+  mode: 'row' | 'manual';
+  sampleRowNumber?: number;
+  resolvedVariables: BatchPreviewRow['resolvedVariables'];
+  errorCode?: number;
+  errorType?: string;
+  httpStatus?: number;
+  metaMessageId?: string;
 }

@@ -84,7 +84,7 @@ function App() {
             }
           />
           <Route
-            path="/contatos/disparo-template-lote"
+            path="/settings/whatsapp-batch"
             element={
               <ProtectedRoute roles={[...ROLES_SETTINGS_ADMIN]}>
                 <WhatsAppBatchTemplatePage />

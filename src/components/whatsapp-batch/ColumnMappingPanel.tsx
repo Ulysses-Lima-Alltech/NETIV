@@ -2,43 +2,51 @@ import type { Corretor, ProjectListItem } from '../../api/client';
 import type { BatchTemplateCatalogItem, TemplateVariableSource } from '../../types/whatsappBatch';
 
 interface Props {
-  headers: string[];
+  spreadsheet: {
+    headers: string[];
+    rowCount: number;
+    sampleRows: Record<string, string>[];
+  };
   suggestions: {
-    phoneColumn: string | null;
-  } | null;
+    phoneColumn: string;
+    customerNameColumn?: string;
+    enterpriseColumn?: string;
+  };
   template: BatchTemplateCatalogItem | null;
   phoneColumn: string;
+  onPhoneColumnChange: (value: string) => void;
   selectedEnterpriseId: string;
+  onSelectedEnterpriseIdChange: (value: string) => void;
+  selectedBrokerId: string;
+  onSelectedBrokerIdChange: (value: string) => void;
   projects: ProjectListItem[];
   brokers: Corretor[];
   variableMappings: Record<string, TemplateVariableSource>;
-  onPhoneColumnChange: (value: string) => void;
-  onEnterpriseChange: (value: string) => void;
-  selectedBrokerId: string;
-  onBrokerChange: (value: string) => void;
-  onVariableMappingChange: (variableId: string, value: TemplateVariableSource) => void;
+  onVariableMappingsChange: (mappings: Record<string, TemplateVariableSource>) => void;
+  onPreview: () => Promise<void>;
+  loadingPreview: boolean;
 }
 
 const inputCls =
   'w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px] bg-white focus:border-[#3B82F6] focus:ring-[3px] focus:ring-[rgba(59,130,246,0.15)] focus:outline-none';
 
-export function ColumnMappingPanel(props: Props) {
-  const {
-    headers,
-    suggestions,
-    template,
-    phoneColumn,
-    selectedEnterpriseId,
-    projects,
-    brokers,
-    variableMappings,
-    onPhoneColumnChange,
-    onEnterpriseChange,
-    selectedBrokerId,
-    onBrokerChange,
-    onVariableMappingChange,
-  } = props;
-
+export function ColumnMappingPanel({
+  spreadsheet,
+  suggestions,
+  template,
+  phoneColumn,
+  onPhoneColumnChange,
+  selectedEnterpriseId,
+  onSelectedEnterpriseIdChange,
+  selectedBrokerId,
+  onSelectedBrokerIdChange,
+  projects,
+  brokers,
+  variableMappings,
+  onVariableMappingsChange,
+  onPreview,
+  loadingPreview,
+}: Props) {
   if (!template) {
     return (
       <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4">
@@ -47,15 +55,20 @@ export function ColumnMappingPanel(props: Props) {
     );
   }
 
+  const updateVariableMapping = (variableId: string, mapping: TemplateVariableSource) => {
+    onVariableMappingsChange({ ...variableMappings, [variableId]: mapping });
+  };
+
   return (
     <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-4">
       <h2 className="text-[14px] font-semibold">Mapeamento de dados</h2>
+      
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
           <label className="block text-[12px] text-[#374151] mb-1">Coluna de telefone</label>
           <select className={inputCls} value={phoneColumn} onChange={(e) => onPhoneColumnChange(e.target.value)}>
             <option value="">Selecione</option>
-            {headers.map((h) => (
+            {spreadsheet.headers.map((h) => (
               <option key={h} value={h}>
                 {h}
               </option>
@@ -65,9 +78,10 @@ export function ColumnMappingPanel(props: Props) {
             <p className="text-[11px] text-[#6B7280] mt-1">Sugestão automática: {suggestions.phoneColumn}</p>
           )}
         </div>
+        
         <div>
           <label className="block text-[12px] text-[#374151] mb-1">Empreendimento (cadastro interno)</label>
-          <select className={inputCls} value={selectedEnterpriseId} onChange={(e) => onEnterpriseChange(e.target.value)}>
+          <select className={inputCls} value={selectedEnterpriseId} onChange={(e) => onSelectedEnterpriseIdChange(e.target.value)}>
             <option value="">Nenhum</option>
             {projects.map((p) => (
               <option key={p.id} value={String(p.id)}>
@@ -76,9 +90,10 @@ export function ColumnMappingPanel(props: Props) {
             ))}
           </select>
         </div>
+        
         <div>
           <label className="block text-[12px] text-[#374151] mb-1">Corretor responsável pela base</label>
-          <select className={inputCls} value={selectedBrokerId} onChange={(e) => onBrokerChange(e.target.value)}>
+          <select className={inputCls} value={selectedBrokerId} onChange={(e) => onSelectedBrokerIdChange(e.target.value)}>
             <option value="">Nenhum</option>
             {brokers
               .filter((b) => b.active)
@@ -99,52 +114,90 @@ export function ColumnMappingPanel(props: Props) {
               <p className="text-[12px] font-semibold text-[#111827] mb-2">
                 {'{{'}
                 {v.id}
-                {'}}'} - {v.label}
+                {'}}'} - {v.label} {v.required && <span className="text-red-500">*</span>}
               </p>
+              
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                <select
-                  className={inputCls}
-                  value={mapping.type}
-                  onChange={(e) => {
-                    const type = e.target.value as TemplateVariableSource['type'];
-                    if (type === 'column') onVariableMappingChange(String(v.id), { type: 'column', columnName: '' });
-                    else if (type === 'fixed') onVariableMappingChange(String(v.id), { type: 'fixed', fixedValue: '' });
-                    else onVariableMappingChange(String(v.id), { type: 'enterprise', enterpriseField: 'name' });
-                  }}
-                >
-                  <option value="column">Coluna da planilha</option>
-                  <option value="fixed">Valor fixo</option>
-                  <option value="enterprise">Cadastro de empreendimento</option>
-                </select>
-                {mapping.type === 'column' && (
+                <div>
+                  <label className="text-[11px] text-[#6B7280]">Tipo</label>
                   <select
                     className={inputCls}
-                    value={mapping.columnName}
-                    onChange={(e) => onVariableMappingChange(String(v.id), { type: 'column', columnName: e.target.value })}
+                    value={mapping.type}
+                    onChange={(e) => updateVariableMapping(String(v.id), { 
+                      type: e.target.value as 'column' | 'fixed' | 'enterprise',
+                      columnName: e.target.value === 'column' ? mapping.columnName : undefined,
+                      fixedValue: e.target.value === 'fixed' ? mapping.fixedValue : undefined,
+                    })}
                   >
-                    <option value="">Selecione a coluna</option>
-                    {headers.map((h) => (
-                      <option key={h} value={h}>
-                        {h}
-                      </option>
-                    ))}
+                    <option value="column">Coluna da planilha</option>
+                    <option value="fixed">Valor fixo</option>
+                    <option value="enterprise">Nome do empreendimento</option>
                   </select>
+                </div>
+                
+                {mapping.type === 'column' && (
+                  <div>
+                    <label className="text-[11px] text-[#6B7280]">Coluna</label>
+                    <select
+                      className={inputCls}
+                      value={mapping.columnName || ''}
+                      onChange={(e) => updateVariableMapping(String(v.id), { 
+                        ...mapping, 
+                        columnName: e.target.value 
+                      })}
+                    >
+                      <option value="">Selecione</option>
+                      {spreadsheet.headers.map((h) => (
+                        <option key={h} value={h}>
+                          {h}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 )}
+                
                 {mapping.type === 'fixed' && (
-                  <input
-                    className={inputCls}
-                    value={mapping.fixedValue}
-                    placeholder="Digite o valor fixo"
-                    onChange={(e) => onVariableMappingChange(String(v.id), { type: 'fixed', fixedValue: e.target.value })}
-                  />
+                  <div>
+                    <label className="text-[11px] text-[#6B7280]">Valor</label>
+                    <input
+                      type="text"
+                      className={inputCls}
+                      value={mapping.fixedValue || ''}
+                      onChange={(e) => updateVariableMapping(String(v.id), { 
+                        ...mapping, 
+                        fixedValue: e.target.value 
+                      })}
+                      placeholder="Digite o valor fixo"
+                    />
+                  </div>
                 )}
+                
                 {mapping.type === 'enterprise' && (
-                  <div className="text-[12px] text-[#6B7280] flex items-center">Usar nome do empreendimento selecionado</div>
+                  <div>
+                    <label className="text-[11px] text-[#6B7280]">Valor</label>
+                    <input
+                      type="text"
+                      className={inputCls}
+                      value={selectedEnterpriseId ? projects.find(p => String(p.id) === selectedEnterpriseId)?.name || '' : ''}
+                      disabled
+                      placeholder="Nome do empreendimento selecionado"
+                    />
+                  </div>
                 )}
               </div>
             </div>
           );
         })}
+      </div>
+
+      <div className="flex justify-end">
+        <button
+          onClick={() => void onPreview()}
+          disabled={!phoneColumn || loadingPreview}
+          className="px-4 py-2 rounded-[10px] bg-[#0EA5E9] text-white text-[13px] font-semibold hover:bg-[#0284C7] disabled:opacity-60"
+        >
+          {loadingPreview ? 'Gerando preview...' : 'Gerar preview'}
+        </button>
       </div>
     </section>
   );

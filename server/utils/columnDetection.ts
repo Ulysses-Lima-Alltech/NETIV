@@ -1,39 +1,93 @@
-export function normalizeHeaderForDetection(value: string): string {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-}
-
-function includesAny(normalizedHeader: string, terms: string[]): boolean {
-  return terms.some((term) => normalizedHeader.includes(term));
-}
-
 export interface BatchColumnSuggestions {
-  phoneColumn: string | null;
-  customerNameColumn: string | null;
-  enterpriseColumn: string | null;
+  phone: string[];
+  name: string[];
+  email: string[];
+  city: string[];
+  enterprise: string[];
+  broker: string[];
+  generic: string[];
+}
+
+const PHONE_PATTERNS = [
+  /telefone/i,
+  /phone/i,
+  /celular/i,
+  /whatsapp/i,
+  /contato/i,
+  /fone/i,
+];
+
+const NAME_PATTERNS = [
+  /nome/i,
+  /name/i,
+  /cliente/i,
+  /contato/i,
+  /pessoa/i,
+];
+
+const EMAIL_PATTERNS = [
+  /email/i,
+  /e[-_]?mail/i,
+  /correio/i,
+];
+
+const CITY_PATTERNS = [
+  /cidade/i,
+  /city/i,
+  /localidade/i,
+  /municipio/i,
+];
+
+const ENTERPRISE_PATTERNS = [
+  /empreendimento/i,
+  /enterprise/i,
+  /empreendimento/i,
+  /projeto/i,
+  /loteamento/i,
+];
+
+const BROKER_PATTERNS = [
+  /corretor/i,
+  /broker/i,
+  /vendedor/i,
+  /consultor/i,
+  /agente/i,
+];
+
+function matchesAnyPattern(text: string, patterns: RegExp[]): boolean {
+  return patterns.some(pattern => pattern.test(text));
 }
 
 export function detectBatchColumns(headers: string[]): BatchColumnSuggestions {
-  let phoneColumn: string | null = null;
-  let customerNameColumn: string | null = null;
-  let enterpriseColumn: string | null = null;
-
-  const phoneTerms = ['telefone', 'celular', 'whatsapp', 'phone', 'numero', 'contato'];
-  const customerNameTerms = ['nome', 'cliente', 'lead', 'contato'];
-  const enterpriseTerms = ['empreendimento', 'interesse', 'produto', 'imovel'];
+  const suggestions: BatchColumnSuggestions = {
+    phone: [],
+    name: [],
+    email: [],
+    city: [],
+    enterprise: [],
+    broker: [],
+    generic: [],
+  };
 
   for (const header of headers) {
-    const normalized = normalizeHeaderForDetection(header);
-    if (!normalized) continue;
-    if (!phoneColumn && includesAny(normalized, phoneTerms)) phoneColumn = header;
-    if (!customerNameColumn && includesAny(normalized, customerNameTerms)) customerNameColumn = header;
-    if (!enterpriseColumn && includesAny(normalized, enterpriseTerms)) enterpriseColumn = header;
+    const normalized = header.trim().toLowerCase();
+    
+    if (matchesAnyPattern(normalized, PHONE_PATTERNS)) {
+      suggestions.phone.push(header);
+    } else if (matchesAnyPattern(normalized, NAME_PATTERNS)) {
+      suggestions.name.push(header);
+    } else if (matchesAnyPattern(normalized, EMAIL_PATTERNS)) {
+      suggestions.email.push(header);
+    } else if (matchesAnyPattern(normalized, CITY_PATTERNS)) {
+      suggestions.city.push(header);
+    } else if (matchesAnyPattern(normalized, ENTERPRISE_PATTERNS)) {
+      suggestions.enterprise.push(header);
+    } else if (matchesAnyPattern(normalized, BROKER_PATTERNS)) {
+      suggestions.broker.push(header);
+    } else {
+      suggestions.generic.push(header);
+    }
   }
 
-  return { phoneColumn, customerNameColumn, enterpriseColumn };
+  return suggestions;
 }

@@ -103,14 +103,16 @@ export function WhatsAppBatchTemplatePage() {
   };
 
   const handlePreview = async () => {
-    if (!file) return;
+    if (!parseData) return;
     setLoadingPreview(true);
     setError(null);
     try {
-      const data = await whatsappBatchApi.preview(file, { mapping: buildMappingPayload() });
-      setPreview(data);
-      const firstValidRow = data.rows.find((row) => row.status === 'valid') ?? null;
-      setTestRowNumber(firstValidRow?.rowNumber ?? null);
+      const mapping = buildMappingPayload();
+      const previewData = await whatsappBatchApi.buildPreview(parseData.spreadsheet, mapping);
+      setPreview(previewData);
+      setTestRowNumber(null);
+      setTestResult(null);
+      setSendResult(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao gerar preview.');
     } finally {
@@ -119,158 +121,166 @@ export function WhatsAppBatchTemplatePage() {
   };
 
   const handleTest = async () => {
-    if (!file) return;
-    if (testMode === 'row' && testRowNumber == null) {
-      setTestResult('Selecione uma linha válida do preview para enviar o teste.');
-      return;
-    }
+    if (!selectedTemplate) return;
     setLoadingTest(true);
     setError(null);
+    setTestResult(null);
     try {
-      const sampleRowIndex = testMode === 'row' && testRowNumber != null ? testRowNumber - 2 : undefined;
-      const result = await whatsappBatchApi.sendTest(file, {
-        mapping: buildMappingPayload(),
+      const mapping = buildMappingPayload();
+      const result = await whatsappBatchApi.sendTest({
+        mapping,
         testPhone,
         mode: testMode,
-        sampleRowIndex,
+        sampleRowIndex: testMode === 'row' ? (testRowNumber ?? 0) - 2 : undefined,
         manualVariables: testMode === 'manual' ? manualTestVariables : undefined,
       });
-      setTestResult(result.success ? `Teste enviado com sucesso (${result.metaMessageId ?? 'sem id'}).` : result.error || 'Falha no teste.');
+      setTestResult(JSON.stringify(result, null, 2));
     } catch (e) {
-      setTestResult(e instanceof Error ? e.message : 'Falha no envio de teste.');
+      setError(e instanceof Error ? e.message : 'Erro ao enviar teste.');
     } finally {
       setLoadingTest(false);
     }
   };
 
   const handleSend = async () => {
-    if (!file) return;
+    if (!preview || preview.validCount === 0) return;
     setLoadingSend(true);
     setError(null);
+    setSendResult(null);
     try {
-      const result = await whatsappBatchApi.sendBatch(file, { mapping: buildMappingPayload() });
-      setSendResult(`Envio finalizado. Total: ${result.total}, Sucesso: ${result.success}, Falhas: ${result.failed}.`);
+      const mapping = buildMappingPayload();
+      const result = await whatsappBatchApi.sendBatch(parseData!.spreadsheet, mapping);
+      setSendResult(JSON.stringify(result, null, 2));
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Falha no envio em lote.');
+      setError(e instanceof Error ? e.message : 'Erro ao enviar mensagens.');
     } finally {
       setLoadingSend(false);
     }
   };
 
-  useEffect(() => {
-    if (!canUseRowMode && testMode === 'row') setTestMode('manual');
-  }, [canUseRowMode, testMode]);
-
-  useEffect(() => {
-    if (!selectedTemplate) {
-      setManualTestVariables({});
-      return;
-    }
-    setManualTestVariables((prev) => {
-      const next: Record<string, string> = {};
-      for (const variable of selectedTemplate.variables) {
-        next[String(variable.id)] = prev[String(variable.id)] ?? '';
-      }
-      return next;
-    });
-  }, [selectedTemplate]);
-
-  const previewVariablesForTest =
-    testMode === 'row'
-      ? (selectedPreviewRow?.resolvedVariables ?? []).map((v) => ({
-          variableId: v.variableId,
-          label: v.label,
-          value: v.value,
-          sourceType: v.sourceType,
-        }))
-      : (selectedTemplate?.variables ?? []).map((variable) => ({
-          variableId: variable.id,
-          label: variable.label,
-          value: (manualTestVariables[String(variable.id)] ?? '').trim() || null,
-          sourceType: 'manual',
-        }));
-
   if (!isAdmin) return <Navigate to="/inbox" replace />;
 
   return (
-    <div className="min-h-screen bg-[#F9FAFB] text-[#111827]">
-      <nav className="h-14 border-b border-[#E5E7EB] bg-white/90 backdrop-blur-sm sticky top-0 z-20 px-6 flex items-center justify-between">
-        <span className="text-[15px] font-semibold">Disparo WhatsApp em lote</span>
-        <AppNav />
-      </nav>
-      <div className="max-w-[1280px] mx-auto px-6 py-6 space-y-5">
-        <SpreadsheetUploadPanel file={file} onFileChange={setFile} onParse={handleParse} loading={loadingParse} />
-        <TemplateSelector templates={templates} selectedTemplateKey={selectedTemplateKey} onChange={setSelectedTemplateKey} />
-        {parseData && (
-          <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-2 text-[12px]">
-            <p>Total de linhas: {parseData.rowCount}</p>
-            <p>Colunas detectadas: {parseData.headers.join(', ') || '-'}</p>
-          </section>
-        )}
-        <ColumnMappingPanel
-          headers={parseData?.headers ?? []}
-          suggestions={parseData?.suggestions ?? null}
-          template={selectedTemplate}
-          phoneColumn={phoneColumn}
-          selectedEnterpriseId={selectedEnterpriseId}
-          selectedBrokerId={selectedBrokerId}
-          projects={projects}
-          brokers={brokers}
-          variableMappings={variableMappings}
-          onPhoneColumnChange={setPhoneColumn}
-          onEnterpriseChange={setSelectedEnterpriseId}
-          onBrokerChange={setSelectedBrokerId}
-          onVariableMappingChange={(variableId, value) => setVariableMappings((prev) => ({ ...prev, [variableId]: value }))}
-        />
-        <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4">
-          <button
-            type="button"
-            onClick={() => void handlePreview()}
-            disabled={!file || !selectedTemplateKey || loadingPreview}
-            className="px-4 py-2 rounded-[10px] bg-[#2563EB] text-white text-[13px] font-semibold hover:bg-[#1D4ED8] disabled:opacity-60"
-          >
-            {loadingPreview ? 'Gerando preview...' : 'Gerar preview'}
-          </button>
-        </section>
-        <BatchPreviewTable preview={preview} />
-        <TestSendPanel
-          testPhone={testPhone}
-          mode={testMode}
-          canUseRowMode={canUseRowMode}
-          selectedRowNumber={testRowNumber}
-          rowOptions={validPreviewRows.map((row) => ({
-            rowNumber: row.rowNumber,
-            label: `Linha ${row.rowNumber} - ${row.phoneOriginal ?? 'sem telefone'}`,
-          }))}
-          manualVariables={(selectedTemplate?.variables ?? []).map((variable) => ({
-            variableId: variable.id,
-            label: variable.label,
-            value: manualTestVariables[String(variable.id)] ?? '',
-          }))}
-          previewVariables={previewVariablesForTest}
-          loading={loadingTest}
-          result={testResult}
-          onTestPhoneChange={setTestPhone}
-          onModeChange={setTestMode}
-          onSelectedRowNumberChange={setTestRowNumber}
-          onManualVariableChange={(variableId, value) =>
-            setManualTestVariables((prev) => ({ ...prev, [String(variableId)]: value }))
-          }
-          onSendTest={handleTest}
-        />
-        <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
-          <button
-            type="button"
-            onClick={() => void handleSend()}
-            disabled={!file || !preview || loadingSend}
-            className="px-4 py-2 rounded-[10px] bg-[#16A34A] text-white text-[13px] font-semibold hover:bg-[#15803D] disabled:opacity-60"
-          >
-            {loadingSend ? 'Enviando lote...' : 'Enviar lote'}
-          </button>
-          {sendResult && <p className="text-[12px] text-[#047857]">{sendResult}</p>}
-          {error && <p className="text-[12px] text-red-700">{error}</p>}
-        </section>
-      </div>
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      <AppNav />
+      <main className="flex-1 p-6">
+        <div className="max-w-7xl mx-auto space-y-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Envio em Lote de Templates WhatsApp</h1>
+            <p className="text-gray-600 mt-1">
+              Envie mensagens em lote usando templates do WhatsApp. Faça upload de uma planilha, mapeie as colunas e envie.
+            </p>
+          </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-md p-4">
+              <p className="text-red-800 text-sm">{error}</p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="space-y-6">
+              <SpreadsheetUploadPanel
+                file={file}
+                onFileChange={setFile}
+                onParse={handleParse}
+                loading={loadingParse}
+                disabled={!selectedTemplateKey}
+              />
+
+              <TemplateSelector
+                templates={templates}
+                selectedKey={selectedTemplateKey}
+                onSelect={setSelectedTemplateKey}
+              />
+
+              {parseData && (
+                <ColumnMappingPanel
+                  spreadsheet={parseData.spreadsheet}
+                  suggestions={parseData.suggestions}
+                  template={selectedTemplate}
+                  phoneColumn={phoneColumn}
+                  onPhoneColumnChange={setPhoneColumn}
+                  selectedEnterpriseId={selectedEnterpriseId}
+                  onSelectedEnterpriseIdChange={setSelectedEnterpriseId}
+                  selectedBrokerId={selectedBrokerId}
+                  onSelectedBrokerIdChange={setSelectedBrokerId}
+                  projects={projects}
+                  brokers={brokers}
+                  variableMappings={variableMappings}
+                  onVariableMappingsChange={setVariableMappings}
+                  onPreview={handlePreview}
+                  loadingPreview={loadingPreview}
+                />
+              )}
+            </div>
+
+            <div className="space-y-6">
+              {preview && (
+                <BatchPreviewTable
+                  preview={preview}
+                  onSelectTestRow={setTestRowNumber}
+                  selectedTestRow={testRowNumber}
+                />
+              )}
+
+              {selectedTemplate && (
+                <TestSendPanel
+                  template={selectedTemplate}
+                  testPhone={testPhone}
+                  onTestPhoneChange={setTestPhone}
+                  testMode={testMode}
+                  onTestModeChange={setTestMode}
+                  testRowNumber={testRowNumber}
+                  onTestRowNumberChange={setTestRowNumber}
+                  availableTestRows={validPreviewRows.map((r) => r.rowNumber)}
+                  manualTestVariables={manualTestVariables}
+                  onManualTestVariablesChange={setManualTestVariables}
+                  onTest={handleTest}
+                  loadingTest={loadingTest}
+                  testResult={testResult}
+                  canUseRowMode={canUseRowMode}
+                  selectedPreviewRow={selectedPreviewRow}
+                />
+              )}
+
+              {preview && preview.validCount > 0 && (
+                <div className="bg-white border border-gray-200 rounded-md p-6">
+                  <h3 className="text-lg font-medium text-gray-900 mb-4">Enviar Mensagens</h3>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <span className="text-gray-500">Total:</span>
+                        <span className="ml-2 font-medium">{preview.total}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Válidos:</span>
+                        <span className="ml-2 font-medium text-green-600">{preview.validCount}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Inválidos:</span>
+                        <span className="ml-2 font-medium text-red-600">{preview.invalidCount + preview.blockedCount}</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleSend}
+                      disabled={loadingSend || preview.validCount === 0}
+                      className="w-full bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                    >
+                      {loadingSend ? 'Enviando...' : `Enviar ${preview.validCount} mensagens`}
+                    </button>
+                    {sendResult && (
+                      <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
+                        <pre className="text-xs text-gray-700 whitespace-pre-wrap">{sendResult}</pre>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </main>
     </div>
   );
 }

@@ -350,11 +350,19 @@ router.get('/conversations', async (req, res) => {
     const status = req.query.status as string | undefined;
     const enterpriseId = req.query.enterpriseId != null ? parseInt(String(req.query.enterpriseId), 10) : undefined;
     const search = req.query.search as string | undefined;
-    const filters: { mode?: 'ANA' | 'handoff'; status?: string; enterpriseId?: number; search?: string } = {};
+    
+    // NOVO: Filtrar por broker_id se for COLLABORATOR
+    let brokerId: number | undefined;
+    if ((req as any).user?.role === 'COLLABORATOR' && (req as any).user?.broker_id) {
+      brokerId = (req as any).user.broker_id;
+    }
+    
+    const filters: { mode?: 'ANA' | 'handoff'; status?: string; enterpriseId?: number; search?: string; brokerId?: number } = {};
     if (mode === 'ANA' || mode === 'handoff') filters.mode = mode;
     if (status && status !== 'all') filters.status = status;
     if (enterpriseId != null && !Number.isNaN(enterpriseId)) filters.enterpriseId = enterpriseId;
     if (search && search.trim() !== '') filters.search = search.trim();
+    if (brokerId != null) filters.brokerId = brokerId;
     const hasFilters = Object.keys(filters).length > 0;
     const rows = await listConversationsWithPreview(channel, limit, hasFilters ? filters : undefined);
     res.json({

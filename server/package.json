@@ -7,7 +7,6 @@
     "start": "node dist/index.js",
     "build": "tsc && node scripts/copy-migrations.cjs",
     "migrate": "tsx db/migrate.ts",
-    "kb:reindex": "tsx scripts/reindexKnowledgeBackfill.ts",
     "migrate:deploy": "node dist/db/migrate.js",
     "start:prod": "node dist/db/migrate.js && node dist/index.js"
   },

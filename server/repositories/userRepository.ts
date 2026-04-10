@@ -33,6 +33,8 @@ export interface AppUser {
   email: string;
   role: UserRole;
   active: boolean;
+  broker_id: number | null;    // NOVO
+  django_user_id: number | null; // NOVO
   created_at: Date;
   updated_at: Date;
 }
@@ -72,10 +74,12 @@ export async function findByEmail(email: string): Promise<(AppUser & { password_
     password_hash: string;
     role: string;
     active: boolean;
+    broker_id: number | null;
+    django_user_id: number | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `SELECT id, name, email, password_hash, role, active, created_at, updated_at
+    `SELECT id, name, email, password_hash, role, active, broker_id, django_user_id, created_at, updated_at
      FROM app_users WHERE LOWER(email) = $1 AND active = true`,
     [normalized]
   );
@@ -98,10 +102,12 @@ export async function findEmbeddedDefaultUser(): Promise<AppUser | null> {
     email: string;
     role: string;
     active: boolean;
+    broker_id: number | null;
+    django_user_id: number | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `SELECT id, name, email, role, active, created_at, updated_at
+    `SELECT id, name, email, role, active, broker_id, django_user_id, created_at, updated_at
      FROM app_users
      WHERE active = true
      ORDER BY CASE role WHEN 'ADMIN' THEN 0 WHEN 'MANAGERIAL' THEN 1 ELSE 2 END, id ASC
@@ -118,10 +124,12 @@ export async function findById(id: number): Promise<AppUser | null> {
     email: string;
     role: string;
     active: boolean;
+    broker_id: number | null;
+    django_user_id: number | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `SELECT id, name, email, role, active, created_at, updated_at
+    `SELECT id, name, email, role, active, broker_id, django_user_id, created_at, updated_at
      FROM app_users WHERE id = $1 AND active = true`,
     [id]
   );
@@ -136,10 +144,12 @@ export async function findByIdIncludingInactive(id: number): Promise<AppUser | n
     email: string;
     role: string;
     active: boolean;
+    broker_id: number | null;
+    django_user_id: number | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `SELECT id, name, email, role, active, created_at, updated_at
+    `SELECT id, name, email, role, active, broker_id, django_user_id, created_at, updated_at
      FROM app_users WHERE id = $1`,
     [id]
   );
@@ -154,10 +164,12 @@ export async function listAllUsers(): Promise<AppUser[]> {
     email: string;
     role: string;
     active: boolean;
+    broker_id: number | null;
+    django_user_id: number | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `SELECT id, name, email, role, active, created_at, updated_at
+    `SELECT id, name, email, role, active, broker_id, django_user_id, created_at, updated_at
      FROM app_users ORDER BY name ASC`
   );
   return result.rows.map((row) => ({ ...row, role: parseStoredUserRole(row.role) }));
@@ -172,10 +184,12 @@ export async function findByEmailIncludingInactive(email: string): Promise<(AppU
     password_hash: string;
     role: string;
     active: boolean;
+    broker_id: number | null;
+    django_user_id: number | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `SELECT id, name, email, password_hash, role, active, created_at, updated_at
+    `SELECT id, name, email, password_hash, role, active, broker_id, django_user_id, created_at, updated_at
      FROM app_users WHERE LOWER(email) = $1`,
     [normalized]
   );
@@ -200,13 +214,15 @@ export async function createUser(input: CreateUserInput): Promise<AppUser> {
     email: string;
     role: string;
     active: boolean;
+    broker_id: number | null;
+    django_user_id: number | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `INSERT INTO app_users (name, email, password_hash, role, active)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, name, email, role, active, created_at, updated_at`,
-    [input.name.trim(), email, hash, input.role, input.active]
+    `INSERT INTO app_users (name, email, password_hash, role, active, broker_id, django_user_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id, name, email, role, active, broker_id, django_user_id, created_at, updated_at`,
+    [input.name.trim(), email, hash, input.role, input.active, null, null]
   );
   const row = result.rows[0];
   if (!row) throw new Error('Falha ao criar usuário.');
@@ -218,6 +234,8 @@ export interface UpdateUserInput {
   email?: string;
   role?: UserRole;
   active?: boolean;
+  broker_id?: number | null;      // NOVO
+  django_user_id?: number | null; // NOVO
 }
 
 export async function updateUser(id: number, input: UpdateUserInput): Promise<AppUser | null> {
@@ -227,9 +245,11 @@ export async function updateUser(id: number, input: UpdateUserInput): Promise<Ap
   const email = input.email !== undefined ? input.email.trim().toLowerCase() : current.email;
   const role = input.role !== undefined ? input.role : current.role;
   const active = input.active !== undefined ? input.active : current.active;
+  const broker_id = input.broker_id !== undefined ? input.broker_id : current.broker_id;
+  const django_user_id = input.django_user_id !== undefined ? input.django_user_id : current.django_user_id;
   await query(
-    `UPDATE app_users SET name = $1, email = $2, role = $3, active = $4, updated_at = NOW() WHERE id = $5`,
-    [name, email, role, active, id]
+    `UPDATE app_users SET name = $1, email = $2, role = $3, active = $4, broker_id = $5, django_user_id = $6, updated_at = NOW() WHERE id = $7`,
+    [name, email, role, active, broker_id, django_user_id, id]
   );
   return findByIdIncludingInactive(id);
 }
@@ -258,10 +278,12 @@ export async function getSessionUser(token: string): Promise<AppUser | null> {
     email: string;
     role: string;
     active: boolean;
+    broker_id: number | null;
+    django_user_id: number | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `SELECT u.id, u.name, u.email, u.role, u.active, u.created_at, u.updated_at
+    `SELECT u.id, u.name, u.email, u.role, u.active, u.broker_id, u.django_user_id, u.created_at, u.updated_at
      FROM app_sessions s
      JOIN app_users u ON u.id = s.user_id AND u.active = true
      WHERE s.token = $1 AND s.expires_at > NOW()`,
