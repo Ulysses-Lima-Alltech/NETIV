@@ -107,14 +107,15 @@ function resolveVariablesForRow(params: {
     }
 
     if (mappingItem.type === 'column') {
-      const value = normalizeValue(params.row[mappingItem.columnName]);
+      const columnName = mappingItem.columnName ?? '';
+      const value = normalizeValue(columnName ? params.row[columnName] : undefined);
       if (!value && variable.required) missingRequired = true;
       details.push({
         variableId: variable.id,
         label: variable.label,
         value,
         sourceType: 'column',
-        sourceLabel: `coluna: ${mappingItem.columnName}`,
+        sourceLabel: `coluna: ${columnName || '(nome da coluna ausente)'}`,
       });
       values.push(value ?? '');
       continue;

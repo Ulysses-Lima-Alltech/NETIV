@@ -157,13 +157,13 @@ export async function replaceEnterpriseFileChunks(
           enterpriseFileId,
           i,
           chunks[i],
-          meta.block,
-          meta.blockPriority,
-          meta.cityHint,
-          meta.enterpriseHint,
-          meta.intentTags,
-          meta.temporalStatus,
-          meta.sourceConfidence,
+          meta.knowledge_block,
+          meta.block_priority,
+          meta.city_hint ?? null,
+          meta.enterprise_hint ?? null,
+          meta.intent_tags,
+          meta.temporal_status,
+          meta.source_confidence,
         ]
       );
     } catch {

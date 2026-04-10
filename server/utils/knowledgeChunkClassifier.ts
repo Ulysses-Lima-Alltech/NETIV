@@ -8,6 +8,9 @@ export interface ClassificationResult {
   source_confidence: number;
 }
 
+export type KnowledgeBlock = ClassificationResult['knowledge_block'];
+export type TemporalStatus = ClassificationResult['temporal_status'];
+
 const COMMERCIAL_KEYWORDS = [
   'preço', 'valor', 'valor de', 'custo', 'investimento', 'financiamento',
   'entrada', 'parcela', 'condições', 'pagamento', 'desconto', 'promocional',
@@ -96,7 +99,11 @@ function extractIntentTags(text: string): string[] {
   return [...new Set(tags)];
 }
 
-export function classifyKnowledgeChunk(content: string, fileName?: string): ClassificationResult {
+export function classifyKnowledgeChunk(
+  content: string,
+  fileNameOrContext?: string | { enterpriseName?: string | null; enterpriseCity?: string | null }
+): ClassificationResult {
+  const fileName = typeof fileNameOrContext === 'string' ? fileNameOrContext : undefined;
   const text = content.toLowerCase();
   let knowledge_block: ClassificationResult['knowledge_block'] = 'facts';
   let block_priority = 50;
@@ -140,7 +147,7 @@ export function classifyKnowledgeChunk(content: string, fileName?: string): Clas
     block_priority,
     city_hint: cityHint,
     enterprise_hint: enterpriseHint,
-    intent_tags,
+    intent_tags: intentTags,
     temporal_status,
     source_confidence,
   };

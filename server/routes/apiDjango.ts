@@ -27,6 +27,11 @@ import {
 
 const router = Router();
 
+function parseRouteId(idParam: string | string[] | undefined): number {
+  const raw = Array.isArray(idParam) ? idParam[0] : idParam;
+  return parseInt(String(raw ?? ''), 10);
+}
+
 // Helper functions for serialization
 function serializeConversation(conv: ConversationRow) {
   return {
@@ -149,7 +154,7 @@ router.get('/conversations', requireServiceJwt(['django']), async (req: JwtReque
 
 router.get('/conversations/:id', requireServiceJwt(['django']), async (req: JwtRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseRouteId(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ error: 'Invalid conversation ID' });
     }
@@ -228,7 +233,7 @@ router.get('/appointments', requireServiceJwt(['django']), async (req: JwtReques
 
 router.get('/appointments/:id', requireServiceJwt(['django']), async (req: JwtRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseRouteId(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ error: 'Invalid appointment ID' });
     }
@@ -273,7 +278,7 @@ router.get('/corretores', requireServiceJwt(['django']), async (req: JwtRequest,
 
 router.get('/corretores/:id', requireServiceJwt(['django']), async (req: JwtRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseRouteId(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ error: 'Invalid corretor ID' });
     }
@@ -325,7 +330,7 @@ router.get('/enterprises', requireServiceJwt(['django']), async (req: JwtRequest
 
 router.get('/enterprises/:id', requireServiceJwt(['django']), async (req: JwtRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseRouteId(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ error: 'Invalid enterprise ID' });
     }

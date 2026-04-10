@@ -36,6 +36,7 @@ router.use('/api/service', apiDjangoRouter);
  * Integração real com Meta fica para depois; envio continua protegido nas outras rotas de /whatsapp-batch.
  */
 router.get('/whatsapp-batch/templates', (_req, res) => {
+  console.log('[whatsapp-batch] templates route hit');
   res.json({
     templates: [
       {

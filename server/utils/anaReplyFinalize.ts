@@ -1,3 +1,5 @@
+import { buildCatalogListMessage } from './anaCatalogMessages.js';
+
 /** Sem delay artificial — resposta enviada imediatamente após geração. */
 export function randomAnaReplyDelayMs(_opts?: {
   burstCount?: number;
@@ -10,7 +12,13 @@ export function sleepMs(ms: number): Promise<void> {
   if (ms <= 0) return Promise.resolve();
   return new Promise((r) => setTimeout(r, ms));
 }
-import { buildCatalogListMessage } from './anaCatalogMessages.js';
+
+/** Resposta segura quando o modelo repete saudação genérica sem conteúdo útil. */
+export function buildGreetingSafeFallback(customerName?: string | null): string {
+  const n = (customerName ?? '').trim();
+  if (n.length >= 2) return `Olá, ${n}! Em que posso ajudar agora?`;
+  return 'Olá! Em que posso ajudar agora?';
+}
 
 const DUPLICATE_FALLBACKS_GENERIC = [
   'Me diz o que você quer priorizar que eu sigo com você.',

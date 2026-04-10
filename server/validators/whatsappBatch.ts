@@ -11,7 +11,24 @@ export const BatchMappingDtoSchema = z.object({
   phoneColumn: z.string().min(1, 'Coluna de telefone é obrigatória'),
   selectedEnterpriseId: z.number().nullable(),
   selectedBrokerId: z.number().nullable(),
-  variableMappings: z.record(VariableMappingSchema),
+  variableMappings: z.record(z.string(), VariableMappingSchema),
+});
+
+/** Só o template ao fazer parse inicial da planilha (outros campos vêm depois). */
+export const parseBatchConfigSchema = z.object({
+  templateKey: z.string().optional(),
+});
+
+export const batchSendSchema = z.object({
+  mapping: BatchMappingDtoSchema,
+});
+
+export const batchTestSchema = z.object({
+  mapping: BatchMappingDtoSchema,
+  testPhone: z.string().min(1, 'Telefone de teste é obrigatório'),
+  mode: z.enum(['row', 'manual']),
+  sampleRowIndex: z.number().int().nonnegative().optional(),
+  manualVariables: z.record(z.string(), z.string()).optional(),
 });
 
 export type BatchMappingDto = z.infer<typeof BatchMappingDtoSchema>;

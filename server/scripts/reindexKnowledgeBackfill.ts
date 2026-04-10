@@ -70,7 +70,6 @@ async function main(): Promise<void> {
       for (const file of files) {
         console.log(`ID: ${file.fileId} | Enterprise: ${file.enterpriseName} (${file.enterpriseId})`);
         console.log(`   Arquivo: ${file.originalName} | Ativo: ${file.isActive ? 'Sim' : 'Não'}`);
-        console.log(`   Texto extraído: ${file.extractedText ? 'Sim' : 'Não'}`);
         console.log('---');
       }
       break;

@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
+import type { ZodIssue } from 'zod';
 import { randomBytes } from 'crypto';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -162,7 +163,7 @@ router.post('/templates/batch/parse', batchUpload.single('file'), async (req, re
     if (!file) return;
     const parsedCfg = parseBatchConfigSchema.safeParse(parseBatchPayload(req.body?.config) ?? {});
     if (!parsedCfg.success) {
-      const msg = parsedCfg.error.issues.map((e) => e.message).join('; ') || 'Configuração inválida.';
+      const msg = parsedCfg.error.issues.map((e: ZodIssue) => e.message).join('; ') || 'Configuração inválida.';
       return res.status(400).json({ success: false, error: msg });
     }
     const parsed = parseSpreadsheet(file.buffer, file.originalname, file.mimetype);
@@ -186,7 +187,7 @@ router.post('/templates/batch/preview', batchUpload.single('file'), async (req, 
     if (!file) return;
     const parsedBody = batchSendSchema.safeParse(parseBatchPayload(req.body?.payload));
     if (!parsedBody.success) {
-      const msg = parsedBody.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
+      const msg = parsedBody.error.issues.map((e: ZodIssue) => e.message).join('; ') || 'Dados inválidos.';
       return res.status(400).json({ success: false, error: msg });
     }
     const parsed = parseSpreadsheet(file.buffer, file.originalname, file.mimetype);
@@ -204,7 +205,7 @@ router.post('/templates/batch/test', batchUpload.single('file'), async (req, res
     if (!file) return;
     const parsedBody = batchTestSchema.safeParse(parseBatchPayload(req.body?.payload));
     if (!parsedBody.success) {
-      const msg = parsedBody.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
+      const msg = parsedBody.error.issues.map((e: ZodIssue) => e.message).join('; ') || 'Dados inválidos.';
       return res.status(400).json({ success: false, error: msg });
     }
     const parsed = parseSpreadsheet(file.buffer, file.originalname, file.mimetype);
@@ -233,7 +234,7 @@ router.post('/templates/batch/send', batchUpload.single('file'), async (req, res
     if (!file) return;
     const parsedBody = batchSendSchema.safeParse(parseBatchPayload(req.body?.payload));
     if (!parsedBody.success) {
-      const msg = parsedBody.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
+      const msg = parsedBody.error.issues.map((e: ZodIssue) => e.message).join('; ') || 'Dados inválidos.';
       return res.status(400).json({ success: false, error: msg });
     }
     const parsed = parseSpreadsheet(file.buffer, file.originalname, file.mimetype);

@@ -144,13 +144,17 @@ router.post('/knowledge/backfill', async (req, res) => {
       return res.status(400).json({ error: 'maxFiles inválido.' });
     }
 
-    const job = startKnowledgeBackfill({
+    const jobId = startKnowledgeBackfill({
       dryRun,
       includeInactive,
       enterpriseId: enterpriseId !== undefined ? Math.trunc(enterpriseId) : undefined,
       fileId: fileId !== undefined ? Math.trunc(fileId) : undefined,
       maxFiles: maxFiles !== undefined ? Math.trunc(maxFiles) : undefined,
     });
+    const job = getKnowledgeBackfillJob(jobId);
+    if (!job) {
+      return res.status(500).json({ error: 'Falha ao criar job de backfill.' });
+    }
 
     res.status(202).json({
       ok: true,
