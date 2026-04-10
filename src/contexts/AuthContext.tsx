@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import { AUTH_BYPASS_MOCK_USER, setStoredAuthToken, authApi, type AuthUser } from '../api/client';
+import { getStoredAuthToken, setStoredAuthToken, authApi, type AuthUser } from '../api/client';
 
 interface AuthState {
   user: AuthUser | null;
@@ -38,12 +38,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Função para ativar bypass (fallback Vercel direto)
-  const activateBypass = useCallback(() => {
-    console.log('[Auth] Ativando bypass mock user (fallback Vercel)');
+  const finalizeUnauthenticated = useCallback(() => {
     setStoredAuthToken(null);
-    setUser(AUTH_BYPASS_MOCK_USER);
-    setError(null);
+    setUser(null);
+    setError('Não autenticado.');
     setLoading(false);
   }, []);
 
@@ -63,19 +61,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Adicionar listener
     window.addEventListener('message', handleMessage);
 
-    // Timeout para fallback (se não receber SSO em 3 segundos)
-    const timeoutId = setTimeout(() => {
-      if (!user && loading) {
-        console.log('[Auth] Timeout SSO, ativando bypass');
-        activateBypass();
-      }
-    }, 3000);
+    const token = getStoredAuthToken();
+    if (token) {
+      void loadRealUser();
+    } else {
+      // Aguarda uma janela curta para possível SSO via postMessage.
+      const timeoutId = setTimeout(() => {
+        if (!user && loading) finalizeUnauthenticated();
+      }, 3000);
+      return () => {
+        window.removeEventListener('message', handleMessage);
+        clearTimeout(timeoutId);
+      };
+    }
 
     return () => {
       window.removeEventListener('message', handleMessage);
-      clearTimeout(timeoutId);
     };
-  }, [user, loading, loadRealUser, activateBypass]);
+  }, [user, loading, loadRealUser, finalizeUnauthenticated]);
 
   // Login normal (formulário)
   const login = useCallback(async (email: string, password: string) => {
