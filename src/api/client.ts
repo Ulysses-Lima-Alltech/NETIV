@@ -927,7 +927,7 @@ export const usersApi = {
     request<{ ok: boolean }>(`/users/${id}/password`, { method: 'PATCH', body: { newPassword } }),
 };
 
-// WhatsApp Batch API
+// API de disparo em lote (templates WhatsApp; rotas /whatsapp-batch no servidor)
 export const whatsappBatchApi = {
   listTemplates: () => request<{ templates: BatchTemplateCatalogItem[] }>('/whatsapp-batch/templates'),
   parseSpreadsheet: (file: File, opts?: { templateKey?: string }) => {
