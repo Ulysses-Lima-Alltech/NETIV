@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import {
@@ -61,7 +61,7 @@ export function ContatosPage() {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(50);
   const [total, setTotal] = useState(0);
-  const [reloadToken, setReloadToken] = useState(0);
+  const listRequestSeqRef = useRef(0);
 
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importOwnerId, setImportOwnerId] = useState<string>('');
@@ -87,22 +87,26 @@ export function ContatosPage() {
   }, []);
 
   const load = useCallback(async () => {
+    const requestSeq = ++listRequestSeqRef.current;
     setLoading(true);
     setError(null);
     try {
       const requestFilters = buildApiFilters(appliedFilters);
       if (import.meta.env.DEV) {
-        console.debug('[ContatosPage] list request', { requestFilters, page, pageSize, reloadToken });
+        console.debug('[ContatosPage] list request', { requestFilters, page, pageSize });
       }
       const data = await contactsApi.list({ ...requestFilters, page, pageSize });
+      if (requestSeq !== listRequestSeqRef.current) return;
       setContacts(data.contacts);
       setTotal(data.total);
     } catch (e) {
+      if (requestSeq !== listRequestSeqRef.current) return;
       setError(e instanceof Error ? e.message : 'Erro ao carregar contatos.');
     } finally {
+      if (requestSeq !== listRequestSeqRef.current) return;
       setLoading(false);
     }
-  }, [appliedFilters, buildApiFilters, page, pageSize, reloadToken]);
+  }, [appliedFilters, buildApiFilters, page, pageSize]);
 
   const handleExportCsv = useCallback(async () => {
     setExportLoading(true);
@@ -163,13 +167,14 @@ export function ContatosPage() {
   }, [filters.search]);
 
   const applyFilters = useCallback(() => {
+    const nextAppliedFilters: ContactFilters = { ...filters };
+    const payload = buildApiFilters(nextAppliedFilters);
     if (import.meta.env.DEV) {
-      console.debug('[ContatosPage] apply filters', { filters });
+      console.debug('[ContatosPage] apply filters', { uiFilters: nextAppliedFilters, payload });
     }
     setPage(1);
-    setAppliedFilters({ ...filters });
-    setReloadToken((prev) => prev + 1);
-  }, [filters]);
+    setAppliedFilters(nextAppliedFilters);
+  }, [buildApiFilters, filters]);
 
   const clearFilters = useCallback(() => {
     if (import.meta.env.DEV) {
@@ -178,7 +183,6 @@ export function ContatosPage() {
     setFilters(initialFilters);
     setAppliedFilters(initialFilters);
     setPage(1);
-    setReloadToken((prev) => prev + 1);
   }, []);
 
   if (!isAdmin) return <Navigate to="/inbox" replace />;

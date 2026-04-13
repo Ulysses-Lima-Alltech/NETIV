@@ -26,7 +26,9 @@ function contactIdParam(req: { params: Record<string, string | undefined> }): st
 
 function parseOptionalInt(value: unknown): number | undefined {
   if (value == null || value === '') return undefined;
-  const parsed = parseInt(String(value), 10);
+  const raw = String(value).trim();
+  if (!/^\d+$/.test(raw)) return undefined;
+  const parsed = parseInt(raw, 10);
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
