@@ -180,8 +180,9 @@ export function ContatosPage() {
     if (import.meta.env.DEV) {
       console.debug('[ContatosPage] clear filters');
     }
-    setFilters(initialFilters);
-    setAppliedFilters(initialFilters);
+    const resetFilters: ContactFilters = { ...initialFilters };
+    setFilters(resetFilters);
+    setAppliedFilters(resetFilters);
     setPage(1);
   }, []);
 

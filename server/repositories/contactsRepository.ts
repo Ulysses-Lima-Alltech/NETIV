@@ -259,7 +259,7 @@ export async function listContacts(params: {
   limit?: number;
   offset?: number;
 }): Promise<Array<ContactRow & { enterprise_display_name?: string | null }>> {
-  const conds: string[] = ['archived_at IS NULL'];
+  const conds: string[] = ['c.archived_at IS NULL'];
   const vals: unknown[] = [];
   let idx = 1;
   if (params.search?.trim()) {
