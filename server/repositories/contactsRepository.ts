@@ -316,6 +316,23 @@ export async function listContacts(params: {
   if (params.withoutEnterprise === true) conds.push(`(c.enterprise_id IS NULL AND NULLIF(BTRIM(c.enterprise_interest), '') IS NULL)`);
   const limit = Math.min(Math.max(params.limit ?? 100, 1), 500);
   const offset = Math.max(params.offset ?? 0, 0);
+  console.debug('[ContactsRepository] listContacts filters', {
+    search: params.search ?? null,
+    enterprise: params.enterprise ?? null,
+    enterpriseId: params.enterpriseId ?? null,
+    ownerUserId: params.ownerUserId ?? null,
+    brokerId: params.brokerId ?? null,
+    status: params.status ?? null,
+    origin: params.origin ?? null,
+    createdFrom: params.createdFrom?.toISOString?.() ?? null,
+    createdTo: params.createdTo?.toISOString?.() ?? null,
+    lastContactFrom: params.lastContactFrom?.toISOString?.() ?? null,
+    lastContactTo: params.lastContactTo?.toISOString?.() ?? null,
+    withoutBroker: params.withoutBroker ?? null,
+    withoutEnterprise: params.withoutEnterprise ?? null,
+    limit,
+    offset,
+  });
   vals.push(limit, offset);
   const { rows } = await query<ContactRow & { enterprise_display_name?: string | null }>(
     `SELECT c.*, e.name AS enterprise_display_name

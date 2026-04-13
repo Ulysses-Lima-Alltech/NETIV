@@ -61,6 +61,7 @@ export function ContatosPage() {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(50);
   const [total, setTotal] = useState(0);
+  const [reloadToken, setReloadToken] = useState(0);
 
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importOwnerId, setImportOwnerId] = useState<string>('');
@@ -89,7 +90,11 @@ export function ContatosPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await contactsApi.list({ ...buildApiFilters(appliedFilters), page, pageSize });
+      const requestFilters = buildApiFilters(appliedFilters);
+      if (import.meta.env.DEV) {
+        console.debug('[ContatosPage] list request', { requestFilters, page, pageSize, reloadToken });
+      }
+      const data = await contactsApi.list({ ...requestFilters, page, pageSize });
       setContacts(data.contacts);
       setTotal(data.total);
     } catch (e) {
@@ -97,7 +102,7 @@ export function ContatosPage() {
     } finally {
       setLoading(false);
     }
-  }, [appliedFilters, buildApiFilters, page, pageSize]);
+  }, [appliedFilters, buildApiFilters, page, pageSize, reloadToken]);
 
   const handleExportCsv = useCallback(async () => {
     setExportLoading(true);
@@ -158,14 +163,22 @@ export function ContatosPage() {
   }, [filters.search]);
 
   const applyFilters = useCallback(() => {
+    if (import.meta.env.DEV) {
+      console.debug('[ContatosPage] apply filters', { filters });
+    }
     setPage(1);
-    setAppliedFilters(filters);
+    setAppliedFilters({ ...filters });
+    setReloadToken((prev) => prev + 1);
   }, [filters]);
 
   const clearFilters = useCallback(() => {
+    if (import.meta.env.DEV) {
+      console.debug('[ContatosPage] clear filters');
+    }
     setFilters(initialFilters);
     setAppliedFilters(initialFilters);
     setPage(1);
+    setReloadToken((prev) => prev + 1);
   }, []);
 
   if (!isAdmin) return <Navigate to="/inbox" replace />;

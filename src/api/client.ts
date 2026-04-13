@@ -463,9 +463,12 @@ export const contactsApi = {
     if (params?.withoutEnterprise === true) q.set('withoutEnterprise', 'true');
     if (params?.page != null) q.set('page', String(params.page));
     if (params?.pageSize != null) q.set('pageSize', String(params.pageSize));
-    return request<{ contacts: ContactListItem[]; page: number; pageSize: number; total: number }>(
-      `/contacts${q.toString() ? `?${q.toString()}` : ''}`
-    );
+    const path = `/contacts${q.toString() ? `?${q.toString()}` : ''}`;
+    if (import.meta.env.DEV) {
+      console.debug('[contactsApi.list] query params', params);
+      console.debug('[contactsApi.list] request path', path);
+    }
+    return request<{ contacts: ContactListItem[]; page: number; pageSize: number; total: number }>(path);
   },
   exportCsv: async (params?: {
     search?: string;
@@ -496,6 +499,9 @@ export const contactsApi = {
     if (params?.lastContactTo) q.set('lastContactTo', params.lastContactTo);
     if (params?.withoutBroker === true) q.set('withoutBroker', 'true');
     if (params?.withoutEnterprise === true) q.set('withoutEnterprise', 'true');
+    if (import.meta.env.DEV) {
+      console.debug('[contactsApi.exportCsv] query params', params);
+    }
     const token = getStoredAuthToken();
     const res = await fetch(`${API_BASE}/contacts/export${q.toString() ? `?${q.toString()}` : ''}`, {
       method: 'GET',

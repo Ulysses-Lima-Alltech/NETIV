@@ -81,6 +81,7 @@ function parseContactFilters(req: { query: Record<string, unknown> }) {
 
 router.get('/', async (req, res) => {
   try {
+    console.debug('[ContactsRoute] GET /contacts query', req.query);
     const filters = parseContactFilters(req as { query: Record<string, unknown> });
     const page = Math.max(parseOptionalInt(req.query.page) ?? 1, 1);
     const pageSize = Math.min(Math.max(parseOptionalInt(req.query.pageSize) ?? parseOptionalInt(req.query.limit) ?? 100, 1), 500);
@@ -134,6 +135,7 @@ router.get('/', async (req, res) => {
 
 router.get('/export', async (req, res) => {
   try {
+    console.debug('[ContactsRoute] GET /contacts/export query', req.query);
     const filters = parseContactFilters(req as { query: Record<string, unknown> });
 
     // Exporta todos os resultados do filtro (sem paginação visual)
