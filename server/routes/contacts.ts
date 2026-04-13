@@ -2,8 +2,10 @@ import { Router } from 'express';
 import multer from 'multer';
 import { query } from '../db/pg.js';
 import {
+  countContacts,
   findContactById,
   listContacts,
+  listContactOrigins,
   setContactOwnerAdmin,
   updateContactAdmin,
 } from '../repositories/contactsRepository.js';
@@ -22,18 +24,73 @@ function contactIdParam(req: { params: Record<string, string | undefined> }): st
   return req.params.id ?? req.params['id(\\d+)'];
 }
 
+function parseOptionalInt(value: unknown): number | undefined {
+  if (value == null || value === '') return undefined;
+  const parsed = parseInt(String(value), 10);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+function parseOptionalBool(value: unknown): boolean | undefined {
+  if (value == null || value === '') return undefined;
+  const raw = String(value).trim().toLowerCase();
+  if (raw === 'true' || raw === '1') return true;
+  if (raw === 'false' || raw === '0') return false;
+  return undefined;
+}
+
+function parseDateStart(value: unknown): Date | undefined {
+  if (typeof value !== 'string' || value.trim() === '') return undefined;
+  const raw = value.trim();
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00.000Z` : raw;
+  const dt = new Date(iso);
+  return Number.isNaN(dt.getTime()) ? undefined : dt;
+}
+
+function parseDateExclusiveEnd(value: unknown): Date | undefined {
+  if (typeof value !== 'string' || value.trim() === '') return undefined;
+  const raw = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const dt = new Date(`${raw}T00:00:00.000Z`);
+    if (Number.isNaN(dt.getTime())) return undefined;
+    dt.setUTCDate(dt.getUTCDate() + 1);
+    return dt;
+  }
+  const dt = new Date(raw);
+  return Number.isNaN(dt.getTime()) ? undefined : dt;
+}
+
+function parseContactFilters(req: { query: Record<string, unknown> }) {
+  const status = req.query.status === 'assigned' || req.query.status === 'unassigned' ? req.query.status : undefined;
+  const brokerId = parseOptionalInt(req.query.brokerId);
+  return {
+    search: typeof req.query.search === 'string' ? req.query.search : undefined,
+    enterprise: typeof req.query.enterprise === 'string' ? req.query.enterprise : undefined,
+    enterpriseId: parseOptionalInt(req.query.enterpriseId),
+    ownerUserId: parseOptionalInt(req.query.ownerUserId),
+    brokerId,
+    status,
+    origin: typeof req.query.origin === 'string' ? req.query.origin : undefined,
+    createdFrom: parseDateStart(req.query.createdFrom),
+    createdTo: parseDateExclusiveEnd(req.query.createdTo),
+    lastContactFrom: parseDateStart(req.query.lastContactFrom),
+    lastContactTo: parseDateExclusiveEnd(req.query.lastContactTo),
+    withoutBroker: parseOptionalBool(req.query.withoutBroker),
+    withoutEnterprise: parseOptionalBool(req.query.withoutEnterprise),
+  };
+}
+
 router.get('/', async (req, res) => {
   try {
-    const ownerUserId = req.query.ownerUserId != null ? parseInt(String(req.query.ownerUserId), 10) : undefined;
-    const status = req.query.status === 'assigned' || req.query.status === 'unassigned' ? req.query.status : undefined;
+    const filters = parseContactFilters(req as { query: Record<string, unknown> });
+    const page = Math.max(parseOptionalInt(req.query.page) ?? 1, 1);
+    const pageSize = Math.min(Math.max(parseOptionalInt(req.query.pageSize) ?? parseOptionalInt(req.query.limit) ?? 100, 1), 500);
+    const offset = parseOptionalInt(req.query.offset) ?? (page - 1) * pageSize;
     const rows = await listContacts({
-      search: typeof req.query.search === 'string' ? req.query.search : undefined,
-      enterprise: typeof req.query.enterprise === 'string' ? req.query.enterprise : undefined,
-      ownerUserId: ownerUserId != null && !Number.isNaN(ownerUserId) ? ownerUserId : undefined,
-      status,
-      limit: req.query.limit != null ? parseInt(String(req.query.limit), 10) : 100,
-      offset: req.query.offset != null ? parseInt(String(req.query.offset), 10) : 0,
+      ...filters,
+      limit: pageSize,
+      offset: Math.max(offset, 0),
     });
+    const total = await countContacts(filters);
     const ownerIds = [...new Set(rows.map((r) => r.owner_user_id).filter((x): x is number => x != null))];
     const ownerMap = new Map<number, string>();
     if (ownerIds.length > 0) {
@@ -65,6 +122,9 @@ router.get('/', async (req, res) => {
         updatedAt: r.updated_at.toISOString(),
       };
       }),
+      page,
+      pageSize,
+      total,
     });
   } catch (e) {
     console.error('[Contacts] GET /', e);
@@ -74,8 +134,7 @@ router.get('/', async (req, res) => {
 
 router.get('/export', async (req, res) => {
   try {
-    const ownerUserId = req.query.ownerUserId != null ? parseInt(String(req.query.ownerUserId), 10) : undefined;
-    const status = req.query.status === 'assigned' || req.query.status === 'unassigned' ? req.query.status : undefined;
+    const filters = parseContactFilters(req as { query: Record<string, unknown> });
 
     // Exporta todos os resultados do filtro (sem paginação visual)
     const allRows: Awaited<ReturnType<typeof listContacts>> = [];
@@ -83,10 +142,7 @@ router.get('/export', async (req, res) => {
     let offset = 0;
     for (;;) {
       const chunk = await listContacts({
-        search: typeof req.query.search === 'string' ? req.query.search : undefined,
-        enterprise: typeof req.query.enterprise === 'string' ? req.query.enterprise : undefined,
-        ownerUserId: ownerUserId != null && !Number.isNaN(ownerUserId) ? ownerUserId : undefined,
-        status,
+        ...filters,
         limit: pageSize,
         offset,
       });
@@ -329,6 +385,16 @@ router.get('/export', async (req, res) => {
   } catch (e) {
     console.error('[Contacts] GET /export', e);
     return res.status(500).json({ error: 'Erro ao exportar contatos em CSV.' });
+  }
+});
+
+router.get('/filter-options', async (_req, res) => {
+  try {
+    const origins = await listContactOrigins();
+    res.json({ origins });
+  } catch (e) {
+    console.error('[Contacts] GET /filter-options', e);
+    res.status(500).json({ error: 'Erro ao carregar filtros de contatos.' });
   }
 });
 

@@ -1,17 +1,6 @@
 import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import type { EnterpriseRow } from '../repositories/enterpriseRepository.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-/** Raiz do monorepo (inbox-app): `server/utils` → 2 níveis; `server/dist/utils` → 3 níveis. */
-function monorepoRoot(): string {
-  const normalized = __dirname.replace(/\\/g, '/');
-  if (normalized.includes('/dist/')) {
-    return join(__dirname, '..', '..', '..');
-  }
-  return join(__dirname, '..', '..');
-}
+import { resolveMunicipiosIbgePath } from './resolveMunicipiosIbgePath.js';
 
 /** Dados do banco passados à ANA para consultas por localização. */
 export interface LocationEnterprisePayload {
@@ -43,7 +32,7 @@ let municipiosCache: MunicipioIbge[] | null = null;
 
 function loadMunicipios(): MunicipioIbge[] {
   if (municipiosCache) return municipiosCache;
-  const path = join(monorepoRoot(), 'public', 'data', 'municipios-ibge.json');
+  const path = resolveMunicipiosIbgePath();
   const raw = readFileSync(path, 'utf-8');
   municipiosCache = JSON.parse(raw) as MunicipioIbge[];
   return municipiosCache;

@@ -5,6 +5,14 @@ import type {
 } from '../types/settings.js';
 import { query } from '../db/pg.js';
 
+/** Log seguro: comprimento + últimos 4 caracteres (nunca o token completo). */
+function maskWebhookVerifyToken(secret: string): { len: number; tail: string | null; empty: boolean } {
+  const s = String(secret ?? '');
+  const t = s.replace(/\s/g, '');
+  if (!t) return { len: 0, tail: null, empty: true };
+  return { len: t.length, tail: t.length <= 4 ? '****' : `…${t.slice(-4)}`, empty: false };
+}
+
 type Row = {
   meta_access_token: string;
   whatsapp_phone_number_id: string;
@@ -50,12 +58,47 @@ export async function updateWhatsAppConfig(update: WhatsAppIntegrationConfigUpda
   const whatsappPhoneNumberId = update.whatsappPhoneNumberId ?? current?.whatsappPhoneNumberId ?? '';
   const whatsappBusinessAccountId = update.whatsappBusinessAccountId ?? current?.whatsappBusinessAccountId ?? '';
   const apiVersion = update.apiVersion ?? current?.apiVersion ?? 'v21.0';
-  const webhookVerifyToken = update.webhookVerifyToken ?? current?.webhookVerifyToken ?? '';
+  const baseWebhookVerifyToken = current?.webhookVerifyToken ?? '';
+  let webhookVerifyToken = baseWebhookVerifyToken;
+  let webhookVerifyTokenEmptyIgnored = false;
+  if (Object.prototype.hasOwnProperty.call(update as Record<string, unknown>, 'webhookVerifyToken')) {
+    const raw = (update as { webhookVerifyToken?: string | null }).webhookVerifyToken;
+    if (raw === undefined || raw === null) {
+      webhookVerifyToken = baseWebhookVerifyToken;
+    } else {
+      const trimmed = String(raw).trim();
+      if (trimmed) {
+        webhookVerifyToken = trimmed;
+      } else {
+        webhookVerifyToken = baseWebhookVerifyToken;
+        webhookVerifyTokenEmptyIgnored = true;
+      }
+    }
+  }
   const defaultSendPhoneNumber =
     update.defaultSendPhoneNumber !== undefined ? update.defaultSendPhoneNumber : current?.defaultSendPhoneNumber ?? null;
   const defaultCountryCode =
     update.defaultCountryCode !== undefined ? update.defaultCountryCode : current?.defaultCountryCode ?? null;
   const enabled = update.enabled !== undefined ? update.enabled : (current?.enabled ?? false);
+
+  const explicitWebhookVerifyToken = Object.prototype.hasOwnProperty.call(
+    update as Record<string, unknown>,
+    'webhookVerifyToken'
+  );
+  console.log('[WHATSAPP_CONFIG_WRITE]', {
+    at: new Date().toISOString(),
+    source: 'whatsappConfigRepository.updateWhatsAppConfig',
+    integration_settings_id: 1,
+    webhook_verify_token_explicit_in_payload: explicitWebhookVerifyToken,
+    prev_webhook_verify_token: maskWebhookVerifyToken(current?.webhookVerifyToken ?? ''),
+    next_webhook_verify_token: maskWebhookVerifyToken(webhookVerifyToken),
+    webhook_verify_token_empty_ignored: webhookVerifyTokenEmptyIgnored,
+  });
+  if (webhookVerifyTokenEmptyIgnored) {
+    console.log('[WHATSAPP_CONFIG_WRITE] webhook_verify_token_empty_ignored — preservando valor atual no banco', {
+      at: new Date().toISOString(),
+    });
+  }
 
   await query(
     `UPDATE integration_settings SET

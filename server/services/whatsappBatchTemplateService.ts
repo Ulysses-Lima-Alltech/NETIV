@@ -1,5 +1,9 @@
 import { query } from '../db/pg.js';
-import { getWhatsAppTemplateByKey, type WhatsAppTemplateCatalogItem } from '../catalogs/whatsappTemplates.js';
+import {
+  getWhatsAppTemplateByKey,
+  renderTemplateTextForInbox,
+  type WhatsAppTemplateCatalogItem,
+} from '../catalogs/whatsappTemplates.js';
 import { detectBatchColumns, type BatchColumnSuggestions } from '../utils/columnDetection.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
 import type { BatchMappingDto } from '../validators/whatsappBatch.js';
@@ -264,18 +268,15 @@ async function applyBatchOwnershipAndContextByPhone(params: {
 
   await query(
     `UPDATE conversations c
-     SET enterprise_id = COALESCE(c.enterprise_id, $2),
-         enterprise_origin_id = COALESCE(c.enterprise_origin_id, $2),
+     SET enterprise_id = COALESCE($2::int, c.enterprise_id),
+         enterprise_origin_id = COALESCE($2::int, c.enterprise_origin_id),
          assigned_broker_id = COALESCE($5, c.assigned_broker_id),
-         lead_source_raw = COALESCE(
-           c.lead_source_raw,
-           jsonb_build_object(
+         lead_source_raw = COALESCE(c.lead_source_raw, '{}'::jsonb) || jsonb_build_object(
              'source', 'batch_template_send',
              'sourceKey', $3::text,
             'rowNumber', $4::integer,
             'brokerId', $5::integer
-           )
-         ),
+           ),
          updated_at = NOW()
      WHERE regexp_replace(COALESCE(c.contact_phone, c.external_contact_id, ''), '\\D', '', 'g') = $1`,
     [params.phoneE164, params.enterpriseId, params.sourceKey, params.sourceRowNumber, params.brokerId]
@@ -387,7 +388,8 @@ export async function sendBatchTemplate(params: {
         null
       );
       if (result.metaMessageId) {
-        await insertMessage(conversation.id, 'assistant', `[template:${template.key}]`, result.metaMessageId);
+        const inboxContent = renderTemplateTextForInbox(template, resolved.values);
+        await insertMessage(conversation.id, 'assistant', inboxContent, result.metaMessageId);
       }
     }
     await applyBatchOwnershipAndContextByPhone({

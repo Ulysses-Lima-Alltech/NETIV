@@ -433,31 +433,69 @@ export const contactsApi = {
   list: (params?: {
     search?: string;
     enterprise?: string;
+    enterpriseId?: number;
     ownerUserId?: number;
+    brokerId?: number;
     status?: 'assigned' | 'unassigned';
-    limit?: number;
-    offset?: number;
+    origin?: string;
+    createdFrom?: string;
+    createdTo?: string;
+    lastContactFrom?: string;
+    lastContactTo?: string;
+    withoutBroker?: boolean;
+    withoutEnterprise?: boolean;
+    page?: number;
+    pageSize?: number;
   }) => {
     const q = new URLSearchParams();
     if (params?.search?.trim()) q.set('search', params.search.trim());
     if (params?.enterprise?.trim()) q.set('enterprise', params.enterprise.trim());
+    if (params?.enterpriseId != null) q.set('enterpriseId', String(params.enterpriseId));
     if (params?.ownerUserId != null) q.set('ownerUserId', String(params.ownerUserId));
+    if (params?.brokerId != null) q.set('brokerId', String(params.brokerId));
     if (params?.status) q.set('status', params.status);
-    if (params?.limit != null) q.set('limit', String(params.limit));
-    if (params?.offset != null) q.set('offset', String(params.offset));
-    return request<{ contacts: ContactListItem[] }>(`/contacts${q.toString() ? `?${q.toString()}` : ''}`);
+    if (params?.origin?.trim()) q.set('origin', params.origin.trim());
+    if (params?.createdFrom) q.set('createdFrom', params.createdFrom);
+    if (params?.createdTo) q.set('createdTo', params.createdTo);
+    if (params?.lastContactFrom) q.set('lastContactFrom', params.lastContactFrom);
+    if (params?.lastContactTo) q.set('lastContactTo', params.lastContactTo);
+    if (params?.withoutBroker === true) q.set('withoutBroker', 'true');
+    if (params?.withoutEnterprise === true) q.set('withoutEnterprise', 'true');
+    if (params?.page != null) q.set('page', String(params.page));
+    if (params?.pageSize != null) q.set('pageSize', String(params.pageSize));
+    return request<{ contacts: ContactListItem[]; page: number; pageSize: number; total: number }>(
+      `/contacts${q.toString() ? `?${q.toString()}` : ''}`
+    );
   },
   exportCsv: async (params?: {
     search?: string;
     enterprise?: string;
+    enterpriseId?: number;
     ownerUserId?: number;
+    brokerId?: number;
     status?: 'assigned' | 'unassigned';
+    origin?: string;
+    createdFrom?: string;
+    createdTo?: string;
+    lastContactFrom?: string;
+    lastContactTo?: string;
+    withoutBroker?: boolean;
+    withoutEnterprise?: boolean;
   }) => {
     const q = new URLSearchParams();
     if (params?.search?.trim()) q.set('search', params.search.trim());
     if (params?.enterprise?.trim()) q.set('enterprise', params.enterprise.trim());
+    if (params?.enterpriseId != null) q.set('enterpriseId', String(params.enterpriseId));
     if (params?.ownerUserId != null) q.set('ownerUserId', String(params.ownerUserId));
+    if (params?.brokerId != null) q.set('brokerId', String(params.brokerId));
     if (params?.status) q.set('status', params.status);
+    if (params?.origin?.trim()) q.set('origin', params.origin.trim());
+    if (params?.createdFrom) q.set('createdFrom', params.createdFrom);
+    if (params?.createdTo) q.set('createdTo', params.createdTo);
+    if (params?.lastContactFrom) q.set('lastContactFrom', params.lastContactFrom);
+    if (params?.lastContactTo) q.set('lastContactTo', params.lastContactTo);
+    if (params?.withoutBroker === true) q.set('withoutBroker', 'true');
+    if (params?.withoutEnterprise === true) q.set('withoutEnterprise', 'true');
     const token = getStoredAuthToken();
     const res = await fetch(`${API_BASE}/contacts/export${q.toString() ? `?${q.toString()}` : ''}`, {
       method: 'GET',
@@ -485,6 +523,7 @@ export const contactsApi = {
     const filename = filenameMatch?.[1] ?? 'leads_netiv.csv';
     return { blob, filename };
   },
+  filterOptions: () => request<{ origins: string[] }>('/contacts/filter-options'),
   get: (id: number) => request<ContactListItem>(`/contacts/${id}`),
   update: (
     id: number,

@@ -508,6 +508,11 @@ export interface BuildAnaSystemPromptOpts {
   isFirstAnaReply?: boolean;
   /** true quando o cliente pediu explicitamente preço/valor/parcela/entrada nesta mensagem atual. */
   explicitPriceAskedThisTurn?: boolean;
+  /**
+   * Disparo em lote com template outbound + empreendimento já vinculado (`lead_source_raw.source === batch_template_send`).
+   * Evita reapresentação e triagem genérica.
+   */
+  postOutboundTemplateBatch?: boolean;
 }
 
 /** Dados de apoio para pergunta de localização (sem impor “fases” de motor). */
@@ -534,6 +539,17 @@ function buildCustomerNameInstructions(opts: BuildAnaSystemPromptOpts): string {
   const nm = (opts.knownCustomerName || '').trim();
   const mentions = opts.customerNameMentionsSoFar ?? 0;
   const asked = opts.anaAskedCustomerName === true;
+  if (opts.postOutboundTemplateBatch === true && opts.mode === 'scoped') {
+    const entName = (opts.enterprise?.name || '').trim() || 'este empreendimento';
+    const nmNote =
+      nm.length >= 2
+        ? `Nome já referenciado no cadastro: "${nm}". `
+        : 'Nome do cliente ainda não está confirmado — só pergunte se precisar para avançar, sem dominar a resposta. ';
+    return `--- CONTINUIDADE (disparo em lote / template WhatsApp já enviado) ---
+${nmNote}
+Foco comercial: "${entName}". Não se reapresente como primeiro atendimento. Não abra triagem genérica ("em que posso ajudar", "o que você procura") nem convite amplo a explorar vários empreendimentos. Responda ao que o cliente escreveu agora, nesse contexto. Só mude de empreendimento ou tipo de imóvel se o cliente pedir explicitamente.
+`;
+  }
   if (nm.length >= 2) {
     const target = 3;
     const need = Math.max(0, target - mentions);

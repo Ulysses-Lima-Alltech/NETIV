@@ -109,19 +109,17 @@ O servidor sobe em `http://localhost:3001`. Para a Meta validar o webhook, use u
 5. Em **Environment** adicione todas as variáveis (OPENAI_*, META_*).
 6. O Render define `PORT` automaticamente; o servidor já usa `process.env.PORT`.
 
-Se o serviço no Render se chamar **netiv-webhook-370**, a URL base será:
-
-`https://netiv-webhook-370.onrender.com`
+Em produção, a URL base depende do host (ex.: AWS/CloudFront, Render, etc.); o path do webhook no servidor é **`/webhook`** (ver `server/index.ts`).
 
 ### 4. URL para cadastrar no painel da Meta
 
-**Callback URL:**
+**Callback URL (exemplo — ambiente AWS/CloudFront validado):**
 
 ```
-https://netiv-webhook-370.onrender.com/webhook
+https://d1mkg8ru36z4vf.cloudfront.net/webhook
 ```
 
-Cadastre exatamente essa URL em: Meta for Developers → Seu app → WhatsApp → Configuração → Webhook.
+Substitua pelo host público real do seu backend se for outro; o importante é que a URL termine no path **`/webhook`**. Cadastre em: Meta for Developers → Seu app → WhatsApp → Configuração → Webhook.
 
 ### 5. Verify Token
 
@@ -131,7 +129,7 @@ No painel da Meta, no campo **Verify token**, coloque o **mesmo valor** que voc�
 META_VERIFY_TOKEN=meu_token_secreto_123
 ```
 
-então no painel da Meta use `meu_token_secreto_123`. A Meta envia esse valor em `hub.verify_token` no GET; o servidor compara com `config.meta.verifyToken`.
+então no painel da Meta use `meu_token_secreto_123`. A Meta envia esse valor em `hub.verify_token` no GET; o endpoint **`GET /webhook`** (`webhookMeta.ts`) usa primeiro o token salvo em **integrações** (`webhook_verify_token` no banco), e se estiver vazio cai no `META_VERIFY_TOKEN` do ambiente (`config.meta.verifyToken`).
 
 ### 6. Campo do webhook a assinar
 

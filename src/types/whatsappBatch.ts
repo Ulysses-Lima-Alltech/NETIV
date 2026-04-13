@@ -9,6 +9,8 @@ export interface BatchTemplateCatalogItem {
   name: string;
   languageCode: 'pt_BR';
   variables: WhatsAppTemplateVariableDef[];
+  /** Corpo com {{1}}, {{2}}… (opcional; inbox usa fallback por label se ausente). */
+  messageBodyTemplate?: string;
 }
 
 export interface TemplateVariableSource {

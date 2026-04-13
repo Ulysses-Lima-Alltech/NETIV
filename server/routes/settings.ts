@@ -24,9 +24,27 @@ router.put('/whatsapp', async (req, res) => {
       return res.status(400).json({ error: msg });
     }
     const update = parsed.data;
+    console.log('[WHATSAPP_CONFIG_WRITE]', {
+      at: new Date().toISOString(),
+      route: 'PUT /api/settings/integrations/whatsapp',
+      path: req.originalUrl ?? req.path,
+      userId: req.user?.id ?? null,
+      userEmail: req.user?.email ?? null,
+      bodyKeys: update && typeof update === 'object' ? Object.keys(update as object) : [],
+      has_webhook_verify_token_key: Object.prototype.hasOwnProperty.call(
+        update as Record<string, unknown>,
+        'webhookVerifyToken'
+      ),
+    });
     let merged = await updateWhatsAppConfig(update);
     const validationError = validateConfigForEnabled(merged);
     if (validationError) {
+      console.log('[WHATSAPP_CONFIG_WRITE]', {
+        at: new Date().toISOString(),
+        route: 'PUT /api/settings/integrations/whatsapp',
+        note: 'validation_failed_rolling_back_enabled_only',
+        validationError,
+      });
       merged = await updateWhatsAppConfig({ enabled: false });
       return res.status(400).json({ error: validationError });
     }

@@ -1,12 +1,24 @@
 import type { WebhookPayload, WebhookMessage } from '../types/webhook.js';
 import { logWebhookEvent } from '../repositories/webhookEventRepository.js';
-import { findOrCreateConversation, applyInboundUserMessageResets } from '../repositories/conversationRepository.js';
+import {
+  findOrCreateConversation,
+  applyInboundUserMessageResets,
+  getConversationById,
+} from '../repositories/conversationRepository.js';
 import { insertMessage, findMessageByMetaId } from '../repositories/messageRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { scheduleWhatsAppAiAfterUserMessage } from './whatsappAiDebounce.js';
 import { leadOriginFromMetaWhatsAppMessage } from './leadOriginResolver.js';
 import { sendTextMessage } from './whatsappMetaService.js';
+import { normalizePhoneE164 } from '../utils/phone.js';
+
+/** TEMP diagnóstico: ignorar `integration_settings.ai_enabled` no agendamento da Ana. Remover após investigação. */
+const ANA_FORCE_AI_DIAGNOSTIC = true;
+
+/** Desligado enquanto se testa o bypass no conversationEngine (`ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY`). Se true, dá `continue` e o motor não corre. */
+const ANA_DIAGNOSTIC_FIXED_REPLY = false;
+const ANA_DIAGNOSTIC_FIXED_TEXT = 'Diagnóstico: recebi sua mensagem no fluxo automático.';
 
 const NON_TEXT_MESSAGE = 'No momento só consigo responder a mensagens de texto.';
 
@@ -19,6 +31,15 @@ function getMessageBody(msg: WebhookMessage): string | null {
   if (msg.text?.body) return msg.text.body;
   if (msg.image?.caption) return msg.image.caption;
   return null;
+}
+
+function anaWebhookTrace(tag: string, payload: Record<string, unknown>): void {
+  console.log(`[ANA_WEBHOOK_TRACE] ${tag}`, payload);
+}
+
+function errorStackShort(e: unknown): string | null {
+  if (!(e instanceof Error) || !e.stack) return null;
+  return e.stack.split('\n').slice(0, 5).join('\n');
 }
 
 /**
@@ -183,7 +204,27 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
   }
 
   const aiConfig = await getOpenAIConfig();
-  const aiReady = !!(aiConfig?.openaiApiKey?.trim() && aiConfig.aiEnabled);
+  const hasOpenaiKey = !!aiConfig?.openaiApiKey?.trim();
+  const aiEnabledInDb = aiConfig?.aiEnabled === true;
+  const aiReady = hasOpenaiKey && (ANA_FORCE_AI_DIAGNOSTIC || aiEnabledInDb);
+  if (ANA_FORCE_AI_DIAGNOSTIC) {
+    console.log('[ANA_FORCE_AI]', {
+      enabled: true,
+      bypassWhere: 'webhookProcessor.integration_ai_gate',
+      ai_enabled_in_db: aiConfig?.aiEnabled ?? null,
+      hasOpenaiKey,
+      aiReady,
+    });
+  }
+  console.log('[ANA_PIPELINE] integration_ai_gate', {
+    aiReady,
+    hasOpenaiKey,
+    aiEnabled: aiEnabledInDb,
+    ana_force_ai: ANA_FORCE_AI_DIAGNOSTIC,
+    note: ANA_FORCE_AI_DIAGNOSTIC
+      ? 'TEMP: ai_enabled ignorado; aiReady = hasOpenaiKey'
+      : 'Modo ANA no inbox (handoff=false) e diferente de integration_settings.ai_enabled; se aiReady=false, nao ha scheduleWhatsAppAiAfterUserMessage',
+  });
   const waReady = await canSendWhatsAppText();
 
   for (const entry of payload.entry ?? []) {
@@ -247,93 +288,235 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           messageId: mid,
           bodyPreview,
         });
-        const alreadyProcessed = await findMessageByMetaId(mid);
-        if (alreadyProcessed) {
-          console.log('[ANA_PIPELINE] dedupe_skip', {
+
+        let conversationIdForCatch: number | null = null;
+        try {
+          anaWebhookTrace('inbound_loop_enter', {
             metaMessageId: mid,
-            conversationId: alreadyProcessed.conversation_id,
             fromTail: phoneDigitsTail(msg.from, 4),
+            type: msg.type ?? 'unknown',
           });
-          continue;
-        }
 
-        const leadOrigin = leadOriginFromMetaWhatsAppMessage(
-          msg as unknown as Record<string, unknown>,
-          phoneNumberId ?? null
-        );
-        const waDisplay = whatsAppProfileDisplayName(value, String(msg.from));
-        const conv = await findOrCreateConversation(
-          'whatsapp',
-          String(msg.from),
-          msg.from,
-          phoneNumberId ?? null,
-          leadOrigin,
-          { whatsappDisplayName: waDisplay }
-        );
+          anaWebhookTrace('dedupe_check_start', { metaMessageId: mid });
+          const alreadyProcessed = await findMessageByMetaId(mid);
+          anaWebhookTrace('dedupe_check_result', {
+            metaMessageId: mid,
+            isDuplicate: !!alreadyProcessed,
+            conversationId: alreadyProcessed?.conversation_id ?? null,
+          });
+          if (alreadyProcessed) {
+            console.log('[ANA_PIPELINE] dedupe_skip', {
+              metaMessageId: mid,
+              conversationId: alreadyProcessed.conversation_id,
+              fromTail: phoneDigitsTail(msg.from, 4),
+            });
+            continue;
+          }
 
-        const type = msg.type ?? 'unknown';
-        const bodyText = getMessageBody(msg);
+          const leadOrigin = leadOriginFromMetaWhatsAppMessage(
+            msg as unknown as Record<string, unknown>,
+            phoneNumberId ?? null
+          );
+          const waDisplay = whatsAppProfileDisplayName(value, String(msg.from));
+          const fromCanon = normalizePhoneE164(String(msg.from)) ?? String(msg.from).replace(/\D/g, '');
 
-        if (type !== 'text' || !bodyText?.trim()) {
-          console.log('[ANA_PIPELINE] non_text_branch', { conversationId: conv.id, metaMessageId: mid, type });
-          if (waReady) {
-            try {
-              const r = await sendTextMessage(String(msg.from), NON_TEXT_MESSAGE);
-              console.log('[ANA_PIPELINE] non_text_reply_sent', {
+          anaWebhookTrace('find_or_create_conversation_start', { metaMessageId: mid });
+          let conv: Awaited<ReturnType<typeof findOrCreateConversation>>;
+          try {
+            conv = await findOrCreateConversation(
+              'whatsapp',
+              String(msg.from),
+              msg.from,
+              phoneNumberId ?? null,
+              leadOrigin,
+              { whatsappDisplayName: waDisplay }
+            );
+          } catch (e) {
+            anaWebhookTrace('find_or_create_conversation_error', {
+              metaMessageId: mid,
+              errorMessage: e instanceof Error ? e.message : String(e),
+              stackShort: errorStackShort(e),
+            });
+            throw e;
+          }
+          conversationIdForCatch = conv.id;
+          anaWebhookTrace('find_or_create_conversation_success', {
+            conversationId: conv.id,
+            metaMessageId: mid,
+          });
+
+          console.log('[WHATSAPP_INBOUND_THREAD]', {
+            metaMessageId: mid,
+            conversationId: conv.id,
+            fromCanon,
+            phoneNumberId: phoneNumberId ?? null,
+            enterpriseIdOnConv: conv.enterprise_id ?? null,
+          });
+
+          const type = msg.type ?? 'unknown';
+          const bodyText = getMessageBody(msg);
+
+          if (type !== 'text' || !bodyText?.trim()) {
+            console.log('[ANA_PIPELINE] non_text_branch', { conversationId: conv.id, metaMessageId: mid, type });
+            if (waReady) {
+              try {
+                const r = await sendTextMessage(String(msg.from), NON_TEXT_MESSAGE);
+                console.log('[ANA_PIPELINE] non_text_reply_sent', {
+                  conversationId: conv.id,
+                  metaMessageId: mid,
+                  ok: r.success,
+                });
+              } catch (e) {
+                console.error('[ANA_PIPELINE] non_text_reply_failed', e instanceof Error ? e.message : String(e));
+              }
+            } else {
+              console.log('[ANA_PIPELINE] non_text_reply_skipped', { reason: 'whatsapp_nao_configurado' });
+            }
+            continue;
+          }
+
+          const text = bodyText.trim();
+
+          anaWebhookTrace('insert_message_start', {
+            conversationId: conv.id,
+            metaMessageId: mid,
+            textLen: text.length,
+          });
+          try {
+            await insertMessage(conv.id, 'user', text, mid);
+            anaWebhookTrace('insert_message_success', { conversationId: conv.id, metaMessageId: mid });
+          } catch (e) {
+            const code = e && typeof e === 'object' && 'code' in e ? String((e as { code: unknown }).code) : '';
+            anaWebhookTrace('insert_message_error', {
+              conversationId: conv.id,
+              metaMessageId: mid,
+              pgCode: code || undefined,
+              errorMessage: e instanceof Error ? e.message : String(e),
+              stackShort: errorStackShort(e),
+            });
+            console.log('[ANA_PIPELINE] inbound_skip', {
+              reason: code === '23505' ? 'insert_unique_meta_message_id_conflict' : 'insert_message_failed',
+              conversationId: conv.id,
+              metaMessageId: mid,
+              fromTail: phoneDigitsTail(msg.from, 4),
+              pgCode: code || undefined,
+              detail: e instanceof Error ? e.message : String(e),
+            });
+            throw e;
+          }
+
+          anaWebhookTrace('inbound_resets_start', { conversationId: conv.id, metaMessageId: mid });
+          try {
+            await applyInboundUserMessageResets(conv.id);
+            anaWebhookTrace('inbound_resets_success', { conversationId: conv.id, metaMessageId: mid });
+          } catch (e) {
+            anaWebhookTrace('inbound_resets_error', {
+              conversationId: conv.id,
+              metaMessageId: mid,
+              errorMessage: e instanceof Error ? e.message : String(e),
+              stackShort: errorStackShort(e),
+            });
+            throw e;
+          }
+
+          console.log('[ANA_PIPELINE] message_persisted', {
+            conversationId: conv.id,
+            metaMessageId: mid,
+            textLen: text.length,
+            from: msg.from ?? null,
+            fromTail: phoneDigitsTail(msg.from, 4),
+            externalContactIdTail: phoneDigitsTail(conv.external_contact_id, 4),
+            contactPhoneTail: phoneDigitsTail(conv.contact_phone, 4),
+          });
+
+          if (ANA_DIAGNOSTIC_FIXED_REPLY) {
+            const live = await getConversationById(conv.id);
+            const inHandoff = live?.handoff === true || live?.classification === 'Handoff';
+            console.log('[ANA_DIAGNOSTIC_FIXED_REPLY] received_inbound', {
+              conversationId: conv.id,
+              metaMessageId: mid,
+              inHandoff,
+            });
+            if (inHandoff) {
+              console.log('[ANA_DIAGNOSTIC_FIXED_REPLY] skip_handoff', { conversationId: conv.id });
+            } else if (!waReady) {
+              console.log('[ANA_DIAGNOSTIC_FIXED_REPLY] send_error', {
                 conversationId: conv.id,
                 metaMessageId: mid,
-                ok: r.success,
+                reason: 'whatsapp_nao_configurado',
               });
-            } catch (e) {
-              console.error('[ANA_PIPELINE] non_text_reply_failed', e instanceof Error ? e.message : String(e));
+              continue;
+            } else {
+              console.log('[ANA_DIAGNOSTIC_FIXED_REPLY] sending', {
+                conversationId: conv.id,
+                metaMessageId: mid,
+                toTail: phoneDigitsTail(msg.from, 4),
+              });
+              try {
+                const dr = await sendTextMessage(String(msg.from), ANA_DIAGNOSTIC_FIXED_TEXT);
+                if (dr.success && dr.metaMessageId) {
+                  await insertMessage(conv.id, 'assistant', ANA_DIAGNOSTIC_FIXED_TEXT, dr.metaMessageId);
+                  console.log('[ANA_DIAGNOSTIC_FIXED_REPLY] sent_success', {
+                    conversationId: conv.id,
+                    outboundMetaMessageId: dr.metaMessageId,
+                  });
+                } else {
+                  console.log('[ANA_DIAGNOSTIC_FIXED_REPLY] send_error', {
+                    conversationId: conv.id,
+                    error: dr.error ?? null,
+                    code: dr.code ?? null,
+                  });
+                }
+              } catch (e) {
+                console.log('[ANA_DIAGNOSTIC_FIXED_REPLY] send_error', {
+                  conversationId: conv.id,
+                  detail: e instanceof Error ? e.message : String(e),
+                });
+              }
+              continue;
             }
-          } else {
-            console.log('[ANA_PIPELINE] non_text_reply_skipped', { reason: 'whatsapp_nao_configurado' });
           }
-          continue;
-        }
 
-        const text = bodyText.trim();
-        try {
-          await insertMessage(conv.id, 'user', text, mid);
-          await applyInboundUserMessageResets(conv.id);
+          if (!aiReady) {
+            console.log('[ANA_PIPELINE] ai_schedule_skipped', {
+              conversationId: conv.id,
+              metaMessageId: mid,
+              fromTail: phoneDigitsTail(msg.from, 4),
+              reason: !aiConfig ? 'sem_config_integracao' : !hasOpenaiKey ? 'sem_api_key' : 'unexpected',
+              hasOpenaiKey,
+              aiEnabled: aiEnabledInDb,
+              ana_force_ai: ANA_FORCE_AI_DIAGNOSTIC,
+            });
+            continue;
+          }
+
+          anaWebhookTrace('schedule_call_start', { conversationId: conv.id, metaMessageId: mid });
+          try {
+            scheduleWhatsAppAiAfterUserMessage(conv.id, String(msg.from), mid);
+            anaWebhookTrace('schedule_call_success', { conversationId: conv.id, metaMessageId: mid });
+          } catch (e) {
+            anaWebhookTrace('schedule_call_error', {
+              conversationId: conv.id,
+              metaMessageId: mid,
+              errorMessage: e instanceof Error ? e.message : String(e),
+              stackShort: errorStackShort(e),
+            });
+            throw e;
+          }
+          console.log('[ANA_PIPELINE] ai_schedule_called', {
+            conversationId: conv.id,
+            metaMessageId: mid,
+            fromTail: phoneDigitsTail(msg.from, 4),
+          });
         } catch (e) {
-          const code = e && typeof e === 'object' && 'code' in e ? String((e as { code: unknown }).code) : '';
-          console.log('[ANA_PIPELINE] inbound_skip', {
-            reason: code === '23505' ? 'insert_unique_meta_message_id_conflict' : 'insert_message_failed',
-            conversationId: conv.id,
+          anaWebhookTrace('inbound_message_processing_error', {
+            conversationId: conversationIdForCatch,
             metaMessageId: mid,
-            fromTail: phoneDigitsTail(msg.from, 4),
-            pgCode: code || undefined,
-            detail: e instanceof Error ? e.message : String(e),
+            errorMessage: e instanceof Error ? e.message : String(e),
+            stackShort: errorStackShort(e),
           });
-          continue;
+          throw e;
         }
-        console.log('[ANA_PIPELINE] message_persisted', {
-          conversationId: conv.id,
-          metaMessageId: mid,
-          textLen: text.length,
-          from: msg.from ?? null,
-          fromTail: phoneDigitsTail(msg.from, 4),
-          externalContactIdTail: phoneDigitsTail(conv.external_contact_id, 4),
-          contactPhoneTail: phoneDigitsTail(conv.contact_phone, 4),
-        });
-
-        if (!aiReady) {
-          console.log('[ANA_PIPELINE] ai_schedule_skipped', {
-            conversationId: conv.id,
-            metaMessageId: mid,
-            fromTail: phoneDigitsTail(msg.from, 4),
-            reason: !aiConfig ? 'sem_config_integracao' : !aiConfig.openaiApiKey?.trim() ? 'sem_api_key' : 'ai_disabled',
-          });
-          continue;
-        }
-        scheduleWhatsAppAiAfterUserMessage(conv.id, String(msg.from));
-        console.log('[ANA_PIPELINE] ai_schedule_called', {
-          conversationId: conv.id,
-          metaMessageId: mid,
-          fromTail: phoneDigitsTail(msg.from, 4),
-        });
       }
     }
   }

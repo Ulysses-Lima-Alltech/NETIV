@@ -152,12 +152,21 @@ export async function findOrCreateConversation(
   leadOrigin?: LeadOriginInput | null,
   opts?: { whatsappDisplayName?: string | null } | null
 ): Promise<ConversationRow> {
-  const normalizedPhone = normalizePhoneE164(contactPhone ?? externalId);
+  let effectiveExternalId = externalId;
+  let effectiveContactPhone = contactPhone;
+  if (channel === 'whatsapp') {
+    const canon = normalizePhoneE164(contactPhone ?? externalId) ?? String(externalId ?? '').replace(/\D/g, '');
+    if (canon) {
+      effectiveExternalId = canon;
+      effectiveContactPhone = canon;
+    }
+  }
+  const normalizedPhone = normalizePhoneE164(effectiveContactPhone ?? effectiveExternalId);
   const contact =
     normalizedPhone != null
       ? await findOrCreateContactByPhone({
           phoneE164: normalizedPhone,
-          phoneDisplay: contactPhone ?? externalId,
+          phoneDisplay: effectiveContactPhone ?? effectiveExternalId,
           fullName: opts?.whatsappDisplayName ?? null,
           source: 'whatsapp',
         })
@@ -194,8 +203,8 @@ export async function findOrCreateConversation(
      RETURNING *`,
     [
       channel,
-      externalId,
-      contactPhone,
+      effectiveExternalId,
+      effectiveContactPhone,
       waName,
       metaPhoneNumberId,
       contact?.id ?? null,

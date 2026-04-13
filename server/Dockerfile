@@ -1,10 +1,11 @@
+# Build só o backend (tsc). Evita `vite build`/esbuild no Alpine (erro de versão host/binary).
 FROM node:22-alpine AS builder
 WORKDIR /app
 
-COPY package*.json ./
+COPY server/package*.json ./
 RUN npm ci
 
-COPY . .
+COPY server/ ./
 RUN npm run build
 
 FROM node:22-alpine
@@ -13,13 +14,14 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 
-COPY package*.json ./
+COPY server/package*.json ./
 RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/db ./db
 COPY --from=builder /app/scripts ./scripts
-COPY --from=builder /app/package.json ./package.json
+
+COPY public/data/municipios-ibge.json ./public/data/municipios-ibge.json
 
 EXPOSE 3000
 

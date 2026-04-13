@@ -15,7 +15,8 @@ import { syncAllConversationOwnersFromContacts } from './repositories/contactsRe
 
 const app = express();
 app.use(cors({ origin: true }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.use('/webhook', webhookMetaRouter);
 app.use('/api', apiRouter);

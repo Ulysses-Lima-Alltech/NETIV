@@ -36,6 +36,7 @@ router.post('/', (req: Request, res: Response) => {
     console.log('[ANA_PIPELINE] webhook_body_invalid');
     return;
   }
+  console.log('[ANA_PIPELINE] webhook_post_accepted_enqueue');
   setImmediate(() => {
     processIncomingWebhook(payload).catch((e) => {
       console.error('[ANA_PIPELINE] processIncomingWebhook', e instanceof Error ? e.message : String(e));

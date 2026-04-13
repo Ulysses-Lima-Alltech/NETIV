@@ -14,15 +14,42 @@ import { useAuth } from '../contexts/AuthContext';
 const inputCls =
   'w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px] bg-white focus:border-[#3B82F6] focus:ring-[3px] focus:ring-[rgba(59,130,246,0.15)] focus:outline-none';
 
+type ContactFilters = {
+  search: string;
+  enterpriseId: string;
+  brokerId: string;
+  status: '' | 'assigned' | 'unassigned';
+  origin: string;
+  createdFrom: string;
+  createdTo: string;
+  lastContactFrom: string;
+  lastContactTo: string;
+  withoutBroker: boolean;
+  withoutEnterprise: boolean;
+};
+
+const initialFilters: ContactFilters = {
+  search: '',
+  enterpriseId: '',
+  brokerId: '',
+  status: '',
+  origin: '',
+  createdFrom: '',
+  createdTo: '',
+  lastContactFrom: '',
+  lastContactTo: '',
+  withoutBroker: false,
+  withoutEnterprise: false,
+};
+
 export function ContatosPage() {
   const { isAdmin } = useAuth();
   const [contacts, setContacts] = useState<ContactListItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState('');
-  const [enterprise, setEnterprise] = useState('');
-  const [status, setStatus] = useState<'assigned' | 'unassigned' | ''>('');
-  const [ownerUserId, setOwnerUserId] = useState<string>('');
+  const [filters, setFilters] = useState<ContactFilters>(initialFilters);
+  const [appliedFilters, setAppliedFilters] = useState<ContactFilters>(initialFilters);
   const [brokers, setBrokers] = useState<Array<{ id: number; fullName: string }>>([]);
+  const [origins, setOrigins] = useState<string[]>([]);
   const [editContact, setEditContact] = useState<ContactListItem | null>(null);
   const [modalEnterpriseTouched, setModalEnterpriseTouched] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
@@ -31,40 +58,53 @@ export function ContatosPage() {
   const [error, setError] = useState<string | null>(null);
   const [exportLoading, setExportLoading] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(50);
+  const [total, setTotal] = useState(0);
 
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importOwnerId, setImportOwnerId] = useState<string>('');
   const [preview, setPreview] = useState<ContactImportPreview | null>(null);
   const [importResult, setImportResult] = useState<string | null>(null);
 
+  const buildApiFilters = useCallback((source: ContactFilters) => {
+    const enterpriseId = source.enterpriseId ? parseInt(source.enterpriseId, 10) : undefined;
+    const brokerId = source.brokerId ? parseInt(source.brokerId, 10) : undefined;
+    return {
+      search: source.search || undefined,
+      enterpriseId: enterpriseId != null && !Number.isNaN(enterpriseId) ? enterpriseId : undefined,
+      brokerId: brokerId != null && !Number.isNaN(brokerId) ? brokerId : undefined,
+      status: source.status || undefined,
+      origin: source.origin || undefined,
+      createdFrom: source.createdFrom || undefined,
+      createdTo: source.createdTo || undefined,
+      lastContactFrom: source.lastContactFrom || undefined,
+      lastContactTo: source.lastContactTo || undefined,
+      withoutBroker: source.withoutBroker || undefined,
+      withoutEnterprise: source.withoutEnterprise || undefined,
+    };
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await contactsApi.list({
-        search: search || undefined,
-        enterprise: enterprise || undefined,
-        status: status || undefined,
-        ownerUserId: ownerUserId ? parseInt(ownerUserId, 10) : undefined,
-        limit: 200,
-      });
+      const data = await contactsApi.list({ ...buildApiFilters(appliedFilters), page, pageSize });
       setContacts(data.contacts);
+      setTotal(data.total);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao carregar contatos.');
     } finally {
       setLoading(false);
     }
-  }, [search, enterprise, status, ownerUserId]);
+  }, [appliedFilters, buildApiFilters, page, pageSize]);
 
   const handleExportCsv = useCallback(async () => {
     setExportLoading(true);
     setExportError(null);
     try {
       const { blob, filename } = await contactsApi.exportCsv({
-        search: search || undefined,
-        enterprise: enterprise || undefined,
-        status: status || undefined,
-        ownerUserId: ownerUserId ? parseInt(ownerUserId, 10) : undefined,
+        ...buildApiFilters(appliedFilters),
       });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -79,7 +119,7 @@ export function ContatosPage() {
     } finally {
       setExportLoading(false);
     }
-  }, [search, enterprise, status, ownerUserId]);
+  }, [appliedFilters, buildApiFilters]);
 
   useEffect(() => {
     corretoresApi
@@ -96,8 +136,37 @@ export function ContatosPage() {
   }, []);
 
   useEffect(() => {
+    contactsApi
+      .filterOptions()
+      .then((d) => setOrigins(d.origins))
+      .catch(() => setOrigins([]));
+  }, []);
+
+  useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setAppliedFilters((prev) => {
+        if (prev.search === filters.search) return prev;
+        setPage(1);
+        return { ...prev, search: filters.search };
+      });
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [filters.search]);
+
+  const applyFilters = useCallback(() => {
+    setPage(1);
+    setAppliedFilters(filters);
+  }, [filters]);
+
+  const clearFilters = useCallback(() => {
+    setFilters(initialFilters);
+    setAppliedFilters(initialFilters);
+    setPage(1);
+  }, []);
 
   if (!isAdmin) return <Navigate to="/inbox" replace />;
 
@@ -110,10 +179,30 @@ export function ContatosPage() {
       <div className="max-w-[1280px] mx-auto px-6 py-6 space-y-5">
         <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
           <h2 className="text-[14px] font-semibold">Filtros</h2>
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
-            <input className={inputCls} placeholder="Buscar por nome ou número" value={search} onChange={(e) => setSearch(e.target.value)} />
-            <input className={inputCls} placeholder="Empreendimento" value={enterprise} onChange={(e) => setEnterprise(e.target.value)} />
-            <select className={inputCls} value={ownerUserId} onChange={(e) => setOwnerUserId(e.target.value)}>
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+            <input
+              className={inputCls}
+              placeholder="Buscar por nome ou número"
+              value={filters.search}
+              onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
+            />
+            <select
+              className={inputCls}
+              value={filters.enterpriseId}
+              onChange={(e) => setFilters((prev) => ({ ...prev, enterpriseId: e.target.value }))}
+            >
+              <option value="">Todos os empreendimentos</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <select
+              className={inputCls}
+              value={filters.brokerId}
+              onChange={(e) => setFilters((prev) => ({ ...prev, brokerId: e.target.value }))}
+            >
               <option value="">Todos os corretores</option>
               {brokers.map((b) => (
                 <option key={b.id} value={b.id}>
@@ -121,18 +210,93 @@ export function ContatosPage() {
                 </option>
               ))}
             </select>
-            <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value as 'assigned' | 'unassigned' | '')}>
+            <select
+              className={inputCls}
+              value={filters.status}
+              onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value as ContactFilters['status'] }))}
+            >
               <option value="">Todos os status</option>
               <option value="assigned">Atribuído</option>
               <option value="unassigned">Sem corretor</option>
             </select>
+            <select className={inputCls} value={filters.origin} onChange={(e) => setFilters((prev) => ({ ...prev, origin: e.target.value }))}>
+              <option value="">Todas as origens</option>
+              {origins.map((origin) => (
+                <option key={origin} value={origin}>
+                  {origin}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-8 gap-3 items-end">
+            <label className="text-[12px] text-[#374151]">
+              Criado de
+              <input
+                className={inputCls}
+                type="date"
+                value={filters.createdFrom}
+                onChange={(e) => setFilters((prev) => ({ ...prev, createdFrom: e.target.value }))}
+              />
+            </label>
+            <label className="text-[12px] text-[#374151]">
+              Criado até
+              <input
+                className={inputCls}
+                type="date"
+                value={filters.createdTo}
+                onChange={(e) => setFilters((prev) => ({ ...prev, createdTo: e.target.value }))}
+              />
+            </label>
+            <label className="text-[12px] text-[#374151]">
+              Último contato de
+              <input
+                className={inputCls}
+                type="date"
+                value={filters.lastContactFrom}
+                onChange={(e) => setFilters((prev) => ({ ...prev, lastContactFrom: e.target.value }))}
+              />
+            </label>
+            <label className="text-[12px] text-[#374151]">
+              Último contato até
+              <input
+                className={inputCls}
+                type="date"
+                value={filters.lastContactTo}
+                onChange={(e) => setFilters((prev) => ({ ...prev, lastContactTo: e.target.value }))}
+              />
+            </label>
+            <label className="inline-flex items-center gap-2 text-[13px] text-[#111827]">
+              <input
+                type="checkbox"
+                checked={filters.withoutBroker}
+                onChange={(e) => setFilters((prev) => ({ ...prev, withoutBroker: e.target.checked }))}
+              />
+              Sem corretor
+            </label>
+            <label className="inline-flex items-center gap-2 text-[13px] text-[#111827]">
+              <input
+                type="checkbox"
+                checked={filters.withoutEnterprise}
+                onChange={(e) => setFilters((prev) => ({ ...prev, withoutEnterprise: e.target.checked }))}
+              />
+              Sem empreendimento
+            </label>
             <button
               type="button"
-              onClick={() => void load()}
+              onClick={applyFilters}
               className="px-4 py-2 rounded-[10px] bg-[#2563EB] text-white text-[13px] font-semibold hover:bg-[#1D4ED8]"
             >
               Filtrar
             </button>
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="px-4 py-2 rounded-[10px] bg-[#F3F4F6] text-[#111827] text-[13px] font-semibold hover:bg-[#E5E7EB]"
+            >
+              Limpar filtros
+            </button>
+          </div>
+          <div className="flex justify-end">
             <button
               type="button"
               onClick={() => void handleExportCsv()}
@@ -259,6 +423,30 @@ export function ContatosPage() {
                 )}
               </tbody>
             </table>
+          </div>
+          <div className="px-3 py-2 border-t border-[#E5E7EB] flex items-center justify-between text-[12px] text-[#6B7280]">
+            <span>
+              {total > 0 ? `${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)} de ${total}` : '0 resultados'}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
+                className="px-3 py-1 rounded-[8px] border border-[#D1D5DB] text-[12px] disabled:opacity-60"
+              >
+                Anterior
+              </button>
+              <span>Página {page}</span>
+              <button
+                type="button"
+                disabled={page * pageSize >= total}
+                onClick={() => setPage((prev) => prev + 1)}
+                className="px-3 py-1 rounded-[8px] border border-[#D1D5DB] text-[12px] disabled:opacity-60"
+              >
+                Próxima
+              </button>
+            </div>
           </div>
         </section>
       </div>

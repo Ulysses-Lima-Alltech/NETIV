@@ -245,8 +245,17 @@ export async function releaseContactOwnersByCorretor(corretorId: number): Promis
 export async function listContacts(params: {
   search?: string;
   enterprise?: string;
+  enterpriseId?: number;
   ownerUserId?: number;
+  brokerId?: number;
   status?: 'assigned' | 'unassigned';
+  origin?: string;
+  createdFrom?: Date;
+  createdTo?: Date;
+  lastContactFrom?: Date;
+  lastContactTo?: Date;
+  withoutBroker?: boolean;
+  withoutEnterprise?: boolean;
   limit?: number;
   offset?: number;
 }): Promise<Array<ContactRow & { enterprise_display_name?: string | null }>> {
@@ -265,13 +274,46 @@ export async function listContacts(params: {
     vals.push(`%${params.enterprise.trim()}%`);
     idx++;
   }
-  if (params.ownerUserId != null) {
-    conds.push(`owner_user_id = $${idx}`);
-    vals.push(params.ownerUserId);
+  if (params.enterpriseId != null) {
+    conds.push(`c.enterprise_id = $${idx}`);
+    vals.push(params.enterpriseId);
     idx++;
   }
-  if (params.status === 'assigned') conds.push('owner_user_id IS NOT NULL');
-  if (params.status === 'unassigned') conds.push('owner_user_id IS NULL');
+  const brokerId = params.brokerId ?? params.ownerUserId;
+  if (brokerId != null) {
+    conds.push(`c.owner_user_id = $${idx}`);
+    vals.push(brokerId);
+    idx++;
+  }
+  if (params.status === 'assigned') conds.push('c.owner_user_id IS NOT NULL');
+  if (params.status === 'unassigned') conds.push('c.owner_user_id IS NULL');
+  if (params.origin?.trim()) {
+    conds.push(`c.source = $${idx}`);
+    vals.push(params.origin.trim());
+    idx++;
+  }
+  if (params.createdFrom != null) {
+    conds.push(`c.created_at >= $${idx}`);
+    vals.push(params.createdFrom);
+    idx++;
+  }
+  if (params.createdTo != null) {
+    conds.push(`c.created_at < $${idx}`);
+    vals.push(params.createdTo);
+    idx++;
+  }
+  if (params.lastContactFrom != null) {
+    conds.push(`c.last_contact_at >= $${idx}`);
+    vals.push(params.lastContactFrom);
+    idx++;
+  }
+  if (params.lastContactTo != null) {
+    conds.push(`c.last_contact_at < $${idx}`);
+    vals.push(params.lastContactTo);
+    idx++;
+  }
+  if (params.withoutBroker === true) conds.push('c.owner_user_id IS NULL');
+  if (params.withoutEnterprise === true) conds.push(`(c.enterprise_id IS NULL AND NULLIF(BTRIM(c.enterprise_interest), '') IS NULL)`);
   const limit = Math.min(Math.max(params.limit ?? 100, 1), 500);
   const offset = Math.max(params.offset ?? 0, 0);
   vals.push(limit, offset);
@@ -285,6 +327,95 @@ export async function listContacts(params: {
     vals
   );
   return rows;
+}
+
+export async function countContacts(params: {
+  search?: string;
+  enterprise?: string;
+  enterpriseId?: number;
+  ownerUserId?: number;
+  brokerId?: number;
+  status?: 'assigned' | 'unassigned';
+  origin?: string;
+  createdFrom?: Date;
+  createdTo?: Date;
+  lastContactFrom?: Date;
+  lastContactTo?: Date;
+  withoutBroker?: boolean;
+  withoutEnterprise?: boolean;
+}): Promise<number> {
+  const conds: string[] = ['c.archived_at IS NULL'];
+  const vals: unknown[] = [];
+  let idx = 1;
+  if (params.search?.trim()) {
+    conds.push(`(COALESCE(c.full_name,'') ILIKE $${idx} OR c.phone_e164 ILIKE $${idx})`);
+    vals.push(`%${params.search.trim()}%`);
+    idx++;
+  }
+  if (params.enterprise?.trim()) {
+    conds.push(`(COALESCE(e.name,'') ILIKE $${idx} OR COALESCE(c.enterprise_interest,'') ILIKE $${idx})`);
+    vals.push(`%${params.enterprise.trim()}%`);
+    idx++;
+  }
+  if (params.enterpriseId != null) {
+    conds.push(`c.enterprise_id = $${idx}`);
+    vals.push(params.enterpriseId);
+    idx++;
+  }
+  const brokerId = params.brokerId ?? params.ownerUserId;
+  if (brokerId != null) {
+    conds.push(`c.owner_user_id = $${idx}`);
+    vals.push(brokerId);
+    idx++;
+  }
+  if (params.status === 'assigned') conds.push('c.owner_user_id IS NOT NULL');
+  if (params.status === 'unassigned') conds.push('c.owner_user_id IS NULL');
+  if (params.origin?.trim()) {
+    conds.push(`c.source = $${idx}`);
+    vals.push(params.origin.trim());
+    idx++;
+  }
+  if (params.createdFrom != null) {
+    conds.push(`c.created_at >= $${idx}`);
+    vals.push(params.createdFrom);
+    idx++;
+  }
+  if (params.createdTo != null) {
+    conds.push(`c.created_at < $${idx}`);
+    vals.push(params.createdTo);
+    idx++;
+  }
+  if (params.lastContactFrom != null) {
+    conds.push(`c.last_contact_at >= $${idx}`);
+    vals.push(params.lastContactFrom);
+    idx++;
+  }
+  if (params.lastContactTo != null) {
+    conds.push(`c.last_contact_at < $${idx}`);
+    vals.push(params.lastContactTo);
+    idx++;
+  }
+  if (params.withoutBroker === true) conds.push('c.owner_user_id IS NULL');
+  if (params.withoutEnterprise === true) conds.push(`(c.enterprise_id IS NULL AND NULLIF(BTRIM(c.enterprise_interest), '') IS NULL)`);
+  const { rows } = await query<{ total: string }>(
+    `SELECT COUNT(*)::text AS total
+     FROM contacts c
+     LEFT JOIN enterprises e ON e.id = c.enterprise_id
+     WHERE ${conds.join(' AND ')}`,
+    vals
+  );
+  return parseInt(rows[0]?.total ?? '0', 10) || 0;
+}
+
+export async function listContactOrigins(): Promise<string[]> {
+  const { rows } = await query<{ source: string }>(
+    `SELECT DISTINCT source
+     FROM contacts
+     WHERE archived_at IS NULL
+       AND NULLIF(BTRIM(source), '') IS NOT NULL
+     ORDER BY source ASC`
+  );
+  return rows.map((row) => row.source);
 }
 
 export async function updateContactAdmin(

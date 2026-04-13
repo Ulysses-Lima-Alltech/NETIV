@@ -40,7 +40,11 @@ import {
 } from '../repositories/enterpriseRepository.js';
 import { loadRankedKnowledgeChunksForPrompt } from '../repositories/enterpriseKnowledgeChunkRepository.js';
 import { isPipelineStale } from './conversationPipelineToken.js';
-import { generateChatCompletion, type ChatMessage } from './openaiService.js';
+import {
+  generateChatCompletion,
+  type ChatMessage,
+  type GenerateCompletionResult,
+} from './openaiService.js';
 import {
   resolveEnterpriseLocationContext,
   findMunicipioInMessage,
@@ -103,9 +107,90 @@ import {
 import { applyOperationalFactGuard } from '../utils/anaOperationalFactGuard.js';
 import { resolveOperationalFactAnswer } from '../utils/anaOperationalFactResolver.js';
 
+/** TEMP diagnóstico: ignorar `integration_settings.ai_enabled` no motor da Ana. Remover após investigação. */
+const ANA_FORCE_AI_DIAGNOSTIC = true;
+
+/** Desligado para rastrear o fluxo real com [ANA_ENGINE_TRACE]. */
+const ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY = false;
+const ANA_ENGINE_DIAGNOSTIC_TEXT = 'Diagnóstico: cheguei no conversation engine.';
+
+/** TEMP: logs [ANA_ENGINE_TRACE] (OpenAI/parse/envio). Desligar com false. */
+const ANA_ENGINE_TRACE = true;
+
+function anaEngineTrace(tag: string, payload: Record<string, unknown>): void {
+  if (!ANA_ENGINE_TRACE) return;
+  console.log(`[ANA_ENGINE_TRACE] ${tag}`, payload);
+}
+
+/** Motivo do fallback com `ANA_TECHNICAL_FALLBACK_NEUTRAL` (log [ANA_FALLBACK_TRACE]). */
+type AnaFallbackTraceReason =
+  | 'openai_failed'
+  | 'openai_http_401'
+  | 'openai_http_403'
+  | 'openai_http_404'
+  | 'openai_http_429'
+  | 'empty_raw_content'
+  | 'parse_rejected'
+  | 'structured_missing_reply'
+  | 'unexpected_error';
+
+function computeAnaTechnicalFallbackTraceReason(
+  result: GenerateCompletionResult,
+  parseAttempted: boolean
+): AnaFallbackTraceReason {
+  if (!result.success) {
+    const err = (result.error || '').toLowerCase();
+    if (/resposta vazia|choices vazio|sem content/.test(err)) {
+      return 'empty_raw_content';
+    }
+    const st = result.httpStatus;
+    if (st === 401) return 'openai_http_401';
+    if (st === 403) return 'openai_http_403';
+    if (st === 404) return 'openai_http_404';
+    if (st === 429) return 'openai_http_429';
+    if (err.includes('abort') || err.includes('aborted') || err.includes('timeout')) {
+      return 'unexpected_error';
+    }
+    if (st != null && st >= 400) return 'openai_failed';
+    return 'openai_failed';
+  }
+  const raw = (result.content || '').trim();
+  if (!raw) {
+    return 'empty_raw_content';
+  }
+  if (parseAttempted) {
+    return 'parse_rejected';
+  }
+  return 'unexpected_error';
+}
+
+function logAnaFallbackTrace(params: {
+  reason: AnaFallbackTraceReason;
+  conversationId: number;
+  result: GenerateCompletionResult;
+  parseAttempted: boolean;
+}): void {
+  const { reason, conversationId, result, parseAttempted } = params;
+  const raw = result.content ?? '';
+  const hasRaw = raw.trim().length > 0;
+  console.log('[ANA_FALLBACK_TRACE] fallback_selected', true);
+  console.log('[ANA_FALLBACK_TRACE] reason', reason);
+  console.log('[ANA_FALLBACK_TRACE] conversationId', conversationId);
+  console.log('[ANA_FALLBACK_TRACE] hasRawOpenAIResponse', hasRaw);
+  console.log('[ANA_FALLBACK_TRACE] hasStructuredReply', false);
+  console.log('[ANA_FALLBACK_TRACE] rawOpenAIResponseLen', raw.length);
+  console.log('[ANA_FALLBACK_TRACE] parseAttempted', parseAttempted);
+  console.log('[ANA_FALLBACK_TRACE] httpStatus', result.httpStatus ?? null);
+}
+
 function anaPhoneTail(raw: string | null | undefined, len = 6): string | null {
   const d = String(raw ?? '').replace(/\D/g, '');
   return d.length ? d.slice(-len) : null;
+}
+
+function leadSourceRawIsBatchTemplate(raw: unknown): boolean {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  return (raw as { source?: string }).source === 'batch_template_send';
 }
 
 function anaTechnicalFallbackStructured(classificationHint: string | null): AnaStructuredReply {
@@ -477,7 +562,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       console.warn('[ANA DEBUG] OpenAI API Key não configurada — ignorando mensagem.');
       return;
     }
-    if (!aiConfig.aiEnabled) {
+    if (!aiConfig.aiEnabled && !ANA_FORCE_AI_DIAGNOSTIC) {
       console.log('[ANA_PIPELINE] engine_skip', {
         reason: 'ai_disabled_in_db',
         conversationId,
@@ -485,6 +570,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
       console.log('[ANA DEBUG] aiEnabled check blocked — ai_enabled=false no banco.');
       return;
+    }
+    if (ANA_FORCE_AI_DIAGNOSTIC && !aiConfig.aiEnabled) {
+      console.log('[ANA_FORCE_AI]', {
+        enabled: true,
+        bypassWhere: 'conversationEngine.handleIncomingMessage',
+        ai_enabled_in_db: aiConfig.aiEnabled,
+        hasOpenaiKey: true,
+        conversationId,
+      });
     }
     console.log('[ANA DEBUG] aiEnabled check passed');
 
@@ -501,6 +595,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let flowStateParsed: CommercialFlowState = parseCommercialFlowState(conv.commercial_flow_state) ?? {};
     const previousProductTypeHintForLog = flowStateParsed.productTypeHint ?? null;
     console.log('[ANA DEBUG] conversation loaded', { conversationId, handoff: conv.handoff, classification: conv.classification });
+    console.log('[ANA_PIPELINE] conversation_state', {
+      conversationId,
+      enterpriseId: conv.enterprise_id ?? null,
+      enterpriseOriginId: conv.enterprise_origin_id ?? null,
+      handoff: conv.handoff,
+      classification: conv.classification,
+      manualClosedAt: conv.manual_closed_at != null,
+    });
     console.log('[ANA_PIPELINE] conversation_phone_context', {
       conversationId,
       toPhoneTail: anaPhoneTail(toPhoneNumber),
@@ -522,6 +624,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     // Decisão final SEMPRE com base no estado mais recente. Modo handoff: NÃO responder. Modo ANA: SEMPRE responder via IA.
     if (effectiveConv.handoff === true || effectiveConv.classification === 'Handoff') {
+      if (ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY) {
+        console.log('[ANA_ENGINE_DIAGNOSTIC] skip_handoff', {
+          conversationId,
+          handoff: effectiveConv.handoff,
+          classification: effectiveConv.classification,
+        });
+      }
       console.log('[ANA_PIPELINE] engine_blocked_handoff', {
         conversationId,
         handoff: effectiveConv.handoff,
@@ -600,7 +709,49 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    if (ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY) {
+      console.log('[ANA_ENGINE_DIAGNOSTIC] engine_entered', {
+        conversationId,
+        inboundMetaMessageId: inboundMetaFromCtx ?? null,
+      });
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        console.log('[ANA_ENGINE_DIAGNOSTIC] send_error', {
+          conversationId,
+          reason: 'pipeline_stale',
+          replyPipelineToken: replyPipelineToken ?? null,
+        });
+        return;
+      }
+      console.log('[ANA_ENGINE_DIAGNOSTIC] sending', {
+        conversationId,
+        toPhoneTail: anaPhoneTail(toPhoneNumber),
+      });
+      try {
+        const diagSend = await sendTextMessage(toPhoneNumber, ANA_ENGINE_DIAGNOSTIC_TEXT);
+        if (diagSend.success && diagSend.metaMessageId) {
+          await insertMessage(conversationId, 'assistant', ANA_ENGINE_DIAGNOSTIC_TEXT, diagSend.metaMessageId);
+          console.log('[ANA_ENGINE_DIAGNOSTIC] sent_success', {
+            conversationId,
+            outboundMetaMessageId: diagSend.metaMessageId,
+          });
+        } else {
+          console.log('[ANA_ENGINE_DIAGNOSTIC] send_error', {
+            conversationId,
+            error: diagSend.error ?? null,
+            code: diagSend.code ?? null,
+          });
+        }
+      } catch (e) {
+        console.log('[ANA_ENGINE_DIAGNOSTIC] send_error', {
+          conversationId,
+          detail: e instanceof Error ? e.message : String(e),
+        });
+      }
+      return;
+    }
+
     const rows = await getMessagesByConversationId(conversationId);
+    anaEngineTrace('rows_loaded', { conversationId, rowCount: rows.length });
     const lastAssistantBeforeUser = [...rows].reverse().find((m) => m.role === 'assistant');
     const lastAssistantPlain = lastAssistantBeforeUser?.content?.trim() || null;
     const trustedCustomerName =
@@ -844,6 +995,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       flowState: flowStateParsed,
     };
 
+    anaEngineTrace('prompt_build_start', { conversationId, historyCount, mode });
     const promptOpts: BuildAnaSystemPromptOpts = {
       mode,
       enterprise: ent,
@@ -864,6 +1016,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       persistedContextBlock,
       isFirstAnaReply,
       explicitPriceAskedThisTurn,
+      postOutboundTemplateBatch:
+        mode === 'scoped' && leadSourceRawIsBatchTemplate(effectiveConv.lead_source_raw),
     };
 
     const rawModels = await getIntegrationModelStringsRaw();
@@ -926,6 +1080,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     messages.push({ role: 'user', content: trimmed });
 
+    anaEngineTrace('prompt_build_done', {
+      conversationId,
+      systemPromptLen: systemPrompt.length,
+      messagesCount: messages.length,
+    });
+
     console.log('[ANA MODEL] modelo_final_selecionado', {
       conversationId,
       model,
@@ -934,6 +1094,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       mode,
       enterprise: ent?.name ?? null,
       appointmentPreflight: appointmentPreflight.active,
+    });
+    anaEngineTrace('openai_request_start', {
+      conversationId,
+      model,
+      messagesCount: messages.length,
+    });
+    anaEngineTrace('generateChatCompletion_before', {
+      conversationId,
+      model,
+      messagesCount: messages.length,
     });
     const result = await generateChatCompletion({
       apiKey: aiConfig.openaiApiKey,
@@ -944,18 +1114,35 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       maxTokens: Math.max(aiConfig.maxTokens ?? 600, 800),
       responseFormatJson: true,
     });
+    anaEngineTrace('generateChatCompletion_after', {
+      conversationId,
+      success: result.success,
+      httpStatus: result.httpStatus ?? null,
+      rawLen: (result.content || '').length,
+      errorPreview: result.error ? String(result.error).slice(0, 200) : null,
+    });
 
     const openAiApiError =
       !result.success && result.error ? result.error.slice(0, 800) : null;
     const openAiHttpStatus = result.httpStatus;
 
     if (result.success) {
+      anaEngineTrace('openai_request_success', {
+        conversationId,
+        rawLen: (result.content || '').length,
+        httpStatus: result.httpStatus ?? null,
+      });
       console.log('[ANA MODEL] resposta_recebida', { conversationId, model, hasContent: !!result.content?.trim() });
       console.log('[ANA_MODEL_OUTPUT]', {
         conversationId,
         raw_model_output_preview: (result.content || '').slice(0, 260),
       });
     } else {
+      anaEngineTrace('openai_request_error', {
+        conversationId,
+        error: result.error ?? null,
+        httpStatus: openAiHttpStatus ?? null,
+      });
       console.error('[ANA MODEL] chamada_falhou', {
         conversationId,
         model,
@@ -967,21 +1154,52 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const openAiCalled = true;
     let replySource: 'openai' | 'technical_fallback' = 'openai';
     let fallbackReason: string | null = null;
-    let structured: AnaStructuredReply | null =
-      result.success && result.content
-        ? parseAnaJson(result.content, { conversationId, messageId: inboundMetaMessageId })
-        : null;
+    const rawContent = result.content ?? '';
+    const rawTrimmed = rawContent.trim();
+    const parseAttempted = result.success && rawTrimmed.length > 0;
+    anaEngineTrace('parse_start', {
+      conversationId,
+      rawLen: rawContent.length,
+      willCallParse: parseAttempted,
+    });
+    anaEngineTrace('parseAnaJson_before', {
+      conversationId,
+      rawLen: rawTrimmed.length,
+      willCallParse: parseAttempted,
+    });
+    let structured: AnaStructuredReply | null = parseAttempted
+      ? parseAnaJson(rawContent, { conversationId, messageId: inboundMetaMessageId })
+      : null;
+    anaEngineTrace('parseAnaJson_after', {
+      conversationId,
+      ok: structured != null,
+      hasStructuredReply: !!(structured?.reply?.trim()),
+    });
+    if (structured) {
+      anaEngineTrace('parse_success', {
+        conversationId,
+        hasStructuredReply: !!(structured.reply?.trim()),
+      });
+    } else {
+      anaEngineTrace('parse_error', {
+        conversationId,
+        reason: !result.success ? 'openai_failed' : !rawTrimmed ? 'empty_raw_content' : 'parse_rejected_or_null',
+      });
+    }
     console.log('[ANA_PARSE_FLOW]', {
       conversationId,
       parseAnaJson_success: Boolean(structured),
       parseAnaJson_fail: !structured,
     });
     if (!structured) {
-      fallbackReason = !result.success
-        ? 'api_error'
-        : !result.content?.trim()
-          ? 'empty_content'
-          : 'parse_rejected';
+      const traceReason = computeAnaTechnicalFallbackTraceReason(result, parseAttempted);
+      logAnaFallbackTrace({
+        reason: traceReason,
+        conversationId,
+        result,
+        parseAttempted,
+      });
+      fallbackReason = traceReason;
       replySource = 'technical_fallback';
 
       const isGreetingForFallback = isBareGreetingOnly(trimmed);
@@ -1429,6 +1647,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         });
         return;
       }
+      anaEngineTrace('final_send_start', { conversationId, phase: 'doc_ack', replyLen: ackText.length });
       const sendAckResult = await sendTextMessage(toPhoneNumber, ackText);
       if (isPipelineStale(conversationId, replyPipelineToken)) {
         console.log('[ANA_DOC_PIPELINE_STALE_ABORT]', {
@@ -1439,6 +1658,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         return;
       }
       if (!sendAckResult.success || !sendAckResult.metaMessageId) {
+        anaEngineTrace('final_send_error', {
+          conversationId,
+          phase: 'doc_ack',
+          error: sendAckResult.error ?? null,
+          code: sendAckResult.code ?? null,
+        });
         console.log('[ANA_PIPELINE] engine_send_fail', {
           conversationId,
           phase: 'doc_ack_after_media',
@@ -1448,6 +1673,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         return;
       }
       await insertMessage(conversationId, 'assistant', ackText, sendAckResult.metaMessageId);
+      anaEngineTrace('final_send_success', {
+        conversationId,
+        phase: 'doc_ack',
+        outboundMetaMessageId: sendAckResult.metaMessageId,
+      });
       console.log('[ANA_DOC_ACK_SENT]', {
         conversationId,
         outboundMetaMessageId: sendAckResult.metaMessageId,
@@ -1499,6 +1729,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    anaEngineTrace('final_reply_choice_before', {
+      conversationId,
+      replySource,
+      fallbackReason: fallbackReason ?? null,
+      replyBodyLen: replyBody.length,
+      branch: shouldAttemptDocSend ? 'doc_or_material' : 'normal_finalize',
+    });
+
     let replyText: string;
     if (shouldAttemptDocSend) {
       if (mediaOutcome != null && !mediaOutcome.ok) {
@@ -1524,6 +1762,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationMode: mode,
       }).slice(0, 4000);
     }
+
+    anaEngineTrace('final_reply_choice_after', {
+      conversationId,
+      replySource,
+      replyTextLen: replyText.length,
+      usedTechnicalFallbackNeutral: replyText.trim() === ANA_TECHNICAL_FALLBACK_NEUTRAL.trim(),
+    });
+
+    anaEngineTrace('final_reply_ready', {
+      conversationId,
+      replyTextLen: replyText.length,
+      hasStructuredReply: !!(structured?.reply?.trim()),
+      replySource,
+      fallbackReason: fallbackReason ?? null,
+    });
 
     const lastContent = (lastAsstDup?.content || '').trim();
     const ageDup = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
@@ -1560,9 +1813,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    anaEngineTrace('final_send_start', {
+      conversationId,
+      phase: 'ana_main_reply',
+      replyLen: replyText.length,
+    });
     const sendResult = await sendTextMessage(toPhoneNumber, replyText);
     if (sendResult.success && sendResult.metaMessageId) {
       await insertMessage(conversationId, 'assistant', replyText, sendResult.metaMessageId);
+      anaEngineTrace('final_send_success', {
+        conversationId,
+        phase: 'ana_main_reply',
+        outboundMetaMessageId: sendResult.metaMessageId,
+      });
       console.log('[ANA_PIPELINE] engine_send_success', {
         conversationId,
         phase: 'ana_main_reply',
@@ -1625,6 +1888,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         replyLen: replyText.length,
       });
     } else {
+      anaEngineTrace('final_send_error', {
+        conversationId,
+        phase: 'ana_main_reply',
+        error: sendResult.error ?? null,
+        code: sendResult.code ?? null,
+      });
       console.log('[ANA_PIPELINE] engine_send_fail', {
         conversationId,
         phase: 'ana_main_reply',

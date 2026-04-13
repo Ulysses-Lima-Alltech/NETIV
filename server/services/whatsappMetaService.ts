@@ -93,11 +93,15 @@ export async function sendTextMessage(to: string, text: string): Promise<SendTex
       ? 'Nenhuma config no banco'
       : `token=${c.metaAccessToken ? 'sim' : 'NÃO'}, phoneId=${c.whatsappPhoneNumberId ? 'sim' : 'NÃO'}`;
     console.error('[WhatsAppMeta] sendTextMessage: config inválida —', detail);
+    console.log('[ANA_PIPELINE] meta_text_send_outcome', { success: false, reason: 'whatsapp_config_invalid', detail });
     if (!c) return { success: false, error: 'Integração WhatsApp não configurada no banco.' };
     return { success: false, error: `Token ou Phone Number ID ausente (${detail}).` };
   }
   const normalizedTo = to.replace(/\D/g, '');
-  if (!normalizedTo) return { success: false, error: 'Número inválido.' };
+  if (!normalizedTo) {
+    console.log('[ANA_PIPELINE] meta_text_send_outcome', { success: false, reason: 'invalid_to_number' });
+    return { success: false, error: 'Número inválido.' };
+  }
   const url = `${META_GRAPH_BASE}/${config.apiVersion}/${config.whatsappPhoneNumberId}/messages`;
   const requestBody = {
     messaging_product: 'whatsapp',
@@ -136,6 +140,13 @@ export async function sendTextMessage(to: string, text: string): Promise<SendTex
         httpStatus: res.status,
         error: err ?? data,
       });
+      console.log('[ANA_PIPELINE] meta_text_send_outcome', {
+        success: false,
+        httpStatus: res.status,
+        code: err?.code,
+        windowClosed: isMetaWindowClosedError({ code: err?.code, message: err?.message }),
+        toTail: normalizedTo.slice(-6),
+      });
       return { success: false, error: err?.message ?? `HTTP ${res.status}`, code: err?.code };
     }
     const mid = (data as MetaSendMessageResponse).messages?.[0]?.id;
@@ -145,12 +156,28 @@ export async function sendTextMessage(to: string, text: string): Promise<SendTex
         error: 'Resposta sem messages[0].id',
         body: data,
       });
+      console.log('[ANA_PIPELINE] meta_text_send_outcome', {
+        success: false,
+        httpStatus: res.status,
+        reason: 'no_messages_id_in_response',
+        toTail: normalizedTo.slice(-6),
+      });
       return { success: false, error: 'Meta não retornou o ID da mensagem.' };
     }
+    console.log('[ANA_PIPELINE] meta_text_send_outcome', {
+      success: true,
+      outboundMetaMessageId: mid,
+      toTail: normalizedTo.slice(-6),
+    });
     return { success: true, metaMessageId: mid };
   } catch (e) {
     clearTimeout(timeout);
     console.error('[MANUAL_SEND_ERROR] erro bruto da Meta', e);
+    console.log('[ANA_PIPELINE] meta_text_send_outcome', {
+      success: false,
+      reason: 'fetch_exception',
+      toTail: normalizedTo.slice(-6),
+    });
     return { success: false, error: e instanceof Error ? e.message : 'Erro ao enviar' };
   }
 }
@@ -169,12 +196,13 @@ export async function sendTemplateMessage(
 
   const url = `${META_GRAPH_BASE}/${config.apiVersion}/${config.whatsappPhoneNumberId}/messages`;
   const bodyParams = buildTemplateParams(template, ctx);
+  // Nome na Meta = `key` do catálogo (snake_case); o campo `name` legível do catálogo não é o ID do template.
   const requestBody = {
     messaging_product: 'whatsapp',
     to: normalizedTo,
     type: 'template',
     template: {
-      name: template.name,
+      name: template.key,
       language: { code: template.languageCode },
       ...(bodyParams.length > 0
         ? {
