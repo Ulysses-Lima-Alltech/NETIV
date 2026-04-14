@@ -75,6 +75,7 @@ import {
   sanitizeFirstCampaignReplyShape,
   sanitizeFinancialNegotiationOverreach,
 } from '../utils/anaReplyFinalize.js';
+import { applyAnaCommercialSingleAxisGuard } from '../utils/anaCommercialAxisGuard.js';
 import {
   extractCustomerNameFromUserUtterance,
   replyExplicitlyAsksCustomerName,
@@ -1532,6 +1533,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           afterPreview: financialGuard.text.slice(0, 120),
         });
         replyBody = financialGuard.text;
+      }
+    }
+
+    {
+      const axisGuard = applyAnaCommercialSingleAxisGuard({
+        reply: replyBody,
+        userMessage: trimmed,
+        isFirstAnaReply,
+        enterpriseName: ent?.name ?? null,
+        conversationId,
+      });
+      if (axisGuard.changed) {
+        replyBody = axisGuard.text;
       }
     }
 
