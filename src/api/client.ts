@@ -978,7 +978,10 @@ export const usersApi = {
 
 // API de disparo em lote (templates WhatsApp; rotas /whatsapp-batch no servidor)
 export const whatsappBatchApi = {
-  listTemplates: () => request<{ templates: BatchTemplateCatalogItem[] }>('/whatsapp-batch/templates'),
+  listTemplates: () =>
+    request<{ templates: BatchTemplateCatalogItem[] }>(
+      `/whatsapp-batch/templates?ts=${Date.now()}`
+    ),
   parseSpreadsheet: (file: File, opts?: { templateKey?: string }) => {
     const formData = new FormData();
     formData.append('file', file);

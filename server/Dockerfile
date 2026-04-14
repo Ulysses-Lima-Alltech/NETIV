@@ -21,8 +21,6 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/db ./db
 COPY --from=builder /app/scripts ./scripts
 
-COPY public/data/municipios-ibge.json ./public/data/municipios-ibge.json
-
 EXPOSE 3000
 
 CMD ["npm", "run", "start:prod"]
