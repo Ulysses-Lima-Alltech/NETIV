@@ -24,6 +24,7 @@ import {
 import {
   tryMatchEnterpriseFromUserCorpus,
   explainEnterpriseMentionMatch,
+  enterpriseHasStrongNameSignalInTrimmed,
 } from '../repositories/enterpriseMatch.js';
 import {
   getActiveEnterpriseById,
@@ -368,6 +369,13 @@ function userExplicitlyAskedPriceInCurrentTurn(message: string): boolean {
     /\bparcela(?:s)?\b/,
   ];
   return explicitAskPatterns.some((re) => re.test(n));
+}
+
+function userAskedAboutSpecificEnterprise(message: string): boolean {
+  const n = normText(message);
+  if (!n) return false;
+  if (/\b(station|empreendimento|residencial|condominio|condomínio)\b/.test(n)) return true;
+  return /\b(sobre|do|da|de|no|na)\s+[a-z0-9][a-z0-9\s-]{1,60}\b/.test(n);
 }
 
 /** Intervalo curto entre mídia confirmada e texto complementar (naturalidade no WhatsApp). */
@@ -791,9 +799,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let scopeMutated = false;
     const entFocusForScope =
       effectiveConv.enterprise_id != null ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;
-    if (entFocusForScope) {
+    if (globalMatchId != null && effectiveConv.enterprise_id == null) {
+      await setConversationEnterpriseId(conversationId, globalMatchId);
+      await mergeConversationCommercialFlowState(conversationId, resetCommercialScopeHints(flowStateParsed));
+      scopeMutated = true;
+    } else if (entFocusForScope) {
+      const explicitEnterpriseAsk = userAskedAboutSpecificEnterprise(trimmed);
+      const userStillRefersToCurrentFocus = enterpriseHasStrongNameSignalInTrimmed(
+        entFocusForScope.id,
+        trimmed,
+        allActiveEnterprises
+      );
       if (globalMatchId != null && globalMatchId !== entFocusForScope.id) {
         await setConversationEnterpriseId(conversationId, globalMatchId);
+        await mergeConversationCommercialFlowState(conversationId, resetCommercialScopeHints(flowStateParsed));
+        scopeMutated = true;
+      } else if (explicitEnterpriseAsk && globalMatchId == null && !userStillRefersToCurrentFocus) {
+        // Cliente puxou novo empreendimento nominal, mas sem match único;
+        // limpa foco antigo para evitar fallback sequestrado por contexto anterior.
+        await setConversationEnterpriseId(conversationId, null);
         await mergeConversationCommercialFlowState(conversationId, resetCommercialScopeHints(flowStateParsed));
         scopeMutated = true;
       } else if (locGlobal != null) {

@@ -321,6 +321,17 @@ export function applyAnaCommercialSingleAxisGuard(opts: {
   const raw = (opts.reply || '').trim();
   if (!raw) return { text: raw, changed: false, detected: [], chosen: null };
 
+  const focusedEnterprise = (opts.enterpriseName || '').trim();
+  if (focusedEnterprise) {
+    const rawNorm = norm(raw);
+    const focusedNorm = norm(focusedEnterprise);
+    if (focusedNorm && rawNorm.includes(focusedNorm)) {
+      // Com empreendimento já resolvido e citado na resposta, evita reescrever
+      // para um texto genérico que pode perder o contexto comercial correto.
+      return { text: raw, changed: false, detected: detectCommercialAxes(raw), chosen: null };
+    }
+  }
+
   const multiPortfolio = (raw.match(/📍/g) || []).length >= 2;
   if (multiPortfolio) {
     return { text: raw, changed: false, detected: detectCommercialAxes(raw), chosen: null };
