@@ -300,7 +300,7 @@ export function sanitizeFirstReplyCommercialLeak(reply: string): {
 
   if (kept.length === 0) {
     return {
-      text: 'Posso te passar um resumo rápido do empreendimento e te orientar no próximo passo.',
+      text: 'Posso te explicar por partes, bem direitinho. Por onde você quer começar: valor, planta ou localização?',
       removedCommercialSentences: removed,
     };
   }
@@ -443,7 +443,7 @@ export function sanitizeFinancialNegotiationOverreach(reply: string): {
 
 /**
  * Guard estrutural para a PRIMEIRA resposta de lead de campanha:
- * - mantém no máximo 3 frases
+ * - mantém no máximo 2 frases (alinha à progressão comercial: uma informação principal por mensagem)
  * - mantém no máximo 1 pergunta
  * - remove excesso sem reescrever o conteúdo-base
  */
@@ -495,7 +495,7 @@ export function sanitizeFirstCampaignReplyShape(reply: string): {
       questionCount += 1;
     }
     kept.push(p.trim());
-    if (kept.length >= 3) break;
+    if (kept.length >= 2) break;
   }
 
   const trimmedSentences = Math.max(0, parts.length - kept.length);
