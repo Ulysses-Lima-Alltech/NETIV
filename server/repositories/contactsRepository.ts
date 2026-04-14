@@ -521,3 +521,10 @@ export async function setContactOwnerAdmin(params: {
   return row;
 }
 
+export async function updateContactType(contactId: number, type: string): Promise<void> {
+  await query(
+    `UPDATE contacts SET contact_type = $1, updated_at = NOW() WHERE id = $2`,
+    [type, contactId]
+  );
+}
+

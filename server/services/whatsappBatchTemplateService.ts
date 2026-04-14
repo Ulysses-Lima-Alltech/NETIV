@@ -13,6 +13,7 @@ import { insertMessage } from '../repositories/messageRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { sendTemplateMessage } from './whatsappMetaService.js';
 import { getCorretorById } from '../repositories/corretorRepository.js';
+import { findOrCreateContactByPhone, updateContactType } from '../repositories/contactsRepository.js';
 
 export interface BatchPreviewRow {
   rowNumber: number;
@@ -379,6 +380,14 @@ export async function sendBatchTemplate(params: {
     });
 
     if (config?.whatsappPhoneNumberId) {
+      const contact = await findOrCreateContactByPhone({
+        phoneE164: normalizedPhone,
+        phoneDisplay: normalizedPhone,
+        source: 'whatsapp',
+      });
+      if (template.key === 'convite_meeting_ecogarden' || template.key === 'novo_agendamento_corretor') {
+        await updateContactType(contact.id, 'INTERNO');
+      }
       const conversation = await findOrCreateConversation(
         'whatsapp',
         normalizedPhone,

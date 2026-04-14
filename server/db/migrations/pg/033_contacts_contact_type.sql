@@ -1,0 +1,2 @@
+ALTER TABLE contacts
+  ADD COLUMN IF NOT EXISTS contact_type TEXT DEFAULT 'CLIENT';
