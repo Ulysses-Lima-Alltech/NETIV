@@ -84,6 +84,8 @@ import {
 import {
   buildUserUtterancesContext,
   computeAppointmentPreflight,
+  ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY,
+  ANA_FALLBACK_APPOINTMENT_FLOW_REPLY,
 } from '../utils/anaAppointmentIntent.js';
 import { extractLeadDataFromConversation } from './leadWalletExtractionService.js';
 import { registerAnaAppointmentIfConfirmed } from './anaAppointmentFromChatService.js';
@@ -369,6 +371,67 @@ function userExplicitlyAskedPriceInCurrentTurn(message: string): boolean {
     /\bparcela(?:s)?\b/,
   ];
   return explicitAskPatterns.some((re) => re.test(n));
+}
+
+function looksLikeStandaloneNameReply(message: string): boolean {
+  const t = (message || '').trim();
+  if (!t || t.length > 40 || t.includes('?') || t.includes('@')) return false;
+  return /^[A-Za-zÀ-ÿ]+(?:\s+[A-Za-zÀ-ÿ]+){0,2}$/.test(t);
+}
+
+function isAppointmentContextualQuestion(message: string): boolean {
+  const n = normText(message);
+  if (!n) return false;
+  return (
+    /\b(quem eu procuro|quem procuro|com quem falo|quem me atende)\b/.test(n) ||
+    /\b(onde eu chego|onde chego|qual o endereco|qual endereco|qual o endereço|endereco|endereço)\b/.test(n) ||
+    /\b(estacionamento|tem vaga|tem estacionamento)\b/.test(n)
+  );
+}
+
+function isShortGenericFollowUpMessage(message: string): boolean {
+  const n = normText(message);
+  if (!n) return false;
+  if (n.length > 48) return false;
+  return (
+    n === 'sim' ||
+    n === 'continua' ||
+    /\b(quero mais detalhes|me fala mais|me fale mais|mais detalhes)\b/.test(n)
+  );
+}
+
+function expandShortFollowUpWithContext(params: {
+  userMessage: string;
+  enterpriseName: string | null;
+  awaitingName: boolean;
+  appointmentActive: boolean;
+}): { expanded: string; expandedApplied: boolean; reason: string | null } {
+  const raw = (params.userMessage || '').trim();
+  if (!raw) return { expanded: raw, expandedApplied: false, reason: null };
+
+  if (params.awaitingName && looksLikeStandaloneNameReply(raw)) {
+    return { expanded: raw, expandedApplied: false, reason: 'awaiting_name_raw_preserved' };
+  }
+  if (!isShortGenericFollowUpMessage(raw)) {
+    return { expanded: raw, expandedApplied: false, reason: null };
+  }
+
+  const ent = (params.enterpriseName || '').trim();
+  if (ent) {
+    return {
+      expanded: `${raw} sobre ${ent}`.trim(),
+      expandedApplied: true,
+      reason: 'generic_followup_with_active_enterprise',
+    };
+  }
+  if (params.appointmentActive) {
+    return {
+      expanded: `${raw} sobre a visita agendada`.trim(),
+      expandedApplied: true,
+      reason: 'generic_followup_with_appointment_context',
+    };
+  }
+  return { expanded: raw, expandedApplied: false, reason: 'no_context_to_expand' };
 }
 
 function userAskedAboutSpecificEnterprise(message: string): boolean {
@@ -763,8 +826,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     anaEngineTrace('rows_loaded', { conversationId, rowCount: rows.length });
     const lastAssistantBeforeUser = [...rows].reverse().find((m) => m.role === 'assistant');
     const lastAssistantPlain = lastAssistantBeforeUser?.content?.trim() || null;
-    const trustedCustomerName =
+    let trustedCustomerName =
       extractCustomerNameFromUserUtterance(trimmed, { lastAssistantPlain }) || null;
+    if (!trustedCustomerName && effectiveConv.ana_asked_customer_name === true) {
+      trustedCustomerName =
+        extractCustomerNameFromUserUtterance(trimmed, { lastAssistantPlain: 'Como posso te chamar?' }) || null;
+    }
     if (trustedCustomerName) {
       const mergedName = await mergeConfirmedCustomerNameIfEmpty(conversationId, trustedCustomerName);
       if (mergedName) {
@@ -784,17 +851,49 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     const allActiveEnterprises = await listEnterprises(true);
     const fullUserUtterances = buildUserUtterancesContext(rows);
-    const triageRequestedProductType = inferRequestedProductType(trimmed, fullUserUtterances);
+    const currentFocusedEnterprise =
+      effectiveConv.enterprise_id != null ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;
+    const appointmentPreflight = computeAppointmentPreflight(trimmed, fullUserUtterances);
+    const awaitingNameForExpansion =
+      !(effectiveConv.customer_name || '').trim() && effectiveConv.ana_asked_customer_name === true;
+    const expansion = expandShortFollowUpWithContext({
+      userMessage: trimmed,
+      enterpriseName: currentFocusedEnterprise?.name ?? null,
+      awaitingName: awaitingNameForExpansion,
+      appointmentActive: appointmentPreflight.active,
+    });
+    const userMessageForReasoning = expansion.expandedApplied ? expansion.expanded : trimmed;
+    if (expansion.expandedApplied || expansion.reason) {
+      console.log('[ANA_CONTEXT_EXPANSION]', {
+        conversationId,
+        reason: expansion.reason,
+        original_user_message: trimmed.slice(0, 220),
+        expanded_user_message: userMessageForReasoning.slice(0, 220),
+        enterpriseId: currentFocusedEnterprise?.id ?? null,
+        enterpriseName: currentFocusedEnterprise?.name ?? null,
+        appointmentActive: appointmentPreflight.active,
+        awaitingName: awaitingNameForExpansion,
+      });
+    }
+
+    const triageRequestedProductType = inferRequestedProductType(userMessageForReasoning, fullUserUtterances);
     const acceptedTiposPool = expandTiposForCommercialPool(triageRequestedProductType);
     const enterprisesPool =
       acceptedTiposPool == null
         ? allActiveEnterprises
         : allActiveEnterprises.filter((e) => acceptedTiposPool.includes(e.tipo));
-    const appointmentPreflight = computeAppointmentPreflight(trimmed, fullUserUtterances);
-    const locGlobal = resolveEnterpriseLocationContext(trimmed, fullUserUtterances, allActiveEnterprises);
+    const locGlobal = resolveEnterpriseLocationContext(
+      userMessageForReasoning,
+      fullUserUtterances,
+      allActiveEnterprises
+    );
 
-    const globalMatchId = tryMatchEnterpriseFromUserCorpus(trimmed, allActiveEnterprises);
-    const mentionExplain = explainEnterpriseMentionMatch(trimmed, allActiveEnterprises, globalMatchId);
+    const globalMatchId = tryMatchEnterpriseFromUserCorpus(userMessageForReasoning, allActiveEnterprises);
+    const mentionExplain = explainEnterpriseMentionMatch(
+      userMessageForReasoning,
+      allActiveEnterprises,
+      globalMatchId
+    );
 
     let scopeMutated = false;
     const entFocusForScope =
@@ -804,10 +903,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       await mergeConversationCommercialFlowState(conversationId, resetCommercialScopeHints(flowStateParsed));
       scopeMutated = true;
     } else if (entFocusForScope) {
-      const explicitEnterpriseAsk = userAskedAboutSpecificEnterprise(trimmed);
+      const explicitEnterpriseAsk = userAskedAboutSpecificEnterprise(userMessageForReasoning);
       const userStillRefersToCurrentFocus = enterpriseHasStrongNameSignalInTrimmed(
         entFocusForScope.id,
-        trimmed,
+        userMessageForReasoning,
         allActiveEnterprises
       );
       if (globalMatchId != null && globalMatchId !== entFocusForScope.id) {
@@ -843,15 +942,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     const locationQueryContext = resolveEnterpriseLocationContext(
-      trimmed,
+      userMessageForReasoning,
       fullUserUtterances,
       enterprisesPool
     );
 
-    const muni = findMunicipioInMessage(`${trimmed}\n${fullUserUtterances}`);
+    const muni = findMunicipioInMessage(`${userMessageForReasoning}\n${fullUserUtterances}`);
     console.log('[ANA_INTENT]', {
       conversationId,
-      userText: trimmed.slice(0, 500),
+      userText: userMessageForReasoning.slice(0, 500),
       inferredProductType: triageRequestedProductType,
       inferredCity: muni?.n ?? null,
       mentionedEnterpriseName: mentionExplain.bestEnterpriseName,
@@ -859,7 +958,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
     console.log('[ANA_MENTION_DEBUG]', {
       conversationId,
-      userText: trimmed.slice(0, 400),
+      userText: userMessageForReasoning.slice(0, 400),
       mentionedEnterpriseName: mentionExplain.bestEnterpriseName,
       matchedByName: mentionExplain.matchedByName,
       matchedBySlug: mentionExplain.matchedBySlug,
@@ -911,7 +1010,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
-    const chunkHint = [trimmed, fullUserUtterances].filter(Boolean).join('\n').slice(0, 12_000);
+    const chunkHint = [userMessageForReasoning, fullUserUtterances].filter(Boolean).join('\n').slice(0, 12_000);
     const knowledgeParts: string[] = [];
     const knowledgeIds =
       ent != null
@@ -1005,7 +1104,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     console.log('[ANA_SCOPE_DEBUG]', {
       conversationId,
-      userText: trimmed.slice(0, 400),
+      userText: userMessageForReasoning.slice(0, 400),
       stage: conversationPhase,
       productTypeHint: flowStateParsed.productTypeHint ?? triageRequestedProductType,
       lastCatalogOfferedNames: flowStateParsed.lastCatalogOfferedNames ?? null,
@@ -1064,7 +1163,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     console.log('[ANA_CHAT_AUDIT]', {
       conversationId,
       messageId: inboundMetaMessageId,
-      userText: trimmed.slice(0, 500),
+      userText: userMessageForReasoning.slice(0, 500),
       historyCount,
       stateBefore,
       phase: 'pre_openai',
@@ -1083,7 +1182,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     console.log('[ANA_HISTORY_LOAD]', {
       conversationId,
-      userText: trimmed.slice(0, 500),
+      userText: userMessageForReasoning.slice(0, 500),
       historyCount,
       stage: flowStateParsed.stage ?? conversationPhase,
       productTypeHint: flowStateParsed.productTypeHint ?? null,
@@ -1103,7 +1202,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     for (const h of history) {
       messages.push({ role: h.role, content: h.content });
     }
-    messages.push({ role: 'user', content: trimmed });
+    messages.push({ role: 'user', content: userMessageForReasoning });
 
     anaEngineTrace('prompt_build_done', {
       conversationId,
@@ -1195,6 +1294,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let structured: AnaStructuredReply | null = parseAttempted
       ? parseAnaJson(rawContent, { conversationId, messageId: inboundMetaMessageId })
       : null;
+    let retryAttempted = false;
     anaEngineTrace('parseAnaJson_after', {
       conversationId,
       ok: structured != null,
@@ -1216,6 +1316,67 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       parseAnaJson_success: Boolean(structured),
       parseAnaJson_fail: !structured,
     });
+    if (!structured) {
+      const retryContextBlock = [
+        `Mensagem original do cliente: "${trimmed.slice(0, 260)}"`,
+        `Mensagem expandida para contexto: "${userMessageForReasoning.slice(0, 260)}"`,
+        `Empreendimento ativo: ${effectiveConv.enterprise_id ?? 'null'}${ent ? ` (${ent.name})` : ''}`,
+        `Estado de visita ativo: ${appointmentPreflight.active ? 'sim' : 'não'}`,
+        `Aguardando nome: ${
+          !(effectiveConv.customer_name || '').trim() && effectiveConv.ana_asked_customer_name === true ? 'sim' : 'não'
+        }`,
+        `Última mensagem da Ana: "${(lastAssistantPlain || '').slice(0, 260)}"`,
+      ].join('\n');
+      const retryMessages: ChatMessage[] = [
+        { role: 'system', content: systemPrompt },
+        {
+          role: 'system',
+          content:
+            `RETRY ESTRUTURADO: gere obrigatoriamente um JSON válido e útil para continuidade.\n` +
+            `Use o contexto abaixo para resolver follow-up curto/contextual sem fallback genérico.\n${retryContextBlock}`,
+        },
+      ];
+      for (const h of history) retryMessages.push({ role: h.role, content: h.content });
+      retryMessages.push({ role: 'user', content: userMessageForReasoning });
+
+      retryAttempted = true;
+      console.log('[ANA_RETRY]', {
+        conversationId,
+        attempt: 2,
+        reason: 'structured_null_after_first_attempt',
+        context: {
+          enterpriseId: effectiveConv.enterprise_id ?? null,
+          enterpriseName: ent?.name ?? null,
+          appointmentActive: appointmentPreflight.active,
+          awaitingName: !(effectiveConv.customer_name || '').trim() && effectiveConv.ana_asked_customer_name === true,
+        },
+      });
+      const retryResult = await generateChatCompletion({
+        apiKey: aiConfig.openaiApiKey,
+        baseUrl: aiConfig.openaiBaseUrl,
+        model,
+        messages: retryMessages,
+        temperature: Math.min(aiConfig.temperature ?? 0.5, 0.65),
+        maxTokens: Math.max(aiConfig.maxTokens ?? 600, 800),
+        responseFormatJson: true,
+      });
+      const retryRaw = (retryResult.content || '').trim();
+      if (retryResult.success && retryRaw) {
+        structured = parseAnaJson(retryResult.content || '', {
+          conversationId,
+          messageId: inboundMetaMessageId,
+        });
+      }
+      console.log('[ANA_RETRY]', {
+        conversationId,
+        attempt: 2,
+        success: retryResult.success,
+        parsed: structured != null,
+        httpStatus: retryResult.httpStatus ?? null,
+        error: retryResult.error ?? null,
+        rawLen: (retryResult.content || '').length,
+      });
+    }
     if (!structured) {
       const traceReason = computeAnaTechnicalFallbackTraceReason(result, parseAttempted);
       logAnaFallbackTrace({
@@ -1244,6 +1405,52 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
 
       structured = anaTechnicalFallbackStructured(effectiveConv.classification);
+
+      const awaitingName =
+        !(effectiveConv.customer_name || '').trim() && effectiveConv.ana_asked_customer_name === true;
+      const hasAppointmentContext =
+        appointmentPreflight.active || !!openAppointmentSummary || isAppointmentContextualQuestion(trimmed);
+
+      let deterministicFallbackReply = structured.reply;
+      if (trustedCustomerName) {
+        deterministicFallbackReply = `Perfeito, ${trustedCustomerName}. Como posso te ajudar agora?`;
+      } else if (awaitingName && looksLikeStandaloneNameReply(trimmed)) {
+        deterministicFallbackReply = 'Perfeito, obrigada. Como posso te ajudar agora?';
+      } else if (hasAppointmentContext) {
+        deterministicFallbackReply = isAppointmentContextualQuestion(trimmed)
+          ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
+          : ANA_FALLBACK_APPOINTMENT_FLOW_REPLY;
+      }
+      structured = { ...structured, reply: deterministicFallbackReply };
+      console.log('[ANA_DETERMINISTIC_REPLY]', {
+        conversationId,
+        reason:
+          trustedCustomerName
+            ? 'trusted_customer_name'
+            : awaitingName && looksLikeStandaloneNameReply(trimmed)
+              ? 'awaiting_name_short_reply'
+              : hasAppointmentContext
+                ? 'appointment_context'
+                : 'none',
+        user_message: trimmed.slice(0, 220),
+        reply: deterministicFallbackReply.slice(0, 220),
+      });
+      console.log('[ANA_FALLBACK]', {
+        reason: traceReason,
+        attempt: retryAttempted ? 2 : 1,
+        user_message: trimmed.slice(0, 220),
+        conversation_state: {
+          conversationId,
+          enterpriseId: effectiveConv.enterprise_id ?? null,
+          classification: effectiveConv.classification ?? null,
+          phase: conversationPhase,
+          appointmentActive: appointmentPreflight.active,
+          hasOpenAppointmentSummary: !!openAppointmentSummary,
+        },
+        awaiting_name: awaitingName,
+        generated_reply_before_fallback: rawTrimmed.slice(0, 260) || null,
+        deterministic_reply: deterministicFallbackReply,
+      });
 
       // ── GREETING BYPASS ────────────────────────────────────────────────────
       // Saudações simples (oi, olá, bom dia, etc.) NUNCA devem receber a
