@@ -1798,6 +1798,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       replyText = finalizeAnaReplyText(replyBody, {
         userMessage: trimmed,
         conversationMode: mode,
+        isFirstAnaReply,
       }).slice(0, 4000);
     }
 

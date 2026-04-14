@@ -142,6 +142,8 @@ export interface FinalizeAnaReplyOptions {
   userMessage?: string | null;
   /** Modo foco: respostas informativas podem terminar sem "?" forçado. */
   conversationMode?: 'triage' | 'scoped' | 'inactive_linked';
+  /** true somente na primeira resposta da Ana na conversa. */
+  isFirstAnaReply?: boolean;
 }
 
 /**
@@ -174,9 +176,78 @@ function normalizeWhitespacePreservingLines(text: string): string {
 /**
  * Só higieniza texto para WhatsApp: sem perguntas aleatórias, sem despedidas fixas — o conteúdo vem do modelo.
  */
-export function finalizeAnaReplyText(text: string, _opts?: FinalizeAnaReplyOptions): string {
-  const s = normalizeWhitespacePreservingLines(stripMarkdownArtifactsForWhatsApp((text || '').trim()));
-  return s.slice(0, 4000);
+function splitSentencesCompact(text: string): string[] {
+  return (text || '')
+    .split(/(?<=[.!?…])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function userAskedForMaterialLikeIntent(userMessage: string | null | undefined): boolean {
+  const n = normClosure(userMessage || '');
+  if (!n) return false;
+  return /\b(book|material|arquivo|apresentacao|apresentação|pdf|catalogo|catálogo)\b/.test(n);
+}
+
+function stripMidConversationReintroduction(text: string, isFirstAnaReply: boolean): string {
+  if (isFirstAnaReply) return text;
+  const sentences = splitSentencesCompact(text);
+  if (sentences.length === 0) return text;
+  const reintroPatterns: RegExp[] = [
+    /\b(sou|meu nome e|eu sou)\s+a?\s*ana\b/i,
+    /\b(secret[aá]ria de vendas|consultora|assistente virtual|especialista)\b/i,
+  ];
+  const kept = sentences.filter((s) => !reintroPatterns.some((re) => re.test(s)));
+  const out = kept.join(' ').replace(/\s{2,}/g, ' ').trim();
+  return out || text;
+}
+
+function keepTwoShortSentencesMax(text: string): string {
+  const sentences = splitSentencesCompact(text);
+  if (sentences.length <= 2) {
+    const qCount = (text.match(/\?/g) || []).length;
+    if (qCount <= 1) return text;
+  }
+  const kept: string[] = [];
+  let questionUsed = false;
+  for (const s of sentences) {
+    const hasQ = s.includes('?');
+    if (hasQ && questionUsed) continue;
+    kept.push(s);
+    if (hasQ) questionUsed = true;
+    if (kept.length >= 2) break;
+  }
+  return kept.join(' ').replace(/\s{2,}/g, ' ').trim();
+}
+
+function applyShortMaterialReplyPolicy(
+  text: string,
+  userMessage: string | null | undefined
+): string {
+  if (!userAskedForMaterialLikeIntent(userMessage)) return text;
+  const n = normClosure(text);
+  if (!n) return text;
+  if (
+    /\b(nao consegui|não consegui|nao foi enviado|não foi enviado|nao localizei|não localizei|nao encontrei|não encontrei|indisponivel|indisponível)\b/.test(
+      n
+    )
+  ) {
+    return keepTwoShortSentencesMax(text);
+  }
+  if (/\b(vou te (enviar|mandar)|te enviei|mandei|posso te (enviar|mandar)|tenho sim)\b/.test(n)) {
+    if (/\b(vou te (enviar|mandar)|te enviei|mandei)\b/.test(n)) return 'Perfeito, vou te enviar aqui.';
+    return 'Tenho sim. Posso te enviar aqui.';
+  }
+  return 'Tenho sim. Posso te enviar aqui.';
+}
+
+export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOptions): string {
+  const isFirstAnaReply = opts?.isFirstAnaReply === true;
+  const base = normalizeWhitespacePreservingLines(stripMarkdownArtifactsForWhatsApp((text || '').trim()));
+  const noReintro = stripMidConversationReintroduction(base, isFirstAnaReply);
+  const materialShort = applyShortMaterialReplyPolicy(noReintro, opts?.userMessage ?? null);
+  const compact = keepTwoShortSentencesMax(materialShort);
+  return compact.slice(0, 4000);
 }
 
 /**
