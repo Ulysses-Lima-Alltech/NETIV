@@ -128,6 +128,7 @@ function mapConversationWithPreviewRow(r: ConversationWithPreview) {
     updatedAt: r.updated_at.toISOString(),
     assignedBrokerName: (r as { assigned_broker_name?: string | null }).assigned_broker_name ?? null,
     assignedBrokerId: (r as { assigned_broker_id?: number | null }).assigned_broker_id ?? null,
+    conversationType: (r as { conversation_type?: string | null }).conversation_type ?? 'CLIENT',
     manualClosedAt: (r as { manual_closed_at?: Date | null }).manual_closed_at?.toISOString() ?? null,
     manualClosedByUserId: (r as { manual_closed_by_user_id?: number | null }).manual_closed_by_user_id ?? null,
     manualClosedReason: (r as { manual_closed_reason?: string | null }).manual_closed_reason ?? null,
@@ -351,6 +352,8 @@ router.get('/conversations', async (req, res) => {
     const status = req.query.status as string | undefined;
     const enterpriseId = req.query.enterpriseId != null ? parseInt(String(req.query.enterpriseId), 10) : undefined;
     const search = req.query.search as string | undefined;
+    const typeRaw = String(req.query.type || 'CLIENT').toUpperCase();
+    const type = typeRaw === 'CORRETOR' || typeRaw === 'ADMIN' ? typeRaw : 'CLIENT';
     
     // NOVO: Filtrar por broker_id se for COLLABORATOR
     let brokerId: number | undefined;
@@ -358,12 +361,20 @@ router.get('/conversations', async (req, res) => {
       brokerId = (req as any).user.broker_id;
     }
     
-    const filters: { mode?: 'ANA' | 'handoff'; status?: string; enterpriseId?: number; search?: string; brokerId?: number } = {};
+    const filters: {
+      mode?: 'ANA' | 'handoff';
+      status?: string;
+      enterpriseId?: number;
+      search?: string;
+      brokerId?: number;
+      conversationType?: 'CLIENT' | 'CORRETOR' | 'ADMIN';
+    } = {};
     if (mode === 'ANA' || mode === 'handoff') filters.mode = mode;
     if (status && status !== 'all') filters.status = status;
     if (enterpriseId != null && !Number.isNaN(enterpriseId)) filters.enterpriseId = enterpriseId;
     if (search && search.trim() !== '') filters.search = search.trim();
     if (brokerId != null) filters.brokerId = brokerId;
+    filters.conversationType = type as 'CLIENT' | 'CORRETOR' | 'ADMIN';
     const hasFilters = Object.keys(filters).length > 0;
     const rows = await listConversationsWithPreview(channel, limit, hasFilters ? filters : undefined);
     res.json({

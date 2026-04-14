@@ -196,6 +196,7 @@ export interface ConversationListItem {
   manualClosedByUserId?: number | null;
   manualClosedReason?: string | null;
   reengagementCount?: number;
+  conversationType?: 'CLIENT' | 'CORRETOR' | 'ADMIN' | string;
 }
 
 /** Corpo parcial para PATCH de classificação + segmentação Carteira. */
@@ -291,6 +292,7 @@ export const whatsappApi = {
     status?: string;
     enterpriseId?: number;
     search?: string;
+    type?: 'CLIENT' | 'CORRETOR' | 'ADMIN';
   }) => {
     const q = new URLSearchParams();
     if (params?.channel) q.set('channel', params.channel);
@@ -299,6 +301,7 @@ export const whatsappApi = {
     if (params?.status && params.status !== 'all') q.set('status', params.status);
     if (params?.enterpriseId != null) q.set('enterpriseId', String(params.enterpriseId));
     if (params?.search?.trim()) q.set('search', params.search.trim());
+    if (params?.type) q.set('type', params.type);
     const query = q.toString();
     return request<{ conversations: ConversationListItem[] }>(`/whatsapp/conversations${query ? `?${query}` : ''}`);
   },

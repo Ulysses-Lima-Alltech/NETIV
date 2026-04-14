@@ -111,6 +111,7 @@ function mapApiMessageToMessage(m: MessageListItem, conversationId: string): Mes
 
 export function InboxPage() {
   const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<'CLIENT' | 'CORRETOR'>('CLIENT');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -128,6 +129,7 @@ export function InboxPage() {
   /** Evita reprocessar o mesmo `conversationId` da URL (sucesso ou falha) em loop. */
   const deepLinkConsumedParamRef = useRef<string | null>(null);
   const selectedIdRef = useRef<string | null>(null);
+  const conversationsRequestIdRef = useRef(0);
 
   const rawConversationParam = searchParams.get('conversationId')?.trim() ?? '';
   const parsedConversationId = useMemo(() => {
@@ -163,10 +165,12 @@ export function InboxPage() {
 
   const loadConversations = useCallback((silent?: boolean) => {
     if (!silent) setConversationsLoading(true);
+    const requestId = ++conversationsRequestIdRef.current;
     const params = inboxFiltersToApiParams({ ...filters, search: searchDebounced });
     return whatsappApi
-      .getConversations({ ...params, limit: 200 })
+      .getConversations({ ...params, limit: 200, type: activeTab })
       .then((data) => {
+        if (requestId !== conversationsRequestIdRef.current) return;
         const mapped = data.conversations.map(mapApiConversationToConversation);
         setConversations((prev) => {
           const sid = selectedIdRef.current;
@@ -177,9 +181,15 @@ export function InboxPage() {
           return mapped;
         });
       })
-      .catch(() => setConversations([]))
-      .finally(() => { if (!silent) setConversationsLoading(false); });
-  }, [filters, searchDebounced]);
+      .catch(() => {
+        if (requestId !== conversationsRequestIdRef.current) return;
+        setConversations([]);
+      })
+      .finally(() => {
+        if (requestId !== conversationsRequestIdRef.current) return;
+        if (!silent) setConversationsLoading(false);
+      });
+  }, [activeTab, filters, searchDebounced]);
 
   const loadMessages = useCallback((convId: string, silent?: boolean) => {
     const id = parseInt(convId, 10);
@@ -229,6 +239,16 @@ export function InboxPage() {
   }, [isUserAtBottom, scrollToBottom]);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
+
+  const handleTabChange = useCallback((tab: 'CLIENT' | 'CORRETOR') => {
+    if (tab === activeTab) return;
+    conversationsRequestIdRef.current += 1;
+    setConversations([]);
+    setSelectedId(null);
+    setMessages([]);
+    setMessagesError(null);
+    setActiveTab(tab);
+  }, [activeTab]);
 
   useEffect(() => {
     if (!rawConversationParam) {
@@ -564,6 +584,30 @@ export function InboxPage() {
           <div className="fixed inset-0 bg-black/30 z-10 md:hidden" aria-hidden onClick={() => setSidebarOpen(false)} />
         )}
         <aside className={`w-[340px] shrink-0 flex flex-col h-full md:relative md:translate-x-0 fixed inset-y-0 left-0 z-20 transform transition-transform duration-200 ease-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+          <div className="shrink-0 px-3 py-2 border-b border-[#E5E7EB] bg-white flex gap-2">
+            <button
+              type="button"
+              onClick={() => handleTabChange('CLIENT')}
+              className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                activeTab === 'CLIENT'
+                  ? 'bg-[#111827] text-white border-[#111827]'
+                  : 'bg-white text-[#374151] border-[#D1D5DB] hover:bg-[#F9FAFB]'
+              }`}
+            >
+              Clientes
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTabChange('CORRETOR')}
+              className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                activeTab === 'CORRETOR'
+                  ? 'bg-[#111827] text-white border-[#111827]'
+                  : 'bg-white text-[#374151] border-[#D1D5DB] hover:bg-[#F9FAFB]'
+              }`}
+            >
+              Corretores
+            </button>
+          </div>
           <InboxFilterBar
             filters={filters}
             onChange={setFilters}

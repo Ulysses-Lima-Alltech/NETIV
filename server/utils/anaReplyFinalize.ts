@@ -250,6 +250,86 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   return compact.slice(0, 4000);
 }
 
+function truncateAtWordBoundary(text: string, maxLen: number): string {
+  const t = (text || '').trim();
+  if (t.length <= maxLen) return t;
+  const sliced = t.slice(0, Math.max(0, maxLen));
+  const lastSpace = sliced.lastIndexOf(' ');
+  const safe = (lastSpace >= 24 ? sliced.slice(0, lastSpace) : sliced).trim();
+  return safe.replace(/[,:;.\-–—\s]+$/g, '').trim();
+}
+
+function ensureSentenceEnd(text: string): string {
+  const t = (text || '').trim();
+  if (!t) return t;
+  if (/[.!?…]$/.test(t)) return t;
+  return `${t}.`;
+}
+
+export function applyAnaHardLengthGuard(params: {
+  text: string;
+  enterpriseName?: string | null;
+  maxChars?: number;
+}): string {
+  const maxChars = Math.max(120, Math.min(360, params.maxChars ?? 300));
+  const enterpriseName = (params.enterpriseName || '').trim();
+  const cleaned = normalizeWhitespacePreservingLines(
+    stripMarkdownArtifactsForWhatsApp((params.text || '').replace(/\r?\n+/g, ' ').trim())
+  );
+  if (!cleaned) return '';
+
+  const inputSentences = splitSentencesCompact(cleaned);
+  const kept: string[] = [];
+  let questionUsed = false;
+  for (const sRaw of inputSentences) {
+    const s = sRaw.replace(/\s+/g, ' ').trim();
+    if (!s) continue;
+    const hasQ = s.includes('?');
+    if (hasQ && questionUsed) continue;
+    kept.push(s);
+    if (hasQ) questionUsed = true;
+    if (kept.length >= 2) break;
+  }
+
+  let out = kept.join(' ').replace(/\s{2,}/g, ' ').trim();
+  if (!out) out = truncateAtWordBoundary(cleaned, 140);
+  out = ensureSentenceEnd(out);
+
+  const hasEnterprise =
+    enterpriseName.length >= 2 &&
+    normClosure(out).includes(normClosure(enterpriseName));
+  if (enterpriseName.length >= 2 && !hasEnterprise) {
+    out = `${enterpriseName}: ${out}`.replace(/\s{2,}/g, ' ').trim();
+  }
+
+  // Reaplica estrutura rígida após eventuais ajustes.
+  const normalizedSentences = splitSentencesCompact(out);
+  const finalSentences: string[] = [];
+  let finalQuestionUsed = false;
+  for (const s of normalizedSentences) {
+    const sentence = s.trim();
+    if (!sentence) continue;
+    const hasQ = sentence.includes('?');
+    if (hasQ && finalQuestionUsed) continue;
+    finalSentences.push(sentence);
+    if (hasQ) finalQuestionUsed = true;
+    if (finalSentences.length >= 2) break;
+  }
+  out = finalSentences.join(' ').replace(/\s{2,}/g, ' ').trim();
+
+  if (out.length > maxChars) {
+    if (finalSentences.length > 1) {
+      const firstOnly = ensureSentenceEnd(finalSentences[0] || '');
+      if (firstOnly.length <= maxChars) out = firstOnly;
+    }
+    if (out.length > maxChars) {
+      out = ensureSentenceEnd(truncateAtWordBoundary(out, maxChars));
+    }
+  }
+
+  return out.slice(0, maxChars).trim();
+}
+
 function normalizeForSemanticCheck(text: string): string {
   return (text || '')
     .replace(/\s+/g, ' ')
@@ -275,7 +355,12 @@ function normOutbound(text: string): string {
 export function evaluateAnaOutboundText(opts: {
   reply: string;
   technicalFallbackText?: string;
+  conversationType?: 'CLIENT' | 'CORRETOR' | 'ADMIN' | string | null;
 }): { text: string; valid: boolean; reason: string } {
+  const conversationType = String(opts.conversationType ?? 'CLIENT').toUpperCase();
+  if (conversationType === 'CORRETOR') {
+    return { text: '', valid: false, reason: 'conversation_type_corretor' };
+  }
   const raw = (opts.reply || '').trim();
   if (!raw) {
     return { text: raw, valid: false, reason: 'empty_text' };

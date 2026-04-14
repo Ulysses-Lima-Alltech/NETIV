@@ -18,6 +18,7 @@ export type { LeadOriginInput } from '../services/leadOriginResolver.js';
 
 export interface ConversationRow {
   id: number;
+  conversation_type?: 'CLIENT' | 'CORRETOR' | 'ADMIN' | string | null;
   channel: string;
   external_contact_id: string;
   contact_phone: string | null;
@@ -417,6 +418,7 @@ export interface ListConversationsFilters {
   enterpriseId?: number;
   search?: string;
   brokerId?: number;  // NOVO — filtra por assigned_broker_id
+  conversationType?: 'CLIENT' | 'CORRETOR' | 'ADMIN';
 }
 
 export async function listConversationsWithPreview(
@@ -460,6 +462,12 @@ export async function listConversationsWithPreview(
   if (filters?.brokerId != null) {
     conditions.push(`c.assigned_broker_id = $${paramIndex}`);
     params.push(filters.brokerId);
+    paramIndex += 1;
+  }
+
+  if (filters?.conversationType) {
+    conditions.push(`c.conversation_type = $${paramIndex}`);
+    params.push(filters.conversationType);
     paramIndex += 1;
   }
 
@@ -664,6 +672,16 @@ export async function setConversationEnterpriseId(
         )).rows[0] ?? row;
   if (afterClass.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(afterClass.contact_id);
   return afterClass;
+}
+
+export async function updateConversationType(
+  conversationId: number,
+  type: 'CLIENT' | 'CORRETOR' | 'ADMIN' | string
+): Promise<void> {
+  await query(
+    `UPDATE conversations SET conversation_type = $1, updated_at = NOW() WHERE id = $2`,
+    [type, conversationId]
+  );
 }
 
 export async function applyAnaConversationUpdate(

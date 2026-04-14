@@ -8,7 +8,7 @@ import { detectBatchColumns, type BatchColumnSuggestions } from '../utils/column
 import { normalizePhoneE164 } from '../utils/phone.js';
 import type { BatchMappingDto } from '../validators/whatsappBatch.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
-import { findOrCreateConversation } from '../repositories/conversationRepository.js';
+import { findOrCreateConversation, updateConversationType } from '../repositories/conversationRepository.js';
 import { insertMessage } from '../repositories/messageRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { sendTemplateMessage } from './whatsappMetaService.js';
@@ -387,6 +387,9 @@ export async function sendBatchTemplate(params: {
         null,
         null
       );
+      if (template.category === 'CORRETOR') {
+        await updateConversationType(conversation.id, 'CORRETOR');
+      }
       if (result.metaMessageId) {
         const inboxContent = renderTemplateTextForInbox(template, resolved.values);
         await insertMessage(conversation.id, 'assistant', inboxContent, result.metaMessageId);

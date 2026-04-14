@@ -68,6 +68,7 @@ import {
 } from './anaAgentService.js';
 import {
   finalizeAnaReplyText,
+  applyAnaHardLengthGuard,
   evaluateAnaOutboundText,
   countCustomerNameMentionsInText,
   sleepMs,
@@ -125,6 +126,9 @@ const ANA_ENGINE_DIAGNOSTIC_TEXT = 'Diagnóstico: cheguei no conversation engine
 
 /** TEMP: logs [ANA_ENGINE_TRACE] (OpenAI/parse/envio). Desligar com false. */
 const ANA_ENGINE_TRACE = true;
+const logger = {
+  info: (message: string, payload?: Record<string, unknown>) => console.log(message, payload ?? {}),
+};
 
 function anaEngineTrace(tag: string, payload: Record<string, unknown>): void {
   if (!ANA_ENGINE_TRACE) return;
@@ -602,6 +606,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     replyPipelineToken,
     inboundMetaMessageId: inboundMetaFromCtx,
   } = ctx;
+  const blockCorretorConversation = (conversationType: unknown): boolean => {
+    return String(conversationType ?? 'CLIENT').toUpperCase() === 'CORRETOR';
+  };
 
   console.log('[ANA DEBUG] handleIncomingMessage start', { conversationId, toPhoneNumber });
 
@@ -705,6 +712,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     // Revalidação imediata antes do bloqueio: sempre buscar estado mais recente (evita race: usuário muda Handoff→ANA durante processamento)
     const latestConv = await getConversationById(conversationId);
     let effectiveConv = latestConv ?? conv;
+    if (blockCorretorConversation(effectiveConv.conversation_type)) {
+      logger.info('Ana bloqueada para conversa tipo CORRETOR', {
+        conversationId: effectiveConv.id,
+        reason: 'conversation_type_corretor',
+      });
+      return;
+    }
 
     console.log('[ANA DEBUG] handoff check', {
       handoff: effectiveConv.handoff,
@@ -762,6 +776,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const confirmOutboundEval = evaluateAnaOutboundText({
         reply: confirmMsg,
         technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+        conversationType: effectiveConv.conversation_type ?? 'CLIENT',
       });
       if (!confirmOutboundEval.valid) {
         logAnaOutboundBlocked({
@@ -1972,9 +1987,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         enterpriseName: ent?.name ?? null,
         conversationId,
       });
+      const ackFinalText = finalizeAnaReplyText(ackAxisGuard.text, {
+        userMessage: trimmed,
+        conversationMode: mode,
+        isFirstAnaReply,
+      });
+      const ackHardLimited = applyAnaHardLengthGuard({
+        text: ackFinalText,
+        enterpriseName: ent?.name ?? null,
+        maxChars: 300,
+      });
       const ackOutboundEval = evaluateAnaOutboundText({
-        reply: ackAxisGuard.text,
+        reply: ackHardLimited,
         technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+        conversationType: effectiveConv.conversation_type ?? 'CLIENT',
       });
       if (!ackOutboundEval.valid) {
         logAnaOutboundBlocked({
@@ -2119,9 +2145,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       enterpriseName: ent?.name ?? null,
       conversationId,
     });
+    const finalEvidenceGuard = applyAnaEvidenceGuardToReply(finalAxisGuard.text, enterpriseEvidence);
+    const finalTextGuard = finalizeAnaReplyText(finalEvidenceGuard.text, {
+      userMessage: trimmed,
+      conversationMode: mode,
+      isFirstAnaReply,
+    });
+    const hardLimitedReply = applyAnaHardLengthGuard({
+      text: finalTextGuard,
+      enterpriseName: ent?.name ?? null,
+      maxChars: 300,
+    });
     const finalOutboundEval = evaluateAnaOutboundText({
-      reply: finalAxisGuard.text,
+      reply: hardLimitedReply,
       technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+      conversationType: effectiveConv.conversation_type ?? 'CLIENT',
     });
     if (!finalOutboundEval.valid) {
       logAnaOutboundBlocked({
