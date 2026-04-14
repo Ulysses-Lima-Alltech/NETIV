@@ -68,7 +68,7 @@ import {
 } from './anaAgentService.js';
 import {
   finalizeAnaReplyText,
-  applyAnaFinalTextGuard,
+  evaluateAnaOutboundText,
   countCustomerNameMentionsInText,
   sleepMs,
   randomAnaReplyDelayMs,
@@ -129,6 +129,19 @@ const ANA_ENGINE_TRACE = true;
 function anaEngineTrace(tag: string, payload: Record<string, unknown>): void {
   if (!ANA_ENGINE_TRACE) return;
   console.log(`[ANA_ENGINE_TRACE] ${tag}`, payload);
+}
+
+function logAnaOutboundBlocked(params: {
+  reason: string;
+  userMessage: string;
+  conversationId: number;
+  replyCandidate: string;
+}): void {
+  console.log('[ANA_OUTBOUND_BLOCKED]');
+  console.log(`[ANA_OUTBOUND_BLOCKED] reason=${params.reason}`);
+  console.log(`[ANA_OUTBOUND_BLOCKED] user_message=${params.userMessage.slice(0, 500)}`);
+  console.log(`[ANA_OUTBOUND_BLOCKED] conversation_id=${params.conversationId}`);
+  console.log(`[ANA_OUTBOUND_BLOCKED] reply_candidate=${params.replyCandidate.slice(0, 500)}`);
 }
 
 /** Motivo do fallback com `ANA_TECHNICAL_FALLBACK_NEUTRAL` (log [ANA_FALLBACK_TRACE]). */
@@ -746,17 +759,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const confirmMsg = finalizeAnaReplyText(
         'Entendido! Um atendente vai entrar em contato em breve. Enquanto isso, sua mensagem já foi registrada. Posso te ajudar com mais alguma coisa antes da transferência?'
       );
-      const confirmFinalGuard = applyAnaFinalTextGuard({
+      const confirmOutboundEval = evaluateAnaOutboundText({
         reply: confirmMsg,
-        userMessage: trimmed,
-        materialRequestedThisTurn: false,
-        materialAvailableToSend: false,
+        technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
       });
-      console.log(`[ANA_FINAL_TEXT_GUARD] original_reply=${confirmMsg.slice(0, 500)}`);
-      console.log(`[ANA_FINAL_TEXT_GUARD] sanitized_reply=${confirmFinalGuard.text.slice(0, 500)}`);
-      console.log(`[ANA_FINAL_TEXT_GUARD] replaced_empty_or_punctuation_only=${confirmFinalGuard.replaced}`);
-      console.log(`[ANA_FINAL_TEXT_GUARD] reason=${confirmFinalGuard.reason}`);
-      const confirmMsgSafe = confirmFinalGuard.text;
+      if (!confirmOutboundEval.valid) {
+        logAnaOutboundBlocked({
+          reason: confirmOutboundEval.reason,
+          userMessage: trimmed,
+          conversationId,
+          replyCandidate: confirmMsg,
+        });
+        return;
+      }
+      const confirmMsgSafe = confirmOutboundEval.text;
       await sleepMs(randomAnaReplyDelayMs({ replyLength: confirmMsgSafe.length }));
       if (isPipelineStale(conversationId, replyPipelineToken)) {
         console.log('[ANA_PIPELINE] engine_cancelled_stale', {
@@ -1956,17 +1972,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         enterpriseName: ent?.name ?? null,
         conversationId,
       });
-      const ackFinalGuard = applyAnaFinalTextGuard({
+      const ackOutboundEval = evaluateAnaOutboundText({
         reply: ackAxisGuard.text,
-        userMessage: trimmed,
-        materialRequestedThisTurn: shouldAttemptDocSend,
-        materialAvailableToSend: canClaimMaterialWasSent,
+        technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
       });
-      console.log(`[ANA_FINAL_TEXT_GUARD] original_reply=${ackAxisGuard.text.slice(0, 500)}`);
-      console.log(`[ANA_FINAL_TEXT_GUARD] sanitized_reply=${ackFinalGuard.text.slice(0, 500)}`);
-      console.log(`[ANA_FINAL_TEXT_GUARD] replaced_empty_or_punctuation_only=${ackFinalGuard.replaced}`);
-      console.log(`[ANA_FINAL_TEXT_GUARD] reason=${ackFinalGuard.reason}`);
-      const ackText = ackFinalGuard.text;
+      if (!ackOutboundEval.valid) {
+        logAnaOutboundBlocked({
+          reason: ackOutboundEval.reason,
+          userMessage: trimmed,
+          conversationId,
+          replyCandidate: ackAxisGuard.text,
+        });
+        return;
+      }
+      const ackText = ackOutboundEval.text;
       const lastContentPreAck = (lastAsstDup?.content || '').trim();
       const ageDupPreAck = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
       if (lastContentPreAck && lastContentPreAck === ackText.trim() && ageDupPreAck < 55_000) {
@@ -2100,17 +2119,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       enterpriseName: ent?.name ?? null,
       conversationId,
     });
-    const finalTextGuard = applyAnaFinalTextGuard({
+    const finalOutboundEval = evaluateAnaOutboundText({
       reply: finalAxisGuard.text,
-      userMessage: trimmed,
-      materialRequestedThisTurn: shouldAttemptDocSend,
-      materialAvailableToSend: canClaimMaterialWasSent || (!!ent && hasSendableFiles),
+      technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
     });
-    console.log(`[ANA_FINAL_TEXT_GUARD] original_reply=${finalAxisGuard.text.slice(0, 500)}`);
-    console.log(`[ANA_FINAL_TEXT_GUARD] sanitized_reply=${finalTextGuard.text.slice(0, 500)}`);
-    console.log(`[ANA_FINAL_TEXT_GUARD] replaced_empty_or_punctuation_only=${finalTextGuard.replaced}`);
-    console.log(`[ANA_FINAL_TEXT_GUARD] reason=${finalTextGuard.reason}`);
-    replyText = finalTextGuard.text;
+    if (!finalOutboundEval.valid) {
+      logAnaOutboundBlocked({
+        reason: finalOutboundEval.reason,
+        userMessage: trimmed,
+        conversationId,
+        replyCandidate: finalAxisGuard.text,
+      });
+      return;
+    }
+    replyText = finalOutboundEval.text;
 
     anaEngineTrace('final_reply_choice_after', {
       conversationId,

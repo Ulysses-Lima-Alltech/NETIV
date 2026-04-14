@@ -263,38 +263,47 @@ function isEmptyOrPunctuationOnly(text: string): boolean {
   return !/[\p{L}\p{N}]/u.test(t);
 }
 
-export function applyAnaFinalTextGuard(opts: {
+function normOutbound(text: string): string {
+  return (text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function evaluateAnaOutboundText(opts: {
   reply: string;
-  userMessage?: string | null;
-  materialRequestedThisTurn?: boolean;
-  materialAvailableToSend?: boolean;
-}): { text: string; replaced: boolean; reason: string } {
+  technicalFallbackText?: string;
+}): { text: string; valid: boolean; reason: string } {
   const raw = (opts.reply || '').trim();
-  if (!isEmptyOrPunctuationOnly(raw)) {
-    return { text: raw.slice(0, 4000), replaced: false, reason: 'kept_semantic_text' };
+  if (!raw) {
+    return { text: raw, valid: false, reason: 'empty_text' };
+  }
+  if (isEmptyOrPunctuationOnly(raw)) {
+    return { text: raw, valid: false, reason: 'punctuation_only_or_placeholder' };
   }
 
-  const askedMaterial = opts.materialRequestedThisTurn === true || userAskedForMaterialLikeIntent(opts.userMessage);
-  if (askedMaterial) {
-    if (opts.materialAvailableToSend === true) {
-      return {
-        text: 'Tenho sim. Vou te enviar aqui.',
-        replaced: true,
-        reason: 'material_requested_with_available_file',
-      };
-    }
-    return {
-      text: 'No momento, eu não tenho esse material disponível aqui para te enviar.',
-      replaced: true,
-      reason: 'material_requested_without_available_file',
-    };
+  const n = normOutbound(raw);
+  const technicalNorm = normOutbound(opts.technicalFallbackText || '');
+  if (technicalNorm && n === technicalNorm) {
+    return { text: raw, valid: false, reason: 'fallback_technical_blocked' };
+  }
+  if (
+    n.includes('nao consegui continuar daqui agora') ||
+    n.includes('me manda novamente em uma frase o que voce quer saber')
+  ) {
+    return { text: raw, valid: false, reason: 'fallback_technical_blocked' };
+  }
+  if (
+    n.includes('erro tecnico') ||
+    n.includes('tente novamente mais tarde') ||
+    n.includes('sistema indisponivel')
+  ) {
+    return { text: raw, valid: false, reason: 'generic_technical_error_blocked' };
   }
 
-  return {
-    text: 'Perfeito. Me diz qual ponto você quer priorizar que eu te respondo objetivamente.',
-    replaced: true,
-    reason: 'empty_or_punctuation_only_generic_fallback',
-  };
+  return { text: raw.slice(0, 4000), valid: true, reason: 'valid_semantic_text' };
 }
 
 /**
