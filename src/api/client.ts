@@ -196,7 +196,7 @@ export interface ConversationListItem {
   manualClosedByUserId?: number | null;
   manualClosedReason?: string | null;
   reengagementCount?: number;
-  conversationType?: 'CLIENT' | 'CORRETOR' | 'ADMIN' | string;
+  conversationType?: 'CLIENT' | 'INTERNO' | string;
 }
 
 /** Corpo parcial para PATCH de classificação + segmentação Carteira. */
@@ -292,7 +292,7 @@ export const whatsappApi = {
     status?: string;
     enterpriseId?: number;
     search?: string;
-    type?: 'CLIENT' | 'CORRETOR' | 'ADMIN';
+    type?: 'CLIENT' | 'INTERNO';
   }) => {
     const q = new URLSearchParams();
     if (params?.channel) q.set('channel', params.channel);

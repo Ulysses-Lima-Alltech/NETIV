@@ -410,6 +410,7 @@ export interface ConversationWithPreview extends ConversationRow {
   last_message_preview: string | null;
   enterprise_name: string | null;
   assigned_broker_name?: string | null;
+  contact_type?: 'CLIENT' | 'INTERNO' | string | null;
 }
 
 export interface ListConversationsFilters {
@@ -418,7 +419,7 @@ export interface ListConversationsFilters {
   enterpriseId?: number;
   search?: string;
   brokerId?: number;  // NOVO — filtra por assigned_broker_id
-  conversationType?: 'CLIENT' | 'CORRETOR' | 'ADMIN';
+  contactType?: 'CLIENT' | 'INTERNO';
 }
 
 export async function listConversationsWithPreview(
@@ -465,9 +466,9 @@ export async function listConversationsWithPreview(
     paramIndex += 1;
   }
 
-  if (filters?.conversationType) {
-    conditions.push(`c.conversation_type = $${paramIndex}`);
-    params.push(filters.conversationType);
+  if (filters?.contactType) {
+    conditions.push(`COALESCE(ct.contact_type, 'CLIENT') = $${paramIndex}`);
+    params.push(filters.contactType);
     paramIndex += 1;
   }
 
@@ -478,10 +479,12 @@ export async function listConversationsWithPreview(
     `SELECT c.*,
       (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_preview,
       e.name AS enterprise_name,
-      br.full_name AS assigned_broker_name
+      br.full_name AS assigned_broker_name,
+      ct.contact_type AS contact_type
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
      LEFT JOIN corretores br ON br.id = c.assigned_broker_id
+     LEFT JOIN contacts ct ON ct.id = c.contact_id
      ${whereClause}
      ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC
      LIMIT $${paramIndex}`,
@@ -497,10 +500,12 @@ export async function getConversationWithPreviewById(id: number): Promise<Conver
     `SELECT c.*,
       (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_preview,
       e.name AS enterprise_name,
-      br.full_name AS assigned_broker_name
+      br.full_name AS assigned_broker_name,
+      ct.contact_type AS contact_type
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
      LEFT JOIN corretores br ON br.id = c.assigned_broker_id
+     LEFT JOIN contacts ct ON ct.id = c.contact_id
      WHERE c.id = $1
      LIMIT 1`,
     [id]

@@ -111,7 +111,7 @@ function mapApiMessageToMessage(m: MessageListItem, conversationId: string): Mes
 
 export function InboxPage() {
   const [searchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState<'CLIENT' | 'CORRETOR'>('CLIENT');
+  const [activeTab, setActiveTab] = useState<'CLIENT' | 'INTERNO'>('CLIENT');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -240,7 +240,7 @@ export function InboxPage() {
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
 
-  const handleTabChange = useCallback((tab: 'CLIENT' | 'CORRETOR') => {
+  const handleTabChange = useCallback((tab: 'CLIENT' | 'INTERNO') => {
     if (tab === activeTab) return;
     conversationsRequestIdRef.current += 1;
     setConversations([]);
@@ -598,14 +598,14 @@ export function InboxPage() {
             </button>
             <button
               type="button"
-              onClick={() => handleTabChange('CORRETOR')}
+              onClick={() => handleTabChange('INTERNO')}
               className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
-                activeTab === 'CORRETOR'
+                activeTab === 'INTERNO'
                   ? 'bg-[#111827] text-white border-[#111827]'
                   : 'bg-white text-[#374151] border-[#D1D5DB] hover:bg-[#F9FAFB]'
               }`}
             >
-              Corretores
+              Interno
             </button>
           </div>
           <InboxFilterBar

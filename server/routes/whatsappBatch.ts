@@ -15,6 +15,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 router.get('/templates', (_req, res) => {
   const templates = listWhatsAppTemplatesCatalog();
+  console.log('[WHATSAPP_BATCH_TEMPLATES]', { count: templates.length, keys: templates.map((t) => t.key) });
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');

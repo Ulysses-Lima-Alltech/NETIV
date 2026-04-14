@@ -25,6 +25,28 @@ export interface WhatsAppTemplateCatalogItem {
   messageBodyTemplate?: string;
 }
 
+const CONVITE_MEETING_ECOGARDEN_TEMPLATE: WhatsAppTemplateCatalogItem = {
+  key: 'convite_meeting_ecogarden',
+  name: 'Convite Meeting Ecogarden',
+  languageCode: 'pt_BR',
+  metaTemplateName: 'convite_meeting_ecogarden',
+  metaTemplateId: '2641199616165451',
+  category: 'CORRETOR',
+  variables: [],
+  messageBodyTemplate: `Fala, corretor(a)! 📈
+
+Quer um produto com baixa resistência de venda e alta valorização para sua carteira? O Ecogarden chegou.
+
+Com apenas pouquíssimas unidades disponíveis nesta fase e obras a super avançadas, este é o loteamento que vai dominar o seu feed nas próximas semanas. Vamos liberar todas as estratégias de vendas e materiais exclusivos no nosso meeting presencial.
+
+🗓 17/04 às 09h
+📍 Pousada Villa Verde - Bom Jesus dos Perdões
+
+O credenciamento é limitado para garantirmos a qualidade do encontro. Não fique de fora da oportunidade que vai acelerar suas comissões em 2026!
+
+Acesse o link e gere seu QR Code de acesso:`,
+};
+
 /** Texto a exibir no inbox após substituir {{1}}… pelos valores enviados à API. */
 export function renderTemplateTextForInbox(
   template: WhatsAppTemplateCatalogItem,
@@ -78,37 +100,28 @@ export const WHATSAPP_TEMPLATES_CATALOG: WhatsAppTemplateCatalogItem[] = [
       'Meu nome é Ana. Estive revisando minha base e encontrei seu contato com interesse em alguns imóveis.\n\n' +
       'Me diz uma coisa: você já comprou seu imóvel ou ainda está buscando? Estamos com uma ótima oportunidade de Feirão que pode fazer sentido para você e queria te contar um pouco mais. Posso te explicar rapidinho por aqui?',
   },
-  {
-    key: 'convite_meeting_ecogarden',
-    name: 'Convite Meeting Ecogarden',
-    languageCode: 'pt_BR',
-    metaTemplateName: 'convite_meeting_ecogarden',
-    metaTemplateId: '2641199616165451',
-    category: 'CORRETOR',
-    variables: [],
-    messageBodyTemplate: `Fala, corretor(a)! 📈
-
-Quer um produto com baixa resistência de venda e alta valorização para sua carteira? O Ecogarden chegou.
-
-Com apenas pouquíssimas unidades disponíveis nesta fase e obras a super avançadas, este é o loteamento que vai dominar o seu feed nas próximas semanas. Vamos liberar todas as estratégias de vendas e materiais exclusivos no nosso meeting presencial.
-
-🗓 17/04 às 09h
-📍 Pousada Villa Verde - Bom Jesus dos Perdões
-
-O credenciamento é limitado para garantirmos a qualidade do encontro. Não fique de fora da oportunidade que vai acelerar suas comissões em 2026!
-
-Acesse o link e gere seu QR Code de acesso:`,
-  },
+  CONVITE_MEETING_ECOGARDEN_TEMPLATE,
 ];
 
+function getEffectiveTemplatesCatalog(): WhatsAppTemplateCatalogItem[] {
+  const byKey = new Map<string, WhatsAppTemplateCatalogItem>();
+  for (const item of WHATSAPP_TEMPLATES_CATALOG) {
+    byKey.set(item.key, item);
+  }
+  if (!byKey.has(CONVITE_MEETING_ECOGARDEN_TEMPLATE.key)) {
+    byKey.set(CONVITE_MEETING_ECOGARDEN_TEMPLATE.key, CONVITE_MEETING_ECOGARDEN_TEMPLATE);
+  }
+  return Array.from(byKey.values());
+}
+
 export function listWhatsAppTemplatesCatalog(): WhatsAppTemplateCatalogItem[] {
-  return WHATSAPP_TEMPLATES_CATALOG;
+  return getEffectiveTemplatesCatalog();
 }
 
 export function getWhatsAppTemplateByKey(key: string): WhatsAppTemplateCatalogItem | null {
-  return WHATSAPP_TEMPLATES_CATALOG.find((item) => item.key === key) ?? null;
+  return getEffectiveTemplatesCatalog().find((item) => item.key === key) ?? null;
 }
 
 export function getWhatsAppTemplates(): WhatsAppTemplateCatalogItem[] {
-  return WHATSAPP_TEMPLATES_CATALOG;
+  return getEffectiveTemplatesCatalog();
 }

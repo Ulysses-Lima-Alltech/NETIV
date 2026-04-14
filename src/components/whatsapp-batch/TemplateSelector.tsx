@@ -15,6 +15,7 @@ const inputCls =
 
 export function TemplateSelector({ templates, selectedKey, onSelect, loading, selectDisabled }: Props) {
   const selected = templates.find((item) => item.key === selectedKey) ?? null;
+  console.log('[WHATSAPP_BATCH_TEMPLATE_SELECTOR_KEYS]', templates.map((item) => item.key));
   return (
     <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
       <h2 className="text-[14px] font-semibold">Template WhatsApp</h2>

@@ -379,15 +379,16 @@ export async function sendBatchTemplate(params: {
       metaMessageId: result.metaMessageId,
     });
 
+    const contact = await findOrCreateContactByPhone({
+      phoneE164: normalizedPhone,
+      phoneDisplay: normalizedPhone,
+      source: 'whatsapp',
+    });
+    if (template.key === 'convite_meeting_ecogarden' || template.key === 'novo_agendamento_corretor') {
+      await updateContactType(contact.id, 'INTERNO');
+    }
+
     if (config?.whatsappPhoneNumberId) {
-      const contact = await findOrCreateContactByPhone({
-        phoneE164: normalizedPhone,
-        phoneDisplay: normalizedPhone,
-        source: 'whatsapp',
-      });
-      if (template.key === 'convite_meeting_ecogarden' || template.key === 'novo_agendamento_corretor') {
-        await updateContactType(contact.id, 'INTERNO');
-      }
       const conversation = await findOrCreateConversation(
         'whatsapp',
         normalizedPhone,

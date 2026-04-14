@@ -55,6 +55,7 @@ export function WhatsAppBatchTemplatePage() {
     void whatsappBatchApi
       .listTemplates()
       .then((r) => {
+        console.log('[WHATSAPP_BATCH_FRONT_API_KEYS]', (r.templates ?? []).map((t) => t.key));
         setTemplates(r.templates ?? []);
       })
       .catch((err: unknown) => {
@@ -84,6 +85,7 @@ export function WhatsAppBatchTemplatePage() {
   }, []);
 
   const selectedTemplate = templates.find((tpl) => tpl.key === selectedTemplateKey) ?? null;
+  console.log('[WHATSAPP_BATCH_FRONT_STATE_KEYS]', templates.map((t) => t.key));
   const validPreviewRows = (preview?.rows ?? []).filter((row) => row.status === 'valid');
   const canUseRowMode = validPreviewRows.length > 0;
   const selectedPreviewRow = testRowNumber == null ? null : validPreviewRows.find((row) => row.rowNumber === testRowNumber) ?? null;
