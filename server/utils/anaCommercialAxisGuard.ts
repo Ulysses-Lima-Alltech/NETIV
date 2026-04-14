@@ -232,6 +232,22 @@ function extractPriceSnippet(original: string): string | null {
   return m ? m[0].replace(/\s+/g, ' ').trim() : null;
 }
 
+function hasEnterpriseMention(text: string, enterpriseName: string | undefined): boolean {
+  const ent = (enterpriseName || '').trim();
+  if (!ent) return false;
+  const t = norm(text);
+  const e = norm(ent);
+  return !!e && t.includes(e);
+}
+
+function ensureEnterpriseMention(text: string, enterpriseName: string | undefined): { text: string; preserved: boolean } {
+  const ent = (enterpriseName || '').trim();
+  const raw = (text || '').trim();
+  if (!ent || !raw) return { text: raw, preserved: false };
+  if (hasEnterpriseMention(raw, ent)) return { text: raw, preserved: true };
+  return { text: `Sobre ${ent}, ${raw}`.replace(/\s+/g, ' ').trim(), preserved: true };
+}
+
 /** Tenta manter só frases que falam exclusivamente do eixo escolhido (+ saudação curta no início). */
 function extractSingleAxisSlice(original: string, target: CommercialAxis): string | null {
   const raw = original.replace(/\s+/g, ' ').trim();
@@ -259,53 +275,71 @@ function buildRewrittenReply(
   target: CommercialAxis,
   original: string,
   enterpriseName: string | undefined
-): string {
+): { text: string; enterprisePreserved: boolean } {
   const name = (enterpriseName || '').trim() || 'o empreendimento';
+  const originalHasEnterprise = hasEnterpriseMention(original, enterpriseName);
 
   const extracted = extractSingleAxisSlice(original, target);
   if (extracted) {
-    return enforceShortShape(extracted);
+    const shaped = enforceShortShape(extracted);
+    if (!originalHasEnterprise) return { text: shaped, enterprisePreserved: false };
+    const withEnterprise = ensureEnterpriseMention(shaped, enterpriseName);
+    return { text: withEnterprise.text, enterprisePreserved: withEnterprise.preserved };
   }
 
+  let rewritten: string;
   switch (target) {
     case 'preco': {
       const price = extractPriceSnippet(original);
       if (price) {
-        return enforceShortShape(
+        rewritten = enforceShortShape(
           `Oi! Sobre ${name}, o valor que aparece aqui começa em ${price}. Se quiser, na próxima mensagem te explico outro ponto com calma.`
         );
+        break;
       }
-      return enforceShortShape(
+      rewritten = enforceShortShape(
         `Oi! Sobre ${name}, posso te passar o valor certinho — me diz se quer que eu comece por ele que eu te detalho na próxima.`
       );
+      break;
     }
     case 'intencao_compra':
-      return enforceShortShape(
+      rewritten = enforceShortShape(
         `Oi! Pra te orientar melhor sobre ${name}, me conta: você está pensando em morar ou investir?`
       );
+      break;
     case 'localizacao':
-      return enforceShortShape(
+      rewritten = enforceShortShape(
         `Oi! Sobre ${name}, me diz se quer que eu te explique primeiro onde fica ou como é o acesso — eu te respondo em uma mensagem só.`
       );
+      break;
     case 'metragem_tipologia':
-      return enforceShortShape(
+      rewritten = enforceShortShape(
         `Oi! Sobre ${name}, metragem e planta eu te explico com calma — quer começar pelo tamanho em m² ou pelos quartos?`
       );
+      break;
     case 'lazer':
-      return enforceShortShape(
+      rewritten = enforceShortShape(
         `Oi! O lazer desse empreendimento é um ponto forte — quer que eu te conte os principais itens numa mensagem só?`
       );
+      break;
     case 'financiamento':
-      return enforceShortShape(
+      rewritten = enforceShortShape(
         `Oi! Financiamento e condições eu te explico por partes. Quer que eu comece pelo programa (tipo Minha Casa Minha Vida) ou pelas condições gerais?`
       );
+      break;
     case 'disponibilidade':
-      return enforceShortShape(`Oi! Sobre disponibilidade e unidades, o que você quer saber primeiro?`);
+      rewritten = enforceShortShape(`Oi! Sobre disponibilidade e unidades, o que você quer saber primeiro?`);
+      break;
     case 'visita_agendamento':
-      return enforceShortShape(`Oi! Pra agendar visita, qual dia e período ficam melhor pra você?`);
+      rewritten = enforceShortShape(`Oi! Pra agendar visita, qual dia e período ficam melhor pra você?`);
+      break;
     default:
-      return enforceShortShape(original);
+      rewritten = enforceShortShape(original);
+      break;
   }
+  if (!originalHasEnterprise) return { text: rewritten, enterprisePreserved: false };
+  const withEnterprise = ensureEnterpriseMention(rewritten, enterpriseName);
+  return { text: withEnterprise.text, enterprisePreserved: withEnterprise.preserved };
 }
 
 /**
@@ -321,22 +355,6 @@ export function applyAnaCommercialSingleAxisGuard(opts: {
   const raw = (opts.reply || '').trim();
   if (!raw) return { text: raw, changed: false, detected: [], chosen: null };
 
-  const focusedEnterprise = (opts.enterpriseName || '').trim();
-  if (focusedEnterprise) {
-    const rawNorm = norm(raw);
-    const focusedNorm = norm(focusedEnterprise);
-    if (focusedNorm && rawNorm.includes(focusedNorm)) {
-      // Com empreendimento já resolvido e citado na resposta, evita reescrever
-      // para um texto genérico que pode perder o contexto comercial correto.
-      return { text: raw, changed: false, detected: detectCommercialAxes(raw), chosen: null };
-    }
-  }
-
-  const multiPortfolio = (raw.match(/📍/g) || []).length >= 2;
-  if (multiPortfolio) {
-    return { text: raw, changed: false, detected: detectCommercialAxes(raw), chosen: null };
-  }
-
   const detected = detectCommercialAxes(raw);
   if (detected.length <= 1) {
     return { text: raw, changed: false, detected, chosen: detected[0] ?? null };
@@ -345,20 +363,31 @@ export function applyAnaCommercialSingleAxisGuard(opts: {
   const userAxis = inferUserRequestedAxis(opts.userMessage);
   const target = pickTargetAxis(detected, userAxis, opts.isFirstAnaReply, opts.userMessage || '');
 
-  let rewritten = buildRewrittenReply(target, raw, opts.enterpriseName ?? undefined);
+  const originalHasEnterprise = hasEnterpriseMention(raw, opts.enterpriseName ?? undefined);
+  let rewriteResult = buildRewrittenReply(target, raw, opts.enterpriseName ?? undefined);
+  let rewritten = rewriteResult.text;
   let finalAxes = detectCommercialAxes(rewritten);
   if (finalAxes.length > 1) {
-    rewritten = buildRewrittenReply('preco', raw, opts.enterpriseName ?? undefined);
+    rewriteResult = buildRewrittenReply('preco', raw, opts.enterpriseName ?? undefined);
+    rewritten = rewriteResult.text;
     finalAxes = detectCommercialAxes(rewritten);
   }
   if (finalAxes.length > 1) {
-    rewritten = buildRewrittenReply('intencao_compra', raw, opts.enterpriseName ?? undefined);
+    rewriteResult = buildRewrittenReply('intencao_compra', raw, opts.enterpriseName ?? undefined);
+    rewritten = rewriteResult.text;
     finalAxes = detectCommercialAxes(rewritten);
   }
 
   const text = enforceShortShape(rewritten);
+  const sanitizedHasEnterprise = hasEnterpriseMention(text, opts.enterpriseName ?? undefined);
+  const enterprisePreserved = originalHasEnterprise ? sanitizedHasEnterprise : false;
 
   const cid = opts.conversationId;
+  console.log(`[ANA_AXIS_GUARD] detected_axes=${detected.join('|') || 'none'}`);
+  console.log(`[ANA_AXIS_GUARD] chosen_axis=${target}`);
+  console.log(`[ANA_AXIS_GUARD] enterprise_preserved=${enterprisePreserved}`);
+  console.log(`[ANA_AXIS_GUARD] original_reply=${raw.slice(0, 500)}`);
+  console.log(`[ANA_AXIS_GUARD] sanitized_reply=${text.slice(0, 500)}`);
   console.log(
     `[ANA_AXIS_GUARD] detected_axes=${detected.join('|')} chosen_axis=${target} user_requested_axis=${userAxis ?? 'none'} conversationId=${cid ?? 'n/a'}`
   );

@@ -68,6 +68,7 @@ import {
 } from './anaAgentService.js';
 import {
   finalizeAnaReplyText,
+  applyAnaFinalTextGuard,
   countCustomerNameMentionsInText,
   sleepMs,
   randomAnaReplyDelayMs,
@@ -745,7 +746,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const confirmMsg = finalizeAnaReplyText(
         'Entendido! Um atendente vai entrar em contato em breve. Enquanto isso, sua mensagem já foi registrada. Posso te ajudar com mais alguma coisa antes da transferência?'
       );
-      await sleepMs(randomAnaReplyDelayMs({ replyLength: confirmMsg.length }));
+      const confirmFinalGuard = applyAnaFinalTextGuard({
+        reply: confirmMsg,
+        userMessage: trimmed,
+        materialRequestedThisTurn: false,
+        materialAvailableToSend: false,
+      });
+      console.log(`[ANA_FINAL_TEXT_GUARD] original_reply=${confirmMsg.slice(0, 500)}`);
+      console.log(`[ANA_FINAL_TEXT_GUARD] sanitized_reply=${confirmFinalGuard.text.slice(0, 500)}`);
+      console.log(`[ANA_FINAL_TEXT_GUARD] replaced_empty_or_punctuation_only=${confirmFinalGuard.replaced}`);
+      console.log(`[ANA_FINAL_TEXT_GUARD] reason=${confirmFinalGuard.reason}`);
+      const confirmMsgSafe = confirmFinalGuard.text;
+      await sleepMs(randomAnaReplyDelayMs({ replyLength: confirmMsgSafe.length }));
       if (isPipelineStale(conversationId, replyPipelineToken)) {
         console.log('[ANA_PIPELINE] engine_cancelled_stale', {
           conversationId,
@@ -761,11 +773,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         inboundMetaMessageId: inboundMetaFromCtx ?? null,
         replyPipelineToken: replyPipelineToken ?? null,
         phase: 'handoff_intent_confirm',
-        textLen: confirmMsg.length,
+        textLen: confirmMsgSafe.length,
       });
-      const sendResult = await sendTextMessage(toPhoneNumber, confirmMsg);
+      const sendResult = await sendTextMessage(toPhoneNumber, confirmMsgSafe);
       if (sendResult.success && sendResult.metaMessageId) {
-        await insertMessage(conversationId, 'assistant', confirmMsg, sendResult.metaMessageId);
+        await insertMessage(conversationId, 'assistant', confirmMsgSafe, sendResult.metaMessageId);
         console.log('[ANA_PIPELINE] engine_send_success', {
           conversationId,
           phase: 'handoff_intent_confirm',
@@ -1936,7 +1948,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         });
         return;
       }
-      const ackText = pickPostMediaAckText(lastAsstDup?.content ?? null);
+      const ackTextRaw = pickPostMediaAckText(lastAsstDup?.content ?? null);
+      const ackAxisGuard = applyAnaCommercialSingleAxisGuard({
+        reply: ackTextRaw,
+        userMessage: trimmed,
+        isFirstAnaReply,
+        enterpriseName: ent?.name ?? null,
+        conversationId,
+      });
+      const ackFinalGuard = applyAnaFinalTextGuard({
+        reply: ackAxisGuard.text,
+        userMessage: trimmed,
+        materialRequestedThisTurn: shouldAttemptDocSend,
+        materialAvailableToSend: canClaimMaterialWasSent,
+      });
+      console.log(`[ANA_FINAL_TEXT_GUARD] original_reply=${ackAxisGuard.text.slice(0, 500)}`);
+      console.log(`[ANA_FINAL_TEXT_GUARD] sanitized_reply=${ackFinalGuard.text.slice(0, 500)}`);
+      console.log(`[ANA_FINAL_TEXT_GUARD] replaced_empty_or_punctuation_only=${ackFinalGuard.replaced}`);
+      console.log(`[ANA_FINAL_TEXT_GUARD] reason=${ackFinalGuard.reason}`);
+      const ackText = ackFinalGuard.text;
       const lastContentPreAck = (lastAsstDup?.content || '').trim();
       const ageDupPreAck = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
       if (lastContentPreAck && lastContentPreAck === ackText.trim() && ageDupPreAck < 55_000) {
@@ -2062,6 +2092,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         isFirstAnaReply,
       }).slice(0, 4000);
     }
+
+    const finalAxisGuard = applyAnaCommercialSingleAxisGuard({
+      reply: replyText,
+      userMessage: trimmed,
+      isFirstAnaReply,
+      enterpriseName: ent?.name ?? null,
+      conversationId,
+    });
+    const finalTextGuard = applyAnaFinalTextGuard({
+      reply: finalAxisGuard.text,
+      userMessage: trimmed,
+      materialRequestedThisTurn: shouldAttemptDocSend,
+      materialAvailableToSend: canClaimMaterialWasSent || (!!ent && hasSendableFiles),
+    });
+    console.log(`[ANA_FINAL_TEXT_GUARD] original_reply=${finalAxisGuard.text.slice(0, 500)}`);
+    console.log(`[ANA_FINAL_TEXT_GUARD] sanitized_reply=${finalTextGuard.text.slice(0, 500)}`);
+    console.log(`[ANA_FINAL_TEXT_GUARD] replaced_empty_or_punctuation_only=${finalTextGuard.replaced}`);
+    console.log(`[ANA_FINAL_TEXT_GUARD] reason=${finalTextGuard.reason}`);
+    replyText = finalTextGuard.text;
 
     anaEngineTrace('final_reply_choice_after', {
       conversationId,

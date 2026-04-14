@@ -250,6 +250,53 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   return compact.slice(0, 4000);
 }
 
+function normalizeForSemanticCheck(text: string): string {
+  return (text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isEmptyOrPunctuationOnly(text: string): boolean {
+  const t = normalizeForSemanticCheck(text);
+  if (!t) return true;
+  // Considera inválido quando não há letras ou números (ex.: ".", "...", "?!", "-").
+  return !/[\p{L}\p{N}]/u.test(t);
+}
+
+export function applyAnaFinalTextGuard(opts: {
+  reply: string;
+  userMessage?: string | null;
+  materialRequestedThisTurn?: boolean;
+  materialAvailableToSend?: boolean;
+}): { text: string; replaced: boolean; reason: string } {
+  const raw = (opts.reply || '').trim();
+  if (!isEmptyOrPunctuationOnly(raw)) {
+    return { text: raw.slice(0, 4000), replaced: false, reason: 'kept_semantic_text' };
+  }
+
+  const askedMaterial = opts.materialRequestedThisTurn === true || userAskedForMaterialLikeIntent(opts.userMessage);
+  if (askedMaterial) {
+    if (opts.materialAvailableToSend === true) {
+      return {
+        text: 'Tenho sim. Vou te enviar aqui.',
+        replaced: true,
+        reason: 'material_requested_with_available_file',
+      };
+    }
+    return {
+      text: 'No momento, eu não tenho esse material disponível aqui para te enviar.',
+      replaced: true,
+      reason: 'material_requested_without_available_file',
+    };
+  }
+
+  return {
+    text: 'Perfeito. Me diz qual ponto você quer priorizar que eu te respondo objetivamente.',
+    replaced: true,
+    reason: 'empty_or_punctuation_only_generic_fallback',
+  };
+}
+
 /**
  * Guard leve da primeira resposta: remove apenas trechos de preço/parcelamento/entrada
  * quando o cliente não pediu isso explicitamente.
