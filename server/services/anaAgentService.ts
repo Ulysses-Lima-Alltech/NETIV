@@ -217,6 +217,9 @@ INSTRUÇÕES GERAIS
 - Quando faltar contexto, faça uma pergunta curta e natural para seguir a conversa.
 - Priorize clareza, continuidade e utilidade — com dosagem: ser útil é conduzir bem e responder com clareza, não encher uma única mensagem com tudo que você sabe.
 - Responda com linguagem humana e comercial, sem soar robótica.
+- Quando existir bloco "EVIDÊNCIA VALIDADA DO BACKEND" no prompt, trate-o como regra dura.
+- Só oferte/acuse disponibilidade de book, planta, material, envio de arquivo e localização exata quando o bloco marcar como "sim".
+- Se o bloco marcar "não", responda de forma honesta e curta, sem prometer envio ou obtenção posterior.
 
 PROGRESSÃO COMERCIAL (OBRIGATÓRIO — prevalece sobre impulso de “ser completa”)
 Você conversa como uma pessoa real no WhatsApp.
@@ -540,6 +543,8 @@ export interface BuildAnaSystemPromptOpts {
    * Evita reapresentação e triagem genérica.
    */
   postOutboundTemplateBatch?: boolean;
+  /** Evidência estruturada validada pelo backend (sim/não). */
+  validatedEvidenceBlock?: string | null;
 }
 
 /** Dados de apoio para pergunta de localização (sem impor “fases” de motor). */
@@ -655,6 +660,9 @@ export function buildAnaSystemPrompt(opts: BuildAnaSystemPromptOpts): string {
   const persisted = (opts.persistedContextBlock || '').trim()
     ? `--- CONTEXTO PERSISTIDO (continuidade; não copie texto técnico ao cliente) ---\n${opts.persistedContextBlock}\n\n`
     : '';
+  const validatedEvidence = (opts.validatedEvidenceBlock || '').trim()
+    ? `--- EVIDÊNCIA VALIDADA DO BACKEND (regras duras) ---\n${opts.validatedEvidenceBlock}\n\n`
+    : '';
 
   const triageType = opts.requestedProductType ?? 'INDEFINIDO';
   const namesList =
@@ -689,7 +697,7 @@ ${buildCustomerNameInstructions(opts)}`;
   if (opts.mode === 'triage' || !opts.enterprise) {
     return `${base}
 
-${persisted}${locationHint ? `${locationHint}\n\n` : ''}${commercialBlock ? `${commercialBlock}\n\n` : ''}PORTFÓLIO (nomes permitidos neste contexto — tipo de interesse: ${triageType}): ${namesList}
+${persisted}${validatedEvidence}${locationHint ? `${locationHint}\n\n` : ''}${commercialBlock ? `${commercialBlock}\n\n` : ''}PORTFÓLIO (nomes permitidos neste contexto — tipo de interesse: ${triageType}): ${namesList}
 Classificação (referência): "${cls}".
 ${openCtx}${appointmentHint}
 ${buildFirstReplyCommercialOpeningInstructions(opts)}
@@ -717,7 +725,7 @@ ${ap.reschedule ? '- Remarcação.\n' : ''}${ap.dateContestation ? '- Contestaç
 
   return `${base}
 
-${persisted}${locationHint ? `${locationHint}\n\n` : ''}${commercialBlock ? `${commercialBlock}\n\n` : ''}--- FOCO DO CADASTRO ATUAL ---
+${persisted}${validatedEvidence}${locationHint ? `${locationHint}\n\n` : ''}${commercialBlock ? `${commercialBlock}\n\n` : ''}--- FOCO DO CADASTRO ATUAL ---
 Empreendimento: "${e.name}" (${e.tipo}).
 ${buildScopedEnterpriseLocationBlock(e)}
 ${buildFirstReplyCommercialOpeningInstructions(opts)}

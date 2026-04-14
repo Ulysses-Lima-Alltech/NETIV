@@ -82,6 +82,10 @@ import {
   replyExplicitlyAsksCustomerName,
 } from '../utils/extractCustomerNameFromMessage.js';
 import {
+  buildAnaEnterpriseEvidence,
+  applyAnaEvidenceGuardToReply,
+} from '../utils/anaEnterpriseEvidence.js';
+import {
   buildUserUtterancesContext,
   computeAppointmentPreflight,
   ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY,
@@ -1034,8 +1038,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let fileInventory = '';
     let hasSendableFiles = false;
     let sendableAnaCategories: FileCategory[] = [];
+    let enterpriseFilesInventory: Awaited<ReturnType<typeof listEnterpriseFiles>> = [];
     if (ent) {
       const files = await listEnterpriseFiles(ent.id);
+      enterpriseFilesInventory = files;
       const sendableRows = files.filter((f) => f.is_active && f.can_be_sent_by_ana);
       sendableAnaCategories = [
         ...new Set(
@@ -1047,6 +1053,41 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       fileInventory = sendableRows.map((f) => `${f.category}: ${f.original_name}`).join('; ');
       hasSendableFiles = sendableAnaCategories.length > 0;
     }
+
+    const enterpriseEvidence = buildAnaEnterpriseEvidence({
+      enterprise: ent,
+      files: enterpriseFilesInventory.map((f) => ({
+        category: f.category,
+        is_active: f.is_active,
+        can_be_sent_by_ana: f.can_be_sent_by_ana,
+        can_be_used_as_knowledge: f.can_be_used_as_knowledge,
+        original_name: f.original_name,
+      })),
+      variablesMap: vars,
+      knowledgeText,
+    });
+    console.log('[ANA_EVIDENCE]', {
+      conversationId,
+      enterprise: ent?.name ?? null,
+      enterpriseId: ent?.id ?? null,
+      hasSendableBook: enterpriseEvidence.hasSendableBook,
+      hasSendableFloorplan: enterpriseEvidence.hasSendableFloorplan,
+      hasAnySendableMaterial: enterpriseEvidence.hasAnySendableMaterial,
+      hasExactLocation: enterpriseEvidence.hasExactLocation,
+      hasPricingInfo: enterpriseEvidence.hasPricingInfo,
+      hasFinancingInfo: enterpriseEvidence.hasFinancingInfo,
+      hasUsableKnowledgeChunks: enterpriseEvidence.hasUsableKnowledgeChunks,
+    });
+    const validatedEvidenceBlock = [
+      `book_enviavel_disponivel: ${enterpriseEvidence.hasSendableBook ? 'sim' : 'não'}`,
+      `planta_enviavel_disponivel: ${enterpriseEvidence.hasSendableFloorplan ? 'sim' : 'não'}`,
+      `material_enviavel_disponivel: ${enterpriseEvidence.hasAnySendableMaterial ? 'sim' : 'não'}`,
+      `localizacao_exata_disponivel: ${enterpriseEvidence.hasExactLocation ? 'sim' : 'não'}`,
+      `preco_estruturado_disponivel: ${enterpriseEvidence.hasPricingInfo ? 'sim' : 'não'}`,
+      `financiamento_estruturado_disponivel: ${enterpriseEvidence.hasFinancingInfo ? 'sim' : 'não'}`,
+      `conhecimento_textual_disponivel: ${enterpriseEvidence.hasUsableKnowledgeChunks ? 'sim' : 'não'}`,
+      'Regra: só prometa envio/posse quando o respectivo campo acima estiver em "sim".',
+    ].join('\n');
 
     let allEnterpriseNames: string[] = [];
     if (mode === 'scoped' && ent) {
@@ -1142,6 +1183,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       explicitPriceAskedThisTurn,
       postOutboundTemplateBatch:
         mode === 'scoped' && leadSourceRawIsBatchTemplate(effectiveConv.lead_source_raw),
+      validatedEvidenceBlock,
     };
 
     const rawModels = await getIntegrationModelStringsRaw();
@@ -1777,6 +1819,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
       if (axisGuard.changed) {
         replyBody = axisGuard.text;
+      }
+    }
+    {
+      const evidenceGuard = applyAnaEvidenceGuardToReply(replyBody, enterpriseEvidence);
+      if (evidenceGuard.changed) {
+        console.log('[ANA_MATERIAL_GUARD]', {
+          conversationId,
+          blocked_offer_reason: evidenceGuard.blockedOfferReason,
+          original_reply: replyBody.slice(0, 240),
+          sanitized_reply: evidenceGuard.text.slice(0, 240),
+        });
+        replyBody = evidenceGuard.text;
       }
     }
 
