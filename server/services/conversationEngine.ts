@@ -166,7 +166,7 @@ function buildSafeOutboundRecoveryReply(params: {
   if (isBareGreetingOnly(params.userMessage)) {
     return buildGreetingSafeFallback(params.knownCustomerName);
   }
-  return 'Perfeito. Me diz em uma frase o que voce quer ver agora: valor, localizacao ou planta.';
+  return 'Claro, eu te explico sim. Me diz só qual ponto pesa mais pra você agora, que eu sigo por aí.';
 }
 
 /** Motivo do fallback com `ANA_TECHNICAL_FALLBACK_NEUTRAL` (log [ANA_FALLBACK_TRACE]). */

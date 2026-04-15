@@ -253,6 +253,7 @@ function extractSingleAxisSlice(original: string, target: CommercialAxis): strin
   const raw = original.replace(/\s+/g, ' ').trim();
   const sentences = raw.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
   const kept: string[] = [];
+  let keptTargetSentence = false;
   for (const sent of sentences) {
     const ax = detectCommercialAxes(sent);
     const greetingOnly =
@@ -263,8 +264,11 @@ function extractSingleAxisSlice(original: string, target: CommercialAxis): strin
     }
     if (ax.length === 1 && ax[0] === target) {
       kept.push(sent);
+      keptTargetSentence = true;
     }
   }
+  // Evita resposta truncada só com saudação (ex.: "Oi! Sou a Ana.").
+  if (!keptTargetSentence) return null;
   const out = kept.join(' ').trim();
   if (!out) return null;
   const axesOut = detectCommercialAxes(out);
@@ -293,12 +297,12 @@ function buildRewrittenReply(
       const price = extractPriceSnippet(original);
       if (price) {
         rewritten = enforceShortShape(
-          `Sobre ${name}, o valor que aparece aqui começa em ${price}. Se você quiser, eu te explico o próximo ponto de um jeito bem direto.`
+          `Sobre ${name}, o valor que aparece aqui começa em ${price}. Se você quiser, eu te explico o próximo ponto de forma bem direta.`
         );
         break;
       }
       rewritten = enforceShortShape(
-        `Sobre ${name}, eu te explico os valores com objetividade. O que faz mais sentido pra você agora?`
+        `Sobre ${name}, eu te explico os valores de forma direta. Me diz só o que pesa mais pra você agora?`
       );
       break;
     }
@@ -309,29 +313,29 @@ function buildRewrittenReply(
       break;
     case 'localizacao':
       rewritten = enforceShortShape(
-        `Sobre a localização do ${name}, o que você quer entender melhor primeiro?`
+        `Sobre a localização do ${name}, eu te explico de forma prática. Qual ponto você quer que eu detalhe primeiro?`
       );
       break;
     case 'metragem_tipologia':
       rewritten = enforceShortShape(
-        `No ${name}, as plantas funcionam assim: eu te explico de forma direta. O que faz mais sentido pra sua rotina hoje?`
+        `No ${name}, as plantas funcionam assim e eu te explico de forma clara. Me diz só o que faz mais sentido pra sua rotina hoje?`
       );
       break;
     case 'lazer':
       rewritten = enforceShortShape(
-        `No ${name}, o lazer é um ponto forte. O que você valoriza mais nessa parte?`
+        `No ${name}, o lazer é um ponto importante. O que você quer que eu detalhe primeiro nessa parte?`
       );
       break;
     case 'financiamento':
       rewritten = enforceShortShape(
-        `Sobre condições, eu te explico de forma prática dentro do que consigo por aqui. O que você quer entender melhor primeiro?`
+        `Sobre condições, eu te explico de forma prática dentro do que consigo por aqui. Qual ponto você quer entender melhor primeiro?`
       );
       break;
     case 'disponibilidade':
-      rewritten = enforceShortShape(`Sobre disponibilidade no ${name}, o que eu consigo te adiantar hoje é o seguinte. Você está buscando algo pra agora?`);
+      rewritten = enforceShortShape(`Sobre disponibilidade no ${name}, eu te passo o que consigo confirmar agora. Você está buscando algo para agora?`);
       break;
     case 'visita_agendamento':
-      rewritten = enforceShortShape(`Perfeito, vamos organizar sua visita ao ${name}. Qual dia costuma funcionar melhor pra sua rotina?`);
+      rewritten = enforceShortShape(`Vamos organizar sua visita ao ${name}. Qual dia costuma funcionar melhor pra sua rotina?`);
       break;
     default:
       rewritten = enforceShortShape(original);

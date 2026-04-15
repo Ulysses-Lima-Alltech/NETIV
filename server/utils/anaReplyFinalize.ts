@@ -16,8 +16,10 @@ export function sleepMs(ms: number): Promise<void> {
 /** Resposta segura quando o modelo repete saudação genérica sem conteúdo útil. */
 export function buildGreetingSafeFallback(customerName?: string | null): string {
   const n = (customerName ?? '').trim();
-  if (n.length >= 2) return `Olá, ${n}! Em que posso ajudar agora?`;
-  return 'Olá! Em que posso ajudar agora?';
+  if (n.length >= 2) {
+    return `Oi, ${n}, tudo bem? Eu sou a Ana e posso te ajudar com as informações. O que você quer entender melhor primeiro?`;
+  }
+  return 'Oi, tudo bem? Eu sou a Ana e posso te ajudar com as informações. O que você quer entender melhor primeiro?';
 }
 
 const DUPLICATE_FALLBACKS_GENERIC = [
@@ -822,15 +824,15 @@ export function isSimpleOpeningGreeting(text: string): boolean {
 }
 
 const GREETING_REPLY_NO_NAME = [
-  'Oi! Eu sou a Ana. Como posso te chamar?',
-  'Olá! Sou a Ana, do comercial. Qual o seu nome?',
-  'Oi! Tudo bem? Me diz seu nome que a gente conversa.',
+  'Oi, tudo bem? Eu sou a Ana e posso te ajudar com as informações. O que você quer entender melhor primeiro?',
+  'Claro, eu te explico sim. Se você quiser, eu te passo um panorama rápido e depois a gente aprofunda no que fizer mais sentido para você.',
+  'Posso te passar um resumo direto e a gente aprofunda no que for mais importante para você.',
 ];
 
 const GREETING_REPLY_WITH_NAME = (name: string) => [
-  `Oi, ${name}! Como posso te ajudar?`,
-  `Olá, ${name}! O que você procura?`,
-  `Oi, ${name}! Me conta o que precisa.`,
+  `Oi, ${name}, tudo bem? Eu sou a Ana e posso te ajudar com as informações. O que você quer entender melhor primeiro?`,
+  `Claro, ${name}. Eu te explico sim e sigo pelo ponto que mais pesa para você agora.`,
+  `Perfeito, ${name}. Posso te passar um panorama rápido e depois a gente aprofunda no que for mais importante para você.`,
 ];
 
 /** Resposta acolhedora para saudação simples (sem chamar a API). */
