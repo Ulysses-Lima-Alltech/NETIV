@@ -34,6 +34,15 @@ export interface OperationalFactResolution {
   fragment: string | null;
 }
 
+interface StructuredListResult {
+  items: string[];
+  source: string | null;
+}
+
+interface BuildAnswerOpts {
+  enterpriseName?: string | null;
+}
+
 // ─── Detecção de tópico ────────────────────────────────────────────────────────
 
 const TOPIC_DETECT: ReadonlyArray<{ re: RegExp; topic: OperationalTopic }> = [
@@ -55,7 +64,7 @@ const TOPIC_DETECT: ReadonlyArray<{ re: RegExp; topic: OperationalTopic }> = [
     topic: 'infraestrutura',
   },
   {
-    re: /\b(portaria|[áa]rea\s+de\s+lazer|sal[aã]o\s+de\s+festas?|piscina|academia|playground|churrasqueira|[áa]reas?\s+comuns?)\b/i,
+    re: /\b(portaria|lazer|[áa]reas?\s+de\s+lazer|[áa]rea\s+de\s+lazer|sal[aã]o\s+de\s+festas?|piscina|academia|playground|churrasqueira|[áa]reas?\s+comuns?)\b/i,
     topic: 'portaria_lazer',
   },
 ];
@@ -161,6 +170,50 @@ const INFRA_SEARCH_RE =
 const PORTARIA_SEARCH_RE =
   /portaria\s*(?:pronta?|entregue|conclu[íi]da?|em\s+obras?|em\s+constru[cç][aã]o)?|[áa]rea\s+de\s+lazer(?:\s*(?:pronta?|entregue|em\s+obras?))?|piscina(?:\s*(?:pronta?|em\s+obras?))?|sal[aã]o\s+de\s+festas?(?:\s*(?:pronto?|entregue|em\s+obras?))?|academia(?:\s*(?:pronta?|em\s+obras?))?|playground(?:\s*(?:pronto?|em\s+obras?))?|churrasqueira(?:\s*(?:pronta?|em\s+obras?))?|[áa]reas?\s+comuns?(?:\s*(?:prontas?|em\s+obras?))?/i;
 
+function extractPortariaLazerList(corpus: string): StructuredListResult {
+  const lines = corpus
+    .split(/[\n\r]+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const sectionHeaderRe = /(?:[áa]reas?\s+comuns?|[áa]reas?\s+de\s+lazer|lazer)\b/i;
+  const sectionLineRe =
+    /(portaria|piscina|quadra|academia|playground|churrasqueira|sal[aã]o|espa[cç]o\s+gourmet|pet\s*place|brinquedoteca|coworking|spa|praia\s+artificial)/i;
+
+  const candidates: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (!sectionHeaderRe.test(line)) continue;
+
+    candidates.push(...splitAmenityCandidates(line));
+    for (let j = i + 1; j < Math.min(lines.length, i + 16); j++) {
+      const next = lines[j]!;
+      if (/^[A-ZÁÉÍÓÚÂÊÔÃÕÇ0-9\s]{8,}$/.test(next) && !sectionLineRe.test(next)) break;
+      if (!sectionLineRe.test(next) && !/^[•\-*]|\d+[.)]/.test(next)) continue;
+      candidates.push(...splitAmenityCandidates(next));
+    }
+  }
+
+  if (candidates.length === 0) {
+    const line = extractLine(corpus, PORTARIA_SEARCH_RE);
+    if (!line) return { items: [], source: null };
+    const parsed = dedupeAmenityItems(
+      splitAmenityCandidates(line)
+        .map(sanitizeAmenityItem)
+        .filter((v): v is string => !!v),
+    );
+    return { items: parsed, source: line };
+  }
+
+  const items = dedupeAmenityItems(
+    candidates
+      .map(sanitizeAmenityItem)
+      .filter((v): v is string => !!v),
+  );
+  const source = items.length > 0 ? items.join(', ') : null;
+  return { items, source };
+}
+
 // ─── Montagem da resposta ──────────────────────────────────────────────────────
 
 /** Limpa o fragmento extraído para uso inline em frases. */
@@ -171,37 +224,111 @@ function cleanFragment(raw: string): string {
     .trim();
 }
 
-/** Torna minúscula a primeira letra para fluir após vírgula. */
-function lcFirst(s: string): string {
-  if (!s) return s;
-  return s.charAt(0).toLowerCase() + s.slice(1);
+function normalizeToken(raw: string): string {
+  return (raw || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function splitAmenityCandidates(raw: string): string[] {
+  return raw
+    .replace(/[•·]/g, ',')
+    .replace(/\s+\|\s+/g, ',')
+    .replace(/\s{2,}/g, ', ')
+    .split(/[;,/]/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
+function sanitizeAmenityItem(raw: string): string | null {
+  const base = cleanFragment(raw)
+    .replace(/^(?:[•\-*]|\d+[.)])\s*/u, '')
+    .replace(
+      /^(?:[áa]reas?\s+comuns?|[áa]reas?\s+de\s+lazer|lazer|itens?\s+de\s+lazer|amenidades?)\s*[:\-]\s*/iu,
+      '',
+    )
+    .replace(/[.]+$/g, '')
+    .trim();
+  if (!base) return null;
+  const n = normalizeToken(base);
+  if (!n) return null;
+  if (
+    n === 'areas comuns' ||
+    n === 'area comum' ||
+    n === 'areas de lazer' ||
+    n === 'area de lazer' ||
+    n === 'lazer' ||
+    n === 'amenidades'
+  ) {
+    return null;
+  }
+  if (base.length < 3 || base.length > 90) return null;
+  return base.charAt(0).toUpperCase() + base.slice(1);
+}
+
+function dedupeAmenityItems(items: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const n = normalizeToken(item)
+      .replace(/\b(com|de|da|do|dos|das|e)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    out.push(item);
+  }
+  return out;
+}
+
+function isGenericAmenityHeader(raw: string): boolean {
+  const n = normalizeToken(raw);
+  return (
+    n === 'areas comuns' ||
+    n === 'area comum' ||
+    n === 'areas de lazer' ||
+    n === 'area de lazer' ||
+    n === 'lazer'
+  );
+}
+
+function formatLazerListAnswer(items: string[], enterpriseName?: string | null): string {
+  const ent = (enterpriseName || '').trim();
+  const header = ent.length >= 2
+    ? `No ${ent}, as áreas de lazer incluem:`
+    : 'As áreas de lazer incluem:';
+  return `${header}\n\n${items.map((i) => `• ${i}`).join('\n')}`;
 }
 
 const NOT_FOUND: Record<OperationalTopic, string> = {
-  entrega_prazo: 'No material de apoio que tenho aqui, não encontrei uma data de entrega.',
+  entrega_prazo: 'Não encontrei uma data de entrega no material disponível.',
   construir_liberacao:
-    'No material de apoio que tenho aqui, não encontrei informação sobre liberação para construir.',
+    'Não encontrei informação sobre liberação para construir no material disponível.',
   obra_andamento:
-    'No material de apoio que tenho aqui, não encontrei uma atualização sobre o andamento das obras.',
+    'Não encontrei uma atualização sobre o andamento das obras no material disponível.',
   infraestrutura:
-    'No material de apoio disponível aqui, não encontrei informação sobre o status da infraestrutura.',
+    'Não encontrei informação sobre o status da infraestrutura no material disponível.',
   portaria_lazer:
-    'No material de apoio que tenho aqui, não encontrei o status de portaria ou áreas de lazer.',
+    'Não encontrei informação suficiente sobre portaria e áreas de lazer no material disponível.',
 };
 
 function buildAnswer(
   topic: OperationalTopic,
   corpus: string,
+  opts?: BuildAnswerOpts,
 ): { answer: string; dataFound: boolean; fragment: string | null } {
   switch (topic) {
     case 'entrega_prazo': {
       const period = extractEntregaPeriod(corpus);
       if (!period) return { answer: NOT_FOUND[topic], dataFound: false, fragment: null };
-      // Se "period" é uma linha completa (não só data), usa diretamente
       const isLongPhrase = period.length > 12;
       const answer = isLongPhrase
-        ? `No material que tenho aqui, ${lcFirst(cleanFragment(period))}.`
-        : `No material que tenho aqui, a entrega está prevista para ${period}.`;
+        ? `${cleanFragment(period)}.`
+        : `A entrega está prevista para ${period}.`;
       return { answer: answer.replace(/\.{2,}$/, '.'), dataFound: true, fragment: period };
     }
 
@@ -209,7 +336,7 @@ function buildAnswer(
       const { polarity, line } = extractLiberacao(corpus);
       if (polarity === 'negative') {
         return {
-          answer: 'Pelo material de apoio que tenho aqui, ainda não está liberado para construir.',
+          answer: 'Ainda não está liberado para construir.',
           dataFound: true,
           fragment: line,
         };
@@ -217,13 +344,13 @@ function buildAnswer(
       if (polarity === 'positive') {
         const fragment = line ?? '';
         const answer = fragment
-          ? `No material de apoio que tenho aqui, ${lcFirst(cleanFragment(fragment))}.`
-          : 'No material de apoio que tenho aqui, está liberado para construir.';
+          ? `${cleanFragment(fragment)}.`
+          : 'Está liberado para construir.';
         return { answer: answer.replace(/\.{2,}$/, '.'), dataFound: true, fragment };
       }
       if (line) {
         return {
-          answer: `No material de apoio que tenho aqui, sobre liberação para construir: ${lcFirst(cleanFragment(line))}.`,
+          answer: `${cleanFragment(line)}.`,
           dataFound: true,
           fragment: line,
         };
@@ -235,7 +362,7 @@ function buildAnswer(
       const line = extractLine(corpus, OBRA_SEARCH_RE);
       if (!line) return { answer: NOT_FOUND[topic], dataFound: false, fragment: null };
       return {
-        answer: `No material de apoio que tenho aqui, sobre obras: ${lcFirst(cleanFragment(line))}.`,
+        answer: `${cleanFragment(line)}.`,
         dataFound: true,
         fragment: line,
       };
@@ -245,17 +372,28 @@ function buildAnswer(
       const line = extractLine(corpus, INFRA_SEARCH_RE);
       if (!line) return { answer: NOT_FOUND[topic], dataFound: false, fragment: null };
       return {
-        answer: `No material de apoio disponível aqui, sobre infraestrutura: ${lcFirst(cleanFragment(line))}.`,
+        answer: `${cleanFragment(line)}.`,
         dataFound: true,
         fragment: line,
       };
     }
 
     case 'portaria_lazer': {
+      const list = extractPortariaLazerList(corpus);
+      if (list.items.length >= 2) {
+        return {
+          answer: formatLazerListAnswer(list.items, opts?.enterpriseName),
+          dataFound: true,
+          fragment: list.source,
+        };
+      }
       const line = extractLine(corpus, PORTARIA_SEARCH_RE);
       if (!line) return { answer: NOT_FOUND[topic], dataFound: false, fragment: null };
+      if (isGenericAmenityHeader(line)) {
+        return { answer: NOT_FOUND[topic], dataFound: false, fragment: null };
+      }
       return {
-        answer: `No material de apoio que tenho aqui, sobre portaria/lazer: ${lcFirst(cleanFragment(line))}.`,
+        answer: `${cleanFragment(line)}.`,
         dataFound: true,
         fragment: line,
       };
@@ -278,12 +416,13 @@ export function resolveOperationalFactAnswer(
   userText: string,
   knowledgeText: string,
   variablesMap: Record<string, string>,
+  opts?: { enterpriseName?: string | null },
 ): OperationalFactResolution | null {
   const topic = detectOperationalTopic(userText);
   if (!topic) return null;
 
   const corpus = buildSearchCorpus(knowledgeText, variablesMap);
-  const { answer, dataFound, fragment } = buildAnswer(topic, corpus);
+  const { answer, dataFound, fragment } = buildAnswer(topic, corpus, opts);
 
   return { answer, topic, dataFound, fragment };
 }

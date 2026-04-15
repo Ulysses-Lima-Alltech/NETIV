@@ -1888,7 +1888,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     // O LLM não tem liberdade de improvisar nesses tópicos.
     let operationalResolverFired = false;
     {
-      const resolution = resolveOperationalFactAnswer(trimmed, knowledgeText, vars);
+      const resolution = resolveOperationalFactAnswer(trimmed, knowledgeText, vars, {
+        enterpriseName: ent?.name ?? null,
+      });
       if (resolution !== null) {
         operationalResolverFired = true;
         console.log('[ANA_OPERATIONAL_RESOLVER]', {
@@ -1951,15 +1953,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     {
-      const axisGuard = applyAnaCommercialSingleAxisGuard({
-        reply: replyBody,
-        userMessage: trimmed,
-        isFirstAnaReply,
-        enterpriseName: ent?.name ?? null,
-        conversationId,
-      });
-      if (axisGuard.changed) {
-        replyBody = axisGuard.text;
+      if (!operationalResolverFired) {
+        const axisGuard = applyAnaCommercialSingleAxisGuard({
+          reply: replyBody,
+          userMessage: trimmed,
+          isFirstAnaReply,
+          enterpriseName: ent?.name ?? null,
+          conversationId,
+        });
+        if (axisGuard.changed) {
+          replyBody = axisGuard.text;
+        }
       }
     }
     {
@@ -2236,23 +2240,29 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }).slice(0, 4000);
     }
 
-    const finalAxisGuard = applyAnaCommercialSingleAxisGuard({
-      reply: replyText,
-      userMessage: trimmed,
-      isFirstAnaReply,
-      enterpriseName: ent?.name ?? null,
-      conversationId,
-    });
-    const finalEvidenceGuard = applyAnaEvidenceGuardToReply(finalAxisGuard.text, enterpriseEvidence);
+    const finalAxisGuardText = operationalResolverFired
+      ? replyText
+      : applyAnaCommercialSingleAxisGuard({
+          reply: replyText,
+          userMessage: trimmed,
+          isFirstAnaReply,
+          enterpriseName: ent?.name ?? null,
+          conversationId,
+        }).text;
+    const finalEvidenceGuard = operationalResolverFired
+      ? { text: finalAxisGuardText, changed: false as const, blockedOfferReason: null as null | string }
+      : applyAnaEvidenceGuardToReply(finalAxisGuardText, enterpriseEvidence);
     const finalTextGuard = finalizeAnaReplyText(finalEvidenceGuard.text, {
       userMessage: trimmed,
       conversationMode: mode,
       isFirstAnaReply,
     });
+    const preserveListFormatting = operationalResolverFired && /\n\s*•\s+/.test(finalTextGuard);
     const hardLimitedReply = applyAnaHardLengthGuard({
       text: finalTextGuard,
       enterpriseName: ent?.name ?? null,
-      maxChars: ANA_OUTBOUND_MAX_CHARS,
+      maxChars: preserveListFormatting ? 360 : ANA_OUTBOUND_MAX_CHARS,
+      preserveLineBreaks: preserveListFormatting,
     });
     let finalOutboundEval = evaluateAnaOutboundText({
       reply: hardLimitedReply,
@@ -2296,7 +2306,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         reason: finalOutboundEval.reason,
         userMessage: trimmed,
         conversationId,
-        replyCandidate: finalAxisGuard.text,
+        replyCandidate: finalAxisGuardText,
       });
       return;
     }
