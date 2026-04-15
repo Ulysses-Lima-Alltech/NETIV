@@ -29,13 +29,37 @@ interface MunicipioIbge {
 }
 
 let municipiosCache: MunicipioIbge[] | null = null;
+let municipiosUnavailable = false;
+let municipiosLoadWarned = false;
 
 function loadMunicipios(): MunicipioIbge[] {
   if (municipiosCache) return municipiosCache;
+  if (municipiosUnavailable) return [];
+
   const path = resolveMunicipiosIbgePath();
-  const raw = readFileSync(path, 'utf-8');
-  municipiosCache = JSON.parse(raw) as MunicipioIbge[];
-  return municipiosCache;
+  if (!path) {
+    municipiosUnavailable = true;
+    return [];
+  }
+  try {
+    const raw = readFileSync(path, 'utf-8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      throw new Error('json_root_not_array');
+    }
+    municipiosCache = parsed as MunicipioIbge[];
+    return municipiosCache;
+  } catch (error) {
+    if (!municipiosLoadWarned) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[MUNICIPIOS_PATH] falha ao carregar municipios-ibge.json; seguindo sem enriquecimento de municipio. detail=${detail}`
+      );
+      municipiosLoadWarned = true;
+    }
+    municipiosUnavailable = true;
+    return [];
+  }
 }
 
 export function normGeoText(s: string): string {
@@ -67,6 +91,7 @@ export function findMunicipioInMessage(text: string): MunicipioIbge | null {
   const hay = normGeoText(text);
   if (hay.length < 3) return null;
   const municipios = loadMunicipios();
+  if (municipios.length === 0) return null;
   const sorted = [...municipios].sort((a, b) => b.n.length - a.n.length);
   for (const m of sorted) {
     const cn = normGeoText(m.n);

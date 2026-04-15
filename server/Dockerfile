@@ -20,6 +20,7 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/db ./db
 COPY --from=builder /app/scripts ./scripts
+COPY public/data ./public/data
 
 EXPOSE 3000
 

@@ -6,6 +6,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const FILE_NAME = 'municipios-ibge.json';
 const REL = ['public', 'data', FILE_NAME] as const;
+let cachedPath: string | null = null;
+let warnedMissingOnce = false;
+let loggedChosenPath: string | null = null;
 
 /** Path absoluto incorreto visto em produção quando cwd ou "raiz" resolvem para `/`. */
 function isPoisonousRootPublicPath(p: string): boolean {
@@ -38,9 +41,10 @@ function uniquePush(list: string[], p: string, seen: Set<string>): void {
 /**
  * Resolve o JSON IBGE para leitura no Node. Único ponto de entrada no backend.
  */
-export function resolveMunicipiosIbgePath(): string {
+export function resolveMunicipiosIbgePath(): string | null {
+  if (cachedPath && existsSync(cachedPath)) return cachedPath;
+
   const cwd = process.cwd();
-  console.log('[MUNICIPIOS_PATH] cwd', cwd);
 
   const candidates: string[] = [];
   const seen = new Set<string>();
@@ -60,26 +64,31 @@ export function resolveMunicipiosIbgePath(): string {
 
   let chosenPath: string | null = null;
   for (const candidate of candidates) {
-    console.log('[MUNICIPIOS_PATH] candidate', candidate);
     if (isPoisonousRootPublicPath(candidate)) {
-      console.log('[MUNICIPIOS_PATH] exists', false);
-      console.log('[MUNICIPIOS_PATH] skip_poison_root_public', candidate);
       continue;
     }
-    const exists = existsSync(candidate);
-    console.log('[MUNICIPIOS_PATH] exists', exists);
-    if (exists) {
+    if (existsSync(candidate)) {
       chosenPath = candidate;
       break;
     }
   }
 
-  if (!chosenPath) {
-    throw new Error(
-      `[resolveMunicipiosIbgePath] ${FILE_NAME} não encontrado. cwd=${cwd} tried=${JSON.stringify(candidates)}`
-    );
+  if (chosenPath) {
+    cachedPath = chosenPath;
+    if (loggedChosenPath !== chosenPath) {
+      console.log('[MUNICIPIOS_PATH] usando', chosenPath);
+      loggedChosenPath = chosenPath;
+    }
+    warnedMissingOnce = false;
+    return chosenPath;
   }
 
-  console.log('[MUNICIPIOS_PATH] chosenPath', chosenPath);
-  return chosenPath;
+  cachedPath = null;
+  if (!warnedMissingOnce) {
+    console.warn(
+      `[MUNICIPIOS_PATH] ${FILE_NAME} ausente; seguindo sem enriquecimento de municipio. cwd=${cwd} tried=${JSON.stringify(candidates)}`
+    );
+    warnedMissingOnce = true;
+  }
+  return null;
 }
