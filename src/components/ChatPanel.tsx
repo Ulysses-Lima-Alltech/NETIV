@@ -247,7 +247,7 @@ export function ChatPanel({
   };
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden bg-white">
       <header className="shrink-0 px-5 py-4 border-b border-[#E5E7EB] bg-white">
         <div className="flex flex-wrap items-start gap-3">
           <div className="flex-1 min-w-0">
@@ -703,7 +703,7 @@ export function ChatPanel({
               <p className="text-[13px] text-[#9CA3AF]">Sem mensagens ainda</p>
             </div>
           ) : (
-            <div className="min-h-full flex flex-col justify-end">
+            <div className="mt-auto">
               {messages.map((msg, idx) => {
                 const dateLabel = formatDateSeparator(msg.createdAt);
                 const showDate = dateLabel !== lastDate;

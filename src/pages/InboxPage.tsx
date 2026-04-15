@@ -664,13 +664,13 @@ export function InboxPage() {
   );
 
   return (
-    <div className="h-screen flex flex-col bg-[#F9FAFB] text-[#111827]">
-      <nav className="shrink-0 flex items-center justify-between px-5 h-14 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm sticky top-0 z-30">
+    <div className="h-dvh overflow-hidden flex flex-col bg-[#F9FAFB] text-[#111827]">
+      <nav className="shrink-0 flex items-center justify-between px-5 h-14 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
         <span className="text-[15px] font-semibold text-[#111827]">Inbox</span>
         <AppNav />
       </nav>
 
-      <div className="flex-1 flex flex-col md:flex-row min-h-0">
+      <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden">
         <button
           type="button"
           aria-label={sidebarOpen ? 'Fechar lista de conversas' : 'Abrir lista de conversas'}
@@ -732,7 +732,7 @@ export function InboxPage() {
             onNewMessage={() => setNewMessageOpen(true)}
           />
         </aside>
-        <main className="flex-1 flex flex-col min-w-0 min-h-0">
+        <main className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
           <ChatPanel
             conversation={selectedConversation}
             windowStatus={selectedWindow}
