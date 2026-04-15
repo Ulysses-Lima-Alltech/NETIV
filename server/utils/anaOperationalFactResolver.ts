@@ -72,7 +72,7 @@ export function detectOperationalTopic(userText: string): OperationalTopic | nul
 
 /**
  * Prioriza os campos mais prováveis de conter dados operacionais:
- * disponibilidade → observacoes → condicoes → preco → knowledgeText (primeiros 15 k).
+ * disponibilidade → observacoes → condicoes → preco → knowledgeText.
  */
 function buildSearchCorpus(
   knowledgeText: string,
@@ -82,7 +82,9 @@ function buildSearchCorpus(
     .map((k) => variablesMap[k] ?? '')
     .filter(Boolean)
     .join('\n');
-  return [varData, knowledgeText.slice(0, 15_000)].filter(Boolean).join('\n');
+  // Usa todo o `knowledgeText` já limitado no pipeline (~52k) para evitar falso
+  // "não encontrei" quando a evidência está fora dos primeiros 15k caracteres.
+  return [varData, knowledgeText].filter(Boolean).join('\n');
 }
 
 // ─── Extração por tópico ───────────────────────────────────────────────────────
@@ -157,7 +159,7 @@ const INFRA_SEARCH_RE =
 // --- portaria_lazer ---
 
 const PORTARIA_SEARCH_RE =
-  /portaria\s*(?:pronta?|entregue|conclu[íi]da?|em\s+obras?|em\s+constru[cç][aã]o)|[áa]rea\s+de\s+lazer\s*(?:pronta?|entregue|em\s+obras?)|piscina\s*(?:pronta?|em\s+obras?)|sal[aã]o\s+de\s+festas?\s*(?:pronto?|entregue|em\s+obras?)/i;
+  /portaria\s*(?:pronta?|entregue|conclu[íi]da?|em\s+obras?|em\s+constru[cç][aã]o)?|[áa]rea\s+de\s+lazer(?:\s*(?:pronta?|entregue|em\s+obras?))?|piscina(?:\s*(?:pronta?|em\s+obras?))?|sal[aã]o\s+de\s+festas?(?:\s*(?:pronto?|entregue|em\s+obras?))?|academia(?:\s*(?:pronta?|em\s+obras?))?|playground(?:\s*(?:pronto?|em\s+obras?))?|churrasqueira(?:\s*(?:pronta?|em\s+obras?))?|[áa]reas?\s+comuns?(?:\s*(?:prontas?|em\s+obras?))?/i;
 
 // ─── Montagem da resposta ──────────────────────────────────────────────────────
 

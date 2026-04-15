@@ -293,42 +293,42 @@ function buildRewrittenReply(
       const price = extractPriceSnippet(original);
       if (price) {
         rewritten = enforceShortShape(
-          `Faz sentido. Sobre ${name}, o valor que aparece aqui começa em ${price}. Se você quiser, eu te explico o próximo ponto de um jeito bem direto.`
+          `Sobre ${name}, o valor que aparece aqui começa em ${price}. Se você quiser, eu te explico o próximo ponto de um jeito bem direto.`
         );
         break;
       }
       rewritten = enforceShortShape(
-        `Que bom seu interesse no ${name}. Eu te explico os valores com objetividade. O que faz mais sentido pra você agora?`
+        `Sobre ${name}, eu te explico os valores com objetividade. O que faz mais sentido pra você agora?`
       );
       break;
     }
     case 'intencao_compra':
       rewritten = enforceShortShape(
-        `Legal, esse é um ponto importante mesmo. Pra eu te orientar melhor no ${name}, você está olhando mais pra morar ou investir?`
+        `Pra eu te orientar melhor no ${name}, você está olhando mais pra morar ou investir?`
       );
       break;
     case 'localizacao':
       rewritten = enforceShortShape(
-        `Que bom que você gostou do ${name}. O que você quer entender melhor da localização primeiro?`
+        `Sobre a localização do ${name}, o que você quer entender melhor primeiro?`
       );
       break;
     case 'metragem_tipologia':
       rewritten = enforceShortShape(
-        `Faz sentido. No ${name}, eu te explico as plantas de forma direta. O que faz mais sentido pra sua rotina hoje?`
+        `No ${name}, as plantas funcionam assim: eu te explico de forma direta. O que faz mais sentido pra sua rotina hoje?`
       );
       break;
     case 'lazer':
       rewritten = enforceShortShape(
-        `Legal, esse é um ponto importante mesmo. No ${name}, o lazer chama bastante atenção. O que você valoriza mais nessa parte?`
+        `No ${name}, o lazer é um ponto forte. O que você valoriza mais nessa parte?`
       );
       break;
     case 'financiamento':
       rewritten = enforceShortShape(
-        `Faz sentido. Sobre condições, eu te explico de forma prática dentro do que consigo por aqui. O que você quer entender melhor primeiro?`
+        `Sobre condições, eu te explico de forma prática dentro do que consigo por aqui. O que você quer entender melhor primeiro?`
       );
       break;
     case 'disponibilidade':
-      rewritten = enforceShortShape(`Que bom seu interesse no ${name}. Sobre disponibilidade, eu te atualizo de forma direta. Você está buscando algo pra agora?`);
+      rewritten = enforceShortShape(`Sobre disponibilidade no ${name}, o que eu consigo te adiantar hoje é o seguinte. Você está buscando algo pra agora?`);
       break;
     case 'visita_agendamento':
       rewritten = enforceShortShape(`Perfeito, vamos organizar sua visita ao ${name}. Qual dia costuma funcionar melhor pra sua rotina?`);
@@ -368,11 +368,13 @@ export function applyAnaCommercialSingleAxisGuard(opts: {
   let rewritten = rewriteResult.text;
   let finalAxes = detectCommercialAxes(rewritten);
   if (finalAxes.length > 1) {
-    rewriteResult = buildRewrittenReply('preco', raw, opts.enterpriseName ?? undefined);
+    // Se o usuário pediu eixo explícito (ex.: lazer), não degradar para preço.
+    const fallbackAxis = userAxis ?? target;
+    rewriteResult = buildRewrittenReply(fallbackAxis, raw, opts.enterpriseName ?? undefined);
     rewritten = rewriteResult.text;
     finalAxes = detectCommercialAxes(rewritten);
   }
-  if (finalAxes.length > 1) {
+  if (finalAxes.length > 1 && userAxis == null) {
     rewriteResult = buildRewrittenReply('intencao_compra', raw, opts.enterpriseName ?? undefined);
     rewritten = rewriteResult.text;
     finalAxes = detectCommercialAxes(rewritten);

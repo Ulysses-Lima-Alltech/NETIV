@@ -81,7 +81,7 @@ import {
   sanitizeFirstCampaignReplyShape,
   sanitizeFinancialNegotiationOverreach,
 } from '../utils/anaReplyFinalize.js';
-import { applyAnaCommercialSingleAxisGuard } from '../utils/anaCommercialAxisGuard.js';
+import { applyAnaCommercialSingleAxisGuard, inferUserRequestedAxis } from '../utils/anaCommercialAxisGuard.js';
 import {
   extractCustomerNameFromUserUtterance,
   replyExplicitlyAsksCustomerName,
@@ -155,9 +155,13 @@ function buildSafeOutboundRecoveryReply(params: {
   userMessage: string;
   knownCustomerName: string | null | undefined;
   appointmentActive: boolean;
+  requestedAxis?: 'preco' | 'metragem_tipologia' | 'localizacao' | 'lazer' | 'financiamento' | 'disponibilidade' | 'visita_agendamento' | 'intencao_compra' | null;
 }): string {
   if (params.appointmentActive) {
     return ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY;
+  }
+  if (params.requestedAxis === 'lazer') {
+    return 'Sobre lazer, não consegui confirmar esse ponto no material que consultei agora. Se você quiser, eu sigo com outro tema em seguida, mas sem te afirmar nada sem base.';
   }
   if (isBareGreetingOnly(params.userMessage)) {
     return buildGreetingSafeFallback(params.knownCustomerName);
@@ -2261,6 +2265,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           userMessage: trimmed,
           knownCustomerName: effectiveConv.customer_name,
           appointmentActive: appointmentPreflight.active || !!openAppointmentSummary,
+          requestedAxis: inferUserRequestedAxis(trimmed),
         });
         const recoveredReplyLimited = applyAnaHardLengthGuard({
           text: finalizeAnaReplyText(recoveredReplyRaw, {
