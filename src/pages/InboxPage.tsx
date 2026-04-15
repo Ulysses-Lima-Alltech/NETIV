@@ -21,6 +21,41 @@ import {
   type InboxFilters,
 } from '../components/InboxFilterBar';
 
+const INBOX_READ_STATE_KEY = 'inbox_read_state_v1';
+
+type InboxReadStateMap = Record<string, string>;
+
+function loadInboxReadState(): InboxReadStateMap {
+  try {
+    const raw = localStorage.getItem(INBOX_READ_STATE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as InboxReadStateMap;
+    }
+  } catch {
+    // noop
+  }
+  return {};
+}
+
+function saveInboxReadState(state: InboxReadStateMap): void {
+  try {
+    localStorage.setItem(INBOX_READ_STATE_KEY, JSON.stringify(state));
+  } catch {
+    // noop
+  }
+}
+
+function computeUnreadCountFromReadState(conversation: Conversation, readState: InboxReadStateMap): number {
+  const lastReadAtRaw = readState[conversation.id] ?? null;
+  if (!lastReadAtRaw) return 1;
+  const updatedMs = new Date(conversation.updatedAt).getTime();
+  const readMs = new Date(lastReadAtRaw).getTime();
+  if (!Number.isFinite(updatedMs) || !Number.isFinite(readMs)) return 0;
+  return updatedMs > readMs ? 1 : 0;
+}
+
 function mapApiConversationToConversation(c: ApiConversation): Conversation {
   const leadName =
     (c.whatsappDisplayName ?? '').trim() ||
@@ -125,11 +160,13 @@ export function InboxPage() {
   const [projects, setProjects] = useState<{ id: number; name: string; active: boolean }[]>([]);
   const [filters, setFilters] = useState<InboxFilters>(DEFAULT_INBOX_FILTERS);
   const [searchDebounced, setSearchDebounced] = useState(filters.search);
+  const [readStateMap, setReadStateMap] = useState<InboxReadStateMap>(() => loadInboxReadState());
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   /** Evita reprocessar o mesmo `conversationId` da URL (sucesso ou falha) em loop. */
   const deepLinkConsumedParamRef = useRef<string | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   const conversationsRequestIdRef = useRef(0);
+  const lastLoadedConversationIdRef = useRef<string | null>(null);
 
   const rawConversationParam = searchParams.get('conversationId')?.trim() ?? '';
   const parsedConversationId = useMemo(() => {
@@ -163,6 +200,20 @@ export function InboxPage() {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
 
+  const markConversationAsRead = useCallback((convId: string) => {
+    setReadStateMap((prev) => {
+      const next = { ...prev, [convId]: new Date().toISOString() };
+      saveInboxReadState(next);
+      return next;
+    });
+  }, []);
+
+  const applyReadFilter = useCallback((list: Conversation[]) => {
+    if (filters.readState === 'read') return list.filter((c) => c.unreadCount === 0);
+    if (filters.readState === 'unread') return list.filter((c) => c.unreadCount > 0);
+    return list;
+  }, [filters.readState]);
+
   const loadConversations = useCallback((silent?: boolean) => {
     if (!silent) setConversationsLoading(true);
     const requestId = ++conversationsRequestIdRef.current;
@@ -171,7 +222,12 @@ export function InboxPage() {
       .getConversations({ ...params, limit: 200, type: activeTab })
       .then((data) => {
         if (requestId !== conversationsRequestIdRef.current) return;
-        const mapped = data.conversations.map(mapApiConversationToConversation);
+        const mappedRaw = data.conversations.map(mapApiConversationToConversation);
+        const mappedWithUnread = mappedRaw.map((c) => ({
+          ...c,
+          unreadCount: c.id === selectedIdRef.current ? 0 : computeUnreadCountFromReadState(c, readStateMap),
+        }));
+        const mapped = applyReadFilter(mappedWithUnread);
         setConversations((prev) => {
           const sid = selectedIdRef.current;
           if (!sid) return mapped;
@@ -189,12 +245,13 @@ export function InboxPage() {
         if (requestId !== conversationsRequestIdRef.current) return;
         if (!silent) setConversationsLoading(false);
       });
-  }, [activeTab, filters, searchDebounced]);
+  }, [activeTab, filters, searchDebounced, readStateMap, applyReadFilter]);
 
   const loadMessages = useCallback((convId: string, silent?: boolean) => {
     const id = parseInt(convId, 10);
     if (Number.isNaN(id)) return;
     const shouldScroll = isUserAtBottom();
+    const conversationChanged = lastLoadedConversationIdRef.current !== convId;
     if (!silent) setMessagesLoading(true);
     if (!silent) setMessagesError(null);
     if (!silent) setSendError(null);
@@ -228,15 +285,17 @@ export function InboxPage() {
             (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           );
         });
-        if (isNewConversation) {
+        if (isNewConversation || conversationChanged) {
           setTimeout(() => scrollToBottom(), 0);
         } else if (shouldScroll) {
           setTimeout(() => scrollToBottom(), 0);
         }
+        lastLoadedConversationIdRef.current = convId;
+        markConversationAsRead(convId);
       })
       .catch(() => { if (!silent) setMessagesError('Falha ao carregar'); })
       .finally(() => { if (!silent) setMessagesLoading(false); });
-  }, [isUserAtBottom, scrollToBottom]);
+  }, [isUserAtBottom, scrollToBottom, markConversationAsRead]);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
 
@@ -294,8 +353,10 @@ export function InboxPage() {
 
   useEffect(() => {
     if (!selectedId) { setMessages([]); setMessagesError(null); return; }
+    setMessages([]);
+    markConversationAsRead(selectedId);
     loadMessages(selectedId);
-  }, [selectedId, loadMessages]);
+  }, [selectedId, loadMessages, markConversationAsRead]);
 
   const POLL_INTERVAL_MS = 5000;
   useEffect(() => {
@@ -618,7 +679,7 @@ export function InboxPage() {
           <ConversationList
             conversations={conversations}
             selectedId={selectedId}
-            onSelect={(id) => { setSelectedId(id); setSidebarOpen(false); }}
+            onSelect={(id) => { markConversationAsRead(id); setSelectedId(id); setSidebarOpen(false); }}
             onDelete={handleDeleteConversation}
             isLoading={conversationsLoading}
             onNewMessage={() => setNewMessageOpen(true)}

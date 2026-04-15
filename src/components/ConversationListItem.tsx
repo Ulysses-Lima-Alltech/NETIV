@@ -12,6 +12,7 @@ interface ConversationListItemProps {
 export function ConversationListItem({ conversation, isSelected, onClick, onDelete }: ConversationListItemProps) {
   const displayName = conversation.leadName.trim() || 'Lead sem nome';
   const projectDisplay = conversation.projectName || conversation.empreendimento;
+  const isUnread = conversation.unreadCount > 0;
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -36,13 +37,15 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
             ? isSelected
               ? 'bg-[#F5F3FF] border-l-[3px] border-l-[#7C3AED]'
               : 'bg-[#FAF5FF] hover:bg-[#F3E8FF] border-l-[3px] border-l-[#A78BFA]'
-            : isSelected
+              : isSelected
               ? 'bg-[#EFF6FF] border-l-[3px] border-l-[#3B82F6]'
-              : 'bg-white hover:bg-[#F9FAFB]'}
+              : isUnread
+                ? 'bg-[#FFF7ED] hover:bg-[#FFEDD5] border-l-[3px] border-l-[#F97316]'
+                : 'bg-white hover:bg-[#F9FAFB]'}
       `}
     >
       <div className="flex items-center gap-2 min-h-6">
-        <span className={`font-medium truncate flex-1 text-[14px] leading-tight ${isSelected ? 'text-[#1D4ED8]' : 'text-[#111827]'}`}>
+        <span className={`truncate flex-1 text-[14px] leading-tight ${isSelected ? 'text-[#1D4ED8] font-semibold' : isUnread ? 'text-[#111827] font-semibold' : 'text-[#111827] font-medium'}`}>
           {displayName}
         </span>
         <span className="text-[11px] text-[#9CA3AF] shrink-0 tabular-nums">
@@ -59,7 +62,7 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
           </button>
         )}
       </div>
-      <p className="text-[13px] text-[#6B7280] truncate mt-1 leading-snug">
+      <p className={`text-[13px] truncate mt-1 leading-snug ${isUnread ? 'text-[#374151] font-medium' : 'text-[#6B7280]'}`}>
         {conversation.lastMessage || 'Sem mensagens'}
       </p>
       <div className="flex items-center gap-1.5 mt-2 flex-wrap">

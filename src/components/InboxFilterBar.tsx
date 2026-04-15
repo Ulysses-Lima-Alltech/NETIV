@@ -3,6 +3,7 @@ export type InboxMode = 'all' | 'ANA' | 'handoff';
 export interface InboxFilters {
   mode: InboxMode;
   status: string;
+  readState: 'all' | 'read' | 'unread';
   enterpriseId: number | '';
   search: string;
 }
@@ -19,6 +20,11 @@ const MODE_OPTIONS: { value: InboxMode; label: string }[] = [
   { value: 'all', label: 'Todos' },
   { value: 'ANA', label: 'ANA' },
   { value: 'handoff', label: 'Handoff' },
+];
+const READ_OPTIONS: Array<{ value: InboxFilters['readState']; label: string }> = [
+  { value: 'all', label: 'Todas' },
+  { value: 'read', label: 'Lidas' },
+  { value: 'unread', label: 'Não lidas' },
 ];
 
 const inputClass =
@@ -62,6 +68,18 @@ export function InboxFilterBar({ filters, onChange, projects, onClear, hasActive
         </div>
       </div>
       <div>
+        <label className="block text-[11px] font-medium text-[#6B7280] mb-0.5">Status</label>
+        <select
+          value={filters.readState}
+          onChange={(e) => onChange({ ...filters, readState: e.target.value as InboxFilters['readState'] })}
+          className={inputClass}
+        >
+          {READ_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </div>
+      <div>
         <label className="block text-[11px] font-medium text-[#6B7280] mb-0.5">Empreendimento</label>
         <select
           value={filters.enterpriseId === '' ? 'all' : filters.enterpriseId}
@@ -103,12 +121,13 @@ export function InboxFilterBar({ filters, onChange, projects, onClear, hasActive
 export const DEFAULT_INBOX_FILTERS: InboxFilters = {
   mode: 'all',
   status: 'all',
+  readState: 'all',
   enterpriseId: '',
   search: '',
 };
 
 export function hasActiveInboxFilters(f: InboxFilters): boolean {
-  return f.mode !== 'all' || f.status !== 'all' || f.enterpriseId !== '' || f.search.trim() !== '';
+  return f.mode !== 'all' || f.status !== 'all' || f.readState !== 'all' || f.enterpriseId !== '' || f.search.trim() !== '';
 }
 
 export function inboxFiltersToApiParams(f: InboxFilters): {

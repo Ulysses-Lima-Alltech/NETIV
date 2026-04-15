@@ -787,6 +787,159 @@ function normalizeLooseJsonCandidate(s: string): string {
     .trim();
 }
 
+function decodeJsonLikeEscapes(s: string): string {
+  return s
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t')
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, '\\')
+    .trim();
+}
+
+/**
+ * Recupera apenas o campo `reply` quando o JSON veio truncado/quebrado.
+ * Esta funcao NAO valida qualidade semantica; use `validateRecoveredReplyQuality`.
+ */
+export function extractRecoveredReplyFromMalformedJsonLikeRaw(raw: string): string | null {
+  const src = stripModelMarkdownFence(raw || '');
+  const keyMatch = src.match(/"reply"\s*:/i);
+  if (!keyMatch || keyMatch.index == null) return null;
+  let i = keyMatch.index + keyMatch[0].length;
+  while (i < src.length && /\s/.test(src[i] || '')) i += 1;
+  if (src[i] !== '"') return null;
+  i += 1;
+  let out = '';
+  let closed = false;
+  let esc = false;
+  for (; i < src.length; i += 1) {
+    const ch = src[i]!;
+    if (esc) {
+      out += `\\${ch}`;
+      esc = false;
+      continue;
+    }
+    if (ch === '\\') {
+      esc = true;
+      continue;
+    }
+    if (ch === '"') {
+      closed = true;
+      break;
+    }
+    out += ch;
+  }
+  if (!closed) return null;
+  const decoded = decodeJsonLikeEscapes(out).trim();
+  return decoded.length > 0 ? decoded.slice(0, 4000) : null;
+}
+
+function normalizeRecoveredReplyText(s: string): string {
+  return (s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function hasAbruptEnding(text: string): boolean {
+  const t = (text || '').trim();
+  if (!t) return true;
+  if (/(\.\.\.|…)\s*$/.test(t)) return true;
+  if (/[,:;\-\/(\[]\s*$/.test(t)) return true;
+  return false;
+}
+
+export interface RecoveredReplyQualityResult {
+  ok: boolean;
+  reason:
+    | 'valid'
+    | 'empty'
+    | 'too_short'
+    | 'too_generic'
+    | 'low_assertiveness'
+    | 'abrupt_end'
+    | 'technical_or_internal'
+    | 'json_like';
+}
+
+/**
+ * Regras fortes para aceitar reply recuperada de JSON quebrado.
+ * Objetivo: evitar promover texto fraco/tecnico so para fugir de fallback.
+ */
+export function validateRecoveredReplyQuality(reply: string): RecoveredReplyQualityResult {
+  const raw = (reply || '').trim();
+  if (!raw) return { ok: false, reason: 'empty' };
+  if (raw.length < 28 || raw.split(/\s+/).filter(Boolean).length < 5) {
+    return { ok: false, reason: 'too_short' };
+  }
+  const n = normalizeRecoveredReplyText(raw);
+  if (!n) return { ok: false, reason: 'empty' };
+
+  if (
+    /^(\{|\[)/.test(raw) ||
+    /"reply"\s*:/.test(raw) ||
+    /"classification"\s*:/.test(raw) ||
+    /```/.test(raw)
+  ) {
+    return { ok: false, reason: 'json_like' };
+  }
+  if (
+    /\b(contexto persistido|evidencia validada|estado_comercial_json|send_file_category|conversationid|messageid)\b/.test(
+      n
+    ) ||
+    /\[ana_[a-z0-9_ -]+\]/i.test(raw)
+  ) {
+    return { ok: false, reason: 'technical_or_internal' };
+  }
+  if (hasAbruptEnding(raw)) return { ok: false, reason: 'abrupt_end' };
+  if (
+    /\b(nao consegui continuar daqui agora|me manda novamente em uma frase|como posso ajudar agora\??|pode repetir|nao entendi)\b/.test(
+      n
+    )
+  ) {
+    return { ok: false, reason: 'too_generic' };
+  }
+  if (
+    /\b(talvez|acho que|posso tentar|se quiser|quando der|quem sabe|eu acredito que)\b/.test(n)
+  ) {
+    return { ok: false, reason: 'low_assertiveness' };
+  }
+  return { ok: true, reason: 'valid' };
+}
+
+export function buildRecoveredReplyStructured(
+  reply: string,
+  classificationHint?: string | null
+): AnaStructuredReply {
+  return {
+    reply,
+    intent: 'geral',
+    productType: null,
+    wantsCatalog: false,
+    locationPreference: null,
+    budgetPreference: null,
+    bedroomsPreference: null,
+    bathroomsPreference: null,
+    nextBestQuestion: null,
+    userGoal: null,
+    lotSizePreference: null,
+    shouldShowPortfolio: false,
+    classification: (classificationHint || 'Novo').trim() || 'Novo',
+    lead_temperature: null,
+    project: '',
+    handoff: false,
+    customer_name: '',
+    summary: '',
+    send_file_category: null,
+    appointment_confirmed: false,
+    appointment_date: null,
+    appointment_time: null,
+    appointment_notes: null,
+  };
+}
+
 /** JSON.parse estrito; em seguida tenta correção mínima de aspas/vírgula (sem extrair texto bruto). */
 function tryParseJsonObject(raw: string): Record<string, unknown> | null {
   if (!raw || typeof raw !== 'string') return null;

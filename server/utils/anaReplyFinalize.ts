@@ -352,6 +352,31 @@ function normOutbound(text: string): string {
     .trim();
 }
 
+function looksLikeInternalControlText(raw: string, normalized: string): boolean {
+  if (!raw) return false;
+  if (/```/.test(raw)) return true;
+  if (/\[ana_[a-z0-9_ -]+\]/i.test(raw)) return true;
+  if (
+    normalized.includes('contexto persistido') ||
+    normalized.includes('evidencia validada do backend') ||
+    normalized.includes('estado_comercial_json') ||
+    normalized.includes('send_file_category') ||
+    normalized.includes('conversationid') ||
+    normalized.includes('messageid')
+  ) {
+    return true;
+  }
+  const trimmed = raw.trim();
+  if (
+    /^\{[\s\S]*\}$/.test(trimmed) &&
+    /"reply"\s*:/.test(trimmed) &&
+    /"classification"\s*:/.test(trimmed)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function evaluateAnaOutboundText(opts: {
   reply: string;
   technicalFallbackText?: string;
@@ -386,6 +411,9 @@ export function evaluateAnaOutboundText(opts: {
     n.includes('sistema indisponivel')
   ) {
     return { text: raw, valid: false, reason: 'generic_technical_error_blocked' };
+  }
+  if (looksLikeInternalControlText(raw, n)) {
+    return { text: raw, valid: false, reason: 'internal_control_text_blocked' };
   }
 
   return { text: raw.slice(0, 4000), valid: true, reason: 'valid_semantic_text' };

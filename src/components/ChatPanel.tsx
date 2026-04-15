@@ -163,13 +163,14 @@ export function ChatPanel({
   }, [conversation?.id ?? '', conversation ? reserveFingerprint(conversation) : '']);
 
   useEffect(() => {
-    const pid = conversation?.projectId;
-    if (pid == null) {
+    if (!conversation) {
       setBrokersForProject([]);
       return;
     }
+    const pid = conversation.projectId;
+    const params = pid != null ? { enterpriseId: pid } : undefined;
     corretoresApi
-      .list({ enterpriseId: pid })
+      .list(params)
       .then((d) => setBrokersForProject(d.corretores.map((c) => ({ id: c.id, fullName: c.fullName }))))
       .catch(() => setBrokersForProject([]));
   }, [conversation?.id, conversation?.projectId]);
@@ -451,14 +452,18 @@ export function ChatPanel({
                   });
                 }}
                 className={selectField}
-                disabled={!conversation.projectId}
                 title={
                   conversation.projectId
                     ? 'Prioridade: manual > já atribuído > automático. Vazio = distribuição automática.'
-                    : 'Defina um empreendimento para listar corretores.'
+                    : 'Sem empreendimento definido: exibindo todos os corretores ativos.'
                 }
               >
                 <option value="">Automático</option>
+                {brokersForProject.length === 0 && (
+                  <option value="" disabled>
+                    Nenhum corretor disponível
+                  </option>
+                )}
                 {brokersForProject.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.fullName}
@@ -679,7 +684,7 @@ export function ChatPanel({
         )}
       </header>
 
-      <div ref={setRef} className="flex-1 overflow-y-auto min-h-0 p-4 bg-[#F9FAFB]">
+      <div ref={setRef} className="flex-1 overflow-y-auto min-h-0 px-4 pt-4 pb-2 bg-[#F9FAFB]">
         {loadError ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center mb-3">
@@ -742,3 +747,4 @@ export function ChatPanel({
     </div>
   );
 }
+

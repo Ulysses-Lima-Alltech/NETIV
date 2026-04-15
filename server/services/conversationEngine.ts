@@ -63,6 +63,9 @@ import {
   type AnaStructuredReply,
   ANA_TECHNICAL_FALLBACK_NEUTRAL,
   parseAnaJson,
+  extractRecoveredReplyFromMalformedJsonLikeRaw,
+  validateRecoveredReplyQuality,
+  buildRecoveredReplyStructured,
   detectStrongPurchaseIntentForLeadTemperature,
   hasCatalogReopenIntent,
 } from './anaAgentService.js';
@@ -146,6 +149,20 @@ function logAnaOutboundBlocked(params: {
   console.log(`[ANA_OUTBOUND_BLOCKED] user_message=${params.userMessage.slice(0, 500)}`);
   console.log(`[ANA_OUTBOUND_BLOCKED] conversation_id=${params.conversationId}`);
   console.log(`[ANA_OUTBOUND_BLOCKED] reply_candidate=${params.replyCandidate.slice(0, 500)}`);
+}
+
+function buildSafeOutboundRecoveryReply(params: {
+  userMessage: string;
+  knownCustomerName: string | null | undefined;
+  appointmentActive: boolean;
+}): string {
+  if (params.appointmentActive) {
+    return ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY;
+  }
+  if (isBareGreetingOnly(params.userMessage)) {
+    return buildGreetingSafeFallback(params.knownCustomerName);
+  }
+  return 'Perfeito. Me diz em uma frase o que voce quer ver agora: valor, localizacao ou planta.';
 }
 
 /** Motivo do fallback com `ANA_TECHNICAL_FALLBACK_NEUTRAL` (log [ANA_FALLBACK_TRACE]). */
@@ -318,6 +335,7 @@ async function acquireConversationLock(conversationId: number): Promise<() => vo
 }
 
 const MAX_HISTORY = 14;
+const ANA_OUTBOUND_MAX_CHARS = 260;
 
 function rowsToHistory(
   rows: { role: string; content: string | null }[],
@@ -418,7 +436,9 @@ function isShortGenericFollowUpMessage(message: string): boolean {
   return (
     n === 'sim' ||
     n === 'continua' ||
-    /\b(quero mais detalhes|me fala mais|me fale mais|mais detalhes)\b/.test(n)
+    /\b(quero mais detalhes|me fala mais|me fale mais|mais detalhes|quero saber mais|mais informacoes|mais informa[cç][aã]o)\b/.test(
+      n
+    )
   );
 }
 
@@ -900,12 +920,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const fullUserUtterances = buildUserUtterancesContext(rows);
     const currentFocusedEnterprise =
       effectiveConv.enterprise_id != null ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;
+    const flowHintEnterpriseId =
+      flowStateParsed.lastSingleCatalogEnterpriseId ?? flowStateParsed.lastInferredEnterpriseId ?? null;
+    const flowHintEnterpriseName =
+      currentFocusedEnterprise?.name ??
+      (flowHintEnterpriseId != null
+        ? allActiveEnterprises.find((e) => e.id === flowHintEnterpriseId)?.name ?? null
+        : null);
     const appointmentPreflight = computeAppointmentPreflight(trimmed, fullUserUtterances);
     const awaitingNameForExpansion =
       !(effectiveConv.customer_name || '').trim() && effectiveConv.ana_asked_customer_name === true;
     const expansion = expandShortFollowUpWithContext({
       userMessage: trimmed,
-      enterpriseName: currentFocusedEnterprise?.name ?? null,
+      enterpriseName: flowHintEnterpriseName,
       awaitingName: awaitingNameForExpansion,
       appointmentActive: appointmentPreflight.active,
     });
@@ -917,7 +944,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         original_user_message: trimmed.slice(0, 220),
         expanded_user_message: userMessageForReasoning.slice(0, 220),
         enterpriseId: currentFocusedEnterprise?.id ?? null,
-        enterpriseName: currentFocusedEnterprise?.name ?? null,
+        enterpriseName: flowHintEnterpriseName,
         appointmentActive: appointmentPreflight.active,
         awaitingName: awaitingNameForExpansion,
       });
@@ -1380,6 +1407,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       ? parseAnaJson(rawContent, { conversationId, messageId: inboundMetaMessageId })
       : null;
     let retryAttempted = false;
+    let retryResult: GenerateCompletionResult | null = null;
     anaEngineTrace('parseAnaJson_after', {
       conversationId,
       ok: structured != null,
@@ -1436,7 +1464,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           awaitingName: !(effectiveConv.customer_name || '').trim() && effectiveConv.ana_asked_customer_name === true,
         },
       });
-      const retryResult = await generateChatCompletion({
+      retryResult = await generateChatCompletion({
         apiKey: aiConfig.openaiApiKey,
         baseUrl: aiConfig.openaiBaseUrl,
         model,
@@ -1461,6 +1489,72 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         error: retryResult.error ?? null,
         rawLen: (retryResult.content || '').length,
       });
+    }
+    if (!structured) {
+      const recoveryRaw =
+        (retryResult?.success && (retryResult.content || '').trim()
+          ? (retryResult.content || '')
+          : rawContent) || '';
+      const recoveredReply = extractRecoveredReplyFromMalformedJsonLikeRaw(recoveryRaw);
+      if (recoveredReply) {
+        const quality = validateRecoveredReplyQuality(recoveredReply);
+        if (quality.ok) {
+          structured = buildRecoveredReplyStructured(recoveredReply, effectiveConv.classification);
+          console.log('[ANA_RECOVERED_REPLY_ACCEPTED]', {
+            conversationId,
+            source: retryResult?.success ? 'retry_raw' : 'first_raw',
+            replyLen: recoveredReply.length,
+          });
+        } else {
+          console.log('[ANA_RECOVERED_REPLY_REJECTED]', {
+            conversationId,
+            source: retryResult?.success ? 'retry_raw' : 'first_raw',
+            reason: quality.reason,
+            preview: recoveredReply.slice(0, 180),
+          });
+        }
+      }
+    }
+    if (!structured) {
+      const regenMessages: ChatMessage[] = [
+        {
+          role: 'system',
+          content:
+            'Escreva somente UMA resposta curta para WhatsApp (sem JSON, sem markdown, sem texto tecnico, sem logs). ' +
+            'Seja assertiva, contextual, comercial e objetiva. No maximo 2 frases curtas e no maximo 1 pergunta.',
+        },
+        {
+          role: 'user',
+          content: [
+            `Mensagem do cliente: "${trimmed.slice(0, 260)}"`,
+            `Mensagem contextual expandida: "${userMessageForReasoning.slice(0, 260)}"`,
+            `Empreendimento atual: ${ent?.name ?? 'nao definido'}`,
+            `Fase: ${conversationPhase}`,
+            'Responda agora em texto puro, direto ao cliente.',
+          ].join('\n'),
+        },
+      ];
+      const regenResult = await generateChatCompletion({
+        apiKey: aiConfig.openaiApiKey,
+        baseUrl: aiConfig.openaiBaseUrl,
+        model,
+        messages: regenMessages,
+        temperature: Math.min(aiConfig.temperature ?? 0.45, 0.55),
+        maxTokens: 140,
+        responseFormatJson: false,
+      });
+      const regenRaw = (regenResult.content || '').trim();
+      const regenQuality = validateRecoveredReplyQuality(regenRaw);
+      console.log('[ANA_REGEN_SHORT_REPLY]', {
+        conversationId,
+        success: regenResult.success,
+        hasText: regenRaw.length > 0,
+        qualityOk: regenQuality.ok,
+        qualityReason: regenQuality.reason,
+      });
+      if (regenResult.success && regenQuality.ok) {
+        structured = buildRecoveredReplyStructured(regenRaw, effectiveConv.classification);
+      }
     }
     if (!structured) {
       const traceReason = computeAnaTechnicalFallbackTraceReason(result, parseAttempted);
@@ -1995,7 +2089,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const ackHardLimited = applyAnaHardLengthGuard({
         text: ackFinalText,
         enterpriseName: ent?.name ?? null,
-        maxChars: 300,
+        maxChars: ANA_OUTBOUND_MAX_CHARS,
       });
       const ackOutboundEval = evaluateAnaOutboundText({
         reply: ackHardLimited,
@@ -2154,13 +2248,44 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const hardLimitedReply = applyAnaHardLengthGuard({
       text: finalTextGuard,
       enterpriseName: ent?.name ?? null,
-      maxChars: 300,
+      maxChars: ANA_OUTBOUND_MAX_CHARS,
     });
-    const finalOutboundEval = evaluateAnaOutboundText({
+    let finalOutboundEval = evaluateAnaOutboundText({
       reply: hardLimitedReply,
       technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
       conversationType: effectiveConv.conversation_type ?? 'CLIENT',
     });
+    if (!finalOutboundEval.valid) {
+      if (finalOutboundEval.reason !== 'conversation_type_corretor') {
+        const recoveredReplyRaw = buildSafeOutboundRecoveryReply({
+          userMessage: trimmed,
+          knownCustomerName: effectiveConv.customer_name,
+          appointmentActive: appointmentPreflight.active || !!openAppointmentSummary,
+        });
+        const recoveredReplyLimited = applyAnaHardLengthGuard({
+          text: finalizeAnaReplyText(recoveredReplyRaw, {
+            userMessage: trimmed,
+            conversationMode: mode,
+            isFirstAnaReply,
+          }),
+          enterpriseName: ent?.name ?? null,
+          maxChars: ANA_OUTBOUND_MAX_CHARS,
+        });
+        const recoveredOutboundEval = evaluateAnaOutboundText({
+          reply: recoveredReplyLimited,
+          technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+          conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+        });
+        if (recoveredOutboundEval.valid) {
+          console.log('[ANA_OUTBOUND_RECOVERY]', {
+            conversationId,
+            previousReason: finalOutboundEval.reason,
+            recoveredReplyLen: recoveredReplyLimited.length,
+          });
+          finalOutboundEval = recoveredOutboundEval;
+        }
+      }
+    }
     if (!finalOutboundEval.valid) {
       logAnaOutboundBlocked({
         reason: finalOutboundEval.reason,
@@ -2327,3 +2452,4 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     release();
   }
 }
+
