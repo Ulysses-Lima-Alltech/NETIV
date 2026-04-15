@@ -685,61 +685,65 @@ export function ChatPanel({
       </header>
 
       <div ref={setRef} className="flex-1 overflow-y-auto min-h-0 px-4 pt-4 pb-0 bg-[#F9FAFB]">
-        {loadError ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center mb-3">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#EF4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div className="min-h-full flex flex-col">
+          {loadError ? (
+            <div className="flex-1 flex flex-col items-center justify-center py-12 text-center">
+              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center mb-3">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#EF4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              </div>
+              <p className="text-[13px] text-red-600">Falha ao carregar mensagens</p>
             </div>
-            <p className="text-[13px] text-red-600">Falha ao carregar mensagens</p>
-          </div>
-        ) : isLoadingMessages ? (
-          <div className="flex flex-col items-center justify-center py-12 gap-3">
-            <div className="h-5 w-5 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin" />
-            <span className="text-[13px] text-[#6B7280]">Carregando…</span>
-          </div>
-        ) : messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <p className="text-[13px] text-[#9CA3AF]">Sem mensagens ainda</p>
-          </div>
-        ) : (
-          <>
-            {messages.map((msg, idx) => {
-              const dateLabel = formatDateSeparator(msg.createdAt);
-              const showDate = dateLabel !== lastDate;
-              if (showDate) lastDate = dateLabel;
-              const isLast = idx === messages.length - 1;
-              return (
-                <div key={msg.id}>
-                  {showDate && (
-                    <div className="flex justify-center my-4">
-                      <span className="text-[11px] font-medium text-[#9CA3AF] bg-white border border-[#E5E7EB] px-3 py-1 rounded-full shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-                        {dateLabel}
-                      </span>
-                    </div>
-                  )}
-                  <MessageBubble
-                    message={msg}
-                    onDeleteMessage={onDeleteMessage}
-                    isLast={isLast}
-                  />
-                </div>
-              );
-            })}
-            <div ref={messagesEndRef} />
-          </>
-        )}
+          ) : isLoadingMessages ? (
+            <div className="flex-1 flex flex-col items-center justify-center py-12 gap-3">
+              <div className="h-5 w-5 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin" />
+              <span className="text-[13px] text-[#6B7280]">Carregando…</span>
+            </div>
+          ) : messages.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center py-12 text-center">
+              <p className="text-[13px] text-[#9CA3AF]">Sem mensagens ainda</p>
+            </div>
+          ) : (
+            <div className="min-h-full flex flex-col justify-end">
+              {messages.map((msg, idx) => {
+                const dateLabel = formatDateSeparator(msg.createdAt);
+                const showDate = dateLabel !== lastDate;
+                if (showDate) lastDate = dateLabel;
+                const isLast = idx === messages.length - 1;
+                return (
+                  <div key={msg.id}>
+                    {showDate && (
+                      <div className="flex justify-center my-4">
+                        <span className="text-[11px] font-medium text-[#9CA3AF] bg-white border border-[#E5E7EB] px-3 py-1 rounded-full shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+                          {dateLabel}
+                        </span>
+                      </div>
+                    )}
+                    <MessageBubble
+                      message={msg}
+                      onDeleteMessage={onDeleteMessage}
+                      isLast={isLast}
+                    />
+                  </div>
+                );
+              })}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+        </div>
       </div>
 
-      {!loadError && !isLoadingMessages && (
+      {!loadError && (
         <>
           {sendError && (
             <div className="px-4 py-2 border-t border-[#FEE2E2] bg-[#FEF2F2] text-[12px] text-[#B91C1C]">{sendError}</div>
           )}
           <ChatComposer
             onSend={onSendMessage}
-            disabled={isSending || (windowStatus ? !windowStatus.isOpen : false)}
+            disabled={isLoadingMessages || isSending || (windowStatus ? !windowStatus.isOpen : false)}
             placeholder={
-              windowStatus && !windowStatus.isOpen
+              isLoadingMessages
+                ? 'Carregando histórico...'
+                : windowStatus && !windowStatus.isOpen
                 ? 'Envio de texto livre bloqueado fora da janela de 24h.'
                 : 'Digite sua mensagem...'
             }
