@@ -5,9 +5,10 @@ import { formatMessageTime } from '../utils/format';
 interface MessageBubbleProps {
   message: Message;
   onDeleteMessage?: (messageId: string) => void | Promise<void>;
+  isLast?: boolean;
 }
 
-export function MessageBubble({ message, onDeleteMessage }: MessageBubbleProps) {
+export function MessageBubble({ message, onDeleteMessage, isLast = false }: MessageBubbleProps) {
   const isAgent = message.sender === 'AGENT';
   const [hovered, setHovered] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -56,7 +57,7 @@ export function MessageBubble({ message, onDeleteMessage }: MessageBubbleProps) 
   return (
     <>
       <div
-        className={`flex ${isAgent ? 'justify-end' : 'justify-start'} mb-2.5 group relative`}
+        className={`flex ${isAgent ? 'justify-end' : 'justify-start'} ${isLast ? 'mb-0' : 'mb-2.5'} group relative`}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => { setHovered(false); if (!showDeleteModal) setShowMenu(false); }}
       >

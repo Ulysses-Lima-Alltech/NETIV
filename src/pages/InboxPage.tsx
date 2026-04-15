@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import type { Conversation, LeadTemperatura, Message } from '../types';
@@ -24,6 +24,21 @@ import {
 const INBOX_READ_STATE_KEY = 'inbox_read_state_v1';
 
 type InboxReadStateMap = Record<string, string>;
+
+function toMillis(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const t = new Date(value).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+function maxIso(a: string | null | undefined, b: string | null | undefined): string | null {
+  const ta = toMillis(a);
+  const tb = toMillis(b);
+  if (ta == null && tb == null) return null;
+  if (ta == null) return b ?? null;
+  if (tb == null) return a ?? null;
+  return ta >= tb ? (a ?? null) : (b ?? null);
+}
 
 function loadInboxReadState(): InboxReadStateMap {
   try {
@@ -167,6 +182,7 @@ export function InboxPage() {
   const selectedIdRef = useRef<string | null>(null);
   const conversationsRequestIdRef = useRef(0);
   const lastLoadedConversationIdRef = useRef<string | null>(null);
+  const pendingScrollModeRef = useRef<'none' | 'force' | 'if-near'>('none');
 
   const rawConversationParam = searchParams.get('conversationId')?.trim() ?? '';
   const parsedConversationId = useMemo(() => {
@@ -191,6 +207,14 @@ export function InboxPage() {
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
 
+  const scheduleScrollToBottom = useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        scrollToBottom();
+      });
+    });
+  }, [scrollToBottom]);
+
   const selectedConversation = selectedId
     ? conversations.find((c) => c.id === selectedId) ?? null
     : null;
@@ -200,9 +224,11 @@ export function InboxPage() {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
 
-  const markConversationAsRead = useCallback((convId: string) => {
+  const markConversationAsRead = useCallback((convId: string, readAtHint?: string | null) => {
+    setConversations((prev) => prev.map((c) => (c.id === convId ? { ...c, unreadCount: 0 } : c)));
     setReadStateMap((prev) => {
-      const next = { ...prev, [convId]: new Date().toISOString() };
+      const nextReadAt = maxIso(prev[convId] ?? null, readAtHint ?? null) ?? new Date().toISOString();
+      const next = { ...prev, [convId]: nextReadAt };
       saveInboxReadState(next);
       return next;
     });
@@ -233,7 +259,9 @@ export function InboxPage() {
           if (!sid) return mapped;
           if (mapped.some((c) => c.id === sid)) return mapped;
           const orphan = prev.find((c) => c.id === sid);
-          if (orphan) return [orphan, ...mapped];
+          if (orphan) {
+            return [{ ...orphan, unreadCount: 0 }, ...mapped];
+          }
           return mapped;
         });
       })
@@ -285,17 +313,29 @@ export function InboxPage() {
             (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           );
         });
-        if (isNewConversation || conversationChanged) {
-          setTimeout(() => scrollToBottom(), 0);
-        } else if (shouldScroll) {
-          setTimeout(() => scrollToBottom(), 0);
-        }
+        if (isNewConversation || conversationChanged) pendingScrollModeRef.current = 'force';
+        else if (shouldScroll) pendingScrollModeRef.current = 'if-near';
         lastLoadedConversationIdRef.current = convId;
-        markConversationAsRead(convId);
+        const latestMessageAt = apiMapped.length > 0 ? apiMapped[apiMapped.length - 1]?.createdAt : null;
+        markConversationAsRead(convId, latestMessageAt);
       })
       .catch(() => { if (!silent) setMessagesError('Falha ao carregar'); })
       .finally(() => { if (!silent) setMessagesLoading(false); });
-  }, [isUserAtBottom, scrollToBottom, markConversationAsRead]);
+  }, [isUserAtBottom, markConversationAsRead]);
+
+  useLayoutEffect(() => {
+    if (!selectedId) return;
+    if (pendingScrollModeRef.current === 'none') return;
+    const mode = pendingScrollModeRef.current;
+    pendingScrollModeRef.current = 'none';
+    if (mode === 'force') {
+      scheduleScrollToBottom();
+      return;
+    }
+    if (mode === 'if-near') {
+      scheduleScrollToBottom();
+    }
+  }, [messages, messagesLoading, selectedId, scheduleScrollToBottom]);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
 
@@ -353,6 +393,7 @@ export function InboxPage() {
 
   useEffect(() => {
     if (!selectedId) { setMessages([]); setMessagesError(null); return; }
+    pendingScrollModeRef.current = 'force';
     setMessages([]);
     markConversationAsRead(selectedId);
     loadMessages(selectedId);
@@ -399,7 +440,8 @@ export function InboxPage() {
       const shouldScroll = isUserAtBottom();
       setMessages((prev) => [...prev, tempMessage]);
       if (shouldScroll) {
-        setTimeout(() => scrollToBottom(), 0);
+        pendingScrollModeRef.current = 'if-near';
+        scheduleScrollToBottom();
       }
       try {
         await whatsappApi.sendToConversation(id, text, file ?? null);
@@ -418,7 +460,7 @@ export function InboxPage() {
         setSending(false);
       }
     },
-    [selectedId, selectedWindow, loadConversations, isUserAtBottom, scrollToBottom]
+    [selectedId, selectedWindow, loadConversations, isUserAtBottom, scheduleScrollToBottom]
   );
 
   const handleNewMessageSent = useCallback(
@@ -679,7 +721,12 @@ export function InboxPage() {
           <ConversationList
             conversations={conversations}
             selectedId={selectedId}
-            onSelect={(id) => { markConversationAsRead(id); setSelectedId(id); setSidebarOpen(false); }}
+            onSelect={(id) => {
+              const conv = conversations.find((c) => c.id === id);
+              markConversationAsRead(id, conv?.updatedAt ?? null);
+              setSelectedId(id);
+              setSidebarOpen(false);
+            }}
             onDelete={handleDeleteConversation}
             isLoading={conversationsLoading}
             onNewMessage={() => setNewMessageOpen(true)}

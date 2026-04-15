@@ -684,7 +684,7 @@ export function ChatPanel({
         )}
       </header>
 
-      <div ref={setRef} className="flex-1 overflow-y-auto min-h-0 px-4 pt-4 pb-2 bg-[#F9FAFB]">
+      <div ref={setRef} className="flex-1 overflow-y-auto min-h-0 px-4 pt-4 pb-0 bg-[#F9FAFB]">
         {loadError ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center mb-3">
@@ -703,10 +703,11 @@ export function ChatPanel({
           </div>
         ) : (
           <>
-            {messages.map((msg) => {
+            {messages.map((msg, idx) => {
               const dateLabel = formatDateSeparator(msg.createdAt);
               const showDate = dateLabel !== lastDate;
               if (showDate) lastDate = dateLabel;
+              const isLast = idx === messages.length - 1;
               return (
                 <div key={msg.id}>
                   {showDate && (
@@ -719,6 +720,7 @@ export function ChatPanel({
                   <MessageBubble
                     message={msg}
                     onDeleteMessage={onDeleteMessage}
+                    isLast={isLast}
                   />
                 </div>
               );
