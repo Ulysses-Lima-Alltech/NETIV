@@ -293,45 +293,45 @@ function buildRewrittenReply(
       const price = extractPriceSnippet(original);
       if (price) {
         rewritten = enforceShortShape(
-          `Oi! Sobre ${name}, o valor que aparece aqui começa em ${price}. Se quiser, na próxima mensagem te explico outro ponto com calma.`
+          `Faz sentido. Sobre ${name}, o valor que aparece aqui começa em ${price}. Se você quiser, eu te explico o próximo ponto de um jeito bem direto.`
         );
         break;
       }
       rewritten = enforceShortShape(
-        `Oi! Sobre ${name}, posso te passar o valor certinho — me diz se quer que eu comece por ele que eu te detalho na próxima.`
+        `Que bom seu interesse no ${name}. Eu te explico os valores com objetividade. O que faz mais sentido pra você agora?`
       );
       break;
     }
     case 'intencao_compra':
       rewritten = enforceShortShape(
-        `Oi! Pra te orientar melhor sobre ${name}, me conta: você está pensando em morar ou investir?`
+        `Legal, esse é um ponto importante mesmo. Pra eu te orientar melhor no ${name}, você está olhando mais pra morar ou investir?`
       );
       break;
     case 'localizacao':
       rewritten = enforceShortShape(
-        `Oi! Sobre ${name}, me diz se quer que eu te explique primeiro onde fica ou como é o acesso — eu te respondo em uma mensagem só.`
+        `Que bom que você gostou do ${name}. O que você quer entender melhor da localização primeiro?`
       );
       break;
     case 'metragem_tipologia':
       rewritten = enforceShortShape(
-        `Oi! Sobre ${name}, metragem e planta eu te explico com calma — quer começar pelo tamanho em m² ou pelos quartos?`
+        `Faz sentido. No ${name}, eu te explico as plantas de forma direta. O que faz mais sentido pra sua rotina hoje?`
       );
       break;
     case 'lazer':
       rewritten = enforceShortShape(
-        `Oi! O lazer desse empreendimento é um ponto forte — quer que eu te conte os principais itens numa mensagem só?`
+        `Legal, esse é um ponto importante mesmo. No ${name}, o lazer chama bastante atenção. O que você valoriza mais nessa parte?`
       );
       break;
     case 'financiamento':
       rewritten = enforceShortShape(
-        `Oi! Financiamento e condições eu te explico por partes. Quer que eu comece pelo programa (tipo Minha Casa Minha Vida) ou pelas condições gerais?`
+        `Faz sentido. Sobre condições, eu te explico de forma prática dentro do que consigo por aqui. O que você quer entender melhor primeiro?`
       );
       break;
     case 'disponibilidade':
-      rewritten = enforceShortShape(`Oi! Sobre disponibilidade e unidades, o que você quer saber primeiro?`);
+      rewritten = enforceShortShape(`Que bom seu interesse no ${name}. Sobre disponibilidade, eu te atualizo de forma direta. Você está buscando algo pra agora?`);
       break;
     case 'visita_agendamento':
-      rewritten = enforceShortShape(`Oi! Pra agendar visita, qual dia e período ficam melhor pra você?`);
+      rewritten = enforceShortShape(`Perfeito, vamos organizar sua visita ao ${name}. Qual dia costuma funcionar melhor pra sua rotina?`);
       break;
     default:
       rewritten = enforceShortShape(original);
