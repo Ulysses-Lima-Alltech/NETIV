@@ -112,6 +112,8 @@ router.get('/conversations', requireServiceJwt(['django']), async (req: JwtReque
       classification,
       lead_temperature,
       handoff,
+      created_from,
+      created_to,
       page = '1',
       page_size = '50',
     } = req.query;
@@ -129,6 +131,8 @@ router.get('/conversations', requireServiceJwt(['django']), async (req: JwtReque
     if (classification) filters.status = classification as string;  // classification → status
     if (lead_temperature) filters.leadTemperature = lead_temperature as string;  // lead_temperature → leadTemperature
     if (handoff !== undefined) filters.mode = handoff === 'true' ? 'handoff' : 'all';  // handoff → mode
+    if (created_from) filters.createdFrom = created_from as string;
+    if (created_to) filters.createdTo = created_to as string;
 
     // Get conversations - buscar total real para paginação correta
     const allConversations = await listConversationsWithPreview('whatsapp', 99999, {

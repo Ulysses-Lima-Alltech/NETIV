@@ -29,7 +29,9 @@ router.use('/auth', authRouter);
 router.use('/auth/sso', ssoRouter);
 
 // API service endpoints for Django (protected by JWT, not session auth)
-router.use('/api/service', apiDjangoRouter);
+// Monta em '/service' pois este router já está em '/api' (index.ts app.use('/api', apiRouter))
+// Resultado final: /api/service/*
+router.use('/service', apiDjangoRouter);
 
 /**
  * Compatibilidade explícita para a URL pública usada pelo frontend:

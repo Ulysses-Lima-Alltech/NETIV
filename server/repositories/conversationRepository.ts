@@ -420,6 +420,8 @@ export interface ListConversationsFilters {
   search?: string;
   brokerId?: number;  // NOVO — filtra por assigned_broker_id
   contactType?: 'CLIENT' | 'INTERNO';
+  createdFrom?: string;  // ISO 'YYYY-MM-DD' — conversas criadas A PARTIR desta data
+  createdTo?: string;    // ISO 'YYYY-MM-DD' — conversas criadas ATÉ esta data (inclusive)
 }
 
 export async function listConversationsWithPreview(
@@ -469,6 +471,19 @@ export async function listConversationsWithPreview(
   if (filters?.contactType) {
     conditions.push(`COALESCE(ct.contact_type, 'CLIENT') = $${paramIndex}`);
     params.push(filters.contactType);
+    paramIndex += 1;
+  }
+
+  // Filtro por data de criação — usado pelo batch diário do Django
+  if (filters?.createdFrom) {
+    conditions.push(`c.created_at >= $${paramIndex}::date`);
+    params.push(filters.createdFrom);
+    paramIndex += 1;
+  }
+  if (filters?.createdTo) {
+    // "< data + 1 dia" inclui o dia inteiro (até 23:59:59)
+    conditions.push(`c.created_at < ($${paramIndex}::date + interval '1 day')`);
+    params.push(filters.createdTo);
     paramIndex += 1;
   }
 
@@ -593,7 +608,9 @@ export async function updateClassification(
     const row = rows[0] ?? null;
     if (row) {
       if (handoff) {
-        notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row));
+        if (process.env.NETIV_REALTIME_LEAD_WEBHOOK !== 'false') {
+          notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row));
+        }
         await assignBrokerForHandoffConversation(conversationId);
       }
       if (row.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(row.contact_id);
@@ -640,7 +657,9 @@ export async function updateClassification(
   const row = rows[0] ?? null;
   if (row) {
     if (handoff) {
-      notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row));
+      if (process.env.NETIV_REALTIME_LEAD_WEBHOOK !== 'false') {
+        notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row));
+      }
       await assignBrokerForHandoffConversation(conversationId);
     }
     if (row.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(row.contact_id);
@@ -740,7 +759,9 @@ export async function applyAnaConversationUpdate(
   if (handoff) {
     const updatedConv = await getConversationById(conversationId);
     if (updatedConv) {
-      notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(updatedConv));
+      if (process.env.NETIV_REALTIME_LEAD_WEBHOOK !== 'false') {
+        notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(updatedConv));
+      }
     }
     await assignBrokerForHandoffConversation(conversationId);
   }
@@ -821,7 +842,9 @@ export async function applyHandoffAfterAppointmentConfirmation(
   // NOVO: Notificar Django sobre o lead
   const updatedConv = await getConversationById(conversationId);
   if (updatedConv) {
-    notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(updatedConv));
+    if (process.env.NETIV_REALTIME_LEAD_WEBHOOK !== 'false') {
+      notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(updatedConv));
+    }
   }
 }
 

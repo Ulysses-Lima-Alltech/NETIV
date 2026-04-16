@@ -162,7 +162,8 @@ class DjangoApiClient {
       ...(data.responsible_id && { responsible_id: data.responsible_id }),
     };
     
-    return this.request(`/leads/${data.lead_id}/schedules`, {
+    // Django route: POST /api/v2/schedules/ (schedules_dispatch)
+    return this.request('/schedules/', {
       method: 'POST',
       body: payload,
     });

@@ -181,7 +181,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     res.json({ sessionToken });
 
   } catch (e) {
-    console.error('[SSO] Erro:', e);
+    console.error('[SSO] Erro:', e instanceof Error ? e.stack ?? e.message : e);
     res.status(500).json({ error: 'Erro interno no SSO.' });
   }
 });
