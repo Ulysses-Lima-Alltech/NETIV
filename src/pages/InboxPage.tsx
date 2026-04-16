@@ -399,15 +399,6 @@ export function InboxPage() {
     loadMessages(selectedId);
   }, [selectedId, loadMessages, markConversationAsRead]);
 
-  const POLL_INTERVAL_MS = 5000;
-  useEffect(() => {
-    const interval = setInterval(() => {
-      loadConversations(true);
-      if (selectedId) loadMessages(selectedId, true);
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [loadConversations, loadMessages, selectedId]);
-
   const handleSendMessage = useCallback(
     async (text: string, file?: File | null) => {
       if (!selectedId) return;

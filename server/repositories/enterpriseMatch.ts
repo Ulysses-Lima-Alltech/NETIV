@@ -29,6 +29,93 @@ const GENERIC_NAME_TOKENS = new Set([
   'club',
 ]);
 
+const VARIANT_NAME_TOKENS = new Set([
+  'fase',
+  'torre',
+  'bloco',
+  'quadra',
+  'etapa',
+  'modulo',
+  'modulos',
+  'ala',
+  'setor',
+]);
+
+const MESSAGE_STOPWORDS = new Set([
+  'o',
+  'a',
+  'os',
+  'as',
+  'de',
+  'do',
+  'da',
+  'dos',
+  'das',
+  'no',
+  'na',
+  'nos',
+  'nas',
+  'em',
+  'sobre',
+  'quero',
+  'saber',
+  'informacoes',
+  'informacao',
+  'me',
+  'fale',
+  'fala',
+  'tem',
+  'empreendimento',
+  'residencial',
+  'condominio',
+]);
+
+function hasVariantMarker(nameNorm: string): boolean {
+  const words = nameNorm.split(/\s+/).filter(Boolean);
+  for (const w of words) {
+    if (VARIANT_NAME_TOKENS.has(w)) return true;
+    if (/^\d+$/.test(w)) return true;
+  }
+  return false;
+}
+
+/**
+ * Desempate conservador:
+ * - só atua em consulta curta com 1 token distintivo (ex.: "evora");
+ * - e quando existe exatamente um "nome-base" sem marcador de variante
+ *   (enquanto os demais empatados são variantes tipo "Fase 2").
+ */
+function breakEnterpriseMentionTie(
+  userTextNorm: string,
+  enterprises: EnterpriseRow[],
+  topIds: number[]
+): number | null {
+  const msgTokens = userTextNorm
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 3 && !MESSAGE_STOPWORDS.has(w));
+  const uniqueMsgTokens = Array.from(new Set(msgTokens));
+  if (uniqueMsgTokens.length !== 1) return null;
+
+  const token = uniqueMsgTokens[0]!;
+  const candidates = topIds
+    .map((id) => enterprises.find((e) => e.id === id))
+    .filter((e): e is EnterpriseRow => !!e);
+  if (candidates.length <= 1) return null;
+
+  const tokenCandidates = candidates.filter((e) =>
+    normEnterpriseMatchText(`${e.name} ${e.slug || ''}`).split(/\s+/).includes(token)
+  );
+  if (tokenCandidates.length <= 1) return null;
+
+  const base = tokenCandidates.filter((e) => !hasVariantMarker(normEnterpriseMatchText(e.name)));
+  const variants = tokenCandidates.filter((e) => hasVariantMarker(normEnterpriseMatchText(e.name)));
+  if (base.length === 1 && variants.length >= 1) {
+    return base[0]!.id;
+  }
+  return null;
+}
+
 /**
  * Pontuação de menção ao empreendimento no texto (quanto maior, mais confiante).
  * - Nome ou slug completo contido no texto: peso alto.
@@ -74,8 +161,30 @@ export function tryMatchEnterpriseFromUserCorpus(userText: string, enterprises: 
     }
   }
 
-  if (bestScore === 0 || tops.length !== 1) return null;
+  if (bestScore === 0) return null;
+  if (tops.length !== 1) {
+    return breakEnterpriseMentionTie(lower, enterprises, tops);
+  }
   return tops[0]!;
+}
+
+export function debugEnterpriseMentionScores(
+  userText: string,
+  enterprises: EnterpriseRow[],
+  topN = 5
+): Array<{ id: number; name: string; slug: string; score: number }> {
+  const lower = normEnterpriseMatchText(userText);
+  if (!lower) return [];
+  return enterprises
+    .map((e) => ({
+      id: e.id,
+      name: e.name,
+      slug: e.slug || '',
+      score: scoreEnterpriseMentionInText(e, lower),
+    }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(1, topN));
 }
 
 /** Diagnóstico para logs: como o match único foi obtido (nome completo vs slug no texto). */

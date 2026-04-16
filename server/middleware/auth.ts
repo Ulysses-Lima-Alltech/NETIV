@@ -23,12 +23,26 @@ function getToken(req: Request): string | null {
   return null;
 }
 
+function isTemporaryPublicSettingsAiRoute(req: Request): boolean {
+  const path = req.path;
+  const method = req.method.toUpperCase();
+  return (
+    (method === 'PUT' && path === '/settings/ai') ||
+    (method === 'POST' && path === '/settings/ai/test')
+  );
+}
+
 /**
  * Com Bearer válido: `req.user` vem da sessão.
  * Sem Bearer: contexto embutido (ANA integrada na plataforma principal, sem login local) — primeiro ADMIN ou `ANA_EMBEDDED_USER_ID`.
  * Bearer inválido/expirado: 401 (não faz fallback embutido).
  */
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  if (isTemporaryPublicSettingsAiRoute(req)) {
+    next();
+    return;
+  }
+
   const bypassEnabled = isAuthBypassEnabled();
   const token = getToken(req);
   if (token) {
@@ -63,6 +77,11 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
 export function requireRole(...allowedRoles: UserRole[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
+    if (isTemporaryPublicSettingsAiRoute(req)) {
+      next();
+      return;
+    }
+
     const user = req.user;
     if (!user) {
       res.status(401).json({ error: 'Não autenticado.' });

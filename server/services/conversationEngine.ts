@@ -25,6 +25,7 @@ import {
   tryMatchEnterpriseFromUserCorpus,
   explainEnterpriseMentionMatch,
   enterpriseHasStrongNameSignalInTrimmed,
+  debugEnterpriseMentionScores,
 } from '../repositories/enterpriseMatch.js';
 import {
   getActiveEnterpriseById,
@@ -801,6 +802,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         reply: confirmMsg,
         technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
         conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+        enterpriseName: null,
       });
       if (!confirmOutboundEval.valid) {
         logAnaOutboundBlocked({
@@ -972,6 +974,23 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       allActiveEnterprises,
       globalMatchId
     );
+    if (globalMatchId == null && userAskedAboutSpecificEnterprise(userMessageForReasoning)) {
+      const topCandidates = debugEnterpriseMentionScores(userMessageForReasoning, allActiveEnterprises, 5);
+      console.log('[ANA_ENTERPRISE_MATCH_FAIL]', {
+        conversationId,
+        userText: userMessageForReasoning.slice(0, 260),
+        normalizedUserText: userMessageForReasoning
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/\p{M}/gu, '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 260),
+        activeEnterprisesCount: allActiveEnterprises.length,
+        topCandidates,
+        reason: topCandidates.length > 1 ? 'ambiguous_or_tie' : 'no_candidate',
+      });
+    }
 
     let scopeMutated = false;
     const entFocusForScope =
@@ -2103,6 +2122,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         reply: ackHardLimited,
         technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
         conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+        enterpriseName: ent?.name ?? null,
       });
       if (!ackOutboundEval.valid) {
         logAnaOutboundBlocked({
@@ -2268,6 +2288,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       reply: hardLimitedReply,
       technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
       conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+      enterpriseName: ent?.name ?? null,
     });
     if (!finalOutboundEval.valid) {
       if (finalOutboundEval.reason !== 'conversation_type_corretor') {
@@ -2290,6 +2311,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           reply: recoveredReplyLimited,
           technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
           conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+          enterpriseName: ent?.name ?? null,
         });
         if (recoveredOutboundEval.valid) {
           console.log('[ANA_OUTBOUND_RECOVERY]', {

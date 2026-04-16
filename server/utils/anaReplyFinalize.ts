@@ -160,7 +160,6 @@ export function stripMarkdownArtifactsForWhatsApp(text: string): string {
   t = t.replace(/`([^`]+)`/g, '$1');
   t = t.replace(/^#{1,6}\s+/gm, '');
   t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
-  t = t.replace(/^\s*[*•]\s+/gm, '');
   return t;
 }
 
@@ -268,17 +267,79 @@ function ensureSentenceEnd(text: string): string {
   return `${t}.`;
 }
 
+const LEADING_LABEL_PREFIX_RE = /^([A-ZÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇ0-9 _-]{2,}):\s+/i;
+
+function normalizeLabelToken(text: string): string {
+  return (text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[_-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isGreetingLikeReply(text: string): boolean {
+  const n = normClosure(text || '');
+  if (!n || n.length > 120) return false;
+  const greetingStart = /^(oi|ola|bom dia|boa tarde|boa noite|opa|e ai)\b/.test(n);
+  if (!greetingStart) return false;
+  if (/\b(preco|valor|lazer|portaria|metragem|localizacao|financiamento|visita|agenda|endereco)\b/.test(n)) {
+    return false;
+  }
+  return true;
+}
+
+function sanitizeLeadingLabelPrefix(text: string, enterpriseName?: string | null): string {
+  const raw = (text || '').trim();
+  if (!raw) return raw;
+
+  const m = LEADING_LABEL_PREFIX_RE.exec(raw);
+  if (!m) return raw;
+
+  const label = (m[1] || '').trim();
+  const body = raw.slice(m[0].length).trim();
+  const normalizedLabel = normalizeLabelToken(label);
+  const normalizedEnterprise = normalizeLabelToken(enterpriseName || '');
+  const isEnterpriseLabel = normalizedEnterprise.length >= 2 && normalizedLabel === normalizedEnterprise;
+
+  if (!body || isGreetingLikeReply(body)) {
+    return buildGreetingSafeFallback(null);
+  }
+  if (isEnterpriseLabel) return body;
+  return body;
+}
+
 export function applyAnaHardLengthGuard(params: {
   text: string;
   enterpriseName?: string | null;
   maxChars?: number;
+  preserveLineBreaks?: boolean;
 }): string {
   const maxChars = Math.max(120, Math.min(360, params.maxChars ?? 300));
   const enterpriseName = (params.enterpriseName || '').trim();
-  const cleaned = normalizeWhitespacePreservingLines(
-    stripMarkdownArtifactsForWhatsApp((params.text || '').replace(/\r?\n+/g, ' ').trim())
-  );
+  const sourceText = params.preserveLineBreaks
+    ? (params.text || '').trim()
+    : (params.text || '').replace(/\r?\n+/g, ' ').trim();
+  const cleaned = normalizeWhitespacePreservingLines(stripMarkdownArtifactsForWhatsApp(sourceText));
   if (!cleaned) return '';
+
+  if (params.preserveLineBreaks) {
+    const lines = cleaned.split('\n').map((line) => line.trim()).filter(Boolean);
+    if (lines.length === 0) return '';
+    const kept: string[] = [];
+    let total = 0;
+    for (const line of lines) {
+      const plus = (kept.length > 0 ? 1 : 0) + line.length;
+      if (total + plus > maxChars) break;
+      kept.push(line);
+      total += plus;
+    }
+    const out = (kept.join('\n').trim() || truncateAtWordBoundary(cleaned.replace(/\n+/g, ' '), maxChars))
+      .slice(0, maxChars)
+      .trim();
+    return sanitizeLeadingLabelPrefix(out, enterpriseName);
+  }
 
   const inputSentences = splitSentencesCompact(cleaned);
   const kept: string[] = [];
@@ -296,13 +357,6 @@ export function applyAnaHardLengthGuard(params: {
   let out = kept.join(' ').replace(/\s{2,}/g, ' ').trim();
   if (!out) out = truncateAtWordBoundary(cleaned, 140);
   out = ensureSentenceEnd(out);
-
-  const hasEnterprise =
-    enterpriseName.length >= 2 &&
-    normClosure(out).includes(normClosure(enterpriseName));
-  if (enterpriseName.length >= 2 && !hasEnterprise) {
-    out = `${enterpriseName}: ${out}`.replace(/\s{2,}/g, ' ').trim();
-  }
 
   // Reaplica estrutura rígida após eventuais ajustes.
   const normalizedSentences = splitSentencesCompact(out);
@@ -329,7 +383,7 @@ export function applyAnaHardLengthGuard(params: {
     }
   }
 
-  return out.slice(0, maxChars).trim();
+  return sanitizeLeadingLabelPrefix(out.slice(0, maxChars).trim(), enterpriseName);
 }
 
 function normalizeForSemanticCheck(text: string): string {
@@ -383,12 +437,13 @@ export function evaluateAnaOutboundText(opts: {
   reply: string;
   technicalFallbackText?: string;
   conversationType?: 'CLIENT' | 'CORRETOR' | 'ADMIN' | string | null;
+  enterpriseName?: string | null;
 }): { text: string; valid: boolean; reason: string } {
   const conversationType = String(opts.conversationType ?? 'CLIENT').toUpperCase();
   if (conversationType === 'CORRETOR') {
     return { text: '', valid: false, reason: 'conversation_type_corretor' };
   }
-  const raw = (opts.reply || '').trim();
+  const raw = sanitizeLeadingLabelPrefix((opts.reply || '').trim(), opts.enterpriseName);
   if (!raw) {
     return { text: raw, valid: false, reason: 'empty_text' };
   }
