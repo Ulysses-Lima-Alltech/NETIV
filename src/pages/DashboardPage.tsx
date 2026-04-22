@@ -252,6 +252,18 @@ export function DashboardPage() {
                   'Exportar CSV'
                 )}
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const params = new URLSearchParams();
+                  params.set('period', period);
+                  if (enterpriseId !== '') params.set('enterpriseId', enterpriseId);
+                  window.location.href = `/api/dashboard/export-django.csv?${params.toString()}`;
+                }}
+                className="inline-flex items-center justify-center gap-2 min-h-[42px] px-4 rounded-[10px] text-[14px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:pointer-events-none transition-colors"
+              >
+                Exportar para Django
+              </button>
               {csvErr && <p className="text-[12px] text-red-600 max-w-xs">{csvErr}</p>}
             </div>
           </div>

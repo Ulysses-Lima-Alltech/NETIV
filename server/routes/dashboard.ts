@@ -106,6 +106,104 @@ router.get('/export.csv', async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// NOVO ENDPOINT: Exportar CSV no formato compatível com Django
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Formata telefone brasileiro: remove +55, espaços, parênteses, traços.
+ * Entrada: "+5511999887766" ou "55 11 99988-7766"
+ * Saída: "11999887766"
+ */
+function formatPhoneForDjango(phone: string | null): string {
+  if (!phone) return '';
+  let clean = phone.replace(/\D/g, ''); // Remove tudo que não é dígito
+  // Remove código do país (55) se presente
+  if (clean.startsWith('55') && clean.length > 11) {
+    clean = clean.slice(2);
+  }
+  return clean;
+}
+
+/**
+ * Formata data ISO para DD/MM/YYYY HH:MM (fuso São Paulo).
+ */
+function formatDateForDjango(isoDate: Date | null): string {
+  if (!isoDate) return '';
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(isoDate);
+}
+
+/**
+ * Gera email fake para contornar bug do Django que exige email.
+ * Formato: {conversation_id}@netiv.lead
+ */
+function generateFakeEmail(conversationId: number): string {
+  return `${conversationId}@netiv.lead`;
+}
+
+/**
+ * Constrói CSV no formato Django:
+ * nome;email;telefone;campanha;origem;descricao_1;descricao_2;descricao_3
+ */
+function buildDjangoCsv(rows: DashboardCsvRow[]): string {
+  const headers = ['nome', 'email', 'telefone', 'campanha', 'origem', 'descricao_1', 'descricao_2', 'descricao_3'];
+  const lines = [headers.join(';')];
+
+  for (const r of rows) {
+    // Monta campanha: "Empreendimento - Classificação" ou só classificação se sem empreendimento
+    const campanha = r.enterprise_name
+      ? `${r.enterprise_name} - ${r.classification}`
+      : r.classification;
+
+    const row = [
+      csvEscape(r.customer_name || 'Sem nome'),           // nome
+      csvEscape(generateFakeEmail(r.conversation_id)),    // email (fake)
+      csvEscape(formatPhoneForDjango(r.contact_phone)),   // telefone
+      csvEscape(campanha),                                 // campanha
+      csvEscape('Netiv IA'),                               // origem
+      csvEscape(r.classification),                         // descricao_1
+      csvEscape(r.lead_temperature || ''),                 // descricao_2
+      csvEscape(formatDateForDjango(r.created_at)),        // descricao_3
+    ];
+    lines.push(row.join(';'));
+  }
+
+  return lines.join('\r\n');
+}
+
+router.get('/export-django.csv', async (req, res) => {
+  try {
+    const raw = typeof req.query.period === 'string' ? req.query.period : '7d';
+    const period: DashboardPeriod = PERIODS.has(raw as DashboardPeriod) ? (raw as DashboardPeriod) : '7d';
+    let enterpriseId: number | null = null;
+    if (req.query.enterpriseId != null && String(req.query.enterpriseId).trim() !== '') {
+      const n = parseInt(String(req.query.enterpriseId), 10);
+      if (!Number.isNaN(n)) enterpriseId = n;
+    }
+    const rows = await getDashboardCsvRows(period, enterpriseId);
+    const body = `\uFEFF${buildDjangoCsv(rows)}`; // BOM para Excel reconhecer UTF-8
+    const dateStr = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="leads-django-${dateStr}.csv"`);
+    res.send(body);
+  } catch (e) {
+    console.error('[Dashboard] GET /export-django.csv:', e);
+    res.status(500).json({ error: 'Erro ao exportar CSV para Django.' });
+  }
+});
+
 /** Filtro local da seção "Itens que exigem atenção" (não altera o overview). */
 router.get('/attention-items', async (req, res) => {
   try {
