@@ -92,6 +92,13 @@ import {
   applyAnaEvidenceGuardToReply,
 } from '../utils/anaEnterpriseEvidence.js';
 import {
+  ANA_MISSING_INFORMATION_REPLY,
+  buildAnaDecisionPolicy,
+  detectExplicitExactLocationRequest,
+  detectExplicitPaymentSimulationRequest,
+  detectStructuredListIntent,
+} from '../utils/anaDecisionPolicy.js';
+import {
   buildUserUtterancesContext,
   computeAppointmentPreflight,
   ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY,
@@ -120,6 +127,11 @@ import {
 } from '../utils/anaDocSendIntent.js';
 import { applyOperationalFactGuard } from '../utils/anaOperationalFactGuard.js';
 import { resolveOperationalFactAnswer } from '../utils/anaOperationalFactResolver.js';
+import {
+  createAnaTurnAudit,
+  updateAnaTurnAuditOutcome,
+  type AnaTurnAuditOutboundStatus,
+} from '../repositories/anaTurnAuditRepository.js';
 
 /** TEMP diagnóstico: ignorar `integration_settings.ai_enabled` no motor da Ana. Remover após investigação. */
 const ANA_FORCE_AI_DIAGNOSTIC = true;
@@ -168,6 +180,29 @@ function buildSafeOutboundRecoveryReply(params: {
     return buildGreetingSafeFallback(params.knownCustomerName);
   }
   return 'Claro, eu te explico sim. Me diz só qual ponto pesa mais pra você agora, que eu sigo por aí.';
+}
+
+function normalizeStructuredReplyCandidate(reply: string): string {
+  const raw = (reply || '').trim();
+  if (!raw) return raw;
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length >= 2) {
+    return lines.slice(0, 7).join('\n');
+  }
+  const parts = raw
+    .split(/\s*;\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length >= 3) {
+    return parts
+      .slice(0, 7)
+      .map((part) => `- ${part.replace(/[.!?]+$/g, '').trim()}`)
+      .join('\n');
+  }
+  return raw;
 }
 
 /** Motivo do fallback com `ANA_TECHNICAL_FALLBACK_NEUTRAL` (log [ANA_FALLBACK_TRACE]). */
@@ -638,6 +673,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   console.log('[ANA DEBUG] handleIncomingMessage start', { conversationId, toPhoneNumber });
 
   const release = await acquireConversationLock(conversationId);
+  let anaTurnAuditId: number | null = null;
+  let anaTurnAuditOutcome: AnaTurnAuditOutboundStatus = 'silent';
+  let anaTurnAuditBlockedReason: string | null = null;
+  let anaTurnAuditGuardsApplied: Record<string, unknown> = {};
+  let anaTurnAuditMissingInformationFlagCreated = false;
+  let anaTurnAuditMissingInformationSubject: string | null = null;
   try {
     console.log('[ANA_PIPELINE] engine_start', {
       conversationId,
@@ -897,6 +938,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     const rows = await getMessagesByConversationId(conversationId);
     anaEngineTrace('rows_loaded', { conversationId, rowCount: rows.length });
+    const isFirstAnaReply = !rows.some((m) => m.role === 'assistant');
     const lastAssistantBeforeUser = [...rows].reverse().find((m) => m.role === 'assistant');
     const lastAssistantPlain = lastAssistantBeforeUser?.content?.trim() || null;
     let trustedCustomerName =
@@ -1220,8 +1262,129 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? rowsToHistory(rows, null, trailingUserBubbles)
         : rowsToHistory(rows, trimmed);
     const historyCount = history.length;
-    const isFirstAnaReply = !rows.some((m) => m.role === 'assistant');
     const explicitPriceAskedThisTurn = userExplicitlyAskedPriceInCurrentTurn(trimmed);
+    const bareGreeting = isBareGreetingOnly(trimmed);
+    const materialAskIntentThisTurn = userExplicitlyAskedForMaterial(trimmed);
+    const explicitMaterialRequestThisTurn = materialAskIntentThisTurn.explicit && !bareGreeting;
+    const requestedAxisForPolicy = inferUserRequestedAxis(userMessageForReasoning);
+    const explicitExactLocationRequestThisTurn = detectExplicitExactLocationRequest(trimmed);
+    const explicitPaymentSimulationRequestThisTurn = detectExplicitPaymentSimulationRequest(trimmed);
+    const asksListStyleInfoThisTurn = detectStructuredListIntent(trimmed, requestedAxisForPolicy);
+    const asksSpecificInfoWithoutEvidenceThisTurn =
+      explicitExactLocationRequestThisTurn || requestedAxisForPolicy != null;
+    const policyDetectedIntent =
+      explicitMaterialRequestThisTurn
+        ? 'pedir_material'
+        : requestedAxisForPolicy ?? (appointmentPreflight.active ? 'agendar' : 'geral');
+    const anaDecision = buildAnaDecisionPolicy({
+      detectedIntent: policyDetectedIntent,
+      requestedAxis: requestedAxisForPolicy,
+      requestedProductType: triageRequestedProductType,
+      enterpriseResolved: ent != null,
+      enterpriseId: ent?.id ?? null,
+      enterpriseEvidence,
+      conversationContext: {
+        phase: conversationPhase,
+        historyCount,
+        hasOpenAppointment: appointmentPreflight.active || !!openAppointmentSummary,
+      },
+      turnFlags: {
+        isBareGreeting: bareGreeting,
+        isShortFollowUp: isShortGenericFollowUpMessage(trimmed),
+        isFirstAnaReply,
+        explicitMaterialRequest: explicitMaterialRequestThisTurn,
+        explicitExactLocationRequest: explicitExactLocationRequestThisTurn,
+        explicitPaymentSimulationRequest: explicitPaymentSimulationRequestThisTurn,
+        asksListStyleInfo: asksListStyleInfoThisTurn,
+        asksSpecificInfoWithoutEvidence: asksSpecificInfoWithoutEvidenceThisTurn,
+      },
+      userMessage: trimmed,
+    });
+    console.log('[ANA_DECISION_POLICY]', {
+      conversationId,
+      policyVersion: anaDecision.policyVersion,
+      resolvedIntent: anaDecision.resolvedIntent,
+      primaryAxis: anaDecision.primaryAxis,
+      responseMode: anaDecision.responseMode,
+      shouldSendMaterial: anaDecision.shouldSendMaterial,
+      shouldUseMissingInformationReply: anaDecision.shouldUseMissingInformationReply,
+      shouldCreateInfoGapFlag: anaDecision.shouldCreateInfoGapFlag,
+      canMentionExactLocation: anaDecision.canMentionExactLocation,
+      canMentionPaymentSimulation: anaDecision.canMentionPaymentSimulation,
+      outboundAllowed: anaDecision.outboundAllowed,
+      blockedReason: anaDecision.blockedReason,
+      explicitMaterialRequestThisTurn,
+      explicitExactLocationRequestThisTurn,
+      explicitPaymentSimulationRequestThisTurn,
+    });
+    anaTurnAuditMissingInformationFlagCreated = anaDecision.shouldCreateInfoGapFlag;
+    anaTurnAuditMissingInformationSubject = anaDecision.missingInformationSubject ?? null;
+    anaTurnAuditGuardsApplied = {
+      policy: {
+        version: anaDecision.policyVersion,
+        resolvedIntent: anaDecision.resolvedIntent,
+        primaryAxis: anaDecision.primaryAxis,
+        responseMode: anaDecision.responseMode,
+      },
+      operationalResolverFired: false,
+      operationalFactGuardReplaced: false,
+      financialGuardReplacedSentences: 0,
+      firstAxisGuardChanged: false,
+      firstEvidenceGuardChanged: false,
+      finalAxisGuardChanged: false,
+      finalEvidenceGuardChanged: false,
+      outboundReason: null,
+      outboundRecovered: false,
+    };
+
+    const turnAudit = await createAnaTurnAudit({
+      conversationId,
+      messageId: lastUserRowForLog?.id ?? null,
+      enterpriseId: ent?.id ?? null,
+      userMessage: trimmed,
+      resolvedIntent: anaDecision.resolvedIntent,
+      resolvedProductType: triageRequestedProductType,
+      primaryAxis: anaDecision.primaryAxis,
+      responseMode: anaDecision.responseMode,
+      evidenceJson: enterpriseEvidence,
+      decisionJson: anaDecision,
+      guardsAppliedJson: anaTurnAuditGuardsApplied,
+      outboundStatus: 'silent',
+      blockedReason: anaDecision.blockedReason,
+      missingInformationFlagCreated: anaDecision.shouldCreateInfoGapFlag,
+      missingInformationSubject: anaDecision.missingInformationSubject ?? null,
+    });
+    anaTurnAuditId = turnAudit.id;
+    if (anaDecision.shouldCreateInfoGapFlag) {
+      const infoGapTicket = {
+        conversation_id: conversationId,
+        enterprise_id: ent?.id ?? null,
+        user_message: trimmed,
+        requested_topic: anaDecision.missingInformationSubject ?? 'nao_classificado',
+        reason: 'missing_confirmed_evidence',
+        status: 'open',
+        created_at: new Date().toISOString(),
+        resolved_at: null,
+        assigned_to: null,
+      };
+      anaTurnAuditGuardsApplied.infoGapTicket = infoGapTicket;
+      console.log('[ANA_INFO_GAP_FLAG]', {
+        conversationId,
+        auditId: turnAudit.id,
+        enterpriseId: ent?.id ?? null,
+        enterpriseName: ent?.name ?? null,
+        messageId: lastUserRowForLog?.id ?? null,
+        missingInformationSubject: anaDecision.missingInformationSubject ?? null,
+        userMessagePreview: trimmed.slice(0, 200),
+        infoGapTicket,
+      });
+    }
+    if (!anaDecision.canRespond || !anaDecision.outboundAllowed) {
+      anaTurnAuditOutcome = 'blocked';
+      anaTurnAuditBlockedReason = anaDecision.blockedReason ?? 'policy_outbound_blocked';
+      anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
+      return;
+    }
 
     if (historyCount === 0) {
       console.log('[CLEAR_HISTORY_AFTER]', {
@@ -1333,7 +1496,27 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       isGreeting: isBareGreetingOnly(trimmed),
     });
 
+    const policyRuntimeDirectives = [
+      `POLICY_DECISION_MODE: ${anaDecision.responseMode}`,
+      anaDecision.responseMode === 'structured'
+        ? 'Responda em formato estruturado quando fizer sentido (linhas curtas/lista objetiva), entre 5 e 7 itens e sem misturar varios temas.'
+        : 'Responda de forma curta e objetiva, com no maximo 3 linhas e no maximo 1 pergunta.',
+      anaDecision.shouldSuggestVisit
+        ? 'Se houver aderencia ao contexto, voce pode sugerir visita de forma natural e sem insistencia.'
+        : null,
+      !anaDecision.canMentionExactLocation
+        ? 'Nao passe endereco/localizacao exata como se estivesse confirmado.'
+        : null,
+      !anaDecision.canMentionPaymentSimulation
+        ? 'Nao simule pagamento, entrada, parcela, prazo, juros ou desconto.'
+        : null,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join('\n');
     const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
+    if (policyRuntimeDirectives) {
+      messages.push({ role: 'system', content: policyRuntimeDirectives });
+    }
     for (const h of history) {
       messages.push({ role: h.role, content: h.content });
     }
@@ -1411,7 +1594,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     const openAiCalled = true;
-    let replySource: 'openai' | 'technical_fallback' = 'openai';
+    let replySource: 'openai' | 'technical_fallback' | 'policy_missing_information' | 'policy_material_unavailable' = 'openai';
     let fallbackReason: string | null = null;
     const rawContent = result.content ?? '';
     const rawTrimmed = rawContent.trim();
@@ -1544,7 +1727,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           role: 'system',
           content:
             'Escreva somente UMA resposta curta para WhatsApp (sem JSON, sem markdown, sem texto tecnico, sem logs). ' +
-            'Seja assertiva, contextual, comercial e objetiva. No maximo 2 frases curtas e no maximo 1 pergunta.',
+            'Seja assertiva, contextual, comercial e objetiva. No maximo 3 linhas e no maximo 1 pergunta.',
         },
         {
           role: 'user',
@@ -1671,6 +1854,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
+    if (anaDecision.shouldUseMissingInformationReply) {
+      structured = {
+        ...structured,
+        reply: ANA_MISSING_INFORMATION_REPLY,
+        send_file_category: null,
+      };
+      replySource = 'policy_missing_information';
+      console.log('[ANA_POLICY_MISSING_INFORMATION_REPLY]', {
+        conversationId,
+        missingInformationSubject: anaDecision.missingInformationSubject ?? null,
+        shouldCreateInfoGapFlag: anaDecision.shouldCreateInfoGapFlag,
+      });
+    }
+
     if (structured.project?.trim()) {
       const pid = tryMatchEnterpriseFromUserCorpus(structured.project.trim(), allActiveEnterprises);
       if (pid != null) {
@@ -1699,7 +1896,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let effectiveSendCategory: FileCategory | null = null;
     let requestedSendCategoryForLog: FileCategory | null = null;
     let fileResolutionSkipReason: string | null = null;
-    const bareGreeting = isBareGreetingOnly(trimmed);
 
     // ─── ANA DOC GATE ────────────────────────────────────────────────────────
     // Regra: envio de arquivo SOMENTE quando a mensagem ATUAL do usuário contiver
@@ -1707,16 +1903,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     // O campo send_file_category do LLM NÃO é usado como gatilho — ele pode
     // disparar por sinais indiretos (preço, localização, "quero saber mais") e
     // causaria envio não autorizado.
-    const { explicit: userExplicit, matchedPattern: materialMatchedPattern } =
-      userExplicitlyAskedForMaterial(trimmed);
-    const userMaterialAsk = userExplicit && !bareGreeting;
-    const shouldAttemptDocSend = !bareGreeting && userMaterialAsk;
+    const materialMatchedPattern = materialAskIntentThisTurn.matchedPattern;
+    const userMaterialAsk = explicitMaterialRequestThisTurn;
+    const shouldAttemptDocSend = anaDecision.shouldSendMaterial;
 
     console.log('[ANA_DOC_GATE]', {
       conversationId,
       explicit: userMaterialAsk,
       bareGreeting,
       shouldAttemptDocSend,
+      policyShouldSendMaterial: anaDecision.shouldSendMaterial,
       enterpriseId: ent?.id ?? null,
       sendableCategories: sendableAnaCategories,
       currentTrimmedPreview: trimmed.slice(0, 80),
@@ -1730,10 +1926,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     if (!shouldAttemptDocSend) {
       structured = { ...structured, send_file_category: null };
-      fileResolutionSkipReason = 'no_material_intent_this_turn';
+      fileResolutionSkipReason = userMaterialAsk ? 'policy_blocked_material_send' : 'no_material_intent_this_turn';
+      if (userMaterialAsk) {
+        structured = {
+          ...structured,
+          reply: pickMaterialUnavailableNeutralReply(lastAsstDup?.content ?? null),
+          send_file_category: null,
+        };
+        replySource = 'policy_material_unavailable';
+      }
       console.log('[ANA_DOC_SEND_SKIPPED]', {
         conversationId,
-        reason: 'no_explicit_request',
+        reason: userMaterialAsk ? 'policy_blocked_material_send' : 'no_explicit_request',
       });
       console.log('[ANA_DOC_RESOLVE_SKIP]', {
         conversationId,
@@ -1912,6 +2116,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
       if (resolution !== null) {
         operationalResolverFired = true;
+        anaTurnAuditGuardsApplied.operationalResolverFired = true;
         console.log('[ANA_OPERATIONAL_RESOLVER]', {
           conversationId,
           topic: resolution.topic,
@@ -1939,6 +2144,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const guardResult = applyOperationalFactGuard(replyBody, trimmed, officialData);
 
       if (guardResult.replaced) {
+        anaTurnAuditGuardsApplied.operationalFactGuardReplaced = true;
         console.log('[ANA_OPERATIONAL_FACT_GUARD]', {
           conversationId,
           replaced: true,
@@ -1948,6 +2154,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         });
         replyBody = guardResult.text;
       } else if (guardResult.groundedClaims.length > 0) {
+        anaTurnAuditGuardsApplied.operationalFactGuardReplaced = false;
         console.log('[ANA_OPERATIONAL_FACT_GUARD]', {
           conversationId,
           replaced: false,
@@ -1958,8 +2165,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     // Guard financeiro: impede simulação/negociação indevida pela Ana e
     // conduz para validação com corretor, sem trocar a resposta inteira.
-    {
+    if (!anaDecision.canMentionPaymentSimulation) {
       const financialGuard = sanitizeFinancialNegotiationOverreach(replyBody);
+      anaTurnAuditGuardsApplied.financialGuardReplacedSentences =
+        financialGuard.replacedFinancialSentences;
       if (financialGuard.replacedFinancialSentences > 0) {
         console.log('[ANA_FINANCIAL_NEGOTIATION_GUARD]', {
           conversationId,
@@ -1980,13 +2189,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           enterpriseName: ent?.name ?? null,
           conversationId,
         });
+        anaTurnAuditGuardsApplied.firstAxisGuardChanged = axisGuard.changed;
         if (axisGuard.changed) {
           replyBody = axisGuard.text;
         }
       }
     }
     {
-      const evidenceGuard = applyAnaEvidenceGuardToReply(replyBody, enterpriseEvidence);
+      const evidenceGuard = applyAnaEvidenceGuardToReply(replyBody, enterpriseEvidence, {
+        allowMaterialOffer: explicitMaterialRequestThisTurn,
+      });
+      anaTurnAuditGuardsApplied.firstEvidenceGuardChanged = evidenceGuard.changed;
       if (evidenceGuard.changed) {
         console.log('[ANA_MATERIAL_GUARD]', {
           conversationId,
@@ -2005,6 +2218,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         phase: 'before_send',
         inboundMetaMessageId,
       });
+      anaTurnAuditOutcome = 'silent';
+      anaTurnAuditBlockedReason = 'pipeline_stale_before_send';
       return;
     }
 
@@ -2058,6 +2273,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           phase: 'before_media_send',
           replyPipelineToken: replyPipelineToken ?? null,
         });
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_media_send';
         return;
       }
       mediaOutcome = await sendAnaEnterpriseMediaFirst({
@@ -2081,6 +2298,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           phase: 'immediately_after_sendAnaEnterpriseMediaFirst',
           replyPipelineToken: replyPipelineToken ?? null,
         });
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_after_media_send';
         return;
       }
     }
@@ -2098,6 +2317,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           phase: 'before_ack_text',
           replyPipelineToken: replyPipelineToken ?? null,
         });
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_ack_text';
         return;
       }
       const ackTextRaw = pickPostMediaAckText(lastAsstDup?.content ?? null);
@@ -2124,6 +2345,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationType: effectiveConv.conversation_type ?? 'CLIENT',
         enterpriseName: ent?.name ?? null,
       });
+      anaTurnAuditGuardsApplied.outboundReason = ackOutboundEval.reason;
       if (!ackOutboundEval.valid) {
         logAnaOutboundBlocked({
           reason: ackOutboundEval.reason,
@@ -2131,6 +2353,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           conversationId,
           replyCandidate: ackAxisGuard.text,
         });
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = ackOutboundEval.reason;
+        anaTurnAuditGuardsApplied.outboundReason = ackOutboundEval.reason;
         return;
       }
       const ackText = ackOutboundEval.text;
@@ -2141,6 +2366,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           conversationId,
           reason: 'ack_would_duplicate_last_assistant',
         });
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'ack_duplicate_suppressed';
         return;
       }
       anaEngineTrace('final_send_start', { conversationId, phase: 'doc_ack', replyLen: ackText.length });
@@ -2151,6 +2378,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           phase: 'after_ack_sendTextMessage',
           replyPipelineToken: replyPipelineToken ?? null,
         });
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_after_ack_send';
         return;
       }
       if (!sendAckResult.success || !sendAckResult.metaMessageId) {
@@ -2166,6 +2395,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           error: sendAckResult.error ?? null,
           code: sendAckResult.code ?? null,
         });
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'doc_ack_send_failed';
         return;
       }
       await insertMessage(conversationId, 'assistant', ackText, sendAckResult.metaMessageId);
@@ -2222,6 +2453,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           ent?.name ?? null
         ).catch((e) => console.error('[Carteira extract]', e));
       }
+      anaTurnAuditOutcome = 'material_sent';
+      anaTurnAuditBlockedReason = null;
       return;
     }
 
@@ -2253,31 +2486,44 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         });
       }
     } else {
-      replyText = finalizeAnaReplyText(replyBody, {
-        userMessage: trimmed,
-        conversationMode: mode,
-        isFirstAnaReply,
-      }).slice(0, 4000);
+      replyText =
+        anaDecision.responseMode === 'structured'
+          ? normalizeStructuredReplyCandidate(replyBody).slice(0, 4000)
+          : finalizeAnaReplyText(replyBody, {
+              userMessage: trimmed,
+              conversationMode: mode,
+              isFirstAnaReply,
+            }).slice(0, 4000);
     }
 
-    const finalAxisGuardText = operationalResolverFired
-      ? replyText
+    const finalAxisGuardResult: { text: string; changed: boolean } = operationalResolverFired
+      ? { text: replyText, changed: false }
       : applyAnaCommercialSingleAxisGuard({
           reply: replyText,
           userMessage: trimmed,
           isFirstAnaReply,
           enterpriseName: ent?.name ?? null,
           conversationId,
-        }).text;
+        });
+    const finalAxisGuardText = finalAxisGuardResult.text;
+    anaTurnAuditGuardsApplied.finalAxisGuardChanged = finalAxisGuardResult.changed;
     const finalEvidenceGuard = operationalResolverFired
       ? { text: finalAxisGuardText, changed: false as const, blockedOfferReason: null as null | string }
-      : applyAnaEvidenceGuardToReply(finalAxisGuardText, enterpriseEvidence);
-    const finalTextGuard = finalizeAnaReplyText(finalEvidenceGuard.text, {
-      userMessage: trimmed,
-      conversationMode: mode,
-      isFirstAnaReply,
-    });
-    const preserveListFormatting = operationalResolverFired && /\n\s*•\s+/.test(finalTextGuard);
+      : applyAnaEvidenceGuardToReply(finalAxisGuardText, enterpriseEvidence, {
+          allowMaterialOffer: explicitMaterialRequestThisTurn,
+        });
+    anaTurnAuditGuardsApplied.finalEvidenceGuardChanged = finalEvidenceGuard.changed;
+    const finalTextGuard =
+      anaDecision.responseMode === 'structured'
+        ? normalizeStructuredReplyCandidate(finalEvidenceGuard.text)
+        : finalizeAnaReplyText(finalEvidenceGuard.text, {
+            userMessage: trimmed,
+            conversationMode: mode,
+            isFirstAnaReply,
+          });
+    const preserveListFormatting =
+      anaDecision.responseMode === 'structured' ||
+      (operationalResolverFired && /\n\s*(?:-|\*)\s+/.test(finalTextGuard));
     const hardLimitedReply = applyAnaHardLengthGuard({
       text: finalTextGuard,
       enterpriseName: ent?.name ?? null,
@@ -2290,6 +2536,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       conversationType: effectiveConv.conversation_type ?? 'CLIENT',
       enterpriseName: ent?.name ?? null,
     });
+    anaTurnAuditGuardsApplied.outboundReason = finalOutboundEval.reason;
     if (!finalOutboundEval.valid) {
       if (finalOutboundEval.reason !== 'conversation_type_corretor') {
         const recoveredReplyRaw = buildSafeOutboundRecoveryReply({
@@ -2320,6 +2567,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             recoveredReplyLen: recoveredReplyLimited.length,
           });
           finalOutboundEval = recoveredOutboundEval;
+          anaTurnAuditGuardsApplied.outboundRecovered = true;
+          anaTurnAuditGuardsApplied.outboundReason = recoveredOutboundEval.reason;
         }
       }
     }
@@ -2330,9 +2579,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationId,
         replyCandidate: finalAxisGuardText,
       });
+      anaTurnAuditOutcome = 'blocked';
+      anaTurnAuditBlockedReason = finalOutboundEval.reason;
+      anaTurnAuditGuardsApplied.outboundReason = finalOutboundEval.reason;
       return;
     }
     replyText = finalOutboundEval.text;
+    anaTurnAuditGuardsApplied.outboundReason = finalOutboundEval.reason;
 
     anaEngineTrace('final_reply_choice_after', {
       conversationId,
@@ -2381,6 +2634,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         phase: 'after_reply_delay',
         inboundMetaMessageId,
       });
+      anaTurnAuditOutcome = 'silent';
+      anaTurnAuditBlockedReason = 'pipeline_stale_after_reply_delay';
       return;
     }
 
@@ -2458,6 +2713,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationPhase,
         replyLen: replyText.length,
       });
+      anaTurnAuditOutcome = shouldAttemptDocSend ? 'material_failed' : 'sent';
+      anaTurnAuditBlockedReason = null;
     } else {
       anaEngineTrace('final_send_error', {
         conversationId,
@@ -2474,6 +2731,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         toPhoneTail: anaPhoneTail(toPhoneNumber),
       });
       console.error('[ANA DEBUG] Falha ao enviar WhatsApp:', sendResult.error, { toPhoneNumber });
+      anaTurnAuditOutcome = 'send_failed';
+      anaTurnAuditBlockedReason = 'main_reply_send_failed';
     }
 
     if (structured.classification === 'Carteira' && prevClassification !== 'Carteira') {
@@ -2487,6 +2746,24 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
   } finally {
     release();
+    if (anaTurnAuditId != null) {
+      try {
+        await updateAnaTurnAuditOutcome(anaTurnAuditId, {
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: anaTurnAuditBlockedReason,
+          guardsAppliedJson: anaTurnAuditGuardsApplied,
+          missingInformationFlagCreated: anaTurnAuditMissingInformationFlagCreated,
+          missingInformationSubject: anaTurnAuditMissingInformationSubject,
+        });
+      } catch (auditError) {
+        console.error('[ANA_TURN_AUDIT_UPDATE_FAILED]', {
+          conversationId,
+          anaTurnAuditId,
+          error: auditError instanceof Error ? auditError.message : String(auditError),
+        });
+      }
+    }
   }
 }
+
 

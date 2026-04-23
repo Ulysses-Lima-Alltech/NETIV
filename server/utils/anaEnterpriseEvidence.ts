@@ -1,4 +1,5 @@
 import type { EnterpriseRow } from '../repositories/enterpriseRepository.js';
+import type { CommercialAxis } from './anaCommercialAxisGuard.js';
 
 type EnterpriseFileLite = {
   category: string;
@@ -18,6 +19,35 @@ export interface AnaEnterpriseEvidence {
   hasUsableKnowledgeChunks: boolean;
 }
 
+export type AnaEvidenceNeed = CommercialAxis | 'material' | 'localizacao_exata' | 'geral';
+
+export function hasAnaEvidenceForNeed(
+  evidence: AnaEnterpriseEvidence,
+  need: AnaEvidenceNeed
+): boolean {
+  switch (need) {
+    case 'material':
+      return evidence.hasAnySendableMaterial;
+    case 'localizacao_exata':
+      return evidence.hasExactLocation;
+    case 'preco':
+      return evidence.hasPricingInfo;
+    case 'financiamento':
+      return evidence.hasFinancingInfo;
+    case 'localizacao':
+      return evidence.hasUsableKnowledgeChunks || evidence.hasExactLocation;
+    case 'metragem_tipologia':
+    case 'lazer':
+    case 'disponibilidade':
+    case 'visita_agendamento':
+    case 'intencao_compra':
+    case 'geral':
+      return evidence.hasUsableKnowledgeChunks;
+    default:
+      return evidence.hasUsableKnowledgeChunks;
+  }
+}
+
 function norm(s: string): string {
   return (s || '')
     .toLowerCase()
@@ -31,8 +61,8 @@ function hasAddressLikeSignal(text: string): boolean {
   const n = norm(text);
   if (!n) return false;
   return (
-    /\b(rua|avenida|av|alameda|rodovia|estrada|travessa|praca|praça)\b/.test(n) ||
-    /\b(n[ºo°]|numero|número)\s*\d+/.test(n) ||
+    /\b(rua|avenida|av|alameda|rodovia|estrada|travessa|praca)\b/.test(n) ||
+    /\b(numero|n)\s*\d+/.test(n) ||
     /\b(cep|mapa|google maps)\b/.test(n)
   );
 }
@@ -40,7 +70,7 @@ function hasAddressLikeSignal(text: string): boolean {
 function hasStrongFinancialSignal(text: string): boolean {
   const n = norm(text);
   if (!n) return false;
-  return /\br\$\s*\d|a partir de|preco|preço|valor(es)?\b/.test(n);
+  return /\br\$\s*\d|a partir de|preco|valor(es)?\b/.test(n);
 }
 
 function hasFinancingSignal(text: string): boolean {
@@ -80,10 +110,14 @@ export function buildAnaEnterpriseEvidence(params: {
   };
 }
 
-function blockReasonForReply(reply: string, ev: AnaEnterpriseEvidence): string | null {
+function blockReasonForReply(
+  reply: string,
+  ev: AnaEnterpriseEvidence,
+  opts?: { allowMaterialOffer?: boolean }
+): string | null {
   const n = norm(reply);
   if (!n) return null;
-  const promisedBook = /\b(tenho (o )?(book|catalogo|catálogo|material|pdf)|posso te enviar (o )?(book|catalogo|catálogo|material|pdf)|vou te (enviar|mandar) (o )?(book|catalogo|catálogo|material|pdf))\b/.test(
+  const promisedBook = /\b(tenho (o )?(book|catalogo|material|pdf)|posso te enviar (o )?(book|catalogo|material|pdf)|vou te (enviar|mandar) (o )?(book|catalogo|material|pdf))\b/.test(
     n
   );
   if (promisedBook && !ev.hasSendableBook) return 'book_not_sendable';
@@ -93,8 +127,14 @@ function blockReasonForReply(reply: string, ev: AnaEnterpriseEvidence): string |
   );
   if (promisedFloorplan && !ev.hasSendableFloorplan) return 'floorplan_not_sendable';
 
+  const genericMaterialOffer =
+    /\b(posso te enviar|vou te enviar|vou te mandar|te envio|te mando|material|book|catalogo|planta|pdf)\b/.test(n);
+  if (opts?.allowMaterialOffer !== true && (promisedBook || promisedFloorplan || genericMaterialOffer)) {
+    return 'unsolicited_material_offer';
+  }
+
   const promisedExactLocation =
-    /\b(tenho (o )?(endereco|endereço|localizacao exata|localização exata)|posso te passar (o )?(endereco|endereço)|te passo o endereco exato|te passo o endereço exato)\b/.test(
+    /\b(tenho (o )?(endereco|localizacao exata)|posso te passar (o )?endereco|te passo o endereco exato)\b/.test(
       n
     );
   if (promisedExactLocation && !ev.hasExactLocation) return 'exact_location_not_available';
@@ -110,20 +150,25 @@ function blockReasonForReply(reply: string, ev: AnaEnterpriseEvidence): string |
 
 export function applyAnaEvidenceGuardToReply(
   reply: string,
-  evidence: AnaEnterpriseEvidence
+  evidence: AnaEnterpriseEvidence,
+  opts?: { allowMaterialOffer?: boolean }
 ): { text: string; changed: boolean; blockedOfferReason: string | null } {
-  const reason = blockReasonForReply(reply, evidence);
+  const reason = blockReasonForReply(reply, evidence, opts);
   if (!reason) return { text: reply, changed: false, blockedOfferReason: null };
 
-  let safe = 'No material que tenho aqui agora, essa informação específica não está disponível.';
+  let safe =
+    'Essa informação eu não tenho aqui agora, mas vou buscar e te retorno com os detalhes o quanto antes. Enquanto isso, posso te ajudar com outras informações?';
   if (reason === 'book_not_sendable') {
-    safe = 'No momento, eu não tenho um book disponível aqui para te enviar.';
+    safe = 'Agora eu nao tenho material enviavel para te mandar desse empreendimento.';
   } else if (reason === 'floorplan_not_sendable') {
-    safe = 'No material que tenho aqui, a planta detalhada não está disponível para envio.';
+    safe = 'Agora eu nao tenho uma planta enviavel para te mandar com seguranca.';
   } else if (reason === 'exact_location_not_available') {
-    safe = 'No material que tenho aqui agora, não encontrei o endereço exato para te passar.';
+    safe =
+      'Essa informação eu não tenho aqui agora, mas vou buscar e te retorno com os detalhes o quanto antes. Enquanto isso, posso te ajudar com outras informações?';
   } else if (reason === 'unsupported_indirect_promise') {
-    safe = 'No momento, só consigo te passar o que já está disponível no sistema.';
+    safe = 'Para te responder com seguranca, eu fico no que ja esta validado no sistema.';
+  } else if (reason === 'unsolicited_material_offer') {
+    safe = 'Posso te explicar os principais pontos por aqui de forma objetiva.';
   }
 
   return { text: safe, changed: true, blockedOfferReason: reason };

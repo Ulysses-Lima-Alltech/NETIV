@@ -277,8 +277,12 @@ export function DashboardPage() {
               </button>
               <button
                 type="button"
-                onClick={() => void handleExportDjangoCsv()}
-                disabled={csvLoading}
+                onClick={() => {
+                  const params = new URLSearchParams();
+                  params.set('period', period);
+                  if (enterpriseId !== '') params.set('enterpriseId', String(enterpriseId));
+                  window.location.href = `/api/dashboard/export-django.csv?${params.toString()}`;
+                }}
                 className="inline-flex items-center justify-center gap-2 min-h-[42px] px-4 rounded-[10px] text-[14px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:pointer-events-none transition-colors"
               >
                 {csvLoading ? (
