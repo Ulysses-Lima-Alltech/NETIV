@@ -198,6 +198,7 @@ export async function loadRankedKnowledgeChunksForPrompt(
     intent_tags: string[] | null;
     temporal_status: TemporalStatus | null;
     source_confidence: number | null;
+    source_priority: number | null;
   }> = [];
   try {
     const q = await query<{
@@ -210,38 +211,34 @@ export async function loadRankedKnowledgeChunksForPrompt(
       intent_tags: string[] | null;
       temporal_status: TemporalStatus | null;
       source_confidence: number | null;
+      source_priority: number | null;
     }>(
       `SELECT c.content, c.chunk_index, f.original_name,
-              c.knowledge_block, c.block_priority, c.city_hint, c.intent_tags, c.temporal_status, c.source_confidence
+              c.knowledge_block, c.block_priority, c.city_hint, c.intent_tags, c.temporal_status, c.source_confidence,
+              COALESCE(v.source_priority, 0) AS source_priority
        FROM enterprise_knowledge_chunks c
        INNER JOIN enterprise_files f ON f.id = c.enterprise_file_id
+       INNER JOIN enterprise_file_versions v
+         ON v.id = c.enterprise_file_version_id
+        AND v.enterprise_file_id = f.id
        WHERE c.enterprise_id = $1
-         AND f.is_active = true
-         AND f.can_be_used_as_knowledge = true
-       ORDER BY f.id, c.chunk_index`,
+         AND c.is_active = true
+         AND f.current_version_id = c.enterprise_file_version_id
+         AND COALESCE(v.storage_provider, '') = 's3'
+         AND COALESCE(v.is_active, f.is_active, true) = true
+         AND COALESCE(v.can_be_used_as_knowledge, f.can_be_used_as_knowledge, false) = true
+         AND COALESCE(v.processing_status, 'PENDING') IN ('PROCESSED', 'SKIPPED')
+       ORDER BY COALESCE(v.source_priority, 0) DESC, f.id, c.chunk_index`,
       [enterpriseId]
     );
     rows = q.rows;
-  } catch {
-    const qLegacy = await query<{ content: string; original_name: string; chunk_index: number }>(
-      `SELECT c.content, c.chunk_index, f.original_name
-       FROM enterprise_knowledge_chunks c
-       INNER JOIN enterprise_files f ON f.id = c.enterprise_file_id
-       WHERE c.enterprise_id = $1
-         AND f.is_active = true
-         AND f.can_be_used_as_knowledge = true
-       ORDER BY f.id, c.chunk_index`,
-      [enterpriseId]
-    );
-    rows = qLegacy.rows.map((r) => ({
-      ...r,
-      knowledge_block: null,
-      block_priority: null,
-      city_hint: null,
-      intent_tags: null,
-      temporal_status: null,
-      source_confidence: null,
-    }));
+  } catch (error) {
+    console.error('[KNOWLEDGE_CHUNKS_QUERY_FAILED]', {
+      enterpriseId,
+      error: error instanceof Error ? error.message : String(error),
+      message: 'Consulta S3-only de chunks falhou; nenhum fallback legado será aplicado.',
+    });
+    rows = [];
   }
   if (rows.length === 0) return '';
 
@@ -253,7 +250,8 @@ export async function loadRankedKnowledgeChunksForPrompt(
       intentTagBoost(r.intent_tags, profile) +
       temporalBoost(r.temporal_status ?? 'atemporal', profile) +
       cityBoost(r.city_hint, opts?.targetCity ?? null, profile) +
-      Math.max(0, Math.min(8, Math.round((r.source_confidence ?? 0) / 12))),
+      Math.max(0, Math.min(8, Math.round((r.source_confidence ?? 0) / 12))) +
+      Math.max(0, Math.min(20, Math.round((r.source_priority ?? 0) / 20))),
     dbOrder: i,
   }));
   if (hintWords.size > 0) scored.sort((a, b) => b.score - a.score || a.dbOrder - b.dbOrder);

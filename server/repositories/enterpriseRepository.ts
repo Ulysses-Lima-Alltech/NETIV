@@ -3,7 +3,7 @@ import { join } from 'path';
 import { config } from '../config.js';
 import { query } from '../db/pg.js';
 import { replaceEnterpriseFileChunks, splitTextIntoChunks } from './enterpriseKnowledgeChunkRepository.js';
-import { downloadFromR2, deleteFromR2 } from '../services/r2Storage.js';
+import { downloadFromKnowledgeS3 } from '../services/s3Storage.js';
 
 export const FILE_CATEGORIES = ['book', 'unidades', 'tabela_comercial', 'outro'] as const;
 export type FileCategory = (typeof FILE_CATEGORIES)[number];
@@ -382,6 +382,8 @@ type KnowledgeFileBackfillRow = {
   enterprise_name: string;
   enterprise_city: string | null;
   file_id: number;
+  current_version_id: number | null;
+  file_version_id: number | null;
   original_name: string;
   storage_path: string;
   mime_type: string;
@@ -389,7 +391,6 @@ type KnowledgeFileBackfillRow = {
   is_active: boolean;
   storage_provider: string | null;
   storage_key: string | null;
-  file_data: Buffer | null;
 };
 
 export interface KnowledgeFileBackfillTarget {
@@ -418,6 +419,45 @@ export interface ReindexKnowledgeBackfillResult {
 async function loadKnowledgeFileBufferForBackfill(
   row: KnowledgeFileBackfillRow
 ): Promise<{ ok: true; buffer: Buffer } | { ok: false; reason: string }> {
+  if (row.current_version_id == null) {
+    console.error('[KNOWLEDGE_CURRENT_VERSION_MISSING]', {
+      enterpriseId: row.enterprise_id,
+      enterpriseFileId: row.file_id,
+      reason: 'current_version_id_is_null',
+    });
+    return { ok: false, reason: 'current_version_missing' };
+  }
+  if (row.file_version_id == null) {
+    console.error('[KNOWLEDGE_CURRENT_VERSION_NOT_FOUND]', {
+      enterpriseId: row.enterprise_id,
+      enterpriseFileId: row.file_id,
+      currentVersionId: row.current_version_id,
+      reason: 'current_version_row_not_found',
+    });
+    return { ok: false, reason: 'current_version_not_found' };
+  }
+  if (row.storage_provider !== 's3') {
+    console.error('[KNOWLEDGE_CURRENT_VERSION_NOT_S3]', {
+      enterpriseId: row.enterprise_id,
+      enterpriseFileId: row.file_id,
+      fileVersionId: row.file_version_id,
+      currentVersionId: row.current_version_id,
+      storageProvider: row.storage_provider,
+      message: 'Leitura operacional exige current_version em S3.',
+    });
+    return { ok: false, reason: 'current_version_not_s3' };
+  }
+  if (!row.storage_key) {
+    console.error('[KNOWLEDGE_CURRENT_VERSION_S3_KEY_MISSING]', {
+      enterpriseId: row.enterprise_id,
+      enterpriseFileId: row.file_id,
+      fileVersionId: row.file_version_id,
+      currentVersionId: row.current_version_id,
+      storageProvider: row.storage_provider,
+    });
+    return { ok: false, reason: 'current_version_s3_key_missing' };
+  }
+
   const abs = join(enterpriseDir(row.enterprise_id), row.storage_path);
   if (existsSync(abs)) {
     try {
@@ -429,27 +469,17 @@ async function loadKnowledgeFileBufferForBackfill(
       };
     }
   }
-  if (row.storage_provider === 'r2' && row.storage_key) {
-    const buf = await downloadFromR2(row.storage_key);
-    if (buf) {
-      try {
-        writeFileSync(abs, buf);
-      } catch {
-        // cache local opcional; segue com o buffer em memória
-      }
-      return { ok: true, buffer: buf };
-    }
-    return { ok: false, reason: 'r2_download_failed' };
-  }
-  if (row.file_data) {
+
+  const buf = await downloadFromKnowledgeS3(row.storage_key);
+  if (buf) {
     try {
-      writeFileSync(abs, row.file_data);
+      writeFileSync(abs, buf);
     } catch {
-      // cache local opcional
+      // cache local opcional; segue com o buffer em memória
     }
-    return { ok: true, buffer: row.file_data };
+    return { ok: true, buffer: buf };
   }
-  return { ok: false, reason: 'file_missing_local_r2_and_bytea' };
+  return { ok: false, reason: 's3_download_failed' };
 }
 
 export async function listKnowledgeFilesForBackfill(opts?: {
@@ -475,16 +505,20 @@ export async function listKnowledgeFilesForBackfill(opts?: {
         e.name AS enterprise_name,
         e.city AS enterprise_city,
         f.id AS file_id,
-        f.original_name,
-        f.storage_path,
-        f.mime_type,
+        f.current_version_id,
+        v.id AS file_version_id,
+        COALESCE(v.original_name, f.original_name) AS original_name,
+        COALESCE(v.storage_path, f.storage_path) AS storage_path,
+        COALESCE(v.mime_type, f.mime_type) AS mime_type,
         f.can_be_used_as_knowledge,
         f.is_active,
-        f.storage_provider,
-        f.storage_key,
-        f.file_data
+        COALESCE(v.storage_provider, f.storage_provider) AS storage_provider,
+        COALESCE(v.storage_key, f.storage_key) AS storage_key
      FROM enterprise_files f
      INNER JOIN enterprises e ON e.id = f.enterprise_id
+     LEFT JOIN enterprise_file_versions v
+       ON v.id = f.current_version_id
+      AND v.enterprise_file_id = f.id
      WHERE ${where.join(' AND ')}
      ORDER BY f.enterprise_id, f.id`,
     params
@@ -511,16 +545,20 @@ export async function reindexKnowledgeFileForBackfill(
         e.name AS enterprise_name,
         e.city AS enterprise_city,
         f.id AS file_id,
-        f.original_name,
-        f.storage_path,
-        f.mime_type,
+        f.current_version_id,
+        v.id AS file_version_id,
+        COALESCE(v.original_name, f.original_name) AS original_name,
+        COALESCE(v.storage_path, f.storage_path) AS storage_path,
+        COALESCE(v.mime_type, f.mime_type) AS mime_type,
         f.can_be_used_as_knowledge,
         f.is_active,
-        f.storage_provider,
-        f.storage_key,
-        f.file_data
+        COALESCE(v.storage_provider, f.storage_provider) AS storage_provider,
+        COALESCE(v.storage_key, f.storage_key) AS storage_key
      FROM enterprise_files f
      INNER JOIN enterprises e ON e.id = f.enterprise_id
+     LEFT JOIN enterprise_file_versions v
+       ON v.id = f.current_version_id
+      AND v.enterprise_file_id = f.id
      WHERE f.id = $1
        AND f.can_be_used_as_knowledge = true
      LIMIT 1`,
@@ -620,11 +658,11 @@ export async function registerEnterpriseFile(
   opts?: {
     canBeUsedAsKnowledge?: boolean;
     canBeSentByAna?: boolean;
-    /** 'r2' para uploads novos via Cloudflare R2; 'local' para armazenamento local. */
-    storageProvider?: 'r2' | 'local';
-    /** Chave do objeto no bucket R2 (ex.: empreendimentos/7/1735-abc.pdf). */
+    /** 's3' para uploads novos (storage oficial); 'local' mantido por compatibilidade legada. */
+    storageProvider?: 's3' | 'local';
+    /** Chave do objeto no bucket S3 (ex.: empreendimentos/7/1735-abc.pdf). */
     storageKey?: string;
-    /** Nome do bucket R2. */
+    /** Nome do bucket S3. */
     bucketName?: string;
     /** URL pública do objeto (se bucket público ou custom domain). */
     publicUrl?: string | null;
@@ -632,7 +670,7 @@ export async function registerEnterpriseFile(
 ): Promise<number> {
   const fullPath = join(enterpriseDir(enterpriseId), storedFilename);
   const safeOriginal = sanitizeOriginalName(originalName);
-  const storageProvider = opts?.storageProvider ?? 'local';
+  const storageProvider = opts?.storageProvider ?? 's3';
 
   console.log('[ENTERPRISE_FILE_UPLOAD_START]', {
     enterpriseId,
@@ -647,10 +685,10 @@ export async function registerEnterpriseFile(
 
   const extracted = await extractText(fullPath, mime, safeOriginal);
 
-  // Para R2: bytes já estão no bucket; não duplicar em BYTEA.
-  // Para local: guarda BYTEA como fallback para FS efêmero.
+  // Para storage externo (S3): bytes já estão no bucket; não duplicar em BYTEA.
+  // Para local (legado): guarda BYTEA como fallback para FS efêmero.
   let fileData: Buffer | null = null;
-  if (storageProvider !== 'r2') {
+  if (storageProvider === 'local') {
     try {
       fileData = readFileSync(fullPath);
       console.log('[ENTERPRISE_FILE_UPLOAD_SAVED]', {
@@ -671,9 +709,9 @@ export async function registerEnterpriseFile(
     console.log('[ENTERPRISE_FILE_UPLOAD_SAVED]', {
       enterpriseId,
       storedFilename,
-      storageProvider: 'r2',
+      storageProvider,
       storageKey: opts?.storageKey,
-      note: 'R2 é fonte de verdade — BYTEA omitido',
+      note: 'Storage externo é fonte de verdade — BYTEA omitido',
     });
   }
 
@@ -779,9 +817,8 @@ export async function deleteEnterpriseFile(
   const { rows } = await query<{
     storage_path: string;
     storage_provider: string | null;
-    storage_key: string | null;
   }>(
-    `SELECT storage_path, storage_provider, storage_key FROM enterprise_files WHERE id = $1 AND enterprise_id = $2`,
+    `SELECT storage_path, storage_provider FROM enterprise_files WHERE id = $1 AND enterprise_id = $2`,
     [fileId, enterpriseId]
   );
   if (!rows[0]) return { ok: false, reason: 'not_found' };
@@ -800,9 +837,12 @@ export async function deleteEnterpriseFile(
     return { ok: true, mode: 'deactivated', message: MSG_DEACTIVATED_HISTORICO };
   }
 
-  // Remove do R2 se for o provider.
-  if (rows[0].storage_provider === 'r2' && rows[0].storage_key) {
-    await deleteFromR2(rows[0].storage_key);
+  if (rows[0].storage_provider === 'r2') {
+    console.error('[KNOWLEDGE_DELETE_LEGACY_R2_REFERENCE]', {
+      enterpriseId,
+      enterpriseFileId: fileId,
+      message: 'Referência legada em R2 detectada. Remoção remota não é executada no runtime S3-only.',
+    });
   }
   // Remove cache local (pode não existir em FS efêmero — ok ignorar).
   const p = join(enterpriseDir(enterpriseId), rows[0].storage_path);
@@ -814,15 +854,54 @@ export async function deleteEnterpriseFile(
 const MAX_KNOWLEDGE = 48_000;
 
 export async function loadAgentKnowledgeText(enterpriseId: number): Promise<string> {
-  const { rows } = await query<{ original_name: string; extracted_text: string | null }>(
-    `SELECT original_name, extracted_text FROM enterprise_files
-     WHERE enterprise_id = $1 AND is_active = true AND can_be_used_as_knowledge = true
-     ORDER BY CASE category WHEN 'book' THEN 0 WHEN 'unidades' THEN 1 WHEN 'tabela_comercial' THEN 2 ELSE 3 END, id`,
+  const { rows } = await query<{
+    file_id: number;
+    current_version_id: number | null;
+    file_version_id: number | null;
+    original_name: string;
+    extracted_text: string | null;
+    storage_provider: string | null;
+  }>(
+    `SELECT
+        f.id AS file_id,
+        f.current_version_id,
+        v.id AS file_version_id,
+        COALESCE(v.original_name, f.original_name) AS original_name,
+        COALESCE(v.extracted_text, f.extracted_text) AS extracted_text,
+        COALESCE(v.storage_provider, f.storage_provider) AS storage_provider
+     FROM enterprise_files f
+     LEFT JOIN enterprise_file_versions v
+       ON v.id = f.current_version_id
+      AND v.enterprise_file_id = f.id
+     WHERE f.enterprise_id = $1
+       AND f.is_active = true
+       AND f.can_be_used_as_knowledge = true
+     ORDER BY CASE f.category WHEN 'book' THEN 0 WHEN 'unidades' THEN 1 WHEN 'tabela_comercial' THEN 2 ELSE 3 END, f.id`,
     [enterpriseId]
   );
   const parts: string[] = [];
   let n = 0;
   for (const r of rows) {
+    if (r.current_version_id == null || r.file_version_id == null) {
+      console.error('[KNOWLEDGE_CURRENT_VERSION_INVALID]', {
+        enterpriseId,
+        enterpriseFileId: r.file_id,
+        currentVersionId: r.current_version_id,
+        reason: 'current_version_missing_or_not_found',
+      });
+      continue;
+    }
+    if (r.storage_provider !== 's3') {
+      console.error('[KNOWLEDGE_CURRENT_VERSION_NOT_S3]', {
+        enterpriseId,
+        enterpriseFileId: r.file_id,
+        fileVersionId: r.file_version_id,
+        currentVersionId: r.current_version_id,
+        storageProvider: r.storage_provider,
+        message: 'Leitura operacional exige current_version em S3.',
+      });
+      continue;
+    }
     if (n >= MAX_KNOWLEDGE) break;
     const t = (r.extracted_text || '').trim();
     if (!t) continue;
@@ -907,28 +986,42 @@ export async function getFileForSend(
   console.log('[ANA_DOC_LOOKUP_QUERY]', {
     enterpriseId,
     category: catNorm,
-    table: 'enterprise_files',
+    table: 'enterprise_files + enterprise_file_versions',
     filters: {
       enterprise_id: enterpriseId,
       category: catNorm,
       is_active: true,
       can_be_sent_by_ana: true,
+      current_version_required: true,
+      current_version_storage_provider: 's3',
     },
   });
 
   const { rows } = await query<{
-    id: number;
+    enterprise_file_id: number;
+    current_version_id: number | null;
+    file_version_id: number | null;
     storage_path: string;
     original_name: string;
     mime_type: string;
-    file_data: Buffer | null;
     storage_provider: string | null;
     storage_key: string | null;
   }>(
-    `SELECT id, storage_path, original_name, mime_type, file_data, storage_provider, storage_key
-     FROM enterprise_files
-     WHERE enterprise_id = $1 AND category = $2 AND is_active = true AND can_be_sent_by_ana = true
-     ORDER BY created_at DESC, id DESC
+    `SELECT
+        f.id AS enterprise_file_id,
+        f.current_version_id,
+        v.id AS file_version_id,
+        COALESCE(v.storage_path, f.storage_path) AS storage_path,
+        COALESCE(v.original_name, f.original_name) AS original_name,
+        COALESCE(v.mime_type, f.mime_type) AS mime_type,
+        COALESCE(v.storage_provider, f.storage_provider) AS storage_provider,
+        COALESCE(v.storage_key, f.storage_key) AS storage_key
+     FROM enterprise_files f
+     LEFT JOIN enterprise_file_versions v
+       ON v.id = f.current_version_id
+      AND v.enterprise_file_id = f.id
+     WHERE f.enterprise_id = $1 AND f.category = $2 AND f.is_active = true AND f.can_be_sent_by_ana = true
+     ORDER BY f.created_at DESC, f.id DESC
      LIMIT 1`,
     [enterpriseId, catNorm]
   );
@@ -978,92 +1071,92 @@ export async function getFileForSend(
     return null;
   }
 
+  if (r.current_version_id == null || r.file_version_id == null) {
+    console.error('[ANA_DOC_CURRENT_VERSION_INVALID]', {
+      enterpriseId,
+      category: catNorm,
+      enterpriseFileId: r.enterprise_file_id,
+      currentVersionId: r.current_version_id,
+      reason: 'current_version_missing_or_not_found',
+    });
+    console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
+    return null;
+  }
+  if (r.storage_provider !== 's3') {
+    console.error('[ANA_DOC_CURRENT_VERSION_NOT_S3]', {
+      enterpriseId,
+      category: catNorm,
+      enterpriseFileId: r.enterprise_file_id,
+      currentVersionId: r.current_version_id,
+      fileVersionId: r.file_version_id,
+      storageProvider: r.storage_provider,
+      message: 'Envio de material exige current_version em S3. Fallback para R2 está bloqueado.',
+    });
+    console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
+    return null;
+  }
+  if (!r.storage_key) {
+    console.error('[ANA_DOC_CURRENT_VERSION_S3_KEY_MISSING]', {
+      enterpriseId,
+      category: catNorm,
+      enterpriseFileId: r.enterprise_file_id,
+      currentVersionId: r.current_version_id,
+      fileVersionId: r.file_version_id,
+    });
+    console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
+    return null;
+  }
+
   const resolvedPath = join(enterpriseDir(enterpriseId), r.storage_path);
   const fileExistsOnDisk = existsSync(resolvedPath);
 
   console.log('[ENTERPRISE_FILE_EXISTS_CHECK]', {
     enterpriseId,
-    fileId: r.id,
+    fileId: r.enterprise_file_id,
+    currentVersionId: r.current_version_id,
+    fileVersionId: r.file_version_id,
     storageProvider: r.storage_provider,
     storageKey: r.storage_key,
     relativeStoragePath: r.storage_path,
     absolutePath: resolvedPath,
     existsOnDisk: fileExistsOnDisk,
-    fileDataAvailable: r.file_data != null,
-    fileDataBytes: r.file_data?.length ?? 0,
   });
 
   if (!fileExistsOnDisk) {
-    if (r.storage_provider === 'r2' && r.storage_key) {
-      // ── Caminho 1: arquivo está no R2 → baixar e cachear em disco ─────────
-      const buf = await downloadFromR2(r.storage_key);
-      if (!buf) {
-        console.log('[ANA_DOC_LOOKUP_MISS_REASON]', {
-          enterpriseId,
-          category: catNorm,
-          enterpriseFileId: r.id,
-          reason: 'r2_download_failed',
-          storageKey: r.storage_key,
-        });
-        console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
-        return null;
-      }
-      try {
-        writeFileSync(resolvedPath, buf);
-        console.log('[ENTERPRISE_FILE_RESTORED_FROM_DB]', {
-          enterpriseId,
-          fileId: r.id,
-          source: 'r2',
-          storageKey: r.storage_key,
-          bytes: buf.length,
-          cachedAt: resolvedPath,
-        });
-      } catch (writeErr) {
-        console.error('[ENTERPRISE_FILE_RESTORE_FAILED]', {
-          enterpriseId,
-          fileId: r.id,
-          source: 'r2',
-          error: writeErr instanceof Error ? writeErr.message : String(writeErr),
-        });
-        console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
-        return null;
-      }
-    } else if (r.file_data) {
-      // ── Caminho 2: fallback BYTEA (registros locais pré-R2) ─────────────
-      try {
-        writeFileSync(resolvedPath, r.file_data);
-        console.log('[ENTERPRISE_FILE_RESTORED_FROM_DB]', {
-          enterpriseId,
-          fileId: r.id,
-          source: 'bytea',
-          bytes: r.file_data.length,
-          cachedAt: resolvedPath,
-        });
-      } catch (writeErr) {
-        console.error('[ENTERPRISE_FILE_RESTORE_FAILED]', {
-          enterpriseId,
-          fileId: r.id,
-          source: 'bytea',
-          error: writeErr instanceof Error ? writeErr.message : String(writeErr),
-        });
-        console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
-        return null;
-      }
-    } else {
-      // ── Caminho 3: sem R2 e sem BYTEA → miss definitivo ─────────────────
+    const buf = await downloadFromKnowledgeS3(r.storage_key);
+    if (!buf) {
       console.log('[ANA_DOC_LOOKUP_MISS_REASON]', {
         enterpriseId,
         category: catNorm,
-        enterpriseFileId: r.id,
-        reason: 'row_ok_but_file_missing_on_disk',
+        enterpriseFileId: r.enterprise_file_id,
+        currentVersionId: r.current_version_id,
+        fileVersionId: r.file_version_id,
+        reason: 's3_download_failed',
         storageProvider: r.storage_provider,
+        storageKey: r.storage_key,
         relativeStoragePath: r.storage_path,
         absolutePath: resolvedPath,
-        fileDataAvailable: false,
-        hint:
-          r.storage_provider === 'r2'
-            ? 'storage_key ausente — registro R2 corrompido. Reenvie o arquivo.'
-            : 'Registro sem file_data (pré-migration 027). Reenvie o arquivo pelo admin.',
+      });
+      console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
+      return null;
+    }
+    try {
+      writeFileSync(resolvedPath, buf);
+      console.log('[ENTERPRISE_FILE_RESTORED_FROM_S3]', {
+        enterpriseId,
+        fileId: r.enterprise_file_id,
+        currentVersionId: r.current_version_id,
+        fileVersionId: r.file_version_id,
+        storageKey: r.storage_key,
+        bytes: buf.length,
+        cachedAt: resolvedPath,
+      });
+    } catch (writeErr) {
+      console.error('[ENTERPRISE_FILE_RESTORE_FAILED]', {
+        enterpriseId,
+        fileId: r.enterprise_file_id,
+        source: 's3',
+        error: writeErr instanceof Error ? writeErr.message : String(writeErr),
       });
       console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
       return null;
@@ -1074,14 +1167,16 @@ export async function getFileForSend(
     enterpriseId,
     category: catNorm,
     found: true,
-    enterpriseFileId: r.id,
+    enterpriseFileId: r.enterprise_file_id,
+    currentVersionId: r.current_version_id,
+    fileVersionId: r.file_version_id,
     originalName: r.original_name,
     relativeStoragePath: r.storage_path,
     existsOnDisk: true,
     restoredFromDb: !fileExistsOnDisk,
   });
   return {
-    id: r.id,
+    id: r.enterprise_file_id,
     path: resolvedPath,
     originalName: r.original_name,
     mime: r.mime_type,

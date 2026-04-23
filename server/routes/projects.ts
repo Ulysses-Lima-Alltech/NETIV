@@ -4,7 +4,11 @@ import { randomBytes } from 'crypto';
 import { mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { config } from '../config.js';
-import { isR2Configured, uploadToR2 } from '../services/r2Storage.js';
+import {
+  getKnowledgeS3Bucket,
+  isKnowledgeS3Configured,
+  putObjectToKnowledgeS3,
+} from '../services/s3Storage.js';
 import {
   listEnterprises,
   createEnterprise,
@@ -64,7 +68,7 @@ function parseUploadBool(v: unknown, defaultVal: boolean): boolean {
 }
 
 // memoryStorage: o buffer fica em RAM. O handler escreve em disco (cache local)
-// e, se R2 estiver configurado, faz upload para o R2 como fonte de verdade.
+// e sempre sobe para S3 como storage oficial do material.
 const upload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
@@ -391,36 +395,37 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
       : '';
     const storedFilename = `${Date.now()}-${randomBytes(8).toString('hex')}${ext}`;
 
-    // Grava em disco como cache local (necessário para extractText + fallback local).
+    // Grava em disco como cache local (necessário para extractText e cache de envio).
+    if (!isKnowledgeS3Configured()) {
+      return res.status(503).json({
+        error: 'KNOWLEDGE_S3_BUCKET não configurado. Upload de conhecimento exige S3.',
+      });
+    }
+
     const dir = join(config.storageEmpreendimentos, String(id));
     mkdirSync(dir, { recursive: true });
     const localPath = join(dir, storedFilename);
     writeFileSync(localPath, req.file.buffer);
 
-    // Tenta upload para R2 se configurado.
-    let storageProvider: 'r2' | 'local' = 'local';
-    let storageKey: string | undefined;
-    let bucketName: string | undefined;
-    let publicUrl: string | null = null;
-
-    if (isR2Configured()) {
-      const r2Key = `empreendimentos/${id}/${storedFilename}`;
-      const r2Res = await uploadToR2(r2Key, req.file.buffer, mime || 'application/octet-stream');
-      if (r2Res.ok) {
-        storageProvider = 'r2';
-        storageKey = r2Res.key;
-        bucketName = r2Res.bucket;
-        publicUrl = r2Res.publicUrl;
-      } else {
-        // Fallback: R2 falhou, arquivo continua salvo apenas em disco local + BYTEA.
-        console.error('[R2_UPLOAD_FALLBACK]', {
-          enterpriseId: id,
-          storedFilename,
-          error: r2Res.error,
-          note: 'Arquivo salvo localmente como fallback',
-        });
-      }
+    const s3Key = `empreendimentos/${id}/${storedFilename}`;
+    const s3Res = await putObjectToKnowledgeS3(
+      s3Key,
+      req.file.buffer,
+      mime || 'application/octet-stream'
+    );
+    if (!s3Res.ok) {
+      console.error('[S3_UPLOAD_FAILED]', {
+        enterpriseId: id,
+        storedFilename,
+        error: s3Res.error,
+      });
+      return res.status(502).json({ error: 'Falha no upload para S3.' });
     }
+
+    const storageProvider: 's3' = 's3';
+    const storageKey = s3Res.key;
+    const bucketName = s3Res.bucket || getKnowledgeS3Bucket();
+    const publicUrl: string | null = null;
 
     const fid = await registerEnterpriseFile(
       id,
