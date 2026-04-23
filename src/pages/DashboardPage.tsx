@@ -187,6 +187,29 @@ export function DashboardPage() {
     }
   }, [period, enterpriseId]);
 
+  const handleExportDjangoCsv = useCallback(async () => {
+    setCsvLoading(true);
+    setCsvErr(null);
+    try {
+      const { blob, filename } = await dashboardApi.downloadDjangoCsv({
+        period,
+        enterpriseId: enterpriseId === '' ? null : enterpriseId,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setCsvErr(e instanceof Error ? e.message : 'Não foi possível exportar o CSV para Qmape. Tente de novo.');
+    } finally {
+      setCsvLoading(false);
+    }
+  }, [period, enterpriseId]);
+
   const classMax = useMemo(
     () => Math.max(1, ...(data?.classification.map((c) => c.count) ?? [1])),
     [data]
@@ -262,7 +285,14 @@ export function DashboardPage() {
                 }}
                 className="inline-flex items-center justify-center gap-2 min-h-[42px] px-4 rounded-[10px] text-[14px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:pointer-events-none transition-colors"
               >
-                Exportar para Django
+                {csvLoading ? (
+                  <>
+                    <span className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                    Exportando…
+                  </>
+                ) : (
+                  'Exportar Qmape'
+                )}
               </button>
               {csvErr && <p className="text-[12px] text-red-600 max-w-xs">{csvErr}</p>}
             </div>
