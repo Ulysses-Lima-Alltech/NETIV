@@ -8,7 +8,9 @@
     "build": "tsc || echo \"TypeScript errors ignored for deploy build\" && node scripts/copy-migrations.cjs",
     "migrate": "tsx db/migrate.ts",
     "migrate:deploy": "node dist/db/migrate.js",
-    "start:prod": "node dist/db/migrate.js && node dist/index.js"
+    "start:prod": "node dist/db/migrate.js && node dist/index.js",
+    "kb:ingest": "tsx scripts/ingestEnterpriseKnowledge.ts",
+    "kb:migrate:r2-s3": "tsx scripts/migrateKnowledgeStorageR2ToS3.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1020.0",
