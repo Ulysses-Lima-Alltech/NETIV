@@ -32,6 +32,15 @@ function parseRouteId(idParam: string | string[] | undefined): number {
   return parseInt(String(raw ?? ''), 10);
 }
 
+function pickCustomerName(conv: ConversationRow): string | null {
+  const clean = (v: unknown): string | null => {
+    if (typeof v !== 'string') return null;
+    const t = v.trim();
+    return t.length > 0 ? t : null;
+  };
+  return clean(conv.customer_name) ?? clean(conv.whatsapp_display_name);
+}
+
 // Helper functions for serialization
 function serializeConversation(conv: ConversationRow) {
   return {
@@ -39,7 +48,7 @@ function serializeConversation(conv: ConversationRow) {
     channel: conv.channel,
     external_contact_id: conv.external_contact_id,
     contact_phone: conv.contact_phone,
-    customer_name: conv.customer_name,
+    customer_name: pickCustomerName(conv),
     enterprise_id: conv.enterprise_id,
     classification: conv.classification,
     lead_temperature: conv.lead_temperature,
@@ -128,7 +137,7 @@ router.get('/conversations', requireServiceJwt(['django']), async (req: JwtReque
     if (enterprise_id) filters.enterpriseId = parseInt(enterprise_id as string);
     if (classification) filters.status = classification as string;  // classification → status
     if (lead_temperature) filters.leadTemperature = lead_temperature as string;  // lead_temperature → leadTemperature
-    if (handoff !== undefined) filters.mode = handoff === 'true' ? 'handoff' : 'all';  // handoff → mode
+    if (handoff !== undefined) filters.mode = handoff === 'true' ? 'handoff' : 'ANA';  // handoff → mode
 
     // Get conversations - buscar total real para paginação correta
     const allConversations = await listConversationsWithPreview('whatsapp', 99999, {
