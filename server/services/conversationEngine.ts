@@ -82,7 +82,11 @@ import {
   sanitizeFirstCampaignReplyShape,
   sanitizeFinancialNegotiationOverreach,
 } from '../utils/anaReplyFinalize.js';
-import { applyAnaCommercialSingleAxisGuard, inferUserRequestedAxis } from '../utils/anaCommercialAxisGuard.js';
+import {
+  applyAnaCommercialSingleAxisGuard,
+  inferResolvedPurchaseIntent,
+  inferUserRequestedAxis,
+} from '../utils/anaCommercialAxisGuard.js';
 import {
   extractCustomerNameFromUserUtterance,
   replyExplicitlyAsksCustomerName,
@@ -126,7 +130,10 @@ import {
   pickPostMediaAckText,
 } from '../utils/anaDocSendIntent.js';
 import { applyOperationalFactGuard } from '../utils/anaOperationalFactGuard.js';
-import { resolveOperationalFactAnswer } from '../utils/anaOperationalFactResolver.js';
+import {
+  resolveOperationalFactAnswer,
+  type OperationalTopic,
+} from '../utils/anaOperationalFactResolver.js';
 import {
   createAnaTurnAudit,
   updateAnaTurnAuditOutcome,
@@ -182,27 +189,40 @@ function buildSafeOutboundRecoveryReply(params: {
   return 'Claro, eu te explico sim. Me diz só qual ponto pesa mais pra você agora, que eu sigo por aí.';
 }
 
-function normalizeStructuredReplyCandidate(reply: string): string {
+function normalizeStructuredReplyCandidate(
+  reply: string,
+  opts?: { preserveAllItems?: boolean }
+): string {
   const raw = (reply || '').trim();
   if (!raw) return raw;
+  const preserveAllItems = opts?.preserveAllItems === true;
+  const sanitizeListPart = (part: string): string =>
+    part
+      .replace(/\s*,?\s*entre outros\.?\s*$/i, '')
+      .replace(/\s+entre outros\.?\s*$/i, '')
+      .trim();
   const lines = raw
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
   if (lines.length >= 2) {
-    return lines.slice(0, 7).join('\n');
+    const normalized = (preserveAllItems ? lines : lines.slice(0, 7))
+      .map((line) => (preserveAllItems ? sanitizeListPart(line) : line))
+      .filter(Boolean);
+    return normalized.join('\n');
   }
   const parts = raw
     .split(/\s*;\s*/)
     .map((part) => part.trim())
     .filter(Boolean);
   if (parts.length >= 3) {
-    return parts
-      .slice(0, 7)
-      .map((part) => `- ${part.replace(/[.!?]+$/g, '').trim()}`)
+    const selected = preserveAllItems ? parts : parts.slice(0, 7);
+    return selected
+      .map((part) => `- ${sanitizeListPart(part.replace(/[.!?]+$/g, '').trim())}`)
+      .filter((part) => part !== '-')
       .join('\n');
   }
-  return raw;
+  return preserveAllItems ? sanitizeListPart(raw) : raw;
 }
 
 /** Motivo do fallback com `ANA_TECHNICAL_FALLBACK_NEUTRAL` (log [ANA_FALLBACK_TRACE]). */
@@ -1266,6 +1286,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const bareGreeting = isBareGreetingOnly(trimmed);
     const materialAskIntentThisTurn = userExplicitlyAskedForMaterial(trimmed);
     const explicitMaterialRequestThisTurn = materialAskIntentThisTurn.explicit && !bareGreeting;
+    const userResolvedPurchaseIntentThisTurn = inferResolvedPurchaseIntent(trimmed);
+    const resolvedPurchaseIntentForTurn =
+      userResolvedPurchaseIntentThisTurn ?? flowStateParsed.purchaseIntent ?? null;
     const requestedAxisForPolicy = inferUserRequestedAxis(userMessageForReasoning);
     const explicitExactLocationRequestThisTurn = detectExplicitExactLocationRequest(trimmed);
     const explicitPaymentSimulationRequestThisTurn = detectExplicitPaymentSimulationRequest(trimmed);
@@ -1313,6 +1336,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       canMentionPaymentSimulation: anaDecision.canMentionPaymentSimulation,
       outboundAllowed: anaDecision.outboundAllowed,
       blockedReason: anaDecision.blockedReason,
+      userResolvedPurchaseIntentThisTurn,
+      resolvedPurchaseIntentForTurn,
       explicitMaterialRequestThisTurn,
       explicitExactLocationRequestThisTurn,
       explicitPaymentSimulationRequestThisTurn,
@@ -1499,7 +1524,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const policyRuntimeDirectives = [
       `POLICY_DECISION_MODE: ${anaDecision.responseMode}`,
       anaDecision.responseMode === 'structured'
-        ? 'Responda em formato estruturado quando fizer sentido (linhas curtas/lista objetiva), entre 5 e 7 itens e sem misturar varios temas.'
+        ? requestedAxisForPolicy === 'lazer'
+          ? 'No eixo de lazer, liste todos os itens encontrados na fonte confiavel, sem limitar quantidade, sem truncar, sem resumir e sem usar "entre outros". Mantenha bullets e quebras de linha.'
+          : 'Responda em formato estruturado quando fizer sentido (linhas curtas/lista objetiva), entre 5 e 7 itens e sem misturar varios temas.'
         : 'Responda de forma curta e objetiva, com no maximo 3 linhas e no maximo 1 pergunta.',
       anaDecision.shouldSuggestVisit
         ? 'Se houver aderencia ao contexto, voce pode sugerir visita de forma natural e sem insistencia.'
@@ -1930,7 +1957,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (userMaterialAsk) {
         structured = {
           ...structured,
-          reply: pickMaterialUnavailableNeutralReply(lastAsstDup?.content ?? null),
+          reply: pickMaterialUnavailableNeutralReply(lastAssistantPlain),
           send_file_category: null,
         };
         replySource = 'policy_material_unavailable';
@@ -2110,12 +2137,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     // oficiais (variablesMap + knowledgeText) ANTES de usar o reply do LLM.
     // O LLM não tem liberdade de improvisar nesses tópicos.
     let operationalResolverFired = false;
+    let operationalResolverTopic: OperationalTopic | null = null;
     {
       const resolution = resolveOperationalFactAnswer(trimmed, knowledgeText, vars, {
         enterpriseName: ent?.name ?? null,
       });
       if (resolution !== null) {
         operationalResolverFired = true;
+        operationalResolverTopic = resolution.topic;
         anaTurnAuditGuardsApplied.operationalResolverFired = true;
         console.log('[ANA_OPERATIONAL_RESOLVER]', {
           conversationId,
@@ -2188,6 +2217,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           isFirstAnaReply,
           enterpriseName: ent?.name ?? null,
           conversationId,
+          resolvedPurchaseIntent: resolvedPurchaseIntentForTurn,
+          lastAssistantMessage: lastAssistantPlain,
         });
         anaTurnAuditGuardsApplied.firstAxisGuardChanged = axisGuard.changed;
         if (axisGuard.changed) {
@@ -2328,6 +2359,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         isFirstAnaReply,
         enterpriseName: ent?.name ?? null,
         conversationId,
+        resolvedPurchaseIntent: resolvedPurchaseIntentForTurn,
+        lastAssistantMessage: lastAssistantPlain,
       });
       const ackFinalText = finalizeAnaReplyText(ackAxisGuard.text, {
         userMessage: trimmed,
@@ -2431,6 +2464,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             : triageRequestedProductType === 'INDEFINIDO'
               ? undefined
               : triageRequestedProductType,
+        userMessage: trimmed,
       });
       await mergeConversationCommercialFlowState(conversationId, nextFlowAck);
       console.log('[ANA_DOC_POST_SEND_STATE_CLEARED]', {
@@ -2466,6 +2500,26 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       branch: shouldAttemptDocSend ? 'doc_or_material' : 'normal_finalize',
     });
 
+    const shouldPreserveFullLazerList =
+      anaDecision.responseMode === 'structured' &&
+      (
+        requestedAxisForPolicy === 'lazer' ||
+        anaDecision.primaryAxis === 'lazer' ||
+        operationalResolverTopic === 'portaria_lazer' ||
+        (
+          /\b[áa]reas?\s+de\s+lazer\b/i.test(replyBody) &&
+          /\n\s*(?:-|\*|•|â€¢)\s+/.test(replyBody)
+        )
+      );
+    if (shouldPreserveFullLazerList) {
+      console.log('[ANA_STRUCTURED_LAZER_FULL_LIST_MODE]', {
+        conversationId,
+        requestedAxisForPolicy,
+        primaryAxis: anaDecision.primaryAxis,
+        operationalResolverTopic,
+      });
+    }
+
     let replyText: string;
     if (shouldAttemptDocSend) {
       if (mediaOutcome != null && !mediaOutcome.ok) {
@@ -2488,7 +2542,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     } else {
       replyText =
         anaDecision.responseMode === 'structured'
-          ? normalizeStructuredReplyCandidate(replyBody).slice(0, 4000)
+          ? normalizeStructuredReplyCandidate(replyBody, {
+              preserveAllItems: shouldPreserveFullLazerList,
+            }).slice(0, 4000)
           : finalizeAnaReplyText(replyBody, {
               userMessage: trimmed,
               conversationMode: mode,
@@ -2504,6 +2560,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           isFirstAnaReply,
           enterpriseName: ent?.name ?? null,
           conversationId,
+          resolvedPurchaseIntent: resolvedPurchaseIntentForTurn,
+          lastAssistantMessage: lastAssistantPlain,
         });
     const finalAxisGuardText = finalAxisGuardResult.text;
     anaTurnAuditGuardsApplied.finalAxisGuardChanged = finalAxisGuardResult.changed;
@@ -2515,7 +2573,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     anaTurnAuditGuardsApplied.finalEvidenceGuardChanged = finalEvidenceGuard.changed;
     const finalTextGuard =
       anaDecision.responseMode === 'structured'
-        ? normalizeStructuredReplyCandidate(finalEvidenceGuard.text)
+        ? normalizeStructuredReplyCandidate(finalEvidenceGuard.text, {
+            preserveAllItems: shouldPreserveFullLazerList,
+          })
         : finalizeAnaReplyText(finalEvidenceGuard.text, {
             userMessage: trimmed,
             conversationMode: mode,
@@ -2524,12 +2584,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const preserveListFormatting =
       anaDecision.responseMode === 'structured' ||
       (operationalResolverFired && /\n\s*(?:-|\*)\s+/.test(finalTextGuard));
-    const hardLimitedReply = applyAnaHardLengthGuard({
-      text: finalTextGuard,
-      enterpriseName: ent?.name ?? null,
-      maxChars: preserveListFormatting ? 360 : ANA_OUTBOUND_MAX_CHARS,
-      preserveLineBreaks: preserveListFormatting,
-    });
+    const hardLimitedReply = shouldPreserveFullLazerList
+      ? finalTextGuard.slice(0, 4000).trim()
+      : applyAnaHardLengthGuard({
+          text: finalTextGuard,
+          enterpriseName: ent?.name ?? null,
+          maxChars: preserveListFormatting ? 360 : ANA_OUTBOUND_MAX_CHARS,
+          preserveLineBreaks: preserveListFormatting,
+        });
     let finalOutboundEval = evaluateAnaOutboundText({
       reply: hardLimitedReply,
       technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
@@ -2682,6 +2744,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             : triageRequestedProductType === 'INDEFINIDO'
               ? undefined
               : triageRequestedProductType,
+        userMessage: trimmed,
       });
       await mergeConversationCommercialFlowState(conversationId, nextFlow);
       const stateAfter = {
