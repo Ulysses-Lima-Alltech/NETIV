@@ -655,6 +655,14 @@ export type ProjectListItem = Omit<EmpreendimentoDTO, 'knowledgeFiles'>;
 
 export type ProjectListFilters = { tipo?: EnterpriseTipo; exclusivo?: boolean };
 
+function defaultKnowledgeUploadFlags(category: FileCategory): {
+  canBeUsedAsKnowledge: boolean;
+  canBeSentByAna: boolean;
+} {
+  if (category === 'outro') return { canBeUsedAsKnowledge: true, canBeSentByAna: false };
+  return { canBeUsedAsKnowledge: false, canBeSentByAna: true };
+}
+
 export const projectsApi = {
   list: (activeOnly = true, filters?: ProjectListFilters) => {
     const q = new URLSearchParams();
@@ -703,8 +711,9 @@ export const projectsApi = {
     fd.append('category', category);
     if (opts?.tipoDocumento === 'BOOK') fd.append('tipoDocumento', 'BOOK');
     fd.append('file', file);
-    fd.append('canBeUsedAsKnowledge', opts?.canBeUsedAsKnowledge !== false ? 'true' : 'false');
-    fd.append('canBeSentByAna', opts?.canBeSentByAna === true ? 'true' : 'false');
+    const defaults = defaultKnowledgeUploadFlags(category);
+    fd.append('canBeUsedAsKnowledge', String(opts?.canBeUsedAsKnowledge ?? defaults.canBeUsedAsKnowledge));
+    fd.append('canBeSentByAna', String(opts?.canBeSentByAna ?? defaults.canBeSentByAna));
     const token = getStoredAuthToken();
     const res = await fetch(`${API_BASE}/projects/${projectId}/knowledge`, {
       method: 'POST',

@@ -715,7 +715,7 @@ export async function registerEnterpriseFile(
     });
   }
 
-  const canBeUsedAsKnowledge = opts?.canBeUsedAsKnowledge !== false;
+  const canBeUsedAsKnowledge = opts?.canBeUsedAsKnowledge === true;
   const canBeSentByAna = opts?.canBeSentByAna === true;
   const { rows } = await query<{ id: number }>(
     `INSERT INTO enterprise_files
@@ -753,22 +753,187 @@ export async function registerEnterpriseFile(
     fileDataStored: fileData != null,
     fileDataBytes: fileData?.length ?? 0,
   });
-  if (canBeUsedAsKnowledge && (extracted || '').trim()) {
+  await syncCurrentFileVersionAfterUploadOrPermissionChange({
+    enterpriseId,
+    enterpriseFileId: fileId,
+    category,
+    originalName: safeOriginal,
+    mime,
+    extractedText: extracted,
+    canBeSentByAna,
+    canBeUsedAsKnowledge,
+  });
+  return fileId;
+}
+
+async function syncCurrentFileVersionAfterUploadOrPermissionChange(opts: {
+  enterpriseId: number;
+  enterpriseFileId: number;
+  category: FileCategory;
+  originalName: string;
+  mime: string;
+  extractedText: string;
+  canBeSentByAna: boolean;
+  canBeUsedAsKnowledge: boolean;
+}): Promise<void> {
+  const { rows } = await query<{
+    current_version_id: number | null;
+    storage_key: string | null;
+    bucket_name: string | null;
+  }>(
+    `SELECT f.current_version_id,
+            COALESCE(v.storage_key, f.storage_key) AS storage_key,
+            COALESCE(v.bucket_name, f.bucket_name) AS bucket_name
+     FROM enterprise_files f
+     LEFT JOIN enterprise_file_versions v
+       ON v.id = f.current_version_id
+      AND v.enterprise_file_id = f.id
+     WHERE f.id = $1
+       AND f.enterprise_id = $2`,
+    [opts.enterpriseFileId, opts.enterpriseId]
+  );
+  const currentVersionId = rows[0]?.current_version_id ?? null;
+  if (currentVersionId == null) {
+    console.error('[KNOWLEDGE_UPLOAD_PROCESSING_DEBUG]', {
+      enterpriseId: opts.enterpriseId,
+      enterpriseFileId: opts.enterpriseFileId,
+      fileVersionId: null,
+      mimeType: opts.mime,
+      extractedTextLength: opts.extractedText.length,
+      chunksCreated: 0,
+      processingStatus: 'FAILED',
+      processingError: 'current_version_id_missing',
+    });
+    return;
+  }
+
+  let processingStatus: 'PROCESSED' | 'FAILED' | 'SKIPPED' = 'SKIPPED';
+  let processingError: string | null = null;
+  let chunksCreated = 0;
+
+  if (!opts.canBeUsedAsKnowledge) {
+    await query(
+      `UPDATE enterprise_knowledge_chunks
+       SET is_active = false
+       WHERE enterprise_file_version_id = $1
+         AND is_active = true`,
+      [currentVersionId]
+    );
+  } else if (opts.extractedText.trim()) {
     try {
-      const enterprise = await getEnterpriseById(enterpriseId);
-      await replaceEnterpriseFileChunks(enterpriseId, fileId, extracted, {
+      const enterprise = await getEnterpriseById(opts.enterpriseId);
+      chunksCreated = await replaceEnterpriseFileChunks(opts.enterpriseId, opts.enterpriseFileId, opts.extractedText, {
         enterpriseName: enterprise?.name ?? null,
         enterpriseCity: enterprise?.city ?? null,
       });
+      processingStatus = chunksCreated > 0 ? 'PROCESSED' : 'FAILED';
+      processingError = chunksCreated > 0 ? null : 'no_chunks_created';
     } catch (e) {
+      processingStatus = 'FAILED';
+      processingError = e instanceof Error ? e.message : String(e);
       console.error('[knowledge_chunks] falha ao indexar arquivo', {
-        enterpriseId,
-        fileId,
-        err: e instanceof Error ? e.message : String(e),
+        enterpriseId: opts.enterpriseId,
+        fileId: opts.enterpriseFileId,
+        fileVersionId: currentVersionId,
+        err: processingError,
       });
     }
+  } else {
+    processingStatus = 'FAILED';
+    processingError = 'empty_extracted_text';
+    await query(
+      `UPDATE enterprise_knowledge_chunks
+       SET is_active = false
+       WHERE enterprise_file_version_id = $1
+         AND is_active = true`,
+      [currentVersionId]
+    );
   }
-  return fileId;
+
+  await query(
+    `UPDATE enterprise_file_versions
+     SET can_be_sent_by_ana = $2,
+         can_be_used_as_knowledge = $3,
+         is_active = true,
+         processing_status = $4,
+         processing_error = $5,
+         processed_at = NOW(),
+         chunk_count = $6,
+         extracted_text = $7,
+         storage_provider = 's3',
+         storage_key = COALESCE(storage_key, $8),
+         bucket_name = COALESCE(bucket_name, $9),
+         file_kind = CASE
+           WHEN $3 = false THEN file_kind
+           WHEN $10 = 'book' THEN 'brochure'
+           WHEN $10 = 'unidades' THEN 'floorplan'
+           WHEN $10 = 'tabela_comercial' THEN 'price_table'
+           ELSE 'unknown'
+         END,
+         source = COALESCE(NULLIF(source, ''), 'ui_upload'),
+         source_priority = COALESCE(source_priority, 10)
+     WHERE id = $1`,
+    [
+      currentVersionId,
+      opts.canBeSentByAna,
+      opts.canBeUsedAsKnowledge,
+      processingStatus,
+      processingError,
+      chunksCreated,
+      opts.extractedText || null,
+      rows[0]?.storage_key ?? null,
+      rows[0]?.bucket_name ?? null,
+      opts.category,
+    ]
+  );
+
+  const { rows: debugRows } = await query<{
+    file_can_be_sent_by_ana: boolean;
+    version_can_be_sent_by_ana: boolean;
+    file_can_be_used_as_knowledge: boolean;
+    version_can_be_used_as_knowledge: boolean;
+    processing_status: string;
+    chunk_count: number;
+  }>(
+    `SELECT
+       f.can_be_sent_by_ana AS file_can_be_sent_by_ana,
+       v.can_be_sent_by_ana AS version_can_be_sent_by_ana,
+       f.can_be_used_as_knowledge AS file_can_be_used_as_knowledge,
+       v.can_be_used_as_knowledge AS version_can_be_used_as_knowledge,
+       v.processing_status,
+       v.chunk_count
+     FROM enterprise_files f
+     INNER JOIN enterprise_file_versions v
+       ON v.id = f.current_version_id
+      AND v.enterprise_file_id = f.id
+     WHERE f.id = $1
+       AND f.enterprise_id = $2`,
+    [opts.enterpriseFileId, opts.enterpriseId]
+  );
+  const debug = debugRows[0];
+  console.error('[KNOWLEDGE_UPLOAD_FLAGS_DEBUG]', {
+    enterpriseId: opts.enterpriseId,
+    enterpriseFileId: opts.enterpriseFileId,
+    fileVersionId: currentVersionId,
+    originalName: opts.originalName,
+    category: opts.category,
+    fileCanBeSentByAna: debug?.file_can_be_sent_by_ana ?? opts.canBeSentByAna,
+    versionCanBeSentByAna: debug?.version_can_be_sent_by_ana ?? opts.canBeSentByAna,
+    fileCanBeUsedAsKnowledge: debug?.file_can_be_used_as_knowledge ?? opts.canBeUsedAsKnowledge,
+    versionCanBeUsedAsKnowledge: debug?.version_can_be_used_as_knowledge ?? opts.canBeUsedAsKnowledge,
+    processingStatus: debug?.processing_status ?? processingStatus,
+    chunkCount: Number(debug?.chunk_count ?? chunksCreated),
+  });
+  console.error('[KNOWLEDGE_UPLOAD_PROCESSING_DEBUG]', {
+    enterpriseId: opts.enterpriseId,
+    enterpriseFileId: opts.enterpriseFileId,
+    fileVersionId: currentVersionId,
+    mimeType: opts.mime,
+    extractedTextLength: opts.extractedText.length,
+    chunksCreated,
+    processingStatus,
+    processingError,
+  });
 }
 
 export async function updateEnterpriseFilePermissions(
@@ -776,26 +941,46 @@ export async function updateEnterpriseFilePermissions(
   fileId: number,
   patch: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean }
 ): Promise<boolean> {
-  const sets: string[] = [];
-  const vals: unknown[] = [];
-  let i = 1;
-  if (patch.canBeUsedAsKnowledge !== undefined) {
-    sets.push(`can_be_used_as_knowledge = $${i++}`);
-    vals.push(patch.canBeUsedAsKnowledge);
-  }
-  if (patch.canBeSentByAna !== undefined) {
-    sets.push(`can_be_sent_by_ana = $${i++}`);
-    vals.push(patch.canBeSentByAna);
-  }
-  if (sets.length === 0) return true;
-  const idxEnt = i++;
-  const idxFile = i++;
-  vals.push(enterpriseId, fileId);
-  const { rowCount } = await query(
-    `UPDATE enterprise_files SET ${sets.join(', ')} WHERE enterprise_id = $${idxEnt} AND id = $${idxFile}`,
-    vals
+  const { rows } = await query<{
+    id: number;
+    category: FileCategory;
+    original_name: string;
+    storage_path: string;
+    mime_type: string;
+    extracted_text: string | null;
+    can_be_sent_by_ana: boolean;
+    can_be_used_as_knowledge: boolean;
+  }>(
+    `UPDATE enterprise_files
+     SET can_be_used_as_knowledge = COALESCE($3, can_be_used_as_knowledge),
+         can_be_sent_by_ana = COALESCE($4, can_be_sent_by_ana)
+     WHERE enterprise_id = $1
+       AND id = $2
+     RETURNING id, category, original_name, storage_path, mime_type, extracted_text,
+               can_be_sent_by_ana, can_be_used_as_knowledge`,
+    [enterpriseId, fileId, patch.canBeUsedAsKnowledge ?? null, patch.canBeSentByAna ?? null]
   );
-  return (rowCount ?? 0) > 0;
+  const updated = rows[0];
+  if (!updated) return false;
+
+  let extracted = updated.extracted_text ?? '';
+  if (updated.can_be_used_as_knowledge && !extracted.trim()) {
+    extracted = await extractText(join(enterpriseDir(enterpriseId), updated.storage_path), updated.mime_type, updated.original_name);
+    await query(`UPDATE enterprise_files SET extracted_text = $1 WHERE id = $2`, [extracted || null, fileId]);
+  }
+
+  await syncCurrentFileVersionAfterUploadOrPermissionChange({
+    enterpriseId,
+    enterpriseFileId: fileId,
+    category: updated.category,
+    originalName: updated.original_name,
+    mime: updated.mime_type,
+    extractedText: extracted,
+    canBeSentByAna: updated.can_be_sent_by_ana,
+    canBeUsedAsKnowledge: updated.can_be_used_as_knowledge,
+  });
+
+  return true;
 }
 
 export type DeleteEnterpriseFileResult =

@@ -67,6 +67,14 @@ function parseUploadBool(v: unknown, defaultVal: boolean): boolean {
   return defaultVal;
 }
 
+function defaultUploadPermissions(category: FileCategory): {
+  canBeUsedAsKnowledge: boolean;
+  canBeSentByAna: boolean;
+} {
+  if (category === 'outro') return { canBeUsedAsKnowledge: true, canBeSentByAna: false };
+  return { canBeUsedAsKnowledge: false, canBeSentByAna: true };
+}
+
 // memoryStorage: o buffer fica em RAM. O handler escreve em disco (cache local)
 // e sempre sobe para S3 como storage oficial do material.
 const upload = multer({
@@ -386,8 +394,9 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
     if (!FILE_CATEGORIES.includes(cat as FileCategory)) {
       return res.status(400).json({ error: 'Categoria inválida: book | unidades | tabela_comercial | outro' });
     }
-    const canBeUsedAsKnowledge = parseUploadBool(req.body?.canBeUsedAsKnowledge, true);
-    const canBeSentByAna = parseUploadBool(req.body?.canBeSentByAna, false);
+    const defaults = defaultUploadPermissions(cat as FileCategory);
+    const canBeUsedAsKnowledge = parseUploadBool(req.body?.canBeUsedAsKnowledge, defaults.canBeUsedAsKnowledge);
+    const canBeSentByAna = parseUploadBool(req.body?.canBeSentByAna, defaults.canBeSentByAna);
 
     // Gera nome do arquivo (mesmo padrão do diskStorage anterior).
     const ext = req.file.originalname.includes('.')

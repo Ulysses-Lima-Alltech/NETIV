@@ -20,6 +20,14 @@ const CAT_LABEL: Record<FileCategory, string> = {
   outro: 'Outro',
 };
 
+function uploadPermissionDefaults(category: FileCategory): {
+  asKnowledge: boolean;
+  allowSend: boolean;
+} {
+  if (category === 'outro') return { asKnowledge: true, allowSend: false };
+  return { asKnowledge: false, allowSend: true };
+}
+
 const LANGS: { v: EmpreendimentoDTO['languageStyle']; l: string }[] = [
   { v: 'informal', l: 'Informal' },
   { v: 'natural', l: 'Natural' },
@@ -101,15 +109,24 @@ export function EmpreendimentosPage() {
   const [uploadCategory, setUploadCategory] = useState<FileCategory>('book');
   const [showInactiveKnowledge, setShowInactiveKnowledge] = useState(false);
   const [knowledgeNotice, setKnowledgeNotice] = useState<string | null>(null);
-  /** Novo upload: padrão seguro — base ligada, envio desligado até marcar */
-  const [uploadAsKnowledge, setUploadAsKnowledge] = useState(true);
-  const [uploadAllowSend, setUploadAllowSend] = useState(false);
+  /** Defaults de upload seguem a categoria, ate o usuario mexer manualmente. */
+  const initialUploadDefaults = uploadPermissionDefaults('book');
+  const [uploadAsKnowledge, setUploadAsKnowledge] = useState(initialUploadDefaults.asKnowledge);
+  const [uploadAllowSend, setUploadAllowSend] = useState(initialUploadDefaults.allowSend);
+  const [uploadFlagsTouched, setUploadFlagsTouched] = useState(false);
   const [filePatchingId, setFilePatchingId] = useState<number | null>(null);
   const [regrasTab, setRegrasTab] = useState<'regras' | 'historico'>('regras');
   const [historyItems, setHistoryItems] = useState<PromptAddonsHistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
   /* ── Data loading (unchanged) ── */
+
+  useEffect(() => {
+    if (uploadFlagsTouched) return;
+    const defaults = uploadPermissionDefaults(uploadCategory);
+    setUploadAsKnowledge(defaults.asKnowledge);
+    setUploadAllowSend(defaults.allowSend);
+  }, [uploadCategory, uploadFlagsTouched]);
 
   const loadList = useCallback(() => {
     setLoading(true);
@@ -235,7 +252,13 @@ export function EmpreendimentosPage() {
         canBeSentByAna: uploadAllowSend,
         ...(uploadCategory === 'book' ? { tipoDocumento: 'BOOK' as const } : {}),
       })
-      .then(() => loadDetail(selectedId))
+      .then(() => {
+        setUploadFlagsTouched(false);
+        const defaults = uploadPermissionDefaults(uploadCategory);
+        setUploadAsKnowledge(defaults.asKnowledge);
+        setUploadAllowSend(defaults.allowSend);
+        loadDetail(selectedId);
+      })
       .catch((er) => setErr(er instanceof Error ? er.message : 'Upload falhou'))
       .finally(() => setUploading(false));
   };
@@ -692,7 +715,10 @@ export function EmpreendimentosPage() {
                         type="checkbox"
                         className="rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
                         checked={uploadAsKnowledge}
-                        onChange={(e) => setUploadAsKnowledge(e.target.checked)}
+                        onChange={(e) => {
+                          setUploadFlagsTouched(true);
+                          setUploadAsKnowledge(e.target.checked);
+                        }}
                         disabled={uploading}
                       />
                       Usar como base da Ana
@@ -702,7 +728,10 @@ export function EmpreendimentosPage() {
                         type="checkbox"
                         className="rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
                         checked={uploadAllowSend}
-                        onChange={(e) => setUploadAllowSend(e.target.checked)}
+                        onChange={(e) => {
+                          setUploadFlagsTouched(true);
+                          setUploadAllowSend(e.target.checked);
+                        }}
                         disabled={uploading}
                       />
                       Permitir envio ao cliente

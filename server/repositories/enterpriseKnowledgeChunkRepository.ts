@@ -137,10 +137,10 @@ export async function replaceEnterpriseFileChunks(
   enterpriseFileId: number,
   fullText: string | null | undefined,
   context?: { enterpriseName?: string | null; enterpriseCity?: string | null }
-): Promise<void> {
+): Promise<number> {
   await query(`DELETE FROM enterprise_knowledge_chunks WHERE enterprise_file_id = $1`, [enterpriseFileId]);
   const chunks = splitTextIntoChunks((fullText || '').trim(), 1800);
-  if (chunks.length === 0) return;
+  if (chunks.length === 0) return 0;
   for (let i = 0; i < chunks.length; i++) {
     const meta = classifyKnowledgeChunk(chunks[i] || '', {
       enterpriseName: context?.enterpriseName ?? null,
@@ -175,6 +175,7 @@ export async function replaceEnterpriseFileChunks(
       );
     }
   }
+  return chunks.length;
 }
 
 /**
