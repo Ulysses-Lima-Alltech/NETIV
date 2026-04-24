@@ -118,15 +118,19 @@ async function streamToBuffer(stream: AsyncIterable<Uint8Array>): Promise<Buffer
   return Buffer.concat(chunks);
 }
 
-export async function downloadFromKnowledgeS3(key: string): Promise<Buffer | null> {
+export async function downloadFromKnowledgeS3(
+  key: string,
+  opts?: { bucket?: string | null }
+): Promise<Buffer | null> {
   const cfg = getKnowledgeS3Cfg();
   if (!cfg) return null;
+  const bucket = (opts?.bucket ?? '').trim() || cfg.bucket;
 
   try {
     const client = makeKnowledgeS3Client(cfg);
     const response = await client.send(
       new GetObjectCommand({
-        Bucket: cfg.bucket,
+        Bucket: bucket,
         Key: key,
       })
     );

@@ -972,6 +972,16 @@ export async function getFileForSend(
   category: FileCategory | string
 ): Promise<{ id: number; path: string; originalName: string; mime: string; relativeStoragePath: string } | null> {
   const catNorm = normalizeFileCategory(String(category));
+  const isBookLookup = catNorm === 'book';
+  const logNoSendableBookFound = (reason: string, extra?: Record<string, unknown>): void => {
+    if (!isBookLookup) return;
+    console.error('NO_SENDABLE_BOOK_FOUND', {
+      enterpriseId,
+      category: catNorm,
+      reason,
+      ...(extra ?? {}),
+    });
+  };
   if (!catNorm) {
     console.log('[ANA_DOC_LOOKUP_MISS_REASON]', {
       enterpriseId,
@@ -987,43 +997,80 @@ export async function getFileForSend(
     enterpriseId,
     category: catNorm,
     table: 'enterprise_files + enterprise_file_versions',
-    filters: {
-      enterprise_id: enterpriseId,
-      category: catNorm,
-      is_active: true,
-      can_be_sent_by_ana: true,
-      current_version_required: true,
-      current_version_storage_provider: 's3',
-    },
+    filters: isBookLookup
+      ? {
+          enterprise_id: enterpriseId,
+          category: 'book',
+          file_is_active: true,
+          file_can_be_sent_by_ana: true,
+          version_is_active: true,
+          version_can_be_sent_by_ana: true,
+          version_storage_provider: 's3',
+          current_version_required: true,
+        }
+      : {
+          enterprise_id: enterpriseId,
+          category: catNorm,
+          is_active: true,
+          can_be_sent_by_ana: true,
+          current_version_required: true,
+          current_version_storage_provider: 's3',
+        },
   });
 
   const { rows } = await query<{
     enterprise_file_id: number;
     current_version_id: number | null;
     file_version_id: number | null;
-    storage_path: string;
-    original_name: string;
-    mime_type: string;
+    storage_path: string | null;
+    original_name: string | null;
+    mime_type: string | null;
     storage_provider: string | null;
     storage_key: string | null;
+    bucket_name: string | null;
   }>(
-    `SELECT
-        f.id AS enterprise_file_id,
-        f.current_version_id,
-        v.id AS file_version_id,
-        COALESCE(v.storage_path, f.storage_path) AS storage_path,
-        COALESCE(v.original_name, f.original_name) AS original_name,
-        COALESCE(v.mime_type, f.mime_type) AS mime_type,
-        COALESCE(v.storage_provider, f.storage_provider) AS storage_provider,
-        COALESCE(v.storage_key, f.storage_key) AS storage_key
-     FROM enterprise_files f
-     LEFT JOIN enterprise_file_versions v
-       ON v.id = f.current_version_id
-      AND v.enterprise_file_id = f.id
-     WHERE f.enterprise_id = $1 AND f.category = $2 AND f.is_active = true AND f.can_be_sent_by_ana = true
-     ORDER BY f.created_at DESC, f.id DESC
-     LIMIT 1`,
-    [enterpriseId, catNorm]
+    isBookLookup
+      ? `SELECT
+           f.id AS enterprise_file_id,
+           f.current_version_id,
+           v.id AS file_version_id,
+           v.storage_path AS storage_path,
+           v.original_name AS original_name,
+           v.mime_type AS mime_type,
+           v.storage_provider AS storage_provider,
+           v.storage_key AS storage_key,
+           v.bucket_name AS bucket_name
+         FROM enterprise_files f
+         INNER JOIN enterprise_file_versions v
+           ON v.id = f.current_version_id
+          AND v.enterprise_file_id = f.id
+         WHERE f.enterprise_id = $1
+           AND f.category = 'book'
+           AND f.is_active = true
+           AND f.can_be_sent_by_ana = true
+           AND v.is_active = true
+           AND v.can_be_sent_by_ana = true
+           AND v.storage_provider = 's3'
+         ORDER BY f.created_at DESC, f.id DESC
+         LIMIT 1`
+      : `SELECT
+           f.id AS enterprise_file_id,
+           f.current_version_id,
+           v.id AS file_version_id,
+           COALESCE(v.storage_path, f.storage_path) AS storage_path,
+           COALESCE(v.original_name, f.original_name) AS original_name,
+           COALESCE(v.mime_type, f.mime_type) AS mime_type,
+           COALESCE(v.storage_provider, f.storage_provider) AS storage_provider,
+           COALESCE(v.storage_key, f.storage_key) AS storage_key,
+           COALESCE(v.bucket_name, f.bucket_name) AS bucket_name
+         FROM enterprise_files f
+         LEFT JOIN enterprise_file_versions v
+           ON v.id = f.current_version_id
+          AND v.enterprise_file_id = f.id
+         WHERE f.enterprise_id = $1 AND f.category = $2 AND f.is_active = true AND f.can_be_sent_by_ana = true
+         ORDER BY f.created_at DESC, f.id DESC
+         LIMIT 1`,
+    isBookLookup ? [enterpriseId] : [enterpriseId, catNorm]
   );
   const r = rows[0];
   if (!r) {
@@ -1067,6 +1114,7 @@ export async function getFileForSend(
             : undefined,
       });
     }
+    logNoSendableBookFound('lookup_query_returned_no_row');
     console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
     return null;
   }
@@ -1078,6 +1126,11 @@ export async function getFileForSend(
       enterpriseFileId: r.enterprise_file_id,
       currentVersionId: r.current_version_id,
       reason: 'current_version_missing_or_not_found',
+    });
+    logNoSendableBookFound('current_version_missing_or_not_found', {
+      enterpriseFileId: r.enterprise_file_id,
+      currentVersionId: r.current_version_id,
+      fileVersionId: r.file_version_id,
     });
     console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
     return null;
@@ -1092,6 +1145,12 @@ export async function getFileForSend(
       storageProvider: r.storage_provider,
       message: 'Envio de material exige current_version em S3. Fallback para R2 está bloqueado.',
     });
+    logNoSendableBookFound('current_version_not_s3', {
+      enterpriseFileId: r.enterprise_file_id,
+      currentVersionId: r.current_version_id,
+      fileVersionId: r.file_version_id,
+      storageProvider: r.storage_provider,
+    });
     console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
     return null;
   }
@@ -1099,6 +1158,30 @@ export async function getFileForSend(
     console.error('[ANA_DOC_CURRENT_VERSION_S3_KEY_MISSING]', {
       enterpriseId,
       category: catNorm,
+      enterpriseFileId: r.enterprise_file_id,
+      currentVersionId: r.current_version_id,
+      fileVersionId: r.file_version_id,
+    });
+    logNoSendableBookFound('current_version_s3_key_missing', {
+      enterpriseFileId: r.enterprise_file_id,
+      currentVersionId: r.current_version_id,
+      fileVersionId: r.file_version_id,
+    });
+    console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
+    return null;
+  }
+  if (!r.storage_path || !r.original_name || !r.mime_type) {
+    console.error('[ANA_DOC_CURRENT_VERSION_METADATA_MISSING]', {
+      enterpriseId,
+      category: catNorm,
+      enterpriseFileId: r.enterprise_file_id,
+      currentVersionId: r.current_version_id,
+      fileVersionId: r.file_version_id,
+      storagePath: r.storage_path,
+      originalName: r.original_name,
+      mimeType: r.mime_type,
+    });
+    logNoSendableBookFound('current_version_metadata_missing', {
       enterpriseFileId: r.enterprise_file_id,
       currentVersionId: r.current_version_id,
       fileVersionId: r.file_version_id,
@@ -1117,13 +1200,17 @@ export async function getFileForSend(
     fileVersionId: r.file_version_id,
     storageProvider: r.storage_provider,
     storageKey: r.storage_key,
+    bucketName: r.bucket_name,
     relativeStoragePath: r.storage_path,
     absolutePath: resolvedPath,
     existsOnDisk: fileExistsOnDisk,
   });
 
   if (!fileExistsOnDisk) {
-    const buf = await downloadFromKnowledgeS3(r.storage_key);
+    const buf = await downloadFromKnowledgeS3(
+      r.storage_key,
+      isBookLookup ? { bucket: r.bucket_name } : undefined
+    );
     if (!buf) {
       console.log('[ANA_DOC_LOOKUP_MISS_REASON]', {
         enterpriseId,
@@ -1134,8 +1221,16 @@ export async function getFileForSend(
         reason: 's3_download_failed',
         storageProvider: r.storage_provider,
         storageKey: r.storage_key,
+        bucketName: r.bucket_name,
         relativeStoragePath: r.storage_path,
         absolutePath: resolvedPath,
+      });
+      logNoSendableBookFound('s3_download_failed', {
+        enterpriseFileId: r.enterprise_file_id,
+        currentVersionId: r.current_version_id,
+        fileVersionId: r.file_version_id,
+        storageKey: r.storage_key,
+        bucketName: r.bucket_name,
       });
       console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
       return null;
@@ -1148,6 +1243,7 @@ export async function getFileForSend(
         currentVersionId: r.current_version_id,
         fileVersionId: r.file_version_id,
         storageKey: r.storage_key,
+        bucketName: r.bucket_name,
         bytes: buf.length,
         cachedAt: resolvedPath,
       });
@@ -1157,6 +1253,11 @@ export async function getFileForSend(
         fileId: r.enterprise_file_id,
         source: 's3',
         error: writeErr instanceof Error ? writeErr.message : String(writeErr),
+      });
+      logNoSendableBookFound('local_cache_write_failed', {
+        enterpriseFileId: r.enterprise_file_id,
+        currentVersionId: r.current_version_id,
+        fileVersionId: r.file_version_id,
       });
       console.log('[ANA_DOC_LOOKUP_RESULT]', { enterpriseId, category: catNorm, found: false });
       return null;
@@ -1171,6 +1272,7 @@ export async function getFileForSend(
     currentVersionId: r.current_version_id,
     fileVersionId: r.file_version_id,
     originalName: r.original_name,
+    bucketName: r.bucket_name,
     relativeStoragePath: r.storage_path,
     existsOnDisk: true,
     restoredFromDb: !fileExistsOnDisk,
