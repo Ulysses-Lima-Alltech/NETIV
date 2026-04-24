@@ -486,14 +486,12 @@ router.delete('/:id/knowledge/:fileId', async (req, res) => {
     if (!result.ok) {
       return res.status(404).json({ error: 'Arquivo não encontrado.' });
     }
-    if (result.mode === 'deactivated') {
-      return res.status(200).json({
-        ok: true,
-        deactivated: true,
-        message: result.message,
-      });
-    }
-    res.json({ ok: true, removed: true });
+    return res.status(200).json({
+      ok: true,
+      deactivated: true,
+      mode: result.mode,
+      message: result.message,
+    });
   } catch (e) {
     console.error('[Projects] knowledge DELETE:', e);
     res.status(500).json({ error: 'Erro ao remover.' });

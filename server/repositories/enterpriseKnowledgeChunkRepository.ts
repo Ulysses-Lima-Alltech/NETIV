@@ -224,10 +224,12 @@ export async function loadRankedKnowledgeChunksForPrompt(
        WHERE c.enterprise_id = $1
          AND c.is_active = true
          AND f.current_version_id = c.enterprise_file_version_id
-         AND COALESCE(v.storage_provider, '') = 's3'
-         AND COALESCE(v.is_active, f.is_active, true) = true
-         AND COALESCE(v.can_be_used_as_knowledge, f.can_be_used_as_knowledge, false) = true
-         AND COALESCE(v.processing_status, 'PENDING') IN ('PROCESSED', 'SKIPPED')
+         AND f.is_active = true
+         AND v.is_active = true
+         AND f.can_be_used_as_knowledge = true
+         AND v.can_be_used_as_knowledge = true
+         AND v.storage_provider = 's3'
+         AND v.processing_status IN ('PROCESSED', 'SKIPPED')
        ORDER BY COALESCE(v.source_priority, 0) DESC, f.id, c.chunk_index`,
       [enterpriseId]
     );

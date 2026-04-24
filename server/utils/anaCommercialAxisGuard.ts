@@ -13,6 +13,8 @@ export type CommercialAxis =
   | 'visita_agendamento'
   | 'intencao_compra';
 
+export type PurchaseIntent = 'MORADIA' | 'INVESTIMENTO';
+
 const AXIS_ORDER: CommercialAxis[] = [
   'preco',
   'intencao_compra',
@@ -107,7 +109,10 @@ export function detectCommercialAxes(text: string): CommercialAxis[] {
 
   if (
     /\bmorar\b/.test(t) ||
+    /\bmoradia\b/.test(t) ||
     /\binvestir\b/.test(t) ||
+    /\binvestimento(s)?\b/.test(t) ||
+    /\brenda\b/.test(t) ||
     /\bobjetivo\b/.test(t) ||
     /\bfinalidade\b/.test(t) ||
     /\badquirir\b/.test(t) ||
@@ -131,9 +136,57 @@ export function inferUserRequestedAxis(userMessage: string | null | undefined): 
   if (/\b(financiamento|parcela|entrada|caixa|mcmv|subs[ií]dio)\b/.test(u)) return 'financiamento';
   if (/\b(disponibilidade|tem unidade|unidades dispon)\b/.test(u)) return 'disponibilidade';
   if (/\b(agendar|visita)\b/.test(u)) return 'visita_agendamento';
-  if (/\b(morar|investir|objetivo|finalidade)\b/.test(u)) return 'intencao_compra';
+  if (/\b(morar|moradia|investir|investimento|renda|objetivo|finalidade)\b/.test(u)) return 'intencao_compra';
 
   return null;
+}
+
+function hasHousingIntentSignal(t: string): boolean {
+  if (!t) return false;
+  return (
+    /\b(morar|moradia|residir|residencia|uso proprio)\b/.test(t) ||
+    /\b(pra|para|como)\s+morar\b/.test(t)
+  );
+}
+
+function hasInvestmentIntentSignal(t: string): boolean {
+  if (!t) return false;
+  return (
+    /\b(investir|investimento|investimentos|renda|retorno|valorizacao)\b/.test(t) ||
+    /\b(pra|para|como)\s+investir\b/.test(t) ||
+    /\b(estamos\s+procurando\s+investimento)\b/.test(t) ||
+    /\balgo\s+para\s+renda\b/.test(t)
+  );
+}
+
+/**
+ * Detecta quando o cliente respondeu de forma definitiva ao eixo morar x investir.
+ * Retorna null quando o texto nao resolve esse eixo.
+ */
+export function inferResolvedPurchaseIntent(userMessage: string | null | undefined): PurchaseIntent | null {
+  const u = norm(userMessage || '');
+  if (!u) return null;
+
+  const housing = hasHousingIntentSignal(u);
+  const investment = hasInvestmentIntentSignal(u);
+
+  if (investment && !housing) return 'INVESTIMENTO';
+  if (housing && !investment) return 'MORADIA';
+
+  if (/\b(mais\s+pra|mais\s+para)\s+investir\b/.test(u)) return 'INVESTIMENTO';
+  if (/\b(mais\s+pra|mais\s+para)\s+morar\b/.test(u)) return 'MORADIA';
+
+  return null;
+}
+
+/** Detecta pergunta binaria desse eixo (morar x investir). */
+export function isPurchaseIntentAxisQuestion(text: string | null | undefined): boolean {
+  const t = norm(text || '');
+  if (!t) return false;
+  if (/\bmorar ou investir\b/.test(t)) return true;
+  if (/\b(foco|objetivo|finalidade|intencao)\b/.test(t) && /\bmorar\b/.test(t) && /\binvestir\b/.test(t)) return true;
+  if (/\b(olhando|pensando)\b/.test(t) && /\bmorar\b/.test(t) && /\binvestir\b/.test(t)) return true;
+  return false;
 }
 
 function isBroadInformationAsk(userMessage: string | null | undefined): boolean {
@@ -248,6 +301,22 @@ function ensureEnterpriseMention(text: string, enterpriseName: string | undefine
   return { text: `Sobre ${ent}, ${raw}`.replace(/\s+/g, ' ').trim(), preserved: true };
 }
 
+function buildAdvanceReplyAfterResolvedPurchaseIntent(
+  intent: PurchaseIntent,
+  enterpriseName: string | undefined
+): string {
+  const name = (enterpriseName || '').trim();
+  const place = name ? `no ${name}` : 'nesse empreendimento';
+  if (intent === 'INVESTIMENTO') {
+    return enforceShortShape(
+      `Perfeito. Pensando em investimento ${place}, voce quer entender mais sobre valores, potencial de valorizacao ou condicoes de pagamento?`
+    );
+  }
+  return enforceShortShape(
+    `Perfeito. Pensando em moradia ${place}, o que pesa mais pra voce agora: valores, planta ou localizacao?`
+  );
+}
+
 /** Tenta manter só frases que falam exclusivamente do eixo escolhido (+ saudação curta no início). */
 function extractSingleAxisSlice(original: string, target: CommercialAxis): string | null {
   const raw = original.replace(/\s+/g, ' ').trim();
@@ -278,7 +347,8 @@ function extractSingleAxisSlice(original: string, target: CommercialAxis): strin
 function buildRewrittenReply(
   target: CommercialAxis,
   original: string,
-  enterpriseName: string | undefined
+  enterpriseName: string | undefined,
+  resolvedPurchaseIntent: PurchaseIntent | null
 ): { text: string; enterprisePreserved: boolean } {
   const name = (enterpriseName || '').trim() || 'o empreendimento';
   const originalHasEnterprise = hasEnterpriseMention(original, enterpriseName);
@@ -307,9 +377,12 @@ function buildRewrittenReply(
       break;
     }
     case 'intencao_compra':
-      rewritten = enforceShortShape(
-        `Pra eu te orientar melhor no ${name}, você está olhando mais pra morar ou investir?`
-      );
+      rewritten =
+        resolvedPurchaseIntent != null
+          ? buildAdvanceReplyAfterResolvedPurchaseIntent(resolvedPurchaseIntent, enterpriseName)
+          : enforceShortShape(
+              `Pra eu te orientar melhor no ${name}, você está olhando mais pra morar ou investir?`
+            );
       break;
     case 'localizacao':
       rewritten = enforceShortShape(
@@ -355,36 +428,80 @@ export function applyAnaCommercialSingleAxisGuard(opts: {
   isFirstAnaReply: boolean;
   enterpriseName?: string | null;
   conversationId?: number;
+  resolvedPurchaseIntent?: PurchaseIntent | null;
+  lastAssistantMessage?: string | null;
 }): { text: string; changed: boolean; detected: CommercialAxis[]; chosen: CommercialAxis | null } {
   const raw = (opts.reply || '').trim();
   if (!raw) return { text: raw, changed: false, detected: [], chosen: null };
 
+  const userResolvedPurchaseIntent = inferResolvedPurchaseIntent(opts.userMessage);
+  const effectiveResolvedPurchaseIntent = userResolvedPurchaseIntent ?? opts.resolvedPurchaseIntent ?? null;
+  const lastAssistantAskedPurchaseIntent = isPurchaseIntentAxisQuestion(opts.lastAssistantMessage ?? '');
+  const shouldBlockRepeatedPurchaseIntentQuestion = (candidateText: string): boolean => {
+    if (!isPurchaseIntentAxisQuestion(candidateText)) return false;
+    if (effectiveResolvedPurchaseIntent != null) return true;
+    if (lastAssistantAskedPurchaseIntent && userResolvedPurchaseIntent != null) return true;
+    return false;
+  };
+  const applyPurchaseIntentLoopProtection = (candidateText: string): string => {
+    if (!shouldBlockRepeatedPurchaseIntentQuestion(candidateText)) return candidateText;
+    if (effectiveResolvedPurchaseIntent == null) return candidateText;
+    return buildAdvanceReplyAfterResolvedPurchaseIntent(
+      effectiveResolvedPurchaseIntent,
+      opts.enterpriseName ?? undefined
+    );
+  };
+
   const detected = detectCommercialAxes(raw);
   if (detected.length <= 1) {
-    return { text: raw, changed: false, detected, chosen: detected[0] ?? null };
+    const protectedSingleAxisText = applyPurchaseIntentLoopProtection(raw);
+    if (protectedSingleAxisText !== raw) {
+      console.log('[ANA_AXIS_GUARD] purchase_intent_loop_prevented=true');
+    }
+    return {
+      text: protectedSingleAxisText,
+      changed: protectedSingleAxisText !== raw,
+      detected,
+      chosen: detected[0] ?? null,
+    };
   }
 
   const userAxis = inferUserRequestedAxis(opts.userMessage);
   const target = pickTargetAxis(detected, userAxis, opts.isFirstAnaReply, opts.userMessage || '');
 
   const originalHasEnterprise = hasEnterpriseMention(raw, opts.enterpriseName ?? undefined);
-  let rewriteResult = buildRewrittenReply(target, raw, opts.enterpriseName ?? undefined);
+  let rewriteResult = buildRewrittenReply(
+    target,
+    raw,
+    opts.enterpriseName ?? undefined,
+    effectiveResolvedPurchaseIntent
+  );
   let rewritten = rewriteResult.text;
   let finalAxes = detectCommercialAxes(rewritten);
   if (finalAxes.length > 1) {
     // Se o usuário pediu eixo explícito (ex.: lazer), não degradar para preço.
     const fallbackAxis = userAxis ?? target;
-    rewriteResult = buildRewrittenReply(fallbackAxis, raw, opts.enterpriseName ?? undefined);
+    rewriteResult = buildRewrittenReply(
+      fallbackAxis,
+      raw,
+      opts.enterpriseName ?? undefined,
+      effectiveResolvedPurchaseIntent
+    );
     rewritten = rewriteResult.text;
     finalAxes = detectCommercialAxes(rewritten);
   }
   if (finalAxes.length > 1 && userAxis == null) {
-    rewriteResult = buildRewrittenReply('intencao_compra', raw, opts.enterpriseName ?? undefined);
+    rewriteResult = buildRewrittenReply(
+      'intencao_compra',
+      raw,
+      opts.enterpriseName ?? undefined,
+      effectiveResolvedPurchaseIntent
+    );
     rewritten = rewriteResult.text;
     finalAxes = detectCommercialAxes(rewritten);
   }
 
-  const text = enforceShortShape(rewritten);
+  const text = applyPurchaseIntentLoopProtection(enforceShortShape(rewritten));
   const sanitizedHasEnterprise = hasEnterpriseMention(text, opts.enterpriseName ?? undefined);
   const enterprisePreserved = originalHasEnterprise ? sanitizedHasEnterprise : false;
 
@@ -394,6 +511,9 @@ export function applyAnaCommercialSingleAxisGuard(opts: {
   console.log(`[ANA_AXIS_GUARD] enterprise_preserved=${enterprisePreserved}`);
   console.log(`[ANA_AXIS_GUARD] original_reply=${raw.slice(0, 500)}`);
   console.log(`[ANA_AXIS_GUARD] sanitized_reply=${text.slice(0, 500)}`);
+  console.log(
+    `[ANA_AXIS_GUARD] purchase_intent_state=${opts.resolvedPurchaseIntent ?? 'none'} purchase_intent_user=${userResolvedPurchaseIntent ?? 'none'} last_asked_purchase_intent=${lastAssistantAskedPurchaseIntent}`
+  );
   console.log(
     `[ANA_AXIS_GUARD] detected_axes=${detected.join('|')} chosen_axis=${target} user_requested_axis=${userAxis ?? 'none'} conversationId=${cid ?? 'n/a'}`
   );
@@ -406,5 +526,5 @@ export function applyAnaCommercialSingleAxisGuard(opts: {
     sanitized_reply: text.slice(0, 500),
   });
 
-  return { text, changed: true, detected, chosen: target };
+  return { text, changed: text !== raw, detected, chosen: target };
 }

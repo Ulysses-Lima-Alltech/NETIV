@@ -1,8 +1,8 @@
 import type { FileCategory } from '../repositories/enterpriseRepository.js';
 
-/** Saudação isolada — não deve acionar fluxo de material. */
+/** Greeting-only message must not trigger material send flow. */
 const BARE_GREETING_ONLY_RE =
-  /^(oi|ol[aá]|olá|oie|hey|hi|hello|bom\s+dia|boa\s+tarde|boa\s+noite|tudo\s+bem|td\s+bem|eae|e\s+a[ií])\s*[!.?…]*$/iu;
+  /^(oi|ol[aá]|oie|hey|hi|hello|bom\s+dia|boa\s+tarde|boa\s+noite|tudo\s+bem|td\s+bem|eae|e\s+a[ií])\s*[!.?…]*$/iu;
 
 export function isBareGreetingOnly(text: string): boolean {
   const t = (text || '').trim();
@@ -10,71 +10,42 @@ export function isBareGreetingOnly(text: string): boolean {
   return BARE_GREETING_ONLY_RE.test(t);
 }
 
-/**
- * Gate estrito de envio de arquivo.
- *
- * Requer combinação explícita de:
- *   • Verbo de envio (manda/envia/encaminha/passa/compartilha) + substantivo de material, OU
- *   • "quero (o/a) <material>" OU "preciso (do/da) <material>"
- *
- * NÃO dispara para:
- *   - pedidos de preço, parcelamento, localização, metragem, fotos genéricas
- *   - "quero saber mais" / "tem informações?"
- *   - substantivos de material isolados ("tem o book?", "qual a tabela?")
- *   - histórico de mensagens anteriores (só avalia a mensagem ATUAL)
- */
-
-// Verbos de entrega/envio (formas conjugadas mais comuns em PT-BR)
+// Common PT-BR send verbs.
 const _SEND_VERBS =
   'mand(?:ar|a|e|ou)|envi(?:ar|a|e|ou)|encaminh(?:ar|a|e|ou)|pass(?:ar|a|e|ou)|compartilh(?:ar|a|e|ou)';
 
-// Prefixo de modalidade: "pode", "poderia", "consegue", "tem como", "teria como"
+// Optional modal prefix: "pode", "poderia", "consegue", "tem como".
 const _MODAL = '(?:(?:pode(?:ria)?|consegue|tem\\s+como|teria\\s+como)\\s+)?';
 
-// Destinatário explícito: "me ", "pra mim "
+// Explicit target pronouns.
 const _TARGET = '(?:me\\s+|pra\\s+mim\\s+)?';
 
-// Artigos / determinantes opcionais entre verbo e substantivo
+// Optional article between verb and noun.
 const _ARTICLE = '(?:\\s+(?:o|a|os|as|um|uma))?';
 
-// Substantivos de material/documento (lista estrita — não inclui "valores", "preço", "fotos")
+// Material/document nouns.
 const _MATERIAL =
-  '(?:book|pdf|material(?:is)?|material\\s+completo|cat[aá]logo|brochure|dossi[eê]|apresenta(?:c|ç)(?:a|ã)o|tabela(?:\\s+comercial)?|planilha|arquivo|documento|anexo)';
+  '(?:book|ebook|pdf|material(?:is)?|material\\s+completo|cat[aá]logo|brochure|dossi[eê]|apresenta(?:c|ç)(?:a|ã)o|tabela(?:\\s+comercial)?|planilha|pre[cç]o(?:s)?|valor(?:es)?|arquivo|documento|anexo)';
 
-const EXPLICIT_MATERIAL_REQUEST_RE = new RegExp(
-  '(?:' +
-    // Padrão A: [modal?] [destinatário?] verbo [artigo?] material
-    // ex.: "me manda o book", "pode enviar o pdf", "envia a tabela"
-    `${_MODAL}${_TARGET}(?:${_SEND_VERBS})${_ARTICLE}\\s+${_MATERIAL}` +
-    '|' +
-    // Padrão B: "quero (o/a)? <material>"
-    // ex.: "quero o book", "quero o pdf"
-    `quero\\s+(?:o\\s+|a\\s+)?${_MATERIAL}` +
-    '|' +
-    // Padrão C: "preciso (do/da)? <material>"
-    // ex.: "preciso do catálogo"
-    `preciso\\s+(?:do\\s+|da\\s+)?${_MATERIAL}` +
-  ')',
-  'i',
-);
+const _MATERIAL_TOPIC_RE =
+  /\b(book|ebook|pdf|material(?:is)?|cat[aá]logo|brochure|dossi[eê]|apresenta[cç][aã]o|planta|plantas?|implantac[aã]o|layout|tabela(?:\s+comercial)?|planilha|arquivo|documento|anexo)\b/i;
+
+const _FOLLOWUP_MATERIAL_COMMAND_RE =
+  /^(?:me\s+manda|me\s+mande|manda\s+pra\s+mim|manda\s+pra\s+gente|manda|mande|envia|envie|me\s+envia|me\s+envie|me\s+passa|me\s+passe|passa\s+pra\s+mim|passe\s+pra\s+mim|pode\s+enviar|pode\s+me\s+enviar|pode\s+me\s+mandar|pode\s+me\s+passar|quero\s+o\s+material|quero\s+material|quero\s+isso|quero\s+esse|quero\s+essa)\b/i;
 
 export interface MaterialAskResult {
-  /** true somente se a mensagem ATUAL contiver pedido explícito de envio de material */
+  /** true only when the current message asks explicit send intent. */
   explicit: boolean;
-  /** Qual padrão foi satisfeito (para debug/log) */
   matchedPattern: 'send_verb_plus_material' | 'want_material' | 'need_material' | null;
 }
 
 /**
- * Avalia APENAS a mensagem atual do usuário.
- * NÃO usa histórico acumulado — isso evitava disparar envio em todos os turnos
- * seguintes após qualquer pedido de "book/material" anterior.
+ * Evaluate only current user message.
  */
 export function userExplicitlyAskedForMaterial(userText: string): MaterialAskResult {
   const t = (userText || '').trim();
   if (!t) return { explicit: false, matchedPattern: null };
 
-  // Testar cada sub-padrão separadamente para identificar qual disparou
   const sendVerbRe = new RegExp(
     `(?:${_MODAL}${_TARGET}(?:${_SEND_VERBS})${_ARTICLE}\\s+${_MATERIAL})`,
     'i',
@@ -88,16 +59,34 @@ export function userExplicitlyAskedForMaterial(userText: string): MaterialAskRes
   return { explicit: false, matchedPattern: null };
 }
 
+/** Short follow-up command ("me mande", "envie", "quero o material"). */
+export function isFollowupMaterialCommand(userText: string): boolean {
+  const t = (userText || '').trim();
+  if (!t) return false;
+  return _FOLLOWUP_MATERIAL_COMMAND_RE.test(t);
+}
+
+/** Current message mentions material topic (book/planta/tabela etc). */
+export function userAskedAboutMaterialTopic(userText: string): boolean {
+  const t = (userText || '').trim();
+  if (!t) return false;
+  return _MATERIAL_TOPIC_RE.test(t);
+}
+
 /**
- * Preferência de categoria a partir do texto ATUAL do cliente (não valida contra o estoque).
- * Usa apenas `userText` — histórico não participa da decisão de qual arquivo enviar.
+ * Infer preferred category from current user text (without inventory validation).
  */
 export function inferPreferredCategoryFromUserText(userText: string): FileCategory | null {
   const t = (userText || '').toLowerCase();
-  if (/\b(planta|plantas|layout)\b/.test(t)) return 'unidades';
-  if (/\b(tabela|pre[cç]o|pre[cç]os|valores|planilha)\b/.test(t)) return 'tabela_comercial';
-  if (/\b(book|pdf|material|cat[aá]logo|brochure|dossi[eê]|apresenta[cç][aã]o|documento|arquivo|anexo)\b/.test(t))
+  if (/\b(planta|plantas?|layout|implantac[aã]o)\b/.test(t)) return 'unidades';
+  if (/\b(tabela|pre[cç]o|pre[cç]os|valor|valores|planilha)\b/.test(t)) return 'tabela_comercial';
+  if (
+    /\b(book|ebook|pdf|material|cat[aá]logo|brochure|dossi[eê]|apresenta[cç][aã]o|documento|arquivo|anexo)\b/.test(
+      t
+    )
+  ) {
     return 'book';
+  }
   return null;
 }
 
@@ -123,10 +112,10 @@ export function buildDocCategoryTryOrder(
 const POST_MEDIA_ACK: readonly string[] = [
   'Perfeito, te enviei aqui.',
   'Claro, acabei de te mandar.',
-  'Pronto, mandei para você.',
+  'Pronto, mandei para voce.',
 ];
 
-/** Texto curto após envio bem-sucedido de arquivo (evita repetir promessa longa do LLM). */
+/** Short post-send ack after successful media send. */
 export function pickPostMediaAckText(lastAssistantMessage: string | null | undefined): string {
   const last = (lastAssistantMessage ?? '').trim().toLowerCase();
   for (const t of POST_MEDIA_ACK) {

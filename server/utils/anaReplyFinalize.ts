@@ -235,11 +235,9 @@ function applyShortMaterialReplyPolicy(
   ) {
     return keepTwoShortSentencesMax(text);
   }
-  if (/\b(vou te (enviar|mandar)|te enviei|mandei|posso te (enviar|mandar)|tenho sim)\b/.test(n)) {
-    if (/\b(vou te (enviar|mandar)|te enviei|mandei)\b/.test(n)) return 'Perfeito, vou te enviar aqui.';
-    return 'Tenho sim. Posso te enviar aqui.';
-  }
-  return 'Tenho sim. Posso te enviar aqui.';
+  // Nunca cria promessa de envio aqui. O claim de envio deve vir somente
+  // do fluxo determinístico após tentativa real de outbound.
+  return keepTwoShortSentencesMax(text);
 }
 
 export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOptions): string {
@@ -880,13 +878,13 @@ export function isSimpleOpeningGreeting(text: string): boolean {
 
 const GREETING_REPLY_NO_NAME = [
   'Oi, tudo bem? Eu sou a Ana e posso te ajudar com as informações. O que você quer entender melhor primeiro?',
-  'Claro, eu te explico sim. Se você quiser, eu te passo um panorama rápido e depois a gente aprofunda no que fizer mais sentido para você.',
+  'Claro, eu te explico sim. Posso te passar um panorama rápido com as informações disponíveis.',
   'Posso te passar um resumo direto e a gente aprofunda no que for mais importante para você.',
 ];
 
 const GREETING_REPLY_WITH_NAME = (name: string) => [
   `Oi, ${name}, tudo bem? Eu sou a Ana e posso te ajudar com as informações. O que você quer entender melhor primeiro?`,
-  `Claro, ${name}. Eu te explico sim e sigo pelo ponto que mais pesa para você agora.`,
+  `Claro, ${name}. Eu te explico sim com as informações disponíveis agora.`,
   `Perfeito, ${name}. Posso te passar um panorama rápido e depois a gente aprofunda no que for mais importante para você.`,
 ];
 

@@ -3,7 +3,7 @@
  * confirmou envio real (`mediaOutcome.ok === true`). Caso contrário, remover do texto ao cliente.
  */
 const DELIVERY_PROMISE_RE =
-  /(vou te enviar|vou enviar|vou mandar|vou te mandar|vou encaminhar|posso te enviar|posso te mandar|posso enviar|posso mandar|consigo (te )?(enviar|mandar)|se quiser (eu )?(te )?(envio|mando)|te envio|j[aá] te envio|te mando|te enviei|j[aá] te enviei|acabei de te (mandar|enviar)|pronto,\s*mandei|mandei (pra|a|para) voc[eê]|segue (o |a )?(arquivo|material|pdf|book|documento|cat[aá]logo)|envio (o |a )?(arquivo|material|pdf|book|documento)|em anexo|já te envio|já te mando|o arquivo está a caminho|te entrego|vou te passar (o |a )?(arquivo|material|pdf|book|documento|cat[aá]logo)|material completo.{0,40}(vou|posso|mando|envio)|(?:vou|posso).{0,24}material completo)/i;
+  /(\btenho\s*,?\s*sim\b|\benviei\b|\bj[aá]\s*enviei\b|vou te enviar|vou enviar|vou mandar|vou te mandar|vou encaminhar|posso te enviar|posso te mandar|posso enviar|posso mandar|consigo (te )?(enviar|mandar)|se quiser (eu )?(te )?(envio|mando)|te envio|j[aá] te envio|te mando|te enviei|j[aá] te enviei|acabei de te (mandar|enviar)|pronto,\s*mandei|mandei (pra|a|para) voc[eê]|segue (o |a )?(arquivo|material|pdf|book|documento|cat[aá]logo)|envio (o |a )?(arquivo|material|pdf|book|documento)|em anexo|já te envio|já te mando|o arquivo está a caminho|te entrego|vou te passar (o |a )?(arquivo|material|pdf|book|documento|cat[aá]logo)|material completo.{0,40}(vou|posso|mando|envio)|(?:vou|posso).{0,24}material completo)/i;
 
 /** Testa texto completo (para validação pós-strip). */
 export function textHasMaterialDeliveryClaim(text: string): boolean {

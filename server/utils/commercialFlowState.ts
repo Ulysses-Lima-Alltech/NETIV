@@ -1,9 +1,23 @@
 import type { EnterpriseRow } from '../repositories/enterpriseRepository.js';
+import type { FileCategory } from '../repositories/enterpriseRepository.js';
 import type { RequestedProductType } from './anaRequestedProductType.js';
 import {
   extractCatalogEnterpriseNamesFromAssistantReply,
   tryMatchEnterpriseFromUserCorpus,
 } from '../repositories/enterpriseMatch.js';
+import {
+  inferResolvedPurchaseIntent,
+  isPurchaseIntentAxisQuestion,
+  type PurchaseIntent,
+} from './anaCommercialAxisGuard.js';
+
+export type MaterialPendingAction = 'send_material';
+export type MaterialSendStatus =
+  | 'sent'
+  | 'not_found'
+  | 'send_failed'
+  | 'enterprise_not_resolved'
+  | 'material_type_not_resolved';
 
 /** Estado persistido em `conversations.commercial_flow_state` (JSON). */
 export interface CommercialFlowState {
@@ -15,9 +29,28 @@ export interface CommercialFlowState {
   /** Último empreendimento inferido do texto da assistente ou já focado na conversa. */
   lastInferredEnterpriseId?: number | null;
   lastAssistantSnippet?: string;
+  /** Eixo morar x investir resolvido pelo cliente. */
+  purchaseIntent?: PurchaseIntent | null;
+  purchaseIntentUpdatedAt?: string;
+  /** Se a ultima resposta da Ana perguntou explicitamente morar x investir. */
+  lastAssistantAskedPurchaseIntent?: boolean;
   updatedAt?: string;
   /** Marca último reset de escopo comercial (saída de foco / catálogo). */
   clearedAt?: string;
+  /** Ação pendente para continuidade determinística de envio de material. */
+  pending_action?: MaterialPendingAction | null;
+  /** Categoria pendente de envio (book/unidades/tabela_comercial/outro). */
+  pending_material_type?: FileCategory | null;
+  /** Empreendimento pendente para envio de material. */
+  pending_enterprise_id?: number | null;
+  /** Último tipo de material solicitado pelo cliente. */
+  last_requested_material_type?: FileCategory | null;
+  /** Timestamp ISO da última solicitação de material. */
+  last_material_request_at?: string;
+  /** Último arquivo efetivamente enviado. */
+  last_material_sent_id?: number | null;
+  /** Último status de envio de material no fluxo determinístico. */
+  last_material_send_status?: MaterialSendStatus | null;
 }
 
 /** Zera shortlist e hints de foco ao sair do escopo ou trocar empreendimento por menção explícita. */
@@ -29,6 +62,13 @@ export function resetCommercialScopeHints(prev: CommercialFlowState | null): Com
   delete next.lastAssistantSnippet;
   delete next.productTypeHint;
   delete next.stage;
+  delete next.pending_action;
+  delete next.pending_material_type;
+  delete next.pending_enterprise_id;
+  delete next.last_requested_material_type;
+  delete next.last_material_request_at;
+  delete next.last_material_sent_id;
+  delete next.last_material_send_status;
   next.clearedAt = new Date().toISOString();
   next.updatedAt = new Date().toISOString();
   return next;
@@ -166,8 +206,10 @@ export function computeNextCommercialFlowState(
     enterpriseIdResolved: number | null;
     enterprises: EnterpriseRow[];
     productTypeHint: RequestedProductType | undefined;
+    userMessage?: string | null;
   }
 ): CommercialFlowState {
+  const nowIso = new Date().toISOString();
   const catalogNames = extractCatalogEnterpriseNamesFromAssistantReply(assistantReply);
   let lastSingleCatalogEnterpriseId: number | null = null;
   if (catalogNames.length === 1) {
@@ -184,6 +226,13 @@ export function computeNextCommercialFlowState(
     lastInferred = prev?.lastInferredEnterpriseId ?? null;
   }
 
+  const userResolvedPurchaseIntent = inferResolvedPurchaseIntent(opts.userMessage ?? null);
+  const purchaseIntent = userResolvedPurchaseIntent ?? prev?.purchaseIntent ?? null;
+  const purchaseIntentUpdatedAt =
+    userResolvedPurchaseIntent != null
+      ? nowIso
+      : (purchaseIntent != null ? prev?.purchaseIntentUpdatedAt ?? nowIso : undefined);
+
   return {
     ...prev,
     stage: opts.conversationPhase,
@@ -192,6 +241,9 @@ export function computeNextCommercialFlowState(
     lastSingleCatalogEnterpriseId,
     lastInferredEnterpriseId: lastInferred,
     lastAssistantSnippet: assistantReply.slice(0, 480),
-    updatedAt: new Date().toISOString(),
+    purchaseIntent,
+    purchaseIntentUpdatedAt,
+    lastAssistantAskedPurchaseIntent: isPurchaseIntentAxisQuestion(assistantReply),
+    updatedAt: nowIso,
   };
 }

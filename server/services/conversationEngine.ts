@@ -20,6 +20,8 @@ import { sendTextMessage, sendLocalMediaToWhatsApp } from './whatsappMetaService
 import {
   pickMaterialUnavailableNeutralReply,
   pickMaterialSendFailedNeutralReply,
+  stripMaterialDeliveryClaims,
+  textHasMaterialDeliveryClaim,
 } from '../utils/anaMaterialReply.js';
 import {
   tryMatchEnterpriseFromUserCorpus,
@@ -37,6 +39,8 @@ import {
   listEnterprises,
   normalizeFileCategory,
   logAnaDocInventoryForEnterprise,
+  resolveSendableEnterpriseFileCurrentVersion,
+  type MaterialFileResolveFailureReason,
   type FileCategory,
   type EnterpriseRow,
 } from '../repositories/enterpriseRepository.js';
@@ -93,6 +97,7 @@ import {
 } from '../utils/extractCustomerNameFromMessage.js';
 import {
   buildAnaEnterpriseEvidence,
+  hasAnaEvidenceForNeed,
   applyAnaEvidenceGuardToReply,
 } from '../utils/anaEnterpriseEvidence.js';
 import {
@@ -120,11 +125,14 @@ import {
   resetCommercialScopeHints,
   isEmptyCommercialFlowState,
   type CommercialFlowState,
+  type MaterialSendStatus,
 } from '../utils/commercialFlowState.js';
 import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
 import {
   isBareGreetingOnly,
   userExplicitlyAskedForMaterial,
+  isFollowupMaterialCommand,
+  userAskedAboutMaterialTopic,
   inferPreferredCategoryFromUserText,
   buildDocCategoryTryOrder,
   pickPostMediaAckText,
@@ -180,13 +188,29 @@ function buildSafeOutboundRecoveryReply(params: {
   if (params.appointmentActive) {
     return ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY;
   }
+  if (params.requestedAxis === 'metragem_tipologia') {
+    return 'No momento não localizei essa informação específica sobre metragem. Posso te ajudar com outras informações do empreendimento.';
+  }
   if (params.requestedAxis === 'lazer') {
     return 'Sobre lazer, não consegui confirmar esse ponto no material que consultei agora. Se você quiser, eu sigo com outro tema em seguida, mas sem te afirmar nada sem base.';
+  }
+  if (params.requestedAxis != null) {
+    return 'No momento não localizei essa informação específica no material disponível. Posso te ajudar com outras informações do empreendimento.';
   }
   if (isBareGreetingOnly(params.userMessage)) {
     return buildGreetingSafeFallback(params.knownCustomerName);
   }
   return 'Claro, eu te explico sim. Me diz só qual ponto pesa mais pra você agora, que eu sigo por aí.';
+}
+
+function buildSpecificMissingAxisReply(
+  requestedAxis: ReturnType<typeof inferUserRequestedAxis> | null
+): string | null {
+  if (requestedAxis === 'metragem_tipologia') {
+    return 'No momento não localizei essa informação específica sobre metragem. Posso te ajudar com outras informações do empreendimento.';
+  }
+  if (requestedAxis == null) return null;
+  return 'No momento não localizei essa informação específica no material disponível. Posso te ajudar com outras informações do empreendimento.';
 }
 
 function normalizeStructuredReplyCandidate(
@@ -476,7 +500,7 @@ function userExplicitlyAskedPriceInCurrentTurn(message: string): boolean {
 function looksLikeStandaloneNameReply(message: string): boolean {
   const t = (message || '').trim();
   if (!t || t.length > 40 || t.includes('?') || t.includes('@')) return false;
-  return /^[A-Za-zÀ-ÿ]+(?:\s+[A-Za-zÀ-ÿ]+){0,2}$/.test(t);
+  return /^[\p{L}]+(?:\s+[\p{L}]+){0,2}$/u.test(t);
 }
 
 function isAppointmentContextualQuestion(message: string): boolean {
@@ -549,6 +573,54 @@ const ANA_MEDIA_THEN_TEXT_GAP_MS = 2200;
 type ResolvedEnterpriseFile = NonNullable<Awaited<ReturnType<typeof getFileForSend>>>;
 
 type AnaMediaFirstResult = { ok: true } | { ok: false; error: string; code?: number; fileName: string };
+
+type MaterialRequestTurnStatus =
+  | 'MATERIAL_SENT'
+  | 'MATERIAL_NOT_FOUND'
+  | 'ENTERPRISE_NOT_RESOLVED'
+  | 'MATERIAL_TYPE_NOT_RESOLVED'
+  | 'SEND_FAILED';
+
+type MaterialFlowFailureReason =
+  | MaterialFileResolveFailureReason
+  | 'enterprise_not_resolved'
+  | 'material_type_not_resolved'
+  | 'no_pending_material_context'
+  | 'outbound_send_failed'
+  | 'llm_bypassed'
+  | 'guard_blocked_promise_without_send';
+
+type MaterialFlowLogPayload = {
+  userMessage: string;
+  detectedMaterialRequest: boolean;
+  isFollowupMaterialCommand: boolean;
+  activeEnterpriseId: number | null;
+  resolvedEnterpriseId: number | null;
+  resolvedEnterpriseName: string | null;
+  requestedMaterialType: FileCategory | null;
+  pendingAction: string | null;
+  pendingMaterialType: FileCategory | null;
+  candidateFilesCount: number;
+  candidateVersionsCount: number;
+  selectedFileId: number | null;
+  selectedFileVersionId: number | null;
+  selectedStorageKey: string | null;
+  selectedBucket: string | null;
+  sendAttempted: boolean;
+  sendSucceeded: boolean;
+  failureReason: MaterialFlowFailureReason | null;
+};
+
+type MaterialRequestTurnResult =
+  | {
+      handled: false;
+      log: MaterialFlowLogPayload;
+    }
+  | {
+      handled: true;
+      status: MaterialRequestTurnStatus;
+      log: MaterialFlowLogPayload;
+    };
 
 /**
  * Envio de mídia ANTES do texto da Ana. Só persiste no histórico se a Meta aceitar.
@@ -677,6 +749,304 @@ async function sendAnaEnterpriseMediaFirst(params: {
   };
 }
 
+function toMaterialSendStatus(status: MaterialRequestTurnStatus): MaterialSendStatus {
+  if (status === 'MATERIAL_SENT') return 'sent';
+  if (status === 'MATERIAL_NOT_FOUND') return 'not_found';
+  if (status === 'ENTERPRISE_NOT_RESOLVED') return 'enterprise_not_resolved';
+  if (status === 'MATERIAL_TYPE_NOT_RESOLVED') return 'material_type_not_resolved';
+  return 'send_failed';
+}
+
+function buildMaterialFlowLog(params: {
+  userMessage: string;
+  detectedMaterialRequest: boolean;
+  isFollowupMaterialCommand: boolean;
+  activeEnterpriseId: number | null;
+  pendingAction: string | null;
+  pendingMaterialType: FileCategory | null;
+}): MaterialFlowLogPayload {
+  return {
+    userMessage: params.userMessage.slice(0, 500),
+    detectedMaterialRequest: params.detectedMaterialRequest,
+    isFollowupMaterialCommand: params.isFollowupMaterialCommand,
+    activeEnterpriseId: params.activeEnterpriseId,
+    resolvedEnterpriseId: null,
+    resolvedEnterpriseName: null,
+    requestedMaterialType: null,
+    pendingAction: params.pendingAction,
+    pendingMaterialType: params.pendingMaterialType,
+    candidateFilesCount: 0,
+    candidateVersionsCount: 0,
+    selectedFileId: null,
+    selectedFileVersionId: null,
+    selectedStorageKey: null,
+    selectedBucket: null,
+    sendAttempted: false,
+    sendSucceeded: false,
+    failureReason: null,
+  };
+}
+
+function buildMaterialFlowState(
+  prev: CommercialFlowState,
+  patch: {
+    pendingAction: 'send_material' | null;
+    pendingMaterialType: FileCategory | null;
+    pendingEnterpriseId: number | null;
+    lastRequestedMaterialType: FileCategory | null;
+    status: MaterialRequestTurnStatus;
+    lastMaterialSentId?: number | null;
+  }
+): CommercialFlowState {
+  const nowIso = new Date().toISOString();
+  return {
+    ...prev,
+    pending_action: patch.pendingAction,
+    pending_material_type: patch.pendingMaterialType,
+    pending_enterprise_id: patch.pendingEnterpriseId,
+    last_requested_material_type: patch.lastRequestedMaterialType,
+    last_material_request_at: nowIso,
+    last_material_sent_id:
+      patch.lastMaterialSentId ??
+      (patch.status === 'MATERIAL_SENT' ? null : prev.last_material_sent_id ?? null),
+    last_material_send_status: toMaterialSendStatus(patch.status),
+    updatedAt: nowIso,
+  };
+}
+
+async function sendMaterialFlowTextMessage(params: {
+  conversationId: number;
+  toPhoneNumber: string;
+  text: string;
+  replyPipelineToken?: number;
+}): Promise<boolean> {
+  if (isPipelineStale(params.conversationId, params.replyPipelineToken)) {
+    return false;
+  }
+  const sendResult = await sendTextMessage(params.toPhoneNumber, params.text);
+  if (!sendResult.success || !sendResult.metaMessageId) {
+    return false;
+  }
+  await insertMessage(params.conversationId, 'assistant', params.text, sendResult.metaMessageId);
+  return true;
+}
+
+async function handleMaterialRequestTurn(params: {
+  conversationId: number;
+  toPhoneNumber: string;
+  userMessage: string;
+  lastAssistantMessage: string | null;
+  allActiveEnterprises: EnterpriseRow[];
+  activeEnterprise: EnterpriseRow | null;
+  flowState: CommercialFlowState;
+  replyPipelineToken?: number;
+}): Promise<MaterialRequestTurnResult> {
+  const trimmed = params.userMessage.trim();
+  const explicitMaterialAsk = userExplicitlyAskedForMaterial(trimmed).explicit;
+  const followupMaterialCommand = isFollowupMaterialCommand(trimmed);
+  const materialTopicMention = userAskedAboutMaterialTopic(trimmed);
+  const detectedMaterialRequest = explicitMaterialAsk || followupMaterialCommand || materialTopicMention;
+  const pendingAction = params.flowState.pending_action ?? null;
+  const pendingMaterialType = params.flowState.pending_material_type ?? null;
+  const activeEnterpriseId = params.activeEnterprise?.id ?? null;
+
+  const logPayload = buildMaterialFlowLog({
+    userMessage: trimmed,
+    detectedMaterialRequest,
+    isFollowupMaterialCommand: followupMaterialCommand,
+    activeEnterpriseId,
+    pendingAction,
+    pendingMaterialType,
+  });
+
+  if (!detectedMaterialRequest) {
+    return { handled: false, log: logPayload };
+  }
+
+  const requestedMaterialType =
+    inferPreferredCategoryFromUserText(trimmed) ??
+    params.flowState.pending_material_type ??
+    params.flowState.last_requested_material_type ??
+    null;
+  logPayload.requestedMaterialType = requestedMaterialType;
+
+  let resolvedEnterprise: EnterpriseRow | null = null;
+  const enterpriseByMentionId = tryMatchEnterpriseFromUserCorpus(trimmed, params.allActiveEnterprises);
+  if (enterpriseByMentionId != null) {
+    resolvedEnterprise = params.allActiveEnterprises.find((item) => item.id === enterpriseByMentionId) ?? null;
+  }
+  if (!resolvedEnterprise && params.activeEnterprise) {
+    resolvedEnterprise = params.activeEnterprise;
+  }
+  if (!resolvedEnterprise && params.flowState.pending_enterprise_id != null) {
+    resolvedEnterprise =
+      params.allActiveEnterprises.find((item) => item.id === params.flowState.pending_enterprise_id) ?? null;
+  }
+  if (!resolvedEnterprise && params.flowState.lastSingleCatalogEnterpriseId != null) {
+    resolvedEnterprise =
+      params.allActiveEnterprises.find((item) => item.id === params.flowState.lastSingleCatalogEnterpriseId) ?? null;
+  }
+  if (!resolvedEnterprise && params.flowState.lastInferredEnterpriseId != null) {
+    resolvedEnterprise =
+      params.allActiveEnterprises.find((item) => item.id === params.flowState.lastInferredEnterpriseId) ?? null;
+  }
+
+  logPayload.resolvedEnterpriseId = resolvedEnterprise?.id ?? null;
+  logPayload.resolvedEnterpriseName = resolvedEnterprise?.name ?? null;
+
+  if (!resolvedEnterprise) {
+    logPayload.failureReason =
+      followupMaterialCommand && pendingAction !== 'send_material'
+        ? 'no_pending_material_context'
+        : 'enterprise_not_resolved';
+    const state = buildMaterialFlowState(params.flowState, {
+      pendingAction: 'send_material',
+      pendingMaterialType: requestedMaterialType,
+      pendingEnterpriseId: null,
+      lastRequestedMaterialType: requestedMaterialType,
+      status: 'ENTERPRISE_NOT_RESOLVED',
+      lastMaterialSentId: null,
+    });
+    await mergeConversationCommercialFlowState(params.conversationId, state);
+    await sendMaterialFlowTextMessage({
+      conversationId: params.conversationId,
+      toPhoneNumber: params.toPhoneNumber,
+      text: 'Me confirma de qual empreendimento voce quer o material para eu enviar certo.',
+      replyPipelineToken: params.replyPipelineToken,
+    });
+    console.log('[MATERIAL_FLOW]', logPayload);
+    return { handled: true, status: 'ENTERPRISE_NOT_RESOLVED', log: logPayload };
+  }
+
+  if (requestedMaterialType == null) {
+    logPayload.failureReason = 'material_type_not_resolved';
+    const state = buildMaterialFlowState(params.flowState, {
+      pendingAction: 'send_material',
+      pendingMaterialType: null,
+      pendingEnterpriseId: resolvedEnterprise.id,
+      lastRequestedMaterialType: null,
+      status: 'MATERIAL_TYPE_NOT_RESOLVED',
+      lastMaterialSentId: null,
+    });
+    await mergeConversationCommercialFlowState(params.conversationId, state);
+    await sendMaterialFlowTextMessage({
+      conversationId: params.conversationId,
+      toPhoneNumber: params.toPhoneNumber,
+      text: 'Me confirma se voce quer o book, a planta ou a tabela para eu enviar certo.',
+      replyPipelineToken: params.replyPipelineToken,
+    });
+    console.log('[MATERIAL_FLOW]', logPayload);
+    return { handled: true, status: 'MATERIAL_TYPE_NOT_RESOLVED', log: logPayload };
+  }
+
+  const fileResolution = await resolveSendableEnterpriseFileCurrentVersion(
+    resolvedEnterprise.id,
+    requestedMaterialType
+  );
+  logPayload.candidateFilesCount = fileResolution.candidateFilesCount;
+  logPayload.candidateVersionsCount = fileResolution.candidateVersionsCount;
+
+  if (!fileResolution.file) {
+    logPayload.failureReason = fileResolution.failureReason ?? 'no_files_for_enterprise';
+    const state = buildMaterialFlowState(params.flowState, {
+      pendingAction: 'send_material',
+      pendingMaterialType: requestedMaterialType,
+      pendingEnterpriseId: resolvedEnterprise.id,
+      lastRequestedMaterialType: requestedMaterialType,
+      status: 'MATERIAL_NOT_FOUND',
+      lastMaterialSentId: null,
+    });
+    await mergeConversationCommercialFlowState(params.conversationId, state);
+    await sendMaterialFlowTextMessage({
+      conversationId: params.conversationId,
+      toPhoneNumber: params.toPhoneNumber,
+      text:
+        'No momento nao localizei esse material especifico. Posso te ajudar com as informacoes principais do empreendimento por aqui.',
+      replyPipelineToken: params.replyPipelineToken,
+    });
+    console.log('[MATERIAL_FLOW]', logPayload);
+    return { handled: true, status: 'MATERIAL_NOT_FOUND', log: logPayload };
+  }
+
+  const selectedFile = fileResolution.file;
+  logPayload.selectedFileId = selectedFile.id;
+  logPayload.selectedFileVersionId = selectedFile.versionId;
+  logPayload.selectedStorageKey = selectedFile.storageKey;
+  logPayload.selectedBucket = selectedFile.bucketName;
+  logPayload.sendAttempted = true;
+
+  if (isPipelineStale(params.conversationId, params.replyPipelineToken)) {
+    logPayload.failureReason = 'outbound_send_failed';
+    console.log('[MATERIAL_FLOW]', logPayload);
+    return { handled: true, status: 'SEND_FAILED', log: logPayload };
+  }
+
+  const mediaOutcome = await sendAnaEnterpriseMediaFirst({
+    conversationId: params.conversationId,
+    toPhoneNumber: params.toPhoneNumber,
+    ent: resolvedEnterprise,
+    enterpriseIdForFile: resolvedEnterprise.id,
+    cat: requestedMaterialType,
+    preResolvedFile: selectedFile,
+  });
+
+  if (!mediaOutcome.ok) {
+    logPayload.failureReason = 'outbound_send_failed';
+    const state = buildMaterialFlowState(params.flowState, {
+      pendingAction: 'send_material',
+      pendingMaterialType: requestedMaterialType,
+      pendingEnterpriseId: resolvedEnterprise.id,
+      lastRequestedMaterialType: requestedMaterialType,
+      status: 'SEND_FAILED',
+      lastMaterialSentId: null,
+    });
+    await mergeConversationCommercialFlowState(params.conversationId, state);
+    await sendMaterialFlowTextMessage({
+      conversationId: params.conversationId,
+      toPhoneNumber: params.toPhoneNumber,
+      text: pickMaterialSendFailedNeutralReply(params.lastAssistantMessage),
+      replyPipelineToken: params.replyPipelineToken,
+    });
+    console.log('[MATERIAL_FLOW]', logPayload);
+    return { handled: true, status: 'SEND_FAILED', log: logPayload };
+  }
+
+  const ackSent = await sendMaterialFlowTextMessage({
+    conversationId: params.conversationId,
+    toPhoneNumber: params.toPhoneNumber,
+    text: 'Enviei o material aqui para voce.',
+    replyPipelineToken: params.replyPipelineToken,
+  });
+
+  if (!ackSent) {
+    logPayload.failureReason = 'outbound_send_failed';
+    const state = buildMaterialFlowState(params.flowState, {
+      pendingAction: 'send_material',
+      pendingMaterialType: requestedMaterialType,
+      pendingEnterpriseId: resolvedEnterprise.id,
+      lastRequestedMaterialType: requestedMaterialType,
+      status: 'SEND_FAILED',
+      lastMaterialSentId: selectedFile.id,
+    });
+    await mergeConversationCommercialFlowState(params.conversationId, state);
+    console.log('[MATERIAL_FLOW]', logPayload);
+    return { handled: true, status: 'SEND_FAILED', log: logPayload };
+  }
+
+  logPayload.sendSucceeded = true;
+  logPayload.failureReason = 'llm_bypassed';
+  const state = buildMaterialFlowState(params.flowState, {
+    pendingAction: null,
+    pendingMaterialType: null,
+    pendingEnterpriseId: null,
+    lastRequestedMaterialType: requestedMaterialType,
+    status: 'MATERIAL_SENT',
+    lastMaterialSentId: selectedFile.id,
+  });
+  await mergeConversationCommercialFlowState(params.conversationId, state);
+  console.log('[MATERIAL_FLOW]', logPayload);
+  return { handled: true, status: 'MATERIAL_SENT', log: logPayload };
+}
 export async function handleIncomingMessage(ctx: IncomingMessageContext): Promise<void> {
   const {
     conversationId,
@@ -716,7 +1086,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationId,
         replyPipelineToken: replyPipelineToken ?? null,
       });
-      console.log('[ANA DEBUG] mensagem vazia após trim — ignorando');
+      console.log('[ANA DEBUG] mensagem vazia apos trim - ignorando');
       return;
     }
 
@@ -733,7 +1103,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationId,
         replyPipelineToken: replyPipelineToken ?? null,
       });
-      console.error('[ANA DEBUG] getOpenAIConfig retornou null — ignorando mensagem.');
+      console.error('[ANA DEBUG] getOpenAIConfig retornou null - ignorando mensagem.');
       return;
     }
     if (!aiConfig.openaiApiKey?.trim()) {
@@ -742,7 +1112,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationId,
         replyPipelineToken: replyPipelineToken ?? null,
       });
-      console.warn('[ANA DEBUG] OpenAI API Key não configurada — ignorando mensagem.');
+      console.warn('[ANA DEBUG] OpenAI API Key nao configurada - ignorando mensagem.');
       return;
     }
     if (!aiConfig.aiEnabled && !ANA_FORCE_AI_DIAGNOSTIC) {
@@ -751,7 +1121,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationId,
         replyPipelineToken: replyPipelineToken ?? null,
       });
-      console.log('[ANA DEBUG] aiEnabled check blocked — ai_enabled=false no banco.');
+      console.log('[ANA DEBUG] aiEnabled check blocked - ai_enabled=false no banco.');
       return;
     }
     if (ANA_FORCE_AI_DIAGNOSTIC && !aiConfig.aiEnabled) {
@@ -795,7 +1165,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         String(toPhoneNumber).replace(/\D/g, '') === String(conv.external_contact_id ?? '').replace(/\D/g, ''),
     });
 
-    // Revalidação imediata antes do bloqueio: sempre buscar estado mais recente (evita race: usuário muda Handoff→ANA durante processamento)
+    // Revalidacao imediata antes do bloqueio: sempre buscar estado mais recente (evita race: usuario muda Handoff->ANA durante processamento)
     const latestConv = await getConversationById(conversationId);
     let effectiveConv = latestConv ?? conv;
     if (blockCorretorConversation(effectiveConv.conversation_type)) {
@@ -812,7 +1182,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       conversationId,
     });
 
-    // Decisão final SEMPRE com base no estado mais recente. Modo handoff: NÃO responder. Modo ANA: SEMPRE responder via IA.
+    // Decisao final SEMPRE com base no estado mais recente. Modo handoff: NAO responder. Modo ANA: SEMPRE responder via IA.
     if (effectiveConv.handoff === true || effectiveConv.classification === 'Handoff') {
       if (ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY) {
         console.log('[ANA_ENGINE_DIAGNOSTIC] skip_handoff', {
@@ -828,7 +1198,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         toPhoneTail: anaPhoneTail(toPhoneNumber),
         inboundMetaMessageId: inboundMetaFromCtx ?? null,
       });
-      console.log('[ANA DEBUG] handoff check blocked — conversa em modo humano, ANA não responde', {
+      console.log('[ANA DEBUG] handoff check blocked - conversa em modo humano, ANA nao responde', {
         conversationId,
         handoff: effectiveConv.handoff,
         classification: effectiveConv.classification,
@@ -1128,6 +1498,30 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       effectiveConv.enterprise_id != null ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;
     const inactiveLinked = Boolean(effectiveConv.enterprise_id && !ent);
 
+    const materialTurnResult = await handleMaterialRequestTurn({
+      conversationId,
+      toPhoneNumber,
+      userMessage: trimmed,
+      lastAssistantMessage: lastAssistantPlain,
+      allActiveEnterprises,
+      activeEnterprise: ent,
+      flowState: flowStateParsed,
+      replyPipelineToken,
+    });
+    if (materialTurnResult.handled) {
+      if (materialTurnResult.status === 'MATERIAL_SENT') {
+        anaTurnAuditOutcome = 'material_sent';
+        anaTurnAuditBlockedReason = null;
+      } else if (materialTurnResult.status === 'SEND_FAILED') {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'material_flow_send_failed';
+      } else {
+        anaTurnAuditOutcome = 'material_failed';
+        anaTurnAuditBlockedReason = materialTurnResult.status.toLowerCase();
+      }
+      return;
+    }
+
     let openAppointmentSummary: string | null = null;
     if (ent?.id) {
       const openAppt = await findOpenAppointmentForConversationAndEnterprise(conversationId, ent.id);
@@ -1171,6 +1565,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     const chunkHint = [userMessageForReasoning, fullUserUtterances].filter(Boolean).join('\n').slice(0, 12_000);
     const knowledgeParts: string[] = [];
+    let ragChunksFound = 0;
     const knowledgeIds =
       ent != null
         ? [ent.id]
@@ -1184,6 +1579,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const chunk = await loadRankedKnowledgeChunksForPrompt(eid, `${row.name}\n${chunkHint}`, {
         targetCity: cityPriority,
       });
+      if (chunk.trim()) ragChunksFound += 1;
       const kb = await loadAgentKnowledgeText(eid);
       const merged = [chunk, kb].filter(Boolean).join('\n\n');
       if (merged.trim()) knowledgeParts.push(`--- ${row.name} ---\n${merged}`);
@@ -1221,6 +1617,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       variablesMap: vars,
       knowledgeText,
     });
+    const structuredFactsFound = Object.values(vars).some((value) => String(value ?? '').trim().length > 0);
     console.log('[ANA_EVIDENCE]', {
       conversationId,
       enterprise: ent?.name ?? null,
@@ -1290,6 +1687,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const resolvedPurchaseIntentForTurn =
       userResolvedPurchaseIntentThisTurn ?? flowStateParsed.purchaseIntent ?? null;
     const requestedAxisForPolicy = inferUserRequestedAxis(userMessageForReasoning);
+    const evidenceHasAnswer =
+      requestedAxisForPolicy != null
+        ? hasAnaEvidenceForNeed(enterpriseEvidence, requestedAxisForPolicy)
+        : enterpriseEvidence.hasUsableKnowledgeChunks;
     const explicitExactLocationRequestThisTurn = detectExplicitExactLocationRequest(trimmed);
     const explicitPaymentSimulationRequestThisTurn = detectExplicitPaymentSimulationRequest(trimmed);
     const asksListStyleInfoThisTurn = detectStructuredListIntent(trimmed, requestedAxisForPolicy);
@@ -1512,7 +1913,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       lastCatalogOfferedNames: flowStateParsed.lastCatalogOfferedNames ?? null,
       clearedAt: flowStateParsed.clearedAt ?? null,
     });
-    // [ANA_HISTORY_WINDOW] — rastreabilidade de quanto contexto chega ao modelo
+    // [ANA_HISTORY_WINDOW] rastreabilidade de quanto contexto chega ao modelo
     console.log('[ANA_HISTORY_WINDOW]', {
       conversationId,
       totalDbRows: rows.length,
@@ -1671,7 +2072,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         `Aguardando nome: ${
           !(effectiveConv.customer_name || '').trim() && effectiveConv.ana_asked_customer_name === true ? 'sim' : 'não'
         }`,
-        `Última mensagem da Ana: "${(lastAssistantPlain || '').slice(0, 260)}"`,
+        `Ultima mensagem da Ana: "${(lastAssistantPlain || "").slice(0, 260)}"`,
       ].join('\n');
       const retryMessages: ChatMessage[] = [
         { role: 'system', content: systemPrompt },
@@ -1802,7 +2203,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
       const isGreetingForFallback = isBareGreetingOnly(trimmed);
 
-      // [ANA_CONTINUATION_FALLBACK] — log centralizado para todo fallback técnico
+      // [ANA_CONTINUATION_FALLBACK] log centralizado para todo fallback tecnico
       console.log('[ANA_CONTINUATION_FALLBACK]', {
         conversationId,
         messageId: inboundMetaMessageId,
@@ -1832,6 +2233,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         deterministicFallbackReply = isAppointmentContextualQuestion(trimmed)
           ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
           : ANA_FALLBACK_APPOINTMENT_FLOW_REPLY;
+      } else if (requestedAxisForPolicy != null && !evidenceHasAnswer) {
+        deterministicFallbackReply = buildSpecificMissingAxisReply(requestedAxisForPolicy) ?? deterministicFallbackReply;
+        console.log('[ANA_GENERIC_FALLBACK_DEBUG]', {
+          conversationId,
+          userMessage: trimmed,
+          activeEnterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+          detectedIntent: policyDetectedIntent,
+          requestedAxis: requestedAxisForPolicy,
+          ragChunksFound,
+          structuredFactsFound,
+          evidenceHasAnswer,
+          fallbackReason: traceReason,
+          genericFallbackBlocked: true,
+        });
       }
       structured = { ...structured, reply: deterministicFallbackReply };
       console.log('[ANA_DETERMINISTIC_REPLY]', {
@@ -1864,7 +2279,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         deterministic_reply: deterministicFallbackReply,
       });
 
-      // ── GREETING BYPASS ────────────────────────────────────────────────────
+      // --- GREETING BYPASS ---
       // Saudações simples (oi, olá, bom dia, etc.) NUNCA devem receber a
       // mensagem de erro técnico "Não consegui continuar daqui agora...".
       // Se o pipeline falhou por qualquer razão técnica mas a mensagem atual
@@ -1882,9 +2297,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     if (anaDecision.shouldUseMissingInformationReply) {
+      const missingAxisReply = buildSpecificMissingAxisReply(requestedAxisForPolicy);
       structured = {
         ...structured,
-        reply: ANA_MISSING_INFORMATION_REPLY,
+        reply: missingAxisReply ?? ANA_MISSING_INFORMATION_REPLY,
         send_file_category: null,
       };
       replySource = 'policy_missing_information';
@@ -1893,6 +2309,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         missingInformationSubject: anaDecision.missingInformationSubject ?? null,
         shouldCreateInfoGapFlag: anaDecision.shouldCreateInfoGapFlag,
       });
+      if (requestedAxisForPolicy != null && missingAxisReply != null) {
+        console.log('[ANA_GENERIC_FALLBACK_DEBUG]', {
+          conversationId,
+          userMessage: trimmed,
+          activeEnterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+          detectedIntent: policyDetectedIntent,
+          requestedAxis: requestedAxisForPolicy,
+          ragChunksFound,
+          structuredFactsFound,
+          evidenceHasAnswer,
+          fallbackReason: 'policy_missing_information',
+          genericFallbackBlocked: true,
+        });
+      }
     }
 
     if (structured.project?.trim()) {
@@ -1924,10 +2354,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let requestedSendCategoryForLog: FileCategory | null = null;
     let fileResolutionSkipReason: string | null = null;
 
-    // ─── ANA DOC GATE ────────────────────────────────────────────────────────
+    // --- ANA DOC GATE ---
     // Regra: envio de arquivo SOMENTE quando a mensagem ATUAL do usuário contiver
     // pedido explícito de material (verbo de envio + substantivo de documento).
-    // O campo send_file_category do LLM NÃO é usado como gatilho — ele pode
+    // O campo send_file_category do LLM NAO e usado como gatilho - ele pode
     // disparar por sinais indiretos (preço, localização, "quero saber mais") e
     // causaria envio não autorizado.
     const materialMatchedPattern = materialAskIntentThisTurn.matchedPattern;
@@ -2101,7 +2531,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     // Guard leve de abertura comercial: só na primeira resposta da Ana e somente
-    // quando o cliente NÃO pediu preço/valor/condições explicitamente.
+    // quando o cliente NÒO pediu preço/valor/condições explicitamente.
     if (isFirstAnaReply && !explicitPriceAskedThisTurn) {
       const before = replyBody;
       const sanitized = sanitizeFirstReplyCommercialLeak(replyBody);
@@ -2131,7 +2561,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
-    // ─── ANA OPERATIONAL FACT RESOLVER (camada determinística) ──────────────
+    // --- ANA OPERATIONAL FACT RESOLVER (camada deterministica) ---
     // Para perguntas sobre entrega, obras, infraestrutura, liberação para
     // construir e portaria/lazer, o pipeline busca a resposta nos dados
     // oficiais (variablesMap + knowledgeText) ANTES de usar o reply do LLM.
@@ -2158,7 +2588,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
-    // ─── ANA OPERATIONAL FACT GUARD (segurança adicional) ────────────────────
+    // --- ANA OPERATIONAL FACT GUARD (seguranca adicional) ---
     // Só roda se o resolver não interceptou. Bloqueia claims operacionais
     // inventados que tenham passado pelo resolver (ex.: tópico não detectado,
     // mas o LLM ainda assim alucinouaaa).
@@ -2335,7 +2765,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
-    /** Envio OK + ACK: um único texto e encerra o turno — sem delay longo nem pós-processamento duplicado. */
+    /** Envio OK + ACK: um unico texto e encerra o turno - sem delay longo nem pos-processamento duplicado. */
     if (shouldAttemptDocSend && canClaimMaterialWasSent) {
       console.log('[ANA_DOC_PIPELINE_START]', {
         conversationId,
@@ -2508,7 +2938,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         operationalResolverTopic === 'portaria_lazer' ||
         (
           /\b[áa]reas?\s+de\s+lazer\b/i.test(replyBody) &&
-          /\n\s*(?:-|\*|•|â€¢)\s+/.test(replyBody)
+          /\n\s*(?:-|\*)\s+/.test(replyBody)
         )
       );
     if (shouldPreserveFullLazerList) {
@@ -2549,7 +2979,39 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               userMessage: trimmed,
               conversationMode: mode,
               isFirstAnaReply,
-            }).slice(0, 4000);
+          }).slice(0, 4000);
+    }
+
+    const materialSendProofAvailable =
+      canClaimMaterialWasSent &&
+      preResolvedFileForAna != null &&
+      Number.isFinite(preResolvedFileForAna.versionId) &&
+      Boolean(preResolvedFileForAna.storageKey) &&
+      Boolean(preResolvedFileForAna.bucketName) &&
+      mediaOutcome?.ok === true;
+    if (!materialSendProofAvailable && textHasMaterialDeliveryClaim(replyText)) {
+      const stripped = stripMaterialDeliveryClaims(replyText).trim();
+      replyText = stripped || pickMaterialUnavailableNeutralReply(lastAsstDup?.content ?? null);
+      console.log('[MATERIAL_FLOW]', {
+        userMessage: trimmed.slice(0, 500),
+        detectedMaterialRequest: explicitMaterialRequestThisTurn || isFollowupMaterialCommand(trimmed),
+        isFollowupMaterialCommand: isFollowupMaterialCommand(trimmed),
+        activeEnterpriseId: ent?.id ?? null,
+        resolvedEnterpriseId: ent?.id ?? null,
+        resolvedEnterpriseName: ent?.name ?? null,
+        requestedMaterialType: effectiveSendCategory ?? inferPreferredCategoryFromUserText(trimmed),
+        pendingAction: flowStateParsed.pending_action ?? null,
+        pendingMaterialType: flowStateParsed.pending_material_type ?? null,
+        candidateFilesCount: 0,
+        candidateVersionsCount: 0,
+        selectedFileId: preResolvedFileForAna?.id ?? null,
+        selectedFileVersionId: preResolvedFileForAna?.versionId ?? null,
+        selectedStorageKey: preResolvedFileForAna?.storageKey ?? null,
+        selectedBucket: preResolvedFileForAna?.bucketName ?? null,
+        sendAttempted: mediaOutcome != null || preResolvedFileForAna != null,
+        sendSucceeded: canClaimMaterialWasSent,
+        failureReason: 'guard_blocked_promise_without_send',
+      });
     }
 
     const finalAxisGuardResult: { text: string; changed: boolean } = operationalResolverFired
@@ -2571,7 +3033,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           allowMaterialOffer: explicitMaterialRequestThisTurn,
         });
     anaTurnAuditGuardsApplied.finalEvidenceGuardChanged = finalEvidenceGuard.changed;
-    const finalTextGuard =
+    let finalTextGuard =
       anaDecision.responseMode === 'structured'
         ? normalizeStructuredReplyCandidate(finalEvidenceGuard.text, {
             preserveAllItems: shouldPreserveFullLazerList,
@@ -2581,6 +3043,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             conversationMode: mode,
             isFirstAnaReply,
           });
+    if (requestedAxisForPolicy != null && /\bqual ponto pesa mais\b/i.test(finalTextGuard)) {
+      finalTextGuard = buildSpecificMissingAxisReply(requestedAxisForPolicy) ?? finalTextGuard;
+      console.log('[ANA_GENERIC_FALLBACK_DEBUG]', {
+        conversationId,
+        userMessage: trimmed,
+        activeEnterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        detectedIntent: policyDetectedIntent,
+        requestedAxis: requestedAxisForPolicy,
+        ragChunksFound,
+        structuredFactsFound,
+        evidenceHasAnswer,
+        fallbackReason: 'generic_axis_question_after_requested_axis',
+        genericFallbackBlocked: true,
+      });
+    }
     const preserveListFormatting =
       anaDecision.responseMode === 'structured' ||
       (operationalResolverFired && /\n\s*(?:-|\*)\s+/.test(finalTextGuard));
@@ -2605,8 +3082,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           userMessage: trimmed,
           knownCustomerName: effectiveConv.customer_name,
           appointmentActive: appointmentPreflight.active || !!openAppointmentSummary,
-          requestedAxis: inferUserRequestedAxis(trimmed),
+          requestedAxis: requestedAxisForPolicy,
         });
+        if (requestedAxisForPolicy != null && !evidenceHasAnswer) {
+          console.log('[ANA_GENERIC_FALLBACK_DEBUG]', {
+            conversationId,
+            userMessage: trimmed,
+            activeEnterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+            detectedIntent: policyDetectedIntent,
+            requestedAxis: requestedAxisForPolicy,
+            ragChunksFound,
+            structuredFactsFound,
+            evidenceHasAnswer,
+            fallbackReason: finalOutboundEval.reason,
+            genericFallbackBlocked: true,
+          });
+        }
         const recoveredReplyLimited = applyAnaHardLengthGuard({
           text: finalizeAnaReplyText(recoveredReplyRaw, {
             userMessage: trimmed,
@@ -2828,5 +3319,3 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
   }
 }
-
-
