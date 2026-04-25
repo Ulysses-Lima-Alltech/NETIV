@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { config } from '../config.js';
-import { query } from '../db/pg.js';
+import { getPool, query } from '../db/pg.js';
 import { replaceEnterpriseFileChunks, splitTextIntoChunks } from './enterpriseKnowledgeChunkRepository.js';
 import { downloadFromKnowledgeS3 } from '../services/s3Storage.js';
 
@@ -985,67 +985,215 @@ export async function updateEnterpriseFilePermissions(
 
 export type DeleteEnterpriseFileResult =
   | { ok: false; reason: 'not_found' }
-  | { ok: true; mode: 'deactivated'; message: string };
+  | {
+      ok: true;
+      removed: true;
+      mode: 'hard_deleted';
+      storageDeleteAttempted: boolean;
+      storageDeleted: boolean;
+      orphanedStorageKeys: string[];
+    };
 
-const MSG_DEACTIVATED_HISTORICO =
-  'Arquivo desativado. O conteudo foi mantido no storage/historico, mas nao sera usado pela Ana.';
-
-/**
- * Desativa arquivo, versoes e elegibilidade logica sem remover storage/chunks.
- */
 export async function deleteEnterpriseFile(
   enterpriseId: number,
   fileId: number
 ): Promise<DeleteEnterpriseFileResult> {
-  const { rows } = await query<{
-    current_version_id: number | null;
-  }>(
-    `SELECT current_version_id FROM enterprise_files WHERE id = $1 AND enterprise_id = $2`,
-    [fileId, enterpriseId]
-  );
-  if (!rows[0]) return { ok: false, reason: 'not_found' };
+  const pool = getPool();
+  const client = await pool.connect();
 
-  const currentVersionIdBefore = rows[0].current_version_id;
+  let enterpriseFileId = fileId;
+  let currentVersionId: number | null = null;
+  let originalName = '';
+  let category: string | null = null;
+  let versionIds: number[] = [];
+  let fileStorageRef: {
+    storageProvider: string | null;
+    bucketName: string | null;
+    storageKey: string | null;
+  } | null = null;
+  let versionStorageRefs: Array<{
+    versionId: number;
+    storageProvider: string | null;
+    bucketName: string | null;
+    storageKey: string | null;
+  }> = [];
+  let chunksDeleted = 0;
+  let sentFilesLogDeleted = 0;
+  let currentVersionCleared = false;
+  let versionsDeleted = 0;
+  let filesDeleted = 0;
+  const orphanedStorageKeySet = new Set<string>();
 
-  await query(
-    `UPDATE enterprise_files
-        SET is_active = false,
-            can_be_sent_by_ana = false,
-            can_be_used_as_knowledge = false
-      WHERE id = $1
-        AND enterprise_id = $2`,
-    [fileId, enterpriseId]
-  );
+  try {
+    await client.query('BEGIN');
 
-  const versionsUpdate = await query(
-    `UPDATE enterprise_file_versions
-        SET is_active = false,
-            can_be_sent_by_ana = false,
-            can_be_used_as_knowledge = false
-      WHERE enterprise_file_id = $1`,
-    [fileId]
-  );
+    const { rows: fileRows } = await client.query<{
+      id: number;
+      current_version_id: number | null;
+      original_name: string;
+      category: string;
+      storage_provider: string | null;
+      bucket_name: string | null;
+      storage_key: string | null;
+    }>(
+      `SELECT id, current_version_id, original_name, category, storage_provider, bucket_name, storage_key
+       FROM enterprise_files
+       WHERE enterprise_id = $1
+         AND id = $2
+       FOR UPDATE`,
+      [enterpriseId, fileId]
+    );
 
-  const { rows: chunkRows } = await query<{ chunks_linked: string }>(
-    `SELECT COUNT(*)::text AS chunks_linked
-       FROM enterprise_knowledge_chunks
-      WHERE enterprise_id = $1
-        AND enterprise_file_id = $2`,
-    [enterpriseId, fileId]
-  );
+    const fileRow = fileRows[0];
+    if (!fileRow) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'not_found' };
+    }
 
-  console.error('[FILE_DELETE_DEBUG]', {
+    enterpriseFileId = fileRow.id;
+    currentVersionId = fileRow.current_version_id;
+    originalName = fileRow.original_name;
+    category = fileRow.category;
+    fileStorageRef = {
+      storageProvider: fileRow.storage_provider,
+      bucketName: fileRow.bucket_name,
+      storageKey: fileRow.storage_key,
+    };
+
+    if ((fileRow.storage_key ?? '').trim()) {
+      orphanedStorageKeySet.add((fileRow.storage_key ?? '').trim());
+    }
+
+    const { rows: versionRows } = await client.query<{
+      id: number;
+      storage_provider: string | null;
+      bucket_name: string | null;
+      storage_key: string | null;
+    }>(
+      `SELECT id, storage_provider, bucket_name, storage_key
+       FROM enterprise_file_versions
+       WHERE enterprise_file_id = $1
+       ORDER BY id`,
+      [enterpriseFileId]
+    );
+
+    versionIds = versionRows.map((row) => row.id);
+    versionStorageRefs = versionRows.map((row) => ({
+      versionId: row.id,
+      storageProvider: row.storage_provider,
+      bucketName: row.bucket_name,
+      storageKey: row.storage_key,
+    }));
+    for (const row of versionRows) {
+      if ((row.storage_key ?? '').trim()) {
+        orphanedStorageKeySet.add((row.storage_key ?? '').trim());
+      }
+    }
+
+    const chunksDeleteResult = await client.query(
+      `DELETE FROM enterprise_knowledge_chunks
+       WHERE enterprise_id = $1
+         AND (
+           enterprise_file_id = $2
+           OR enterprise_file_version_id = ANY($3::int[])
+         )`,
+      [enterpriseId, enterpriseFileId, versionIds]
+    );
+    chunksDeleted = chunksDeleteResult.rowCount ?? 0;
+
+    const sentFilesLogDeleteResult = await client.query(
+      `DELETE FROM sent_files_log WHERE enterprise_file_id = $1`,
+      [enterpriseFileId]
+    );
+    sentFilesLogDeleted = sentFilesLogDeleteResult.rowCount ?? 0;
+
+    const clearCurrentVersionResult = await client.query(
+      `UPDATE enterprise_files
+          SET current_version_id = NULL
+       WHERE enterprise_id = $1
+         AND id = $2`,
+      [enterpriseId, enterpriseFileId]
+    );
+    currentVersionCleared = (clearCurrentVersionResult.rowCount ?? 0) > 0;
+
+    const versionsDeleteResult = await client.query(
+      `DELETE FROM enterprise_file_versions WHERE enterprise_file_id = $1`,
+      [enterpriseFileId]
+    );
+    versionsDeleted = versionsDeleteResult.rowCount ?? 0;
+
+    const fileDeleteResult = await client.query(
+      `DELETE FROM enterprise_files WHERE enterprise_id = $1 AND id = $2`,
+      [enterpriseId, enterpriseFileId]
+    );
+    filesDeleted = fileDeleteResult.rowCount ?? 0;
+
+    if (filesDeleted < 1) {
+      throw new Error('Falha ao remover arquivo principal em hard delete.');
+    }
+
+    await client.query('COMMIT');
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // ignora rollback secundario
+    }
+    const fallbackOrphanedStorageKeys = Array.from(orphanedStorageKeySet);
+    console.error('[FILE_HARD_DELETE_DEBUG]', {
+      enterpriseId,
+      enterpriseFileId,
+      originalName,
+      category,
+      currentVersionId,
+      versionIds,
+      fileStorageRef,
+      versionStorageRefs,
+      chunksDeleted,
+      sentFilesLogDeleted,
+      currentVersionCleared,
+      versionsDeleted,
+      filesDeleted,
+      storageDeleteAttempted: false,
+      storageDeleted: false,
+      orphanedStorageKeys: fallbackOrphanedStorageKeys,
+      mode: 'hard_deleted',
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  const orphanedStorageKeys = Array.from(orphanedStorageKeySet);
+  console.error('[FILE_HARD_DELETE_DEBUG]', {
     enterpriseId,
-    enterpriseFileId: fileId,
-    currentVersionIdBefore,
-    versionsAffected: versionsUpdate.rowCount ?? 0,
-    chunksLinked: Number(chunkRows[0]?.chunks_linked ?? 0),
-    mode: 'deactivated',
-    s3Deleted: false,
-    reason: 'soft_delete_file_and_versions_preserve_storage_and_chunks',
+    enterpriseFileId,
+    originalName,
+    category,
+    currentVersionId,
+    versionIds,
+    fileStorageRef,
+    versionStorageRefs,
+    chunksDeleted,
+    sentFilesLogDeleted,
+    currentVersionCleared,
+    versionsDeleted,
+    filesDeleted,
+    storageDeleteAttempted: false,
+    storageDeleted: false,
+    orphanedStorageKeys,
+    mode: 'hard_deleted',
   });
 
-  return { ok: true, mode: 'deactivated', message: MSG_DEACTIVATED_HISTORICO };
+  return {
+    ok: true,
+    removed: true,
+    mode: 'hard_deleted',
+    storageDeleteAttempted: false,
+    storageDeleted: false,
+    orphanedStorageKeys,
+  };
 }
 
 const MAX_KNOWLEDGE = 48_000;

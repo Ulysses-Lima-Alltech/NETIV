@@ -497,9 +497,11 @@ router.delete('/:id/knowledge/:fileId', async (req, res) => {
     }
     return res.status(200).json({
       ok: true,
-      deactivated: true,
+      removed: true,
       mode: result.mode,
-      message: result.message,
+      storageDeleteAttempted: result.storageDeleteAttempted,
+      storageDeleted: result.storageDeleted,
+      orphanedStorageKeys: result.orphanedStorageKeys,
     });
   } catch (e) {
     console.error('[Projects] knowledge DELETE:', e);

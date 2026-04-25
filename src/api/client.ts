@@ -731,7 +731,16 @@ export const projectsApi = {
     return data as KnowledgeFileItem;
   },
   deleteKnowledge: (projectId: number, fileId: number) =>
-    request<{ ok: boolean; removed?: boolean; deactivated?: boolean; message?: string }>(
+    request<{
+      ok: boolean;
+      removed?: boolean;
+      mode?: 'hard_deleted' | 'deactivated';
+      deactivated?: boolean;
+      message?: string;
+      storageDeleteAttempted?: boolean;
+      storageDeleted?: boolean;
+      orphanedStorageKeys?: string[];
+    }>(
       `/projects/${projectId}/knowledge/${fileId}`,
       { method: 'DELETE' }
     ),

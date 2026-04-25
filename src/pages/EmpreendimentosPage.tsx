@@ -282,8 +282,16 @@ export function EmpreendimentosPage() {
     projectsApi
       .deleteKnowledge(selectedId, fileId)
       .then((res) => {
-        if (res.deactivated && res.message) setKnowledgeNotice(res.message);
-        else setKnowledgeNotice(null);
+        if (res.mode === 'hard_deleted' || res.removed === true) {
+          setKnowledgeNotice('Arquivo excluído definitivamente.');
+        } else if (res.deactivated && res.message) {
+          // fallback legado para ambientes ainda não migrados.
+          setKnowledgeNotice(res.message);
+        } else if (res.message) {
+          setKnowledgeNotice(res.message);
+        } else {
+          setKnowledgeNotice(null);
+        }
         loadDetail(selectedId);
       })
       .catch((e) => setErr(e instanceof Error ? e.message : 'Erro ao remover arquivo'));
@@ -766,7 +774,7 @@ export function EmpreendimentosPage() {
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                     <p className="text-[12px] text-[#6B7280]">
                       {showInactiveKnowledge
-                        ? `${knowledgeInactive.length} arquivo(s) desativado(s) — mantido(s) por causa do histórico de envios.`
+                        ? `${knowledgeInactive.length} arquivo(s) desativado(s) exibido(s) (legado).`
                         : `${knowledgeInactive.length} arquivo(s) desativado(s) oculto(s).`}
                     </p>
                     <button
@@ -784,7 +792,7 @@ export function EmpreendimentosPage() {
                   <p className="text-[13px] text-[#9CA3AF] py-1">Nenhum arquivo cadastrado.</p>
                 ) : knowledgeDisplayed.length === 0 ? (
                   <div className="rounded-[10px] border border-dashed border-[#D1D5DB] bg-[#FAFAFB] px-4 py-3 text-[13px] text-[#6B7280]">
-                    <p>Nenhum arquivo ativo. Os desativados permanecem só para histórico.</p>
+                    <p>Nenhum arquivo ativo. Existem apenas arquivos desativados (legado).</p>
                     {knowledgeInactive.length > 0 && (
                       <button
                         type="button"
@@ -859,19 +867,13 @@ export function EmpreendimentosPage() {
                               </label>
                             </div>
                           </div>
-                          {!isInactive ? (
-                            <button
-                              type="button"
-                              onClick={() => removeFile(f.id)}
-                              className="shrink-0 text-[12px] font-medium text-[#9CA3AF] hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all sm:self-center"
-                            >
-                              Remover
-                            </button>
-                          ) : (
-                            <span className="shrink-0 text-[11px] text-[#9CA3AF] max-w-[100px] text-right leading-tight sm:self-center" title="Arquivo usado em envios; não pode ser excluído do histórico.">
-                              Histórico
-                            </span>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => removeFile(f.id)}
+                            className="shrink-0 text-[12px] font-medium text-[#9CA3AF] hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all sm:self-center"
+                          >
+                            Remover
+                          </button>
                         </li>
                       );
                     })}
