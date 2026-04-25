@@ -76,7 +76,7 @@ function hasStrongFinancialSignal(text: string): boolean {
 function hasFinancingSignal(text: string): boolean {
   const n = norm(text);
   if (!n) return false;
-  return /\b(financiamento|parcelamento|parcela|entrada|fgts|mcmv|minha casa minha vida|subsidi)\b/.test(n);
+  return /\b(financiamento|formas?\s+de\s+pagamento|condic(?:ao|oes)\s+de\s+pagamento|pagamento|parcelamento|parcela|entrada|fgts|mcmv|minha casa minha vida|subsidi)\b/.test(n);
 }
 
 export function buildAnaEnterpriseEvidence(params: {

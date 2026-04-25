@@ -62,7 +62,9 @@ function parseDateExclusiveEnd(value: unknown): Date | undefined {
 }
 
 function parseContactFilters(req: { query: Record<string, unknown> }) {
-  const status = req.query.status === 'assigned' || req.query.status === 'unassigned' ? req.query.status : undefined;
+  const statusRaw = typeof req.query.status === 'string' ? req.query.status : '';
+  const status: 'assigned' | 'unassigned' | undefined =
+    statusRaw === 'assigned' || statusRaw === 'unassigned' ? statusRaw : undefined;
   const brokerId = parseOptionalInt(req.query.brokerId);
   return {
     search: typeof req.query.search === 'string' ? req.query.search : undefined,

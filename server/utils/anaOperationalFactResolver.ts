@@ -416,9 +416,9 @@ export function resolveOperationalFactAnswer(
   userText: string,
   knowledgeText: string,
   variablesMap: Record<string, string>,
-  opts?: { enterpriseName?: string | null },
+  opts?: { enterpriseName?: string | null; hintedTopic?: OperationalTopic | null },
 ): OperationalFactResolution | null {
-  const topic = detectOperationalTopic(userText);
+  const topic = detectOperationalTopic(userText) ?? (opts?.hintedTopic ?? null);
   if (!topic) return null;
 
   const corpus = buildSearchCorpus(knowledgeText, variablesMap);

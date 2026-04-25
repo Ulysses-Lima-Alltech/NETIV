@@ -55,6 +55,11 @@ export function detectCommercialAxes(text: string): CommercialAxis[] {
   if (
     /\bm[²2]\b/.test(text) ||
     /\bmetros?\s+quadrados?\b/.test(t) ||
+    /\bquantos?\s+metros?\b/.test(t) ||
+    /\btamanho\b/.test(t) ||
+    /\barea\s+do\s+lote\b/.test(t) ||
+    /\barea\s+do\s+apartamento\b/.test(t) ||
+    /\barea\s+util\b/.test(t) ||
     /\bdormit[oó]rios?\b/.test(t) ||
     /\bquartos?\b/.test(t) ||
     /\bplanta(s)?\b/.test(t) ||
@@ -83,12 +88,24 @@ export function detectCommercialAxes(text: string): CommercialAxis[] {
     found.add('localizacao');
   }
 
-  if (/\blazer\b/.test(t) || /\brooftop\b/.test(t) || /\bpiscina\b/.test(t) || /\bdiferenciais?\b/.test(t) || /\bamenit/.test(t)) {
+  if (
+    /\blazer\b/.test(t) ||
+    /\brooftop\b/.test(t) ||
+    /\bpiscina\b/.test(t) ||
+    /\bdiferenciais?\b/.test(t) ||
+    /\bamenit/.test(t) ||
+    /\b(area|areas)\s+(de\s+)?lazer\b/.test(t) ||
+    /\bareas?\s+comuns?\b/.test(t)
+  ) {
     found.add('lazer');
   }
 
   if (
     /\bfinanciamento\b/.test(t) ||
+    /\bformas?\s+de\s+pagamento\b/.test(t) ||
+    /\bcondic(?:ao|oes)\s+de\s+pagamento\b/.test(t) ||
+    /\bparcelamento\b/.test(t) ||
+    /\bpagamento\b/.test(t) ||
     /\bcaixa\b/.test(t) ||
     /\bmcmv\b/.test(t) ||
     /\bsubs[ií]dio(s)?\b/.test(t) ||
@@ -131,9 +148,22 @@ export function inferUserRequestedAxis(userMessage: string | null | undefined): 
 
   if (/\b(quanto|custa|valor|pre[cç]o|r\$)\b/.test(u)) return 'preco';
   if (/\b(onde fica|localiza|endere[çc]o|bairro|estação|estacao|cidade|regi[aã]o|proxim|metros? da)\b/.test(u)) return 'localizacao';
-  if (/\b(m[²2]|metragem|planta|dormit[oó]rio|quarto|tipologia)\b/.test(u)) return 'metragem_tipologia';
-  if (/\b(lazer|piscina|rooftop|diferenciais?)\b/.test(u)) return 'lazer';
-  if (/\b(financiamento|parcela|entrada|caixa|mcmv|subs[ií]dio)\b/.test(u)) return 'financiamento';
+  if (
+    /\b(m[²2]|metragem|planta|dormit[oó]rio|quarto|tipologia|tamanho|quantos metros|area do lote|area do apartamento|area util)\b/.test(
+      u
+    )
+  ) {
+    return 'metragem_tipologia';
+  }
+  if (/\b(lazer|piscina|rooftop|diferenciais?|amenidades?)\b/.test(u)) return 'lazer';
+  if (/\b(area|areas)\s+(de\s+)?lazer\b/.test(u) || /\bareas?\s+comuns?\b/.test(u)) return 'lazer';
+  if (
+    /\b(financiamento|parcela|entrada|caixa|mcmv|subs[ií]dio|pagamento|parcelamento)\b/.test(u) ||
+    /\bformas?\s+de\s+pagamento\b/.test(u) ||
+    /\bcondic(?:ao|oes)\s+de\s+pagamento\b/.test(u)
+  ) {
+    return 'financiamento';
+  }
   if (/\b(disponibilidade|tem unidade|unidades dispon)\b/.test(u)) return 'disponibilidade';
   if (/\b(agendar|visita)\b/.test(u)) return 'visita_agendamento';
   if (/\b(morar|moradia|investir|investimento|renda|objetivo|finalidade)\b/.test(u)) return 'intencao_compra';

@@ -107,6 +107,20 @@ export async function createAnaTurnAudit(
   return rows[0];
 }
 
+export async function getLastAnaTurnAuditByConversation(
+  conversationId: number
+): Promise<AnaTurnAuditRow | null> {
+  const { rows } = await query<AnaTurnAuditRow>(
+    `SELECT *
+     FROM ana_turn_audit
+     WHERE conversation_id = $1
+     ORDER BY created_at DESC, id DESC
+     LIMIT 1`,
+    [conversationId]
+  );
+  return rows[0] ?? null;
+}
+
 export async function updateAnaTurnAuditOutcome(
   id: number,
   input: UpdateAnaTurnAuditOutcomeInput

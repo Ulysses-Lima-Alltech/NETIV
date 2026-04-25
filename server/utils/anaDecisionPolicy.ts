@@ -2,16 +2,18 @@ import type { RequestedProductType } from './anaRequestedProductType.js';
 import type { CommercialAxis } from './anaCommercialAxisGuard.js';
 import { hasAnaEvidenceForNeed, type AnaEnterpriseEvidence } from './anaEnterpriseEvidence.js';
 
-export const ANA_DECISION_POLICY_VERSION = 'v1';
+export const ANA_DECISION_POLICY_VERSION = 'v2';
 
 export const ANA_MISSING_INFORMATION_REPLY =
-  'Essa informação eu não tenho aqui agora, mas vou buscar e te retorno com os detalhes o quanto antes. Enquanto isso, posso te ajudar com outras informações?';
+  'No momento nao localizei essa informacao especifica. Posso te ajudar com outras informacoes do empreendimento.';
 
 export type AnaDecisionResponseMode = 'short' | 'structured';
+export type AnaDecisionCurrentAxis = CommercialAxis | 'material' | 'geral' | 'outro';
 
 export interface AnaDecisionPolicyInput {
   detectedIntent: string | null;
   requestedAxis: CommercialAxis | null;
+  lastAxis?: CommercialAxis | null;
   requestedProductType: RequestedProductType;
   enterpriseResolved: boolean;
   enterpriseId: number | null;
@@ -51,6 +53,17 @@ export interface AnaDecisionPolicyResult {
   shouldUseMissingInformationReply: boolean;
   shouldUsePaymentSimulationRedirect: boolean;
   missingInformationSubject: string | null;
+  detectedIntent: string | null;
+  currentAxis: AnaDecisionCurrentAxis;
+  lastAxis: CommercialAxis | null;
+  isDirectInfoRequest: boolean;
+  isGenericOpenQuestion: boolean;
+  isRepeatOfLastAxis: boolean;
+  isAskingForMoreOnSameAxis: boolean;
+  evidenceFound: boolean;
+  shouldAnswerDirectly: boolean;
+  shouldAskClarifyingQuestion: boolean;
+  shouldAvoidGenericFallback: boolean;
 }
 
 function norm(text: string): string {
@@ -60,6 +73,67 @@ function norm(text: string): string {
     .replace(/\p{M}/gu, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function isCommercialAxis(axis: AnaDecisionCurrentAxis | null | undefined): axis is CommercialAxis {
+  return (
+    axis === 'preco' ||
+    axis === 'metragem_tipologia' ||
+    axis === 'localizacao' ||
+    axis === 'lazer' ||
+    axis === 'financiamento' ||
+    axis === 'disponibilidade' ||
+    axis === 'visita_agendamento' ||
+    axis === 'intencao_compra'
+  );
+}
+
+function detectAxisFallbackFromMessage(userMessage: string): CommercialAxis | null {
+  const n = norm(userMessage);
+  if (!n) return null;
+
+  if (/\b(quanto|custa|valor|preco|r\$)\b/.test(n)) return 'preco';
+  if (
+    /\b(metragem|tamanho|quantos metros|m2|m²|metros quadrados|area do lote|area do apartamento|area util)\b/.test(
+      n
+    )
+  ) {
+    return 'metragem_tipologia';
+  }
+  if (/\b(onde fica|localizacao|endereco|bairro|cidade|regiao|proximo)\b/.test(n)) return 'localizacao';
+  if (/\b(lazer|areas de lazer|area de lazer|amenidades|areas comuns|piscina|academia)\b/.test(n)) return 'lazer';
+  if (
+    /\b(formas de pagamento|forma de pagamento|pagamento|financiamento|condicao de pagamento|condicoes de pagamento|parcelamento|parcela|entrada)\b/.test(
+      n
+    )
+  ) {
+    return 'financiamento';
+  }
+  if (/\b(disponibilidade|tem unidade|unidades disponiveis)\b/.test(n)) return 'disponibilidade';
+  if (/\b(visita|agendar|agendamento)\b/.test(n)) return 'visita_agendamento';
+  if (/\b(morar|investir|investimento|moradia)\b/.test(n)) return 'intencao_compra';
+  return null;
+}
+
+function detectAskingForMoreOnSameAxis(userMessage: string): boolean {
+  const n = norm(userMessage);
+  if (!n) return false;
+  if (/^(mais|tem mais|tem outras|outras)\??$/.test(n)) return true;
+  return (
+    /\b(tem mais|mais alguma|mais algum|mais areas?|tem outras?|outras opcoes|outros itens)\b/.test(n) ||
+    /\b(quero mais|tem mais informacao|tem mais detalhes)\b/.test(n)
+  );
+}
+
+function detectGenericOpenQuestion(userMessage: string): boolean {
+  const n = norm(userMessage);
+  if (!n) return false;
+  return (
+    /\b(quero saber mais|me fala mais|me fale mais|mais informacoes|mais detalhes|me explica|explica melhor)\b/.test(
+      n
+    ) ||
+    /\b(o que voce tem|quais opcoes|me conta mais)\b/.test(n)
+  );
 }
 
 export function detectExplicitExactLocationRequest(userMessage: string): boolean {
@@ -88,7 +162,8 @@ export function detectStructuredListIntent(
   if (!n) return false;
   if (requestedAxis === 'lazer') return true;
   return (
-    /\b(lista|quais|itens|diferenciais|amenidades|lazer|opcoes|comparar)\b/.test(n) ||
+    /\b(lista|quais|itens|diferenciais|amenidades|lazer|opcoes|comparar|areas|area comum|areas comuns)\b/.test(n) ||
+    /\b(tem mais|mais areas|mais area|tem outras|outras areas|outros itens)\b/.test(n) ||
     /\b(me mostra|quero ver)\b/.test(n)
   );
 }
@@ -106,7 +181,6 @@ function detectVisitOpportunity(params: {
   if (!n) return false;
   if (params.requestedAxis === 'visita_agendamento') return true;
 
-  // Evita sugerir visita cedo demais: exige algum contexto de maturidade.
   const contextLooksMature =
     params.historyCount >= 2 ||
     params.conversationPhase === 'scoped' ||
@@ -119,49 +193,82 @@ function detectVisitOpportunity(params: {
   );
 }
 
+function resolveCurrentAxis(input: AnaDecisionPolicyInput): AnaDecisionCurrentAxis {
+  if (input.turnFlags.explicitMaterialRequest) return 'material';
+  if (input.requestedAxis != null) return input.requestedAxis;
+
+  const asksMore = detectAskingForMoreOnSameAxis(input.userMessage);
+  if (asksMore && input.lastAxis != null) return input.lastAxis;
+
+  const fallbackAxis = detectAxisFallbackFromMessage(input.userMessage);
+  if (fallbackAxis != null) return fallbackAxis;
+
+  if (detectGenericOpenQuestion(input.userMessage) || input.turnFlags.isShortFollowUp) return 'geral';
+  return 'outro';
+}
+
+function resolveEvidenceFound(axis: AnaDecisionCurrentAxis, evidence: AnaEnterpriseEvidence): boolean {
+  if (axis === 'material') return hasAnaEvidenceForNeed(evidence, 'material');
+  if (axis === 'geral' || axis === 'outro') return evidence.hasUsableKnowledgeChunks;
+  return hasAnaEvidenceForNeed(evidence, axis);
+}
+
 function resolveMissingInformationSubject(params: {
-  requestedAxis: CommercialAxis | null;
+  currentAxis: AnaDecisionCurrentAxis;
   turnFlags: AnaDecisionPolicyInput['turnFlags'];
   evidence: AnaEnterpriseEvidence;
+  isDirectInfoRequest: boolean;
+  evidenceFound: boolean;
 }): string | null {
-  const { requestedAxis, turnFlags, evidence } = params;
-  if (!turnFlags.asksSpecificInfoWithoutEvidence) return null;
+  const { currentAxis, turnFlags, evidence, isDirectInfoRequest, evidenceFound } = params;
+  if (!isDirectInfoRequest) return null;
 
   if (turnFlags.explicitExactLocationRequest && !hasAnaEvidenceForNeed(evidence, 'localizacao_exata')) {
-    // Com localizacao generica valida, responde com limite em vez de fallback de lacuna.
     if (hasAnaEvidenceForNeed(evidence, 'localizacao')) return null;
     return 'localizacao_exata';
   }
-  if (requestedAxis === 'preco' && !hasAnaEvidenceForNeed(evidence, 'preco')) {
-    return 'preco';
-  }
-  if (requestedAxis === 'financiamento' && !hasAnaEvidenceForNeed(evidence, 'financiamento')) {
-    return 'financiamento';
-  }
-  if (requestedAxis != null && !hasAnaEvidenceForNeed(evidence, requestedAxis)) {
-    return requestedAxis;
-  }
-  return null;
+  if (currentAxis === 'material') return null;
+  if (evidenceFound) return null;
+
+  if (currentAxis === 'financiamento') return 'financiamento';
+  if (currentAxis === 'metragem_tipologia') return 'metragem_tipologia';
+  if (isCommercialAxis(currentAxis)) return currentAxis;
+  return 'geral';
 }
 
-function resolvePrimaryAxis(input: AnaDecisionPolicyInput): AnaDecisionPolicyResult['primaryAxis'] {
-  if (input.turnFlags.explicitMaterialRequest) return 'material';
-  if (input.requestedAxis) return input.requestedAxis;
+function resolvePrimaryAxis(currentAxis: AnaDecisionCurrentAxis): AnaDecisionPolicyResult['primaryAxis'] {
+  if (currentAxis === 'material') return 'material';
+  if (isCommercialAxis(currentAxis)) return currentAxis;
   return 'geral';
 }
 
 export function buildAnaDecisionPolicy(input: AnaDecisionPolicyInput): AnaDecisionPolicyResult {
-  const primaryAxis = resolvePrimaryAxis(input);
-  const responseMode: AnaDecisionResponseMode = input.turnFlags.asksListStyleInfo ? 'structured' : 'short';
+  const lastAxis = input.lastAxis ?? null;
+  const currentAxis = resolveCurrentAxis(input);
+  const primaryAxis = resolvePrimaryAxis(currentAxis);
+  const asksForMoreOnSameAxis = detectAskingForMoreOnSameAxis(input.userMessage);
+  const isGenericOpenQuestion = currentAxis === 'geral' || currentAxis === 'outro'
+    ? detectGenericOpenQuestion(input.userMessage) || input.turnFlags.isShortFollowUp
+    : false;
+  const isDirectInfoRequest =
+    currentAxis === 'material' ||
+    isCommercialAxis(currentAxis) ||
+    input.turnFlags.explicitExactLocationRequest ||
+    input.turnFlags.explicitPaymentSimulationRequest;
+  const isRepeatOfLastAxis = isCommercialAxis(currentAxis) && lastAxis != null && currentAxis === lastAxis;
+  const isAskingForMoreOnSameAxis = asksForMoreOnSameAxis && isRepeatOfLastAxis;
+  const evidenceFound = resolveEvidenceFound(currentAxis, input.enterpriseEvidence);
   const shouldSendMaterial =
-    input.turnFlags.explicitMaterialRequest &&
+    currentAxis === 'material' &&
     input.enterpriseResolved &&
     hasAnaEvidenceForNeed(input.enterpriseEvidence, 'material');
 
   const missingInformationSubject = resolveMissingInformationSubject({
-    requestedAxis: input.requestedAxis,
+    currentAxis,
     turnFlags: input.turnFlags,
     evidence: input.enterpriseEvidence,
+    isDirectInfoRequest,
+    evidenceFound,
   });
   const shouldUseMissingInformationReply = missingInformationSubject != null;
   const shouldCreateInfoGapFlag = shouldUseMissingInformationReply;
@@ -174,17 +281,37 @@ export function buildAnaDecisionPolicy(input: AnaDecisionPolicyInput): AnaDecisi
   const outboundAllowed = canRespond;
   const shouldSuggestVisit = detectVisitOpportunity({
     userMessage: input.userMessage,
-    requestedAxis: input.requestedAxis,
+    requestedAxis: isCommercialAxis(currentAxis) ? currentAxis : null,
     enterpriseResolved: input.enterpriseResolved,
     hasOpenAppointment: input.conversationContext.hasOpenAppointment,
     conversationPhase: input.conversationContext.phase,
     historyCount: input.conversationContext.historyCount,
   });
-  const shouldAskQuestion = shouldUseMissingInformationReply;
+  const shouldAskClarifyingQuestion =
+    !isDirectInfoRequest &&
+    isGenericOpenQuestion &&
+    !shouldUseMissingInformationReply &&
+    !input.turnFlags.explicitMaterialRequest;
+  const shouldAskQuestion = shouldAskClarifyingQuestion;
+  const shouldAnswerDirectly =
+    isDirectInfoRequest &&
+    evidenceFound &&
+    !shouldUseMissingInformationReply &&
+    !shouldSendMaterial;
+  const shouldAvoidGenericFallback =
+    isDirectInfoRequest ||
+    isRepeatOfLastAxis ||
+    isAskingForMoreOnSameAxis ||
+    currentAxis !== 'geral';
+
+  const responseMode: AnaDecisionResponseMode =
+    input.turnFlags.asksListStyleInfo || (currentAxis === 'lazer' && isAskingForMoreOnSameAxis)
+      ? 'structured'
+      : 'short';
 
   return {
     policyVersion: ANA_DECISION_POLICY_VERSION,
-    resolvedIntent: input.detectedIntent || (input.requestedAxis ?? 'geral'),
+    resolvedIntent: input.detectedIntent || (isCommercialAxis(currentAxis) ? currentAxis : 'geral'),
     canRespond,
     shouldAskQuestion,
     shouldSendMaterial,
@@ -199,5 +326,16 @@ export function buildAnaDecisionPolicy(input: AnaDecisionPolicyInput): AnaDecisi
     shouldUseMissingInformationReply,
     shouldUsePaymentSimulationRedirect,
     missingInformationSubject,
+    detectedIntent: input.detectedIntent,
+    currentAxis,
+    lastAxis,
+    isDirectInfoRequest,
+    isGenericOpenQuestion,
+    isRepeatOfLastAxis,
+    isAskingForMoreOnSameAxis,
+    evidenceFound,
+    shouldAnswerDirectly,
+    shouldAskClarifyingQuestion,
+    shouldAvoidGenericFallback,
   };
 }

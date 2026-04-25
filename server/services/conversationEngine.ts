@@ -78,6 +78,7 @@ import {
   finalizeAnaReplyText,
   applyAnaHardLengthGuard,
   evaluateAnaOutboundText,
+  repliesSemanticallySimilar,
   countCustomerNameMentionsInText,
   sleepMs,
   randomAnaReplyDelayMs,
@@ -88,8 +89,10 @@ import {
 } from '../utils/anaReplyFinalize.js';
 import {
   applyAnaCommercialSingleAxisGuard,
+  detectCommercialAxes,
   inferResolvedPurchaseIntent,
   inferUserRequestedAxis,
+  type CommercialAxis,
 } from '../utils/anaCommercialAxisGuard.js';
 import {
   extractCustomerNameFromUserUtterance,
@@ -144,6 +147,7 @@ import {
 } from '../utils/anaOperationalFactResolver.js';
 import {
   createAnaTurnAudit,
+  getLastAnaTurnAuditByConversation,
   updateAnaTurnAuditOutcome,
   type AnaTurnAuditOutboundStatus,
 } from '../repositories/anaTurnAuditRepository.js';
@@ -189,28 +193,97 @@ function buildSafeOutboundRecoveryReply(params: {
     return ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY;
   }
   if (params.requestedAxis === 'metragem_tipologia') {
-    return 'No momento não localizei essa informação específica sobre metragem. Posso te ajudar com outras informações do empreendimento.';
+    return 'No momento nao localizei essa informacao especifica sobre metragem no material disponivel.';
   }
   if (params.requestedAxis === 'lazer') {
-    return 'Sobre lazer, não consegui confirmar esse ponto no material que consultei agora. Se você quiser, eu sigo com outro tema em seguida, mas sem te afirmar nada sem base.';
+    return 'Sobre lazer, nao consegui confirmar mais itens alem do que esta validado no material que consultei agora.';
+  }
+  if (params.requestedAxis === 'financiamento') {
+    return 'No momento nao localizei informacoes especificas sobre formas de pagamento. Posso te ajudar com localizacao, lazer ou outras informacoes do empreendimento.';
   }
   if (params.requestedAxis != null) {
-    return 'No momento não localizei essa informação específica no material disponível. Posso te ajudar com outras informações do empreendimento.';
+    return 'No momento nao localizei essa informacao especifica no material disponivel.';
   }
   if (isBareGreetingOnly(params.userMessage)) {
     return buildGreetingSafeFallback(params.knownCustomerName);
   }
-  return 'Claro, eu te explico sim. Me diz só qual ponto pesa mais pra você agora, que eu sigo por aí.';
+  return 'Me conta qual informacao voce quer priorizar agora, que eu sigo direto nesse ponto.';
 }
 
 function buildSpecificMissingAxisReply(
   requestedAxis: ReturnType<typeof inferUserRequestedAxis> | null
 ): string | null {
   if (requestedAxis === 'metragem_tipologia') {
-    return 'No momento não localizei essa informação específica sobre metragem. Posso te ajudar com outras informações do empreendimento.';
+    return 'No momento nao localizei essa informacao especifica sobre metragem no material disponivel.';
+  }
+  if (requestedAxis === 'financiamento') {
+    return 'No momento nao localizei informacoes especificas sobre formas de pagamento. Posso te ajudar com localizacao, lazer ou outras informacoes do empreendimento.';
+  }
+  if (requestedAxis === 'lazer') {
+    return 'No momento nao localizei informacoes especificas sobre areas de lazer cadastradas para esse empreendimento.';
+  }
+  if (requestedAxis === 'preco') {
+    return 'No momento nao localizei informacoes especificas sobre preco para esse empreendimento.';
+  }
+  if (requestedAxis === 'localizacao') {
+    return 'No momento nao localizei informacoes especificas de localizacao para esse empreendimento.';
   }
   if (requestedAxis == null) return null;
-  return 'No momento não localizei essa informação específica no material disponível. Posso te ajudar com outras informações do empreendimento.';
+  return 'No momento nao localizei essa informacao especifica no material disponivel.';
+}
+
+function buildRepeatedMissingAxisReply(axis: CommercialAxis | null): string | null {
+  if (axis === 'financiamento') {
+    return 'Eu ainda nao tenho essa informacao de pagamento cadastrada para esse empreendimento. Posso te ajudar com outro ponto ou encaminhar para atendimento humano.';
+  }
+  if (axis === 'metragem_tipologia') {
+    return 'Eu ainda nao tenho essa informacao de metragem cadastrada para esse empreendimento. Posso te ajudar com outro ponto ou encaminhar para atendimento humano.';
+  }
+  if (axis === 'lazer') {
+    return 'Essas sao as areas de lazer que tenho cadastradas ate agora. Quer que eu te explique alguma delas melhor?';
+  }
+  return null;
+}
+
+function hasBlockedGenericFallbackPhrase(text: string): boolean {
+  const n = normText(text || '');
+  if (!n) return false;
+  return (
+    /\bqual ponto pesa mais\b/.test(n) ||
+    /\bme diz so qual ponto pesa mais\b/.test(n) ||
+    /\bme conta qual informacao voce quer priorizar\b/.test(n)
+  );
+}
+
+function buildDirectAxisFallbackReply(axis: CommercialAxis): string {
+  if (axis === 'metragem_tipologia') {
+    return 'Sobre metragem, eu te passo apenas o que esta validado no sistema para esse empreendimento.';
+  }
+  if (axis === 'financiamento') {
+    return 'Sobre formas de pagamento, eu te passo apenas o que esta validado no sistema para esse empreendimento.';
+  }
+  if (axis === 'preco') {
+    return 'Sobre preco, eu te passo apenas o que esta validado no sistema para esse empreendimento.';
+  }
+  if (axis === 'localizacao') {
+    return 'Sobre localizacao, eu te passo apenas o que esta validado no sistema para esse empreendimento.';
+  }
+  if (axis === 'lazer') {
+    return 'Sobre lazer, eu te passo apenas o que esta validado no sistema para esse empreendimento.';
+  }
+  return 'Sobre esse ponto, eu te passo apenas o que esta validado no sistema para esse empreendimento.';
+}
+
+function axisHumanLabel(axis: CommercialAxis): string {
+  if (axis === 'metragem_tipologia') return 'metragem';
+  if (axis === 'financiamento') return 'formas de pagamento';
+  if (axis === 'preco') return 'preco';
+  if (axis === 'localizacao') return 'localizacao';
+  if (axis === 'lazer') return 'lazer';
+  if (axis === 'disponibilidade') return 'disponibilidade';
+  if (axis === 'visita_agendamento') return 'visita';
+  if (axis === 'intencao_compra') return 'intencao de compra';
+  return 'esse ponto';
 }
 
 function normalizeStructuredReplyCandidate(
@@ -247,6 +320,180 @@ function normalizeStructuredReplyCandidate(
       .join('\n');
   }
   return preserveAllItems ? sanitizeListPart(raw) : raw;
+}
+
+const COMMERCIAL_AXIS_SET: ReadonlySet<CommercialAxis> = new Set<CommercialAxis>([
+  'preco',
+  'metragem_tipologia',
+  'localizacao',
+  'lazer',
+  'financiamento',
+  'disponibilidade',
+  'visita_agendamento',
+  'intencao_compra',
+]);
+
+interface AnaAxisRepetitionAuditSnapshot {
+  detectedIntent: string | null;
+  lastAxis: CommercialAxis | null;
+  currentAxis: CommercialAxis | null;
+  alreadyAnswered: boolean;
+  evidenceFound: boolean;
+  responseMode: 'short' | 'structured' | null;
+  reasonForNotRepeatingAnswer: string | null;
+}
+
+function isCommercialAxis(value: unknown): value is CommercialAxis {
+  return typeof value === 'string' && COMMERCIAL_AXIS_SET.has(value as CommercialAxis);
+}
+
+function hasLazerSignal(text: string | null | undefined): boolean {
+  const n = normText(text || '');
+  if (!n) return false;
+  return (
+    /\blazer\b/.test(n) ||
+    /\bamenidades?\b/.test(n) ||
+    /\b(area|areas)\s+(de\s+)?lazer\b/.test(n) ||
+    /\bareas?\s+comuns?\b/.test(n)
+  );
+}
+
+function inferAxisFromAssistantText(text: string | null | undefined): CommercialAxis | null {
+  const raw = (text || '').trim();
+  if (!raw) return null;
+  const detected = detectCommercialAxes(raw);
+  if (detected.length > 0) return detected[0] ?? null;
+  if (hasLazerSignal(raw) && /\n\s*(?:[-*•]|\d+[.)])\s+/u.test(raw)) {
+    return 'lazer';
+  }
+  return null;
+}
+
+function asksForMoreItems(message: string): boolean {
+  const n = normText(message);
+  if (!n) return false;
+  if (/^(mais|tem mais|tem outras|outras)\??$/.test(n)) return true;
+  return (
+    /\b(tem mais|mais areas?|mais itens?|tem outras?|outras areas?|outros itens?)\b/.test(n) ||
+    /\b(alem dessas|alem disso|algo a mais)\b/.test(n)
+  );
+}
+
+function normalizeListItemForCompare(raw: string): string {
+  return (raw || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\b(de|da|do|das|dos|e|com)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function dedupeListItems(items: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const clean = item.replace(/[.]+$/g, '').replace(/\s+/g, ' ').trim();
+    if (!clean) continue;
+    const key = normalizeListItemForCompare(clean);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(clean);
+  }
+  return out;
+}
+
+function extractReplyListItems(text: string | null | undefined): string[] {
+  const raw = (text || '').trim();
+  if (!raw) return [];
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const bullets = lines
+    .map((line) => line.match(/^(?:[-*•]|\d+[.)])\s+(.+)$/u))
+    .filter((m): m is RegExpMatchArray => m != null)
+    .map((m) => m[1]!.trim());
+  if (bullets.length > 0) return dedupeListItems(bullets);
+
+  const inlineLine = lines.find((line) => /\b(incluem|inclui|conta com)\b/i.test(line) && /[,;|]/.test(line));
+  if (!inlineLine) return [];
+  const normalized = inlineLine.replace(/^.*?:\s*/u, '');
+  const parts = normalized
+    .split(/[;,|]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return dedupeListItems(parts);
+}
+
+function stripGenericOperationalOpening(text: string): string {
+  const raw = (text || '').trim();
+  if (!raw) return raw;
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return raw;
+  const first = lines[0] ?? '';
+  const firstNorm = normText(first);
+  const genericOpeners = [
+    /^(claro|perfeito|otima pergunta|boa pergunta|excelente pergunta|com certeza|sem duvida|entendi|legal|que bom|faz sentido)\b/,
+    /^(certo|show|beleza)\b/,
+  ];
+  const hasListOrFactAfter =
+    lines.slice(1).some((line) => /^(?:[-*•]|\d+[.)])\s+/u.test(line)) ||
+    /\b(r\$\s*[\d.,]+|\d+\s*m[²2]|fica em|localizacao|areas? de lazer|metragem)\b/i.test(lines.slice(1).join(' '));
+  if (!hasListOrFactAfter) return raw;
+  if (!genericOpeners.some((re) => re.test(firstNorm))) return raw;
+  return lines.slice(1).join('\n').trim();
+}
+
+function stripGenericAxisFollowupQuestion(text: string): string {
+  const raw = (text || '').trim();
+  if (!raw) return raw;
+  const genericQuestionRe = [
+    /\bqual ponto\b.*\b(agora|primeiro)\b.*\?/i,
+    /\bo que voce quer\b.*\b(detalhar|aprofundar)\b.*\?/i,
+    /\bme diz\b.*\b(pesa mais|priorizar)\b.*\?/i,
+    /\bposso te ajudar com outras informacoes\b.*\?/i,
+    /\bqual informacao voce quer priorizar\b.*\?/i,
+  ];
+  const normalizedRaw = normText(raw);
+  if (!genericQuestionRe.some((re) => re.test(normalizedRaw))) return raw;
+
+  const sentences = raw
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const kept = sentences.filter((s) => !genericQuestionRe.some((re) => re.test(normText(s))));
+  if (kept.length > 0) return kept.join(' ').trim();
+
+  const stripped = raw
+    .replace(/(?:\s*[,.!?-]\s*)?\bqual ponto\b[\s\S]*$/i, '')
+    .replace(/(?:\s*[,.!?-]\s*)?\bme diz\b[\s\S]*$/i, '')
+    .replace(/(?:\s*[,.!?-]\s*)?\bqual informacao voce quer priorizar\b[\s\S]*$/i, '')
+    .trim();
+  return stripped || raw;
+}
+
+function buildNoAdditionalLazerReply(): string {
+  return 'Essas sao as areas de lazer que tenho cadastradas ate agora. Quer que eu te explique alguma delas melhor?';
+}
+
+function buildOnlyNewLazerItemsReply(newItems: string[]): string {
+  const items = dedupeListItems(newItems).slice(0, 8);
+  if (items.length === 0) return buildNoAdditionalLazerReply();
+  return `Tem sim. Alem das areas que eu ja te passei, tambem temos:\n${items.map((item) => `- ${item}`).join('\n')}\nSe quiser, eu te explico melhor uma delas.`;
+}
+
+function userAskedDirectOperationalAxis(
+  userMessage: string,
+  currentAxis: CommercialAxis | null
+): boolean {
+  if (currentAxis == null) return false;
+  const askedAxis = inferUserRequestedAxis(userMessage);
+  return askedAxis === currentAxis;
 }
 
 /** Motivo do fallback com `ANA_TECHNICAL_FALLBACK_NEUTRAL` (log [ANA_FALLBACK_TRACE]). */
@@ -1067,6 +1314,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   let anaTurnAuditOutcome: AnaTurnAuditOutboundStatus = 'silent';
   let anaTurnAuditBlockedReason: string | null = null;
   let anaTurnAuditGuardsApplied: Record<string, unknown> = {};
+  let anaTurnAuditDecisionJson: Record<string, unknown> = {};
+  let anaRepetitionAudit: AnaAxisRepetitionAuditSnapshot | null = null;
   let anaTurnAuditMissingInformationFlagCreated = false;
   let anaTurnAuditMissingInformationSubject: string | null = null;
   try {
@@ -1679,6 +1928,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? rowsToHistory(rows, null, trailingUserBubbles)
         : rowsToHistory(rows, trimmed);
     const historyCount = history.length;
+    const previousTurnAudit = await getLastAnaTurnAuditByConversation(conversationId);
+    const lastTurnWasMissingInformation = Boolean(previousTurnAudit?.missing_information_subject);
     const explicitPriceAskedThisTurn = userExplicitlyAskedPriceInCurrentTurn(trimmed);
     const bareGreeting = isBareGreetingOnly(trimmed);
     const materialAskIntentThisTurn = userExplicitlyAskedForMaterial(trimmed);
@@ -1687,6 +1938,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const resolvedPurchaseIntentForTurn =
       userResolvedPurchaseIntentThisTurn ?? flowStateParsed.purchaseIntent ?? null;
     const requestedAxisForPolicy = inferUserRequestedAxis(userMessageForReasoning);
+    const lastAxisFromAudit = isCommercialAxis(previousTurnAudit?.primary_axis ?? null)
+      ? (previousTurnAudit?.primary_axis as CommercialAxis)
+      : null;
+    const lastAxisFromAssistant = inferAxisFromAssistantText(lastAssistantPlain);
+    const lastAxisForRepetition = lastAxisFromAudit ?? lastAxisFromAssistant;
+    const asksForMoreThisTurn = asksForMoreItems(trimmed);
     const evidenceHasAnswer =
       requestedAxisForPolicy != null
         ? hasAnaEvidenceForNeed(enterpriseEvidence, requestedAxisForPolicy)
@@ -1703,6 +1960,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const anaDecision = buildAnaDecisionPolicy({
       detectedIntent: policyDetectedIntent,
       requestedAxis: requestedAxisForPolicy,
+      lastAxis: lastAxisForRepetition,
       requestedProductType: triageRequestedProductType,
       enterpriseResolved: ent != null,
       enterpriseId: ent?.id ?? null,
@@ -1724,6 +1982,36 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       },
       userMessage: trimmed,
     });
+    const asksForMoreOnSameAxisPolicy = anaDecision.isAskingForMoreOnSameAxis === true;
+    const asksForMoreThisTurnNormalized = asksForMoreThisTurn || asksForMoreOnSameAxisPolicy;
+    const currentAxisForRepetition: CommercialAxis | null =
+      isCommercialAxis(anaDecision.currentAxis)
+        ? anaDecision.currentAxis
+        : requestedAxisForPolicy ??
+          (asksForMoreThisTurnNormalized && lastAxisForRepetition != null ? lastAxisForRepetition : null) ??
+          (isCommercialAxis(anaDecision.primaryAxis) ? anaDecision.primaryAxis : null);
+    const evidenceFoundForCurrentAxis =
+      currentAxisForRepetition != null
+        ? hasAnaEvidenceForNeed(enterpriseEvidence, currentAxisForRepetition)
+        : enterpriseEvidence.hasUsableKnowledgeChunks;
+    anaRepetitionAudit = {
+      detectedIntent: policyDetectedIntent,
+      lastAxis: lastAxisForRepetition,
+      currentAxis: currentAxisForRepetition,
+      alreadyAnswered: false,
+      evidenceFound: evidenceFoundForCurrentAxis,
+      responseMode: anaDecision.responseMode,
+      reasonForNotRepeatingAnswer: null,
+    };
+    anaTurnAuditDecisionJson = {
+      ...anaDecision,
+      repetitionAudit: anaRepetitionAudit,
+    };
+    console.log('[ANA_REPETITION_AUDIT]', {
+      conversationId,
+      phase: 'policy',
+      ...anaRepetitionAudit,
+    });
     console.log('[ANA_DECISION_POLICY]', {
       conversationId,
       policyVersion: anaDecision.policyVersion,
@@ -1742,6 +2030,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       explicitMaterialRequestThisTurn,
       explicitExactLocationRequestThisTurn,
       explicitPaymentSimulationRequestThisTurn,
+      detectedIntent: anaDecision.detectedIntent,
+      currentAxis: anaDecision.currentAxis,
+      lastAxis: anaDecision.lastAxis,
+      isDirectInfoRequest: anaDecision.isDirectInfoRequest,
+      isGenericOpenQuestion: anaDecision.isGenericOpenQuestion,
+      isRepeatOfLastAxis: anaDecision.isRepeatOfLastAxis,
+      isAskingForMoreOnSameAxis: anaDecision.isAskingForMoreOnSameAxis,
+      evidenceFound: anaDecision.evidenceFound,
+      shouldAnswerDirectly: anaDecision.shouldAnswerDirectly,
+      shouldAskClarifyingQuestion: anaDecision.shouldAskClarifyingQuestion,
+      shouldAvoidGenericFallback: anaDecision.shouldAvoidGenericFallback,
+      lastAxisForRepetition,
+      currentAxisForRepetition,
+      asksForMoreThisTurn: asksForMoreThisTurnNormalized,
     });
     anaTurnAuditMissingInformationFlagCreated = anaDecision.shouldCreateInfoGapFlag;
     anaTurnAuditMissingInformationSubject = anaDecision.missingInformationSubject ?? null;
@@ -1751,6 +2053,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         resolvedIntent: anaDecision.resolvedIntent,
         primaryAxis: anaDecision.primaryAxis,
         responseMode: anaDecision.responseMode,
+        detectedIntent: anaDecision.detectedIntent,
+        currentAxis: anaDecision.currentAxis,
+        lastAxis: anaDecision.lastAxis,
+        isDirectInfoRequest: anaDecision.isDirectInfoRequest,
+        isGenericOpenQuestion: anaDecision.isGenericOpenQuestion,
+        isRepeatOfLastAxis: anaDecision.isRepeatOfLastAxis,
+        isAskingForMoreOnSameAxis: anaDecision.isAskingForMoreOnSameAxis,
+        evidenceFound: anaDecision.evidenceFound,
+        shouldAnswerDirectly: anaDecision.shouldAnswerDirectly,
+        shouldAskClarifyingQuestion: anaDecision.shouldAskClarifyingQuestion,
+        shouldAvoidGenericFallback: anaDecision.shouldAvoidGenericFallback,
       },
       operationalResolverFired: false,
       operationalFactGuardReplaced: false,
@@ -1761,6 +2074,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       finalEvidenceGuardChanged: false,
       outboundReason: null,
       outboundRecovered: false,
+      repetitionAudit: anaRepetitionAudit,
     };
 
     const turnAudit = await createAnaTurnAudit({
@@ -1773,7 +2087,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       primaryAxis: anaDecision.primaryAxis,
       responseMode: anaDecision.responseMode,
       evidenceJson: enterpriseEvidence,
-      decisionJson: anaDecision,
+      decisionJson: anaTurnAuditDecisionJson,
       guardsAppliedJson: anaTurnAuditGuardsApplied,
       outboundStatus: 'silent',
       blockedReason: anaDecision.blockedReason,
@@ -2233,20 +2547,23 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         deterministicFallbackReply = isAppointmentContextualQuestion(trimmed)
           ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
           : ANA_FALLBACK_APPOINTMENT_FLOW_REPLY;
-      } else if (requestedAxisForPolicy != null && !evidenceHasAnswer) {
-        deterministicFallbackReply = buildSpecificMissingAxisReply(requestedAxisForPolicy) ?? deterministicFallbackReply;
+      } else if (anaDecision.shouldUseMissingInformationReply && currentAxisForRepetition != null) {
+        deterministicFallbackReply = buildSpecificMissingAxisReply(currentAxisForRepetition) ?? deterministicFallbackReply;
         console.log('[ANA_GENERIC_FALLBACK_DEBUG]', {
           conversationId,
           userMessage: trimmed,
           activeEnterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
           detectedIntent: policyDetectedIntent,
-          requestedAxis: requestedAxisForPolicy,
+          requestedAxis: currentAxisForRepetition,
           ragChunksFound,
           structuredFactsFound,
           evidenceHasAnswer,
           fallbackReason: traceReason,
           genericFallbackBlocked: true,
         });
+      } else if (anaDecision.shouldAvoidGenericFallback && currentAxisForRepetition != null) {
+        deterministicFallbackReply =
+          buildDirectAxisFallbackReply(currentAxisForRepetition);
       }
       structured = { ...structured, reply: deterministicFallbackReply };
       console.log('[ANA_DETERMINISTIC_REPLY]', {
@@ -2297,7 +2614,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     if (anaDecision.shouldUseMissingInformationReply) {
-      const missingAxisReply = buildSpecificMissingAxisReply(requestedAxisForPolicy);
+      const missingAxis = currentAxisForRepetition ?? requestedAxisForPolicy;
+      const repeatedMissingReply =
+        anaDecision.isRepeatOfLastAxis && lastTurnWasMissingInformation
+          ? buildRepeatedMissingAxisReply(missingAxis)
+          : null;
+      const missingAxisReply = repeatedMissingReply ?? buildSpecificMissingAxisReply(missingAxis);
       structured = {
         ...structured,
         reply: missingAxisReply ?? ANA_MISSING_INFORMATION_REPLY,
@@ -2309,13 +2631,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         missingInformationSubject: anaDecision.missingInformationSubject ?? null,
         shouldCreateInfoGapFlag: anaDecision.shouldCreateInfoGapFlag,
       });
-      if (requestedAxisForPolicy != null && missingAxisReply != null) {
+      if (missingAxis != null && missingAxisReply != null) {
         console.log('[ANA_GENERIC_FALLBACK_DEBUG]', {
           conversationId,
           userMessage: trimmed,
           activeEnterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
           detectedIntent: policyDetectedIntent,
-          requestedAxis: requestedAxisForPolicy,
+          requestedAxis: missingAxis,
           ragChunksFound,
           structuredFactsFound,
           evidenceHasAnswer,
@@ -2571,6 +2893,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     {
       const resolution = resolveOperationalFactAnswer(trimmed, knowledgeText, vars, {
         enterpriseName: ent?.name ?? null,
+        hintedTopic:
+          asksForMoreThisTurnNormalized && currentAxisForRepetition === 'lazer'
+            ? 'portaria_lazer'
+            : null,
       });
       if (resolution !== null) {
         operationalResolverFired = true;
@@ -3043,14 +3369,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             conversationMode: mode,
             isFirstAnaReply,
           });
-    if (requestedAxisForPolicy != null && /\bqual ponto pesa mais\b/i.test(finalTextGuard)) {
-      finalTextGuard = buildSpecificMissingAxisReply(requestedAxisForPolicy) ?? finalTextGuard;
+    if (
+      currentAxisForRepetition != null &&
+      anaDecision.shouldAvoidGenericFallback &&
+      (/\bqual ponto pesa mais\b/i.test(finalTextGuard) ||
+        /\bqual informacao voce quer priorizar\b/i.test(normText(finalTextGuard)))
+    ) {
+      finalTextGuard = buildSpecificMissingAxisReply(currentAxisForRepetition) ?? finalTextGuard;
       console.log('[ANA_GENERIC_FALLBACK_DEBUG]', {
         conversationId,
         userMessage: trimmed,
         activeEnterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
         detectedIntent: policyDetectedIntent,
-        requestedAxis: requestedAxisForPolicy,
+        requestedAxis: currentAxisForRepetition,
         ragChunksFound,
         structuredFactsFound,
         evidenceHasAnswer,
@@ -3082,7 +3413,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           userMessage: trimmed,
           knownCustomerName: effectiveConv.customer_name,
           appointmentActive: appointmentPreflight.active || !!openAppointmentSummary,
-          requestedAxis: requestedAxisForPolicy,
+          requestedAxis: currentAxisForRepetition ?? requestedAxisForPolicy,
         });
         if (requestedAxisForPolicy != null && !evidenceHasAnswer) {
           console.log('[ANA_GENERIC_FALLBACK_DEBUG]', {
@@ -3139,6 +3470,179 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     replyText = finalOutboundEval.text;
     anaTurnAuditGuardsApplied.outboundReason = finalOutboundEval.reason;
+    let blockedGenericFallback = false;
+    if (
+      anaDecision.shouldAvoidGenericFallback &&
+      currentAxisForRepetition != null &&
+      hasBlockedGenericFallbackPhrase(replyText)
+    ) {
+      blockedGenericFallback = true;
+      const missingFallback =
+        anaDecision.isRepeatOfLastAxis && lastTurnWasMissingInformation
+          ? buildRepeatedMissingAxisReply(currentAxisForRepetition)
+          : buildSpecificMissingAxisReply(currentAxisForRepetition);
+      const directSanitized = stripGenericAxisFollowupQuestion(replyText);
+      replyText = !evidenceFoundForCurrentAxis
+        ? (missingFallback ?? buildDirectAxisFallbackReply(currentAxisForRepetition))
+        : (directSanitized !== replyText ? directSanitized : buildDirectAxisFallbackReply(currentAxisForRepetition));
+      console.log('[ANA_GENERIC_FALLBACK_BLOCKED]', {
+        conversationId,
+        currentAxis: currentAxisForRepetition,
+        evidenceFound: evidenceFoundForCurrentAxis,
+        replacementPreview: replyText.slice(0, 220),
+      });
+    }
+
+    const recentAssistantReplies = [...rowsBeforeSend]
+      .filter((m) => m.role === 'assistant')
+      .map((m) => (m.content || '').trim())
+      .filter((content) => content.length > 0)
+      .slice(-4);
+    const latestAssistantReply = recentAssistantReplies[recentAssistantReplies.length - 1] ?? '';
+    const sameAxisAsLast =
+      currentAxisForRepetition != null &&
+      anaRepetitionAudit?.lastAxis != null &&
+      currentAxisForRepetition === anaRepetitionAudit.lastAxis;
+    const similarToAnyRecentReply = recentAssistantReplies.some(
+      (prev) => repliesSemanticallySimilar(prev, replyText) || prev === replyText.trim()
+    );
+    let alreadyAnswered = false;
+    let reasonForNotRepeatingAnswer: string | null = null;
+
+    if (latestAssistantReply && sameAxisAsLast) {
+      alreadyAnswered =
+        repliesSemanticallySimilar(latestAssistantReply, replyText) ||
+        latestAssistantReply === replyText.trim();
+    } else if (anaDecision.shouldAvoidGenericFallback && similarToAnyRecentReply) {
+      alreadyAnswered = true;
+      if (currentAxisForRepetition != null) {
+        replyText = !evidenceFoundForCurrentAxis
+          ? (
+              (anaDecision.isRepeatOfLastAxis && lastTurnWasMissingInformation
+                ? buildRepeatedMissingAxisReply(currentAxisForRepetition)
+                : buildSpecificMissingAxisReply(currentAxisForRepetition)) ??
+              buildDirectAxisFallbackReply(currentAxisForRepetition)
+            )
+          : buildDirectAxisFallbackReply(currentAxisForRepetition);
+        reasonForNotRepeatingAnswer = 'duplicate_recent_reply_blocked';
+      }
+    }
+
+    if (sameAxisAsLast && currentAxisForRepetition === 'lazer' && latestAssistantReply) {
+      const previousItems = extractReplyListItems(latestAssistantReply);
+      const candidateItems = extractReplyListItems(replyText);
+      if (previousItems.length > 0 && candidateItems.length > 0) {
+        const previousSet = new Set(previousItems.map((item) => normalizeListItemForCompare(item)));
+        const allAlreadySent = candidateItems.every((item) =>
+          previousSet.has(normalizeListItemForCompare(item))
+        );
+        if (allAlreadySent) alreadyAnswered = true;
+
+        if ((asksForMoreThisTurnNormalized || hasLazerSignal(trimmed)) && alreadyAnswered) {
+          const newItems = candidateItems.filter(
+            (item) => !previousSet.has(normalizeListItemForCompare(item))
+          );
+          replyText =
+            asksForMoreThisTurnNormalized && newItems.length > 0
+              ? buildOnlyNewLazerItemsReply(newItems)
+              : buildNoAdditionalLazerReply();
+          reasonForNotRepeatingAnswer =
+            asksForMoreThisTurnNormalized && newItems.length > 0
+              ? 'provided_only_new_lazer_items'
+              : 'no_additional_lazer_evidence';
+        }
+      } else if ((asksForMoreThisTurnNormalized || hasLazerSignal(trimmed)) && alreadyAnswered) {
+        replyText = buildNoAdditionalLazerReply();
+        reasonForNotRepeatingAnswer = 'no_additional_lazer_evidence';
+      }
+    } else if (sameAxisAsLast && asksForMoreThisTurnNormalized && alreadyAnswered) {
+      const axisLabel = currentAxisForRepetition != null ? axisHumanLabel(currentAxisForRepetition) : 'esse ponto';
+      replyText =
+        `Essas sao as informacoes que tenho cadastradas ate agora sobre ${axisLabel}. Posso te explicar melhor algum ponto especifico?`;
+      reasonForNotRepeatingAnswer = 'no_additional_axis_evidence';
+    }
+
+    let postPolicyReply = stripGenericOperationalOpening(replyText);
+    const directAxisRequested =
+      userAskedDirectOperationalAxis(trimmed, currentAxisForRepetition) &&
+      evidenceFoundForCurrentAxis &&
+      (
+        currentAxisForRepetition === 'lazer' ||
+        currentAxisForRepetition === 'preco' ||
+        currentAxisForRepetition === 'metragem_tipologia' ||
+        currentAxisForRepetition === 'localizacao' ||
+        currentAxisForRepetition === 'financiamento'
+      );
+    if (directAxisRequested) {
+      postPolicyReply = stripGenericAxisFollowupQuestion(postPolicyReply);
+    }
+
+    if (postPolicyReply !== replyText) {
+      const preservePostPolicyLines = /\n\s*(?:[-*•]|\d+[.)])\s+/u.test(postPolicyReply);
+      const limitedPostPolicyReply = preservePostPolicyLines
+        ? postPolicyReply.slice(0, 4000).trim()
+        : applyAnaHardLengthGuard({
+            text: postPolicyReply,
+            enterpriseName: ent?.name ?? null,
+            maxChars: ANA_OUTBOUND_MAX_CHARS,
+            preserveLineBreaks: preservePostPolicyLines,
+          });
+      const postPolicyEval = evaluateAnaOutboundText({
+        reply: limitedPostPolicyReply,
+        technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+        conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+        enterpriseName: ent?.name ?? null,
+      });
+      if (postPolicyEval.valid) {
+        replyText = postPolicyEval.text;
+        anaTurnAuditGuardsApplied.outboundReason = postPolicyEval.reason;
+      }
+    }
+
+    if (anaRepetitionAudit) {
+      if (blockedGenericFallback && !reasonForNotRepeatingAnswer) {
+        reasonForNotRepeatingAnswer = 'generic_fallback_blocked_for_direct_axis';
+      }
+      anaRepetitionAudit = {
+        ...anaRepetitionAudit,
+        alreadyAnswered,
+        reasonForNotRepeatingAnswer,
+      };
+      anaTurnAuditGuardsApplied.repetitionAudit = anaRepetitionAudit;
+      anaTurnAuditDecisionJson = {
+        ...anaTurnAuditDecisionJson,
+        repetitionAudit: anaRepetitionAudit,
+      };
+      console.log('[ANA_REPETITION_AUDIT]', {
+        conversationId,
+        phase: 'final',
+        ...anaRepetitionAudit,
+      });
+    }
+    const turnDecisionAudit = {
+      userMessage: trimmed,
+      detectedIntent: anaDecision.detectedIntent,
+      currentAxis: anaDecision.currentAxis,
+      lastAxis: anaDecision.lastAxis,
+      isDirectInfoRequest: anaDecision.isDirectInfoRequest,
+      isRepeatOfLastAxis: anaDecision.isRepeatOfLastAxis,
+      isAskingForMoreOnSameAxis: anaDecision.isAskingForMoreOnSameAxis,
+      evidenceFound: anaDecision.evidenceFound,
+      responseMode: anaDecision.responseMode,
+      usedFallback: replySource === 'technical_fallback' || anaDecision.shouldUseMissingInformationReply,
+      fallbackReason: fallbackReason ?? (anaDecision.shouldUseMissingInformationReply ? 'policy_missing_information' : null),
+      blockedGenericFallback,
+      finalResponsePreview: replyText.slice(0, 260),
+    };
+    anaTurnAuditGuardsApplied.turnDecisionAudit = turnDecisionAudit;
+    anaTurnAuditDecisionJson = {
+      ...anaTurnAuditDecisionJson,
+      turnDecisionAudit,
+    };
+    console.log('[ANA_TURN_DECISION_AUDIT]', {
+      conversationId,
+      ...turnDecisionAudit,
+    });
 
     anaEngineTrace('final_reply_choice_after', {
       conversationId,
@@ -3306,6 +3810,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           outboundStatus: anaTurnAuditOutcome,
           blockedReason: anaTurnAuditBlockedReason,
           guardsAppliedJson: anaTurnAuditGuardsApplied,
+          decisionJson: anaTurnAuditDecisionJson,
           missingInformationFlagCreated: anaTurnAuditMissingInformationFlagCreated,
           missingInformationSubject: anaTurnAuditMissingInformationSubject,
         });
@@ -3319,3 +3824,5 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
   }
 }
+
+
