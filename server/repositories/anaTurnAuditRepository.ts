@@ -14,6 +14,7 @@ export interface AnaTurnAuditRow {
   conversation_id: number;
   message_id: number | null;
   enterprise_id: number | null;
+  contact_id: number | null;
   user_message: string;
   resolved_intent: string | null;
   resolved_product_type: string | null;
@@ -22,6 +23,7 @@ export interface AnaTurnAuditRow {
   evidence_json: unknown;
   decision_json: unknown;
   guards_applied_json: unknown;
+  diagnostics_json: unknown;
   outbound_status: AnaTurnAuditOutboundStatus;
   blocked_reason: string | null;
   missing_information_flag_created: boolean;
@@ -34,6 +36,7 @@ export interface CreateAnaTurnAuditInput {
   conversationId: number;
   messageId?: number | null;
   enterpriseId?: number | null;
+  contactId?: number | null;
   userMessage: string;
   resolvedIntent?: string | null;
   resolvedProductType?: string | null;
@@ -42,6 +45,7 @@ export interface CreateAnaTurnAuditInput {
   evidenceJson?: unknown;
   decisionJson?: unknown;
   guardsAppliedJson?: unknown;
+  diagnosticsJson?: unknown;
   outboundStatus?: AnaTurnAuditOutboundStatus;
   blockedReason?: string | null;
   missingInformationFlagCreated?: boolean;
@@ -53,6 +57,7 @@ export interface UpdateAnaTurnAuditOutcomeInput {
   blockedReason?: string | null;
   guardsAppliedJson?: unknown;
   decisionJson?: unknown;
+  diagnosticsJson?: unknown;
   missingInformationFlagCreated?: boolean;
   missingInformationSubject?: string | null;
 }
@@ -69,6 +74,7 @@ export async function createAnaTurnAudit(
        conversation_id,
        message_id,
        enterprise_id,
+       contact_id,
        user_message,
        resolved_intent,
        resolved_product_type,
@@ -77,19 +83,21 @@ export async function createAnaTurnAudit(
        evidence_json,
        decision_json,
        guards_applied_json,
+       diagnostics_json,
        outbound_status,
        blocked_reason,
        missing_information_flag_created,
        missing_information_subject
      ) VALUES (
-       $1, $2, $3, $4, $5, $6, $7, $8,
-       $9::jsonb, $10::jsonb, $11::jsonb, $12, $13, $14, $15
+       $1, $2, $3, $4, $5, $6, $7, $8, $9,
+       $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15, $16, $17
      )
      RETURNING *`,
     [
       input.conversationId,
       input.messageId ?? null,
       input.enterpriseId ?? null,
+      input.contactId ?? null,
       input.userMessage,
       input.resolvedIntent ?? null,
       input.resolvedProductType ?? null,
@@ -98,6 +106,7 @@ export async function createAnaTurnAudit(
       toJsonString(input.evidenceJson),
       toJsonString(input.decisionJson),
       toJsonString(input.guardsAppliedJson),
+      toJsonString(input.diagnosticsJson),
       input.outboundStatus ?? 'silent',
       input.blockedReason ?? null,
       input.missingInformationFlagCreated === true,
@@ -144,6 +153,10 @@ export async function updateAnaTurnAuditOutcome(
   if (input.decisionJson !== undefined) {
     sets.push(`decision_json = $${i++}::jsonb`);
     values.push(toJsonString(input.decisionJson));
+  }
+  if (input.diagnosticsJson !== undefined) {
+    sets.push(`diagnostics_json = $${i++}::jsonb`);
+    values.push(toJsonString(input.diagnosticsJson));
   }
   if (input.missingInformationFlagCreated !== undefined) {
     sets.push(`missing_information_flag_created = $${i++}`);

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getOpenAIConfig, getOpenAIConfigPublic, updateOpenAIConfig } from '../repositories/openaiConfigRepository.js';
+import { runAnaOpenAIDiagnostic } from '../services/anaOpenAIDiagnosticService.js';
 import { openAISettingUpdateSchema } from '../validators/ai.js';
 
 const router = Router();
@@ -78,6 +79,26 @@ router.post('/ai/test', async (_req, res) => {
     console.error('[Settings] POST ai/test:', e);
     const msg = e instanceof Error ? e.message : 'Erro ao testar.';
     res.status(500).json({ success: false, error: msg });
+  }
+});
+
+router.post('/ai/diagnostics/ana/openai', async (_req, res) => {
+  try {
+    const result = await runAnaOpenAIDiagnostic();
+    return res.json(result);
+  } catch (e) {
+    console.error('[Settings] POST ai/diagnostics/ana/openai:', e);
+    const msg = e instanceof Error ? e.message : 'Erro ao diagnosticar provider da Ana.';
+    return res.status(500).json({
+      ok: false,
+      provider: 'unknown',
+      model: null,
+      status: null,
+      classifiedError: 'UNKNOWN_RUNTIME_ERROR',
+      sanitizedMessage: msg,
+      canGenerate: false,
+      recommendation: 'Revise o servidor e tente novamente.',
+    });
   }
 });
 

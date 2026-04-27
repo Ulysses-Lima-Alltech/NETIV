@@ -178,6 +178,19 @@ export async function replaceEnterpriseFileChunks(
   return chunks.length;
 }
 
+type RankedChunkRow = {
+  content: string;
+  original_name: string;
+  chunk_index: number;
+  knowledge_block: KnowledgeBlock | null;
+  block_priority: number | null;
+  city_hint: string | null;
+  intent_tags: string[] | null;
+  temporal_status: TemporalStatus | null;
+  source_confidence: number | null;
+  source_priority: number | null;
+};
+
 /**
  * Recupera trechos do book/documentos alinhados à mensagem atual (sobreposição lexical).
  * Só inclui arquivos ativos marcados como base de conhecimento.
@@ -187,33 +200,25 @@ export async function loadRankedKnowledgeChunksForPrompt(
   hintText: string,
   opts?: { targetCity?: string | null }
 ): Promise<string> {
+  const result = await loadRankedKnowledgeChunksForPromptWithMeta(enterpriseId, hintText, opts);
+  return result.promptText;
+}
+
+export async function loadRankedKnowledgeChunksForPromptWithMeta(
+  enterpriseId: number,
+  hintText: string,
+  opts?: { targetCity?: string | null }
+): Promise<{
+  promptText: string;
+  selectedChunkCount: number;
+  sourceFiles: string[];
+  retrievalError: string | null;
+}> {
   const profile = detectQuestionProfile(hintText);
   const hintWords = normWords(hintText);
-  let rows: Array<{
-    content: string;
-    original_name: string;
-    chunk_index: number;
-    knowledge_block: KnowledgeBlock | null;
-    block_priority: number | null;
-    city_hint: string | null;
-    intent_tags: string[] | null;
-    temporal_status: TemporalStatus | null;
-    source_confidence: number | null;
-    source_priority: number | null;
-  }> = [];
+  let rows: RankedChunkRow[] = [];
   try {
-    const q = await query<{
-      content: string;
-      original_name: string;
-      chunk_index: number;
-      knowledge_block: KnowledgeBlock | null;
-      block_priority: number | null;
-      city_hint: string | null;
-      intent_tags: string[] | null;
-      temporal_status: TemporalStatus | null;
-      source_confidence: number | null;
-      source_priority: number | null;
-    }>(
+    const q = await query<RankedChunkRow>(
       `SELECT c.content, c.chunk_index, f.original_name,
               c.knowledge_block, c.block_priority, c.city_hint, c.intent_tags, c.temporal_status, c.source_confidence,
               COALESCE(v.source_priority, 0) AS source_priority
@@ -236,14 +241,27 @@ export async function loadRankedKnowledgeChunksForPrompt(
     );
     rows = q.rows;
   } catch (error) {
+    const retrievalError = error instanceof Error ? error.message : String(error);
     console.error('[KNOWLEDGE_CHUNKS_QUERY_FAILED]', {
       enterpriseId,
-      error: error instanceof Error ? error.message : String(error),
+      error: retrievalError,
       message: 'Consulta S3-only de chunks falhou; nenhum fallback legado será aplicado.',
     });
-    rows = [];
+    return {
+      promptText: '',
+      selectedChunkCount: 0,
+      sourceFiles: [],
+      retrievalError,
+    };
   }
-  if (rows.length === 0) return '';
+  if (rows.length === 0) {
+    return {
+      promptText: '',
+      selectedChunkCount: 0,
+      sourceFiles: [],
+      retrievalError: null,
+    };
+  }
 
   const scored = rows.map((r, i) => ({
     ...r,
@@ -260,6 +278,7 @@ export async function loadRankedKnowledgeChunksForPrompt(
   if (hintWords.size > 0) scored.sort((a, b) => b.score - a.score || a.dbOrder - b.dbOrder);
 
   const used = new Set<string>();
+  const sourceFiles = new Set<string>();
   const byBlock: Record<KnowledgeBlock, string[]> = {
     ana_rules: [],
     variable_data: [],
@@ -284,6 +303,7 @@ export async function loadRankedKnowledgeChunksForPrompt(
     if (n + piece.length > MAX_CONTEXT_CHARS) return false;
     const block = r.knowledge_block ?? 'facts';
     byBlock[block].push(piece);
+    sourceFiles.add(r.original_name);
     n += piece.length;
     return true;
   };
@@ -307,16 +327,21 @@ export async function loadRankedKnowledgeChunksForPrompt(
   }
   const parts: string[] = [];
   const order: Array<[KnowledgeBlock, string]> = [
-    ['ana_rules', 'BLOCO 4 — REGRAS DA ANA'],
-    ['variable_data', 'BLOCO 3 — DADOS VARIAVEIS'],
-    ['commercial_intent', 'BLOCO 2 — INTENCOES COMERCIAIS'],
-    ['facts', 'BLOCO 1 — FATOS DO EMPREENDIMENTO'],
+    ['ana_rules', 'BLOCO 4 - REGRAS DA ANA'],
+    ['variable_data', 'BLOCO 3 - DADOS VARIAVEIS'],
+    ['commercial_intent', 'BLOCO 2 - INTENCOES COMERCIAIS'],
+    ['facts', 'BLOCO 1 - FATOS DO EMPREENDIMENTO'],
   ];
   for (const [block, title] of order) {
     if (byBlock[block].length === 0) continue;
     parts.push(`\n### ${title}\n${byBlock[block].join('\n')}`);
   }
-  return parts.join('\n').trim();
+  return {
+    promptText: parts.join('\n').trim(),
+    selectedChunkCount: used.size,
+    sourceFiles: Array.from(sourceFiles),
+    retrievalError: null,
+  };
 }
 
 export { splitTextIntoChunks };

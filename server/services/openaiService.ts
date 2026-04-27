@@ -1,3 +1,11 @@
+import {
+  classifyLlmProviderError,
+  detectLlmProvider,
+  sanitizeProviderErrorMessage,
+  type LlmClassifiedError,
+  type LlmProvider,
+} from '../utils/llmProviderDiagnostics.js';
+
 const REQUEST_TIMEOUT_MS = 30000;
 
 export interface ChatMessage {
@@ -22,11 +30,17 @@ export interface GenerateCompletionResult {
   error?: string;
   /** Status HTTP quando a API retornou corpo de erro (diagnóstico). */
   httpStatus?: number;
+  provider?: LlmProvider;
+  model?: string;
+  errorCode?: string | null;
+  errorType?: string | null;
+  classifiedError?: LlmClassifiedError | null;
 }
 
 export async function generateChatCompletion(params: GenerateCompletionParams): Promise<GenerateCompletionResult> {
   const { apiKey, baseUrl, model, messages, temperature, maxTokens, responseFormatJson } = params;
   const url = (baseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '') + '/chat/completions';
+  const provider = detectLlmProvider(baseUrl);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -66,10 +80,30 @@ export async function generateChatCompletion(params: GenerateCompletionParams): 
 
     if (!res.ok) {
       const e = data.error;
-      const parts = [e?.message, e?.code && `code=${e.code}`, e?.type && `type=${e.type}`].filter(Boolean);
-      const msg = parts.length > 0 ? parts.join(' | ') : `Erro HTTP ${res.status}`;
-      console.error('[OpenAI] API error', { status: res.status, message: msg, model });
-      return { success: false, error: msg, httpStatus: res.status };
+      const classified = classifyLlmProviderError({
+        provider,
+        httpStatus: res.status,
+        providerErrorCode: e?.code ?? null,
+        providerErrorType: e?.type ?? null,
+        message: e?.message ?? `Erro HTTP ${res.status}`,
+      });
+      console.error('[OpenAI] API error', {
+        status: res.status,
+        message: classified.sanitizedMessage,
+        model,
+        provider,
+        classifiedError: classified.classifiedError,
+      });
+      return {
+        success: false,
+        error: classified.sanitizedMessage,
+        httpStatus: res.status,
+        provider,
+        model,
+        errorCode: classified.providerErrorCode,
+        errorType: classified.providerErrorType,
+        classifiedError: classified.classifiedError,
+      };
     }
 
     const content = data.choices?.[0]?.message?.content?.trim();
@@ -78,14 +112,35 @@ export async function generateChatCompletion(params: GenerateCompletionParams): 
       console.error('[OpenAI] resposta sem content (choices vazio ou null)', { model, preview });
       return {
         success: false,
-        error: `Resposta vazia da API. preview=${preview.slice(0, 280)}`,
+        error: sanitizeProviderErrorMessage(`Resposta vazia da API. preview=${preview.slice(0, 280)}`),
+        provider,
+        model,
+        classifiedError: 'UNKNOWN_LLM_ERROR',
       };
     }
-    return { success: true, content };
+    return { success: true, content, httpStatus: res.status, provider, model };
   } catch (e) {
     clearTimeout(timeout);
     const msg = e instanceof Error ? e.message : String(e);
-    console.error('[OpenAI] Request failed:', msg);
-    return { success: false, error: msg };
+    const classified = classifyLlmProviderError({
+      provider,
+      httpStatus: null,
+      message: msg,
+    });
+    console.error('[OpenAI] Request failed:', {
+      message: classified.sanitizedMessage,
+      provider,
+      model,
+      classifiedError: classified.classifiedError,
+    });
+    return {
+      success: false,
+      error: classified.sanitizedMessage,
+      provider,
+      model,
+      errorCode: classified.providerErrorCode,
+      errorType: classified.providerErrorType,
+      classifiedError: classified.classifiedError,
+    };
   }
 }

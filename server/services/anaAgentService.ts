@@ -713,7 +713,7 @@ ${buildCustomerNameInstructions(opts)}`;
   if (opts.mode === 'triage' || !opts.enterprise) {
     return `${base}
 
-${persisted}${validatedEvidence}${locationHint ? `${locationHint}\n\n` : ''}${commercialBlock ? `${commercialBlock}\n\n` : ''}PORTFÓLIO (nomes permitidos neste contexto — tipo de interesse: ${triageType}): ${namesList}
+${persisted}${validatedEvidence}${locationHint ? `${locationHint}\n\n` : ''}${commercialBlock ? `${commercialBlock}\n\n` : ''}${know ? `${know}\n\n` : ''}PORTFÓLIO (nomes permitidos neste contexto — tipo de interesse: ${triageType}): ${namesList}
 Classificação (referência): "${cls}".
 ${openCtx}${appointmentHint}
 ${buildFirstReplyCommercialOpeningInstructions(opts)}
