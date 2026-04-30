@@ -9,6 +9,7 @@ import { parseCommercialFlowState, type CommercialFlowState } from '../utils/com
 import { normalizePhoneE164 } from '../utils/phone.js';
 import {
   assignContactToConversation,
+  findContactById,
   findOrCreateContactByPhone,
   syncConversationOwnerFromContact,
   trySyncContactEnterpriseFromLinkedConversations,
@@ -593,7 +594,11 @@ export async function updateClassification(
     const row = rows[0] ?? null;
     if (row) {
       if (handoff) {
-        notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row));
+        const contact = row.contact_id != null ? await findContactById(row.contact_id) : null;
+        notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row, {
+          whatsappDisplayName: row.whatsapp_display_name ?? null,
+          contactFullName: contact?.full_name ?? null,
+        }));
         await assignBrokerForHandoffConversation(conversationId);
       }
       if (row.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(row.contact_id);
@@ -640,7 +645,11 @@ export async function updateClassification(
   const row = rows[0] ?? null;
   if (row) {
     if (handoff) {
-      notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row));
+      const contact = row.contact_id != null ? await findContactById(row.contact_id) : null;
+      notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row, {
+        whatsappDisplayName: row.whatsapp_display_name ?? null,
+        contactFullName: contact?.full_name ?? null,
+      }));
       await assignBrokerForHandoffConversation(conversationId);
     }
     if (row.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(row.contact_id);
@@ -657,7 +666,15 @@ export async function setConversationEnterpriseId(
     if (!ok) return null;
   }
   const { rows } = await query<ConversationRow>(
-    `UPDATE conversations SET enterprise_id = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+    `UPDATE conversations
+      SET enterprise_id = $1,
+          synced_to_django_at = CASE
+            WHEN enterprise_id IS DISTINCT FROM $1 THEN NULL
+            ELSE synced_to_django_at
+          END,
+          updated_at = NOW()
+    WHERE id = $2
+    RETURNING *`,
     [enterpriseId, conversationId]
   );
   const row = rows[0];

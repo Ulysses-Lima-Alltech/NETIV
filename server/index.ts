@@ -12,6 +12,7 @@ import { bootstrapFirstAdmin } from './bootstrap/adminBootstrap.js';
 import { processDueDeferredHandoffs } from './repositories/conversationRepository.js';
 import { processAnaReengagementScan } from './services/anaReengagementService.js';
 import { syncAllConversationOwnersFromContacts } from './repositories/contactsRepository.js';
+import { runDjangoSyncWorker } from './services/djangoSyncWorker.js';
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -80,6 +81,9 @@ initPostgres()
     setInterval(() => {
       void processAnaReengagementScan().catch((err) => console.error('[ana reengage]', err));
     }, 300_000);
+    setInterval(() => {
+      void runDjangoSyncWorker().catch((err) => console.error('[django sync]', err));
+    }, 10_000);
   })
   .catch((e) => {
     console.error('[startup]', e);
