@@ -1,5 +1,9 @@
 import { query } from '../db/pg.js';
 import type { AnaDecisionResponseMode } from '../utils/anaDecisionPolicy.js';
+import type {
+  EnterpriseResolutionCandidate,
+  EnterpriseResolutionSource,
+} from './enterpriseMatch.js';
 
 export type AnaTurnAuditOutboundStatus =
   | 'sent'
@@ -28,6 +32,12 @@ export interface AnaTurnAuditRow {
   blocked_reason: string | null;
   missing_information_flag_created: boolean;
   missing_information_subject: string | null;
+  enterprise_resolution_source: EnterpriseResolutionSource | null;
+  resolved_enterprise_id: number | null;
+  resolved_enterprise_name: string | null;
+  enterprise_candidates: unknown;
+  rag_was_loaded: boolean;
+  reason_when_no_enterprise: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -50,6 +60,12 @@ export interface CreateAnaTurnAuditInput {
   blockedReason?: string | null;
   missingInformationFlagCreated?: boolean;
   missingInformationSubject?: string | null;
+  enterpriseResolutionSource?: EnterpriseResolutionSource | null;
+  resolvedEnterpriseId?: number | null;
+  resolvedEnterpriseName?: string | null;
+  enterpriseCandidates?: EnterpriseResolutionCandidate[];
+  ragWasLoaded?: boolean;
+  reasonWhenNoEnterprise?: string | null;
 }
 
 export interface UpdateAnaTurnAuditOutcomeInput {
@@ -60,6 +76,12 @@ export interface UpdateAnaTurnAuditOutcomeInput {
   diagnosticsJson?: unknown;
   missingInformationFlagCreated?: boolean;
   missingInformationSubject?: string | null;
+  enterpriseResolutionSource?: EnterpriseResolutionSource | null;
+  resolvedEnterpriseId?: number | null;
+  resolvedEnterpriseName?: string | null;
+  enterpriseCandidates?: EnterpriseResolutionCandidate[];
+  ragWasLoaded?: boolean;
+  reasonWhenNoEnterprise?: string | null;
 }
 
 function toJsonString(payload: unknown): string {
@@ -87,10 +109,17 @@ export async function createAnaTurnAudit(
        outbound_status,
        blocked_reason,
        missing_information_flag_created,
-       missing_information_subject
+       missing_information_subject,
+       enterprise_resolution_source,
+       resolved_enterprise_id,
+       resolved_enterprise_name,
+       enterprise_candidates,
+       rag_was_loaded,
+       reason_when_no_enterprise
      ) VALUES (
        $1, $2, $3, $4, $5, $6, $7, $8, $9,
-       $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15, $16, $17
+       $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15, $16, $17,
+       $18, $19, $20, $21::jsonb, $22, $23
      )
      RETURNING *`,
     [
@@ -111,6 +140,12 @@ export async function createAnaTurnAudit(
       input.blockedReason ?? null,
       input.missingInformationFlagCreated === true,
       input.missingInformationSubject ?? null,
+      input.enterpriseResolutionSource ?? null,
+      input.resolvedEnterpriseId ?? input.enterpriseId ?? null,
+      input.resolvedEnterpriseName ?? null,
+      toJsonString(input.enterpriseCandidates ?? []),
+      input.ragWasLoaded === true,
+      input.reasonWhenNoEnterprise ?? null,
     ]
   );
   return rows[0];
@@ -165,6 +200,30 @@ export async function updateAnaTurnAuditOutcome(
   if (input.missingInformationSubject !== undefined) {
     sets.push(`missing_information_subject = $${i++}`);
     values.push(input.missingInformationSubject);
+  }
+  if (input.enterpriseResolutionSource !== undefined) {
+    sets.push(`enterprise_resolution_source = $${i++}`);
+    values.push(input.enterpriseResolutionSource);
+  }
+  if (input.resolvedEnterpriseId !== undefined) {
+    sets.push(`resolved_enterprise_id = $${i++}`);
+    values.push(input.resolvedEnterpriseId);
+  }
+  if (input.resolvedEnterpriseName !== undefined) {
+    sets.push(`resolved_enterprise_name = $${i++}`);
+    values.push(input.resolvedEnterpriseName);
+  }
+  if (input.enterpriseCandidates !== undefined) {
+    sets.push(`enterprise_candidates = $${i++}::jsonb`);
+    values.push(toJsonString(input.enterpriseCandidates));
+  }
+  if (input.ragWasLoaded !== undefined) {
+    sets.push(`rag_was_loaded = $${i++}`);
+    values.push(input.ragWasLoaded === true);
+  }
+  if (input.reasonWhenNoEnterprise !== undefined) {
+    sets.push(`reason_when_no_enterprise = $${i++}`);
+    values.push(input.reasonWhenNoEnterprise);
   }
 
   const { rows } = await query<AnaTurnAuditRow>(

@@ -28,6 +28,8 @@ import {
   explainEnterpriseMentionMatch,
   enterpriseHasStrongNameSignalInTrimmed,
   debugEnterpriseMentionScores,
+  resolveEnterpriseForAnaTurn,
+  type AnaEnterpriseResolution,
 } from '../repositories/enterpriseMatch.js';
 import {
   getActiveEnterpriseById,
@@ -873,6 +875,22 @@ function userExplicitlyAskedPriceInCurrentTurn(message: string): boolean {
   return explicitAskPatterns.some((re) => re.test(n));
 }
 
+function buildNoEnterpriseResolvedReply(userMessage: string): string {
+  return userExplicitlyAskedPriceInCurrentTurn(userMessage)
+    ? 'Claro. De qual empreendimento você quer saber os valores?'
+    : 'Oi! Sou a Ana. Sobre qual empreendimento você quer informações?';
+}
+
+function buildAmbiguousEnterpriseReply(candidates: AnaEnterpriseResolution['candidates']): string {
+  const names = candidates.map((candidate) => candidate.enterpriseName).filter(Boolean);
+  if (names.length === 0) return 'Sobre qual empreendimento você quer informações?';
+  const formatted =
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(', ')} ou ${names[names.length - 1]}`;
+  return `Encontrei mais de uma possibilidade: ${formatted}. Qual desses empreendimentos você quer conhecer?`;
+}
+
 function looksLikeStandaloneNameReply(message: string): boolean {
   const t = (message || '').trim();
   if (!t || t.length > 40 || t.includes('?') || t.includes('@')) return false;
@@ -1447,6 +1465,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   let anaRepetitionAudit: AnaAxisRepetitionAuditSnapshot | null = null;
   let anaTurnAuditMissingInformationFlagCreated = false;
   let anaTurnAuditMissingInformationSubject: string | null = null;
+  let anaEnterpriseResolutionForAudit: AnaEnterpriseResolution = {
+    source: 'unresolved',
+    enterpriseId: null,
+    enterpriseName: null,
+    candidates: [],
+    reasonWhenNoEnterprise: null,
+  };
+  let anaRagWasLoadedForAudit = false;
   let anaTurnDiagnostics: AnaTurnDiagnostics = createAnaTurnDiagnostics({});
   try {
     console.log('[ANA_PIPELINE] engine_start', {
@@ -1742,41 +1768,129 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
     const allActiveEnterprises = await listEnterprises(true);
-    let enterpriseSourceForAudit: 'conversation' | 'contact' | 'contact_interest' | 'inferred' | 'none' =
-      effectiveConv.enterprise_id != null ? 'conversation' : 'none';
-    if (effectiveConv.enterprise_id == null && effectiveConv.contact_id != null) {
-      const linkedContact = await findContactById(effectiveConv.contact_id);
-      let contactEnterpriseId: number | null = null;
-      if (linkedContact?.enterprise_id != null) {
-        contactEnterpriseId =
-          allActiveEnterprises.some((item) => item.id === linkedContact.enterprise_id)
-            ? linkedContact.enterprise_id
-            : null;
-        if (contactEnterpriseId != null) enterpriseSourceForAudit = 'contact';
+    const linkedContact =
+      effectiveConv.contact_id != null ? await findContactById(effectiveConv.contact_id) : null;
+    let enterpriseResolution = await resolveEnterpriseForAnaTurn({
+      userMessage: trimmed,
+      activeEnterprises: allActiveEnterprises,
+      conversationEnterpriseId: effectiveConv.enterprise_id,
+      campaignEnterpriseId: effectiveConv.enterprise_origin_id ?? null,
+      contactEnterpriseId: linkedContact?.enterprise_id ?? null,
+    });
+    anaEnterpriseResolutionForAudit = enterpriseResolution;
+    if (
+      enterpriseResolution.enterpriseId != null &&
+      effectiveConv.enterprise_id !== enterpriseResolution.enterpriseId
+    ) {
+      const updated = await setConversationEnterpriseId(conversationId, enterpriseResolution.enterpriseId);
+      if (updated) {
+        effectiveConv = updated;
+        conv = updated;
+        flowStateParsed = parseCommercialFlowState(updated.commercial_flow_state) ?? flowStateParsed;
       }
-      if (contactEnterpriseId == null && linkedContact?.enterprise_interest) {
-        const inferredId = tryMatchEnterpriseFromUserCorpus(linkedContact.enterprise_interest, allActiveEnterprises);
-        if (inferredId != null) {
-          contactEnterpriseId = inferredId;
-          enterpriseSourceForAudit = 'contact_interest';
-        }
-      }
-      if (contactEnterpriseId != null) {
-        const updated = await setConversationEnterpriseId(conversationId, contactEnterpriseId);
-        if (updated) {
-          effectiveConv = updated;
-          conv = updated;
-          flowStateParsed = parseCommercialFlowState(updated.commercial_flow_state) ?? flowStateParsed;
-        }
-      }
-      console.log('[ANA_ENTERPRISE_RESOLUTION]', {
-        conversationId,
-        contactId: effectiveConv.contact_id ?? null,
-        enterpriseId: effectiveConv.enterprise_id ?? null,
-        enterpriseSource: enterpriseSourceForAudit,
-      });
     }
+    console.log('[ANA_ENTERPRISE_RESOLUTION]', {
+      conversationId,
+      contactId: effectiveConv.contact_id ?? null,
+      enterpriseResolutionSource: enterpriseResolution.source,
+      resolvedEnterpriseId: enterpriseResolution.enterpriseId,
+      resolvedEnterpriseName: enterpriseResolution.enterpriseName,
+      enterpriseCandidates: enterpriseResolution.candidates,
+      reasonWhenNoEnterprise: enterpriseResolution.reasonWhenNoEnterprise,
+    });
+    let enterpriseSourceForAudit: string = enterpriseResolution.source;
     const fullUserUtterances = buildUserUtterancesContext(rows);
+    const lastUserRowForLog = [...rows].reverse().find((r) => r.role === 'user');
+    const inboundMetaMessageId = lastUserRowForLog?.meta_message_id ?? inboundMetaFromCtx ?? null;
+
+    if (enterpriseResolution.source === 'ambiguous' || enterpriseResolution.source === 'unresolved') {
+      const deterministicReply =
+        enterpriseResolution.source === 'ambiguous'
+          ? buildAmbiguousEnterpriseReply(enterpriseResolution.candidates)
+          : buildNoEnterpriseResolvedReply(trimmed);
+      anaTurnDiagnostics.rag.consulted = false;
+      anaTurnDiagnostics.rag.enterpriseResolved = false;
+      anaTurnDiagnostics.rag.enterpriseId = null;
+      anaTurnDiagnostics.rag.includedInPrompt = false;
+      anaTurnDiagnostics.rag.reason =
+        enterpriseResolution.source === 'ambiguous'
+          ? 'RAG_NO_ENTERPRISE_LINK_AMBIGUOUS'
+          : 'RAG_NO_ENTERPRISE_LINK';
+      markAnaTurnStage(
+        anaTurnDiagnostics,
+        'enterprise_resolution',
+        enterpriseResolution.source === 'ambiguous' ? 'failed' : 'skipped',
+        {
+          source: enterpriseResolution.source,
+          candidates: enterpriseResolution.candidates,
+          reasonWhenNoEnterprise: enterpriseResolution.reasonWhenNoEnterprise,
+        }
+      );
+      markAnaTurnStage(anaTurnDiagnostics, 'rag_retrieval', 'skipped', {
+        reason: anaTurnDiagnostics.rag.reason,
+      });
+      const turnAudit = await createAnaTurnAudit({
+        conversationId,
+        messageId: lastUserRowForLog?.id ?? null,
+        enterpriseId: null,
+        contactId: effectiveConv.contact_id ?? null,
+        userMessage: trimmed,
+        resolvedIntent: enterpriseResolution.source,
+        resolvedProductType: null,
+        primaryAxis: null,
+        responseMode: 'short',
+        evidenceJson: {},
+        decisionJson: { enterpriseResolution },
+        guardsAppliedJson: { enterpriseResolutionGuard: true },
+        diagnosticsJson: anaTurnDiagnostics,
+        outboundStatus: 'silent',
+        blockedReason: null,
+        missingInformationFlagCreated: false,
+        missingInformationSubject: null,
+        enterpriseResolutionSource: enterpriseResolution.source,
+        resolvedEnterpriseId: null,
+        resolvedEnterpriseName: null,
+        enterpriseCandidates: enterpriseResolution.candidates,
+        ragWasLoaded: false,
+        reasonWhenNoEnterprise: enterpriseResolution.reasonWhenNoEnterprise,
+      });
+      anaTurnAuditId = turnAudit.id;
+      anaTurnAuditDecisionJson = { enterpriseResolution };
+      anaTurnAuditGuardsApplied = { enterpriseResolutionGuard: true };
+      anaTurnAuditMissingInformationFlagCreated = false;
+      anaTurnAuditMissingInformationSubject = null;
+
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_enterprise_clarification';
+        anaTurnDiagnostics.finalResponse.replySource = 'enterprise_resolution_clarification';
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        return;
+      }
+      const sendClarification = await sendTextMessage(toPhoneNumber, deterministicReply);
+      if (sendClarification.success && sendClarification.metaMessageId) {
+        await insertMessage(conversationId, 'assistant', deterministicReply, sendClarification.metaMessageId);
+        anaTurnAuditOutcome = 'sent';
+        anaTurnAuditBlockedReason = null;
+        anaTurnDiagnostics.finalResponse.replySource = 'enterprise_resolution_clarification';
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
+          replySource: 'enterprise_resolution_clarification',
+          outboundStatus: anaTurnAuditOutcome,
+        });
+      } else {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'enterprise_resolution_clarification_send_failed';
+        anaTurnDiagnostics.finalResponse.replySource = 'enterprise_resolution_clarification';
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+          replySource: 'enterprise_resolution_clarification',
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: anaTurnAuditBlockedReason,
+        });
+      }
+      return;
+    }
     const currentFocusedEnterprise =
       effectiveConv.enterprise_id != null ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;
     const flowHintEnterpriseId =
@@ -1821,7 +1935,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       allActiveEnterprises
     );
 
-    const globalMatchId = tryMatchEnterpriseFromUserCorpus(userMessageForReasoning, allActiveEnterprises);
+    const globalMatchId =
+      enterpriseResolution.source === 'message_alias' ? enterpriseResolution.enterpriseId : null;
     const mentionExplain = explainEnterpriseMentionMatch(
       userMessageForReasoning,
       allActiveEnterprises,
@@ -1846,14 +1961,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     let scopeMutated = false;
-    const entFocusForScope =
-      effectiveConv.enterprise_id != null ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;
+    const entFocusForScope = (
+      effectiveConv.enterprise_id != null ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null
+    ) as EnterpriseRow;
     if (globalMatchId != null && effectiveConv.enterprise_id == null) {
       await setConversationEnterpriseId(conversationId, globalMatchId);
       enterpriseSourceForAudit = 'inferred';
       await mergeConversationCommercialFlowState(conversationId, resetCommercialScopeHints(flowStateParsed));
       scopeMutated = true;
-    } else if (entFocusForScope) {
+    } else if (false && entFocusForScope) {
       const explicitEnterpriseAsk = userAskedAboutSpecificEnterprise(userMessageForReasoning);
       const userStillRefersToCurrentFocus = enterpriseHasStrongNameSignalInTrimmed(
         entFocusForScope.id,
@@ -1884,6 +2000,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         await mergeConversationCommercialFlowState(conversationId, resetCommercialScopeHints(flowStateParsed));
         scopeMutated = true;
       }
+    }
+    if (enterpriseResolution.source === 'message_alias') {
+      await mergeConversationCommercialFlowState(conversationId, resetCommercialScopeHints(flowStateParsed));
+      scopeMutated = true;
     }
     if (scopeMutated) {
       const refreshed = await getConversationById(conversationId);
@@ -2009,12 +2129,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let ragChunksFound = 0;
     let ragRetrievalError: string | null = null;
     const ragSourceFiles = new Set<string>();
-    const knowledgeIds =
-      ent != null
-        ? [ent.id]
-        : enterprisesPool.length <= 6
-          ? enterprisesPool.map((e) => e.id)
-          : enterprisesPool.slice(0, 4).map((e) => e.id);
+    const knowledgeIds = ent != null ? [ent.id] : [];
     for (const eid of knowledgeIds) {
       const row = allActiveEnterprises.find((x) => x.id === eid);
       if (!row) continue;
@@ -2033,6 +2148,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (merged.trim()) knowledgeParts.push(`--- ${row.name} ---\n${merged}`);
     }
     const knowledgeText = knowledgeParts.join('\n\n').slice(0, 52_000);
+    anaRagWasLoadedForAudit = knowledgeText.trim().length > 0;
 
     let fileInventory = '';
     let hasSendableFiles = false;
@@ -2145,9 +2261,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }`,
       `tipo_interesse_inferido_hint: ${triageRequestedProductType}`,
     ].join('\n');
-
-    const lastUserRowForLog = [...rows].reverse().find((r) => r.role === 'user');
-    const inboundMetaMessageId = lastUserRowForLog?.meta_message_id ?? inboundMetaFromCtx ?? null;
 
     const history =
       trailingUserBubbles != null && trailingUserBubbles > 1
@@ -2321,6 +2434,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       blockedReason: anaDecision.blockedReason,
       missingInformationFlagCreated: anaDecision.shouldCreateInfoGapFlag,
       missingInformationSubject: anaDecision.missingInformationSubject ?? null,
+      enterpriseResolutionSource: enterpriseResolution.source,
+      resolvedEnterpriseId: ent?.id ?? null,
+      resolvedEnterpriseName: ent?.name ?? null,
+      enterpriseCandidates: enterpriseResolution.candidates,
+      ragWasLoaded: knowledgeText.trim().length > 0,
+      reasonWhenNoEnterprise: enterpriseResolution.reasonWhenNoEnterprise,
     });
     anaTurnAuditId = turnAudit.id;
 
@@ -3307,27 +3426,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     if (structured.project?.trim()) {
-      const pid = tryMatchEnterpriseFromUserCorpus(structured.project.trim(), allActiveEnterprises);
-      if (pid != null) {
-        if (effectiveConv.enterprise_id !== pid) {
-          await setConversationEnterpriseId(conversationId, pid);
-          effectiveConv = (await getConversationById(conversationId)) ?? effectiveConv;
-        }
-        ent = await getActiveEnterpriseById(pid);
-        if (ent) {
-          const files = await listEnterpriseFiles(ent.id);
-          const sendableRows = files.filter((f) => f.is_active && f.can_be_sent_by_ana);
-          sendableAnaCategories = [
-            ...new Set(
-              sendableRows
-                .map((f) => normalizeFileCategory(f.category))
-                .filter((c): c is FileCategory => c != null)
-            ),
-          ];
-          fileInventory = sendableRows.map((f) => `${f.category}: ${f.original_name}`).join('; ');
-          hasSendableFiles = sendableAnaCategories.length > 0;
-        }
-      }
+      console.log('[ANA_ENTERPRISE_LLM_PROJECT_IGNORED]', {
+        conversationId,
+        projectFromLlm: structured.project.trim().slice(0, 160),
+        resolvedEnterpriseId: ent?.id ?? null,
+        reason: 'enterprise_resolution_must_not_be_chosen_by_llm',
+      });
     }
 
     let preResolvedFileForAna: Awaited<ReturnType<typeof getFileForSend>> = null;
@@ -4607,6 +4711,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           diagnosticsJson: anaTurnDiagnostics,
           missingInformationFlagCreated: anaTurnAuditMissingInformationFlagCreated,
           missingInformationSubject: anaTurnAuditMissingInformationSubject,
+          enterpriseResolutionSource: anaEnterpriseResolutionForAudit.source,
+          resolvedEnterpriseId: anaEnterpriseResolutionForAudit.enterpriseId,
+          resolvedEnterpriseName: anaEnterpriseResolutionForAudit.enterpriseName,
+          enterpriseCandidates: anaEnterpriseResolutionForAudit.candidates,
+          ragWasLoaded: anaRagWasLoadedForAudit,
+          reasonWhenNoEnterprise: anaEnterpriseResolutionForAudit.reasonWhenNoEnterprise,
         });
       } catch (auditError) {
         console.error('[ANA_TURN_AUDIT_UPDATE_FAILED]', {
