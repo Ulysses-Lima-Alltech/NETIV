@@ -213,8 +213,24 @@ test('dashboard agrega custo por empreendimento apenas no periodo e inclui grupo
   assert.match(source, /llm_usage_events/);
   assert.match(source, /SUM\(ue\.estimated_cost_usd\)/);
   assert.match(source, /ue\.created_at AT TIME ZONE/);
-  assert.match(source, /FULL OUTER JOIN usage_groups/);
+  assert.doesNotMatch(source, /FULL\s+(?:OUTER\s+)?JOIN/i);
+  assert.match(source, /COALESCE\(c\.enterprise_id::text, '__NO_ENTERPRISE__'\) AS group_key/);
+  assert.match(source, /COALESCE\(ue\.enterprise_id::text, '__NO_ENTERPRISE__'\) AS group_key/);
+  assert.match(source, /combined AS \(/);
+  assert.match(source, /SELECT \* FROM conv_groups\s+UNION ALL\s+SELECT \* FROM usage_groups/);
+  assert.match(source, /GROUP BY group_key/);
   assert.match(source, /\(sem empreendimento\)/);
+});
+
+test('dashboard query combina linhas apenas comerciais, apenas llm, ambos e enterprise_id null via group_key', () => {
+  const source = readFileSync(new URL('../repositories/dashboardRepository.js', import.meta.url), 'utf8');
+
+  assert.match(source, /conv_groups AS \([\s\S]*0::bigint AS llm_calls/);
+  assert.match(source, /usage_groups AS \([\s\S]*0::bigint AS total/);
+  assert.match(source, /SUM\(total\)::text AS total/);
+  assert.match(source, /SUM\(llm_calls\)::text AS llm_calls/);
+  assert.match(source, /CASE WHEN group_key = '__NO_ENTERPRISE__' THEN NULL ELSE MAX\(enterprise_id\) END AS enterprise_id/);
+  assert.match(source, /WHEN group_key = '__NO_ENTERPRISE__' THEN '\(sem empreendimento\)'/);
 });
 
 test('contrato do dashboard retorna campos novos sem remover os antigos', () => {

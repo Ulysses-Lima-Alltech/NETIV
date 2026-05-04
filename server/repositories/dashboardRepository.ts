@@ -384,20 +384,33 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
     llm_cost_per_conversation: string | null;
   }>(
     `WITH conv_groups AS (
-      SELECT c.enterprise_id,
+      SELECT COALESCE(c.enterprise_id::text, '__NO_ENTERPRISE__') AS group_key,
+        c.enterprise_id,
         e.name,
         COUNT(*)::bigint AS total,
         SUM(CASE WHEN c.classification = 'Qualificado' THEN 1 ELSE 0 END)::bigint AS qualified,
         SUM(CASE WHEN c.classification = 'Handoff' THEN 1 ELSE 0 END)::bigint AS handoffs,
-        SUM(CASE WHEN c.classification = 'Carteira' THEN 1 ELSE 0 END)::bigint AS carteiras
+        SUM(CASE WHEN c.classification = 'Carteira' THEN 1 ELSE 0 END)::bigint AS carteiras,
+        0::bigint AS llm_calls,
+        0::bigint AS llm_input_tokens,
+        0::bigint AS llm_output_tokens,
+        0::bigint AS llm_total_tokens,
+        0::numeric(12,6) AS llm_cost_usd,
+        0::bigint AS llm_contacts,
+        0::bigint AS llm_conversations
       FROM conversations c
       LEFT JOIN enterprises e ON e.id = c.enterprise_id
       WHERE 1=1 ${ent}
       GROUP BY c.enterprise_id, e.name
     ),
     usage_groups AS (
-      SELECT ue.enterprise_id::int AS enterprise_id,
+      SELECT COALESCE(ue.enterprise_id::text, '__NO_ENTERPRISE__') AS group_key,
+        ue.enterprise_id::int AS enterprise_id,
         e.name,
+        0::bigint AS total,
+        0::bigint AS qualified,
+        0::bigint AS handoffs,
+        0::bigint AS carteiras,
         COUNT(*)::bigint AS llm_calls,
         SUM(ue.input_tokens)::bigint AS llm_input_tokens,
         SUM(ue.output_tokens)::bigint AS llm_output_tokens,
@@ -411,29 +424,37 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
         AND (ue.created_at AT TIME ZONE '${TZ}')::date <= (CURRENT_TIMESTAMP AT TIME ZONE '${TZ}')::date
         AND ($1::int IS NULL OR ue.enterprise_id = $1::int)
       GROUP BY ue.enterprise_id, e.name
+    ),
+    combined AS (
+      SELECT * FROM conv_groups
+      UNION ALL
+      SELECT * FROM usage_groups
     )
-    SELECT COALESCE(cg.enterprise_id, ug.enterprise_id) AS enterprise_id,
-      COALESCE(cg.name, ug.name, '(sem empreendimento)') AS name,
-      COALESCE(cg.total, 0)::text AS total,
-      COALESCE(cg.qualified, 0)::text AS qualified,
-      COALESCE(cg.handoffs, 0)::text AS handoffs,
-      COALESCE(cg.carteiras, 0)::text AS carteiras,
-      ug.llm_cost_usd::text AS llm_cost_usd,
-      COALESCE(ug.llm_calls, 0)::text AS llm_calls,
-      COALESCE(ug.llm_input_tokens, 0)::text AS llm_input_tokens,
-      COALESCE(ug.llm_output_tokens, 0)::text AS llm_output_tokens,
-      COALESCE(ug.llm_total_tokens, 0)::text AS llm_total_tokens,
-      CASE WHEN COALESCE(ug.llm_contacts, 0) > 0
-        THEN (ug.llm_cost_usd / ug.llm_contacts)::numeric(12,6)::text
+    SELECT CASE WHEN group_key = '__NO_ENTERPRISE__' THEN NULL ELSE MAX(enterprise_id) END AS enterprise_id,
+      CASE
+        WHEN group_key = '__NO_ENTERPRISE__' THEN '(sem empreendimento)'
+        ELSE COALESCE(MAX(name), '(sem empreendimento)')
+      END AS name,
+      SUM(total)::text AS total,
+      SUM(qualified)::text AS qualified,
+      SUM(handoffs)::text AS handoffs,
+      SUM(carteiras)::text AS carteiras,
+      SUM(llm_cost_usd)::numeric(12,6)::text AS llm_cost_usd,
+      SUM(llm_calls)::text AS llm_calls,
+      SUM(llm_input_tokens)::text AS llm_input_tokens,
+      SUM(llm_output_tokens)::text AS llm_output_tokens,
+      SUM(llm_total_tokens)::text AS llm_total_tokens,
+      CASE WHEN SUM(llm_contacts) > 0
+        THEN (SUM(llm_cost_usd) / SUM(llm_contacts))::numeric(12,6)::text
         ELSE NULL
       END AS llm_cost_per_contact,
-      CASE WHEN COALESCE(ug.llm_conversations, 0) > 0
-        THEN (ug.llm_cost_usd / ug.llm_conversations)::numeric(12,6)::text
+      CASE WHEN SUM(llm_conversations) > 0
+        THEN (SUM(llm_cost_usd) / SUM(llm_conversations))::numeric(12,6)::text
         ELSE NULL
       END AS llm_cost_per_conversation
-    FROM conv_groups cg
-    FULL OUTER JOIN usage_groups ug ON ug.enterprise_id IS NOT DISTINCT FROM cg.enterprise_id
-    ORDER BY COALESCE(cg.total, 0) DESC, COALESCE(cg.name, ug.name) NULLS LAST
+    FROM combined
+    GROUP BY group_key
+    ORDER BY SUM(total) DESC, name NULLS LAST
     LIMIT 50`,
     [eid, daysBack]
   );
