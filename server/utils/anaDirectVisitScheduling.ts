@@ -6,6 +6,9 @@ import {
 import type { CommercialFlowState } from './commercialFlowState.js';
 
 const SP_OFFSET = '-03:00';
+export const VISIT_WINDOW_START_MINUTES = 6 * 60 + 30;
+export const VISIT_WINDOW_END_MINUTES = 19 * 60 + 30;
+export const VISIT_WINDOW_REPLY = 'Pode ser entre 6h30 e 19h30.';
 
 const PROHIBITED_VISIT_SCHEDULING_PHRASES = [
   'assim que o corretor confirmar',
@@ -58,6 +61,15 @@ function norm(s: string): string {
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
+}
+
+function timeHmToMinutes(timeHm: string): number | null {
+  const [hhRaw, mmRaw] = timeHm.split(':');
+  const hh = parseInt(hhRaw ?? '', 10);
+  const mm = parseInt(mmRaw ?? '', 10);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return hh * 60 + mm;
 }
 
 function formatYmdInSaoPaulo(d: Date): string {
@@ -195,12 +207,20 @@ export function isDirectVisitSchedulingWindow(now: Date = new Date()): boolean {
     timeZone: APPOINTMENT_BUSINESS_TZ,
     weekday: 'short',
     hour: '2-digit',
+    minute: '2-digit',
     hour12: false,
   }).formatToParts(now);
   const weekday = parts.find((p) => p.type === 'weekday')?.value ?? '';
   const hour = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '', 10);
+  const minute = parseInt(parts.find((p) => p.type === 'minute')?.value ?? '', 10);
   const isSunday = weekday.toLowerCase().startsWith('sun');
-  return !isSunday && Number.isFinite(hour) && hour >= 9 && hour < 18;
+  const minutes = hour * 60 + minute;
+  return (
+    !isSunday &&
+    Number.isFinite(minutes) &&
+    minutes >= VISIT_WINDOW_START_MINUTES &&
+    minutes <= VISIT_WINDOW_END_MINUTES
+  );
 }
 
 export function isAllowedVisitSlot(dateYmd: string, timeHm: string): boolean {
@@ -208,17 +228,21 @@ export function isAllowedVisitSlot(dateYmd: string, timeHm: string): boolean {
   if (!parsed) return false;
   const weekday = getJsWeekdayForYmdInSaoPaulo(dateYmd);
   if (weekday === 0) return false;
-  const [hh] = timeHm.split(':').map((x) => parseInt(x, 10));
-  return Number.isFinite(hh) && hh >= 9 && hh < 18;
+  const minutes = timeHmToMinutes(timeHm);
+  return (
+    minutes != null &&
+    minutes >= VISIT_WINDOW_START_MINUTES &&
+    minutes <= VISIT_WINDOW_END_MINUTES
+  );
 }
 
 function askTimeReply(label: string | null): string {
-  if (label) return `Perfeito. Qual horário você prefere ${label}? Pode ser entre 9h e 18h.`;
-  return 'Perfeito. Qual horário você prefere para a visita? Pode ser entre 9h e 18h.';
+  if (label) return `Perfeito. Qual horário você prefere ${label}? ${VISIT_WINDOW_REPLY}`;
+  return `Perfeito. Qual horário você prefere para a visita? ${VISIT_WINDOW_REPLY}`;
 }
 
 function pendingAskTimeReply(label: string | null): string {
-  if (label) return `Só preciso que você me diga o horário para agendar sua visita para ${label}. Pode ser entre 9h e 18h.`;
+  if (label) return `Só preciso que você me diga o horário para agendar sua visita para ${label}. ${VISIT_WINDOW_REPLY}`;
   return 'Só preciso que você me diga o horário para agendar sua visita.';
 }
 
@@ -320,7 +344,7 @@ export function handleVisitSchedulingDeterministically(
       });
       return finish(
         'time_outside_visit_window',
-        'Esse horário fica fora da janela de visitas. Pode me informar um horário entre 9h e 18h?',
+        `Esse horário fica fora da janela de visitas. ${VISIT_WINDOW_REPLY}`,
         nextState
       );
     }
