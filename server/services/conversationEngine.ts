@@ -93,6 +93,8 @@ import {
   sanitizeFirstReplyCommercialLeak,
   sanitizeFirstCampaignReplyShape,
   sanitizeFinancialNegotiationOverreach,
+  evaluateAnaEmptyFallbackGuard,
+  applyFirstUsefulGreetingStyle,
 } from '../utils/anaReplyFinalize.js';
 import {
   applyAnaCommercialSingleAxisGuard,
@@ -111,7 +113,6 @@ import {
   applyAnaEvidenceGuardToReply,
 } from '../utils/anaEnterpriseEvidence.js';
 import {
-  ANA_MISSING_INFORMATION_REPLY,
   buildAnaDecisionPolicy,
   detectExplicitExactLocationRequest,
   detectExplicitPaymentSimulationRequest,
@@ -184,13 +185,14 @@ const ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY = false;
 const ANA_ENGINE_DIAGNOSTIC_TEXT = 'Diagnóstico: cheguei no conversation engine.';
 const ANA_PROVIDER_FAILURE_HANDOFF_REPLY =
   'Vou encaminhar seu atendimento para um consultor te ajudar com essa informação certinho.';
-const MAX_ANA_GENERATION_ATTEMPTS = 4;
+const MAX_ANA_GENERATION_ATTEMPTS = 5;
 
 type AnaGenerationStrategy =
   | 'primary_json'
   | 'same_context_retry'
   | 'json_repair'
-  | 'secondary_provider';
+  | 'secondary_provider'
+  | 'rag_empty_fallback_retry';
 
 /** TEMP: logs [ANA_ENGINE_TRACE] (OpenAI/parse/envio). Desligar com false. */
 const ANA_ENGINE_TRACE = true;
@@ -237,59 +239,19 @@ function buildSafeOutboundRecoveryReply(params: {
   appointmentActive: boolean;
   requestedAxis?: 'preco' | 'metragem_tipologia' | 'localizacao' | 'lazer' | 'financiamento' | 'disponibilidade' | 'visita_agendamento' | 'intencao_compra' | null;
 }): string {
-  if (params.appointmentActive) {
-    return ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY;
-  }
-  if (params.requestedAxis === 'metragem_tipologia') {
-    return 'No momento nao localizei essa informacao especifica sobre metragem no material disponivel.';
-  }
-  if (params.requestedAxis === 'lazer') {
-    return 'Sobre lazer, nao consegui confirmar mais itens alem do que esta validado no material que consultei agora.';
-  }
-  if (params.requestedAxis === 'financiamento') {
-    return 'No momento nao localizei informacoes especificas sobre formas de pagamento. Posso te ajudar com localizacao, lazer ou outras informacoes do empreendimento.';
-  }
-  if (params.requestedAxis != null) {
-    return 'No momento nao localizei essa informacao especifica no material disponivel.';
-  }
-  if (isBareGreetingOnly(params.userMessage)) {
-    return buildGreetingSafeFallback(params.knownCustomerName);
-  }
-  return 'Me conta qual informacao voce quer priorizar agora, que eu sigo direto nesse ponto.';
+  void params;
+  return '';
 }
 
 function buildSpecificMissingAxisReply(
   requestedAxis: ReturnType<typeof inferUserRequestedAxis> | null
 ): string | null {
-  if (requestedAxis === 'metragem_tipologia') {
-    return 'No momento nao localizei essa informacao especifica sobre metragem no material disponivel.';
-  }
-  if (requestedAxis === 'financiamento') {
-    return 'No momento nao localizei informacoes especificas sobre formas de pagamento. Posso te ajudar com localizacao, lazer ou outras informacoes do empreendimento.';
-  }
-  if (requestedAxis === 'lazer') {
-    return 'No momento nao localizei informacoes especificas sobre areas de lazer cadastradas para esse empreendimento.';
-  }
-  if (requestedAxis === 'preco') {
-    return 'No momento nao localizei informacoes especificas sobre preco para esse empreendimento.';
-  }
-  if (requestedAxis === 'localizacao') {
-    return 'No momento nao localizei informacoes especificas de localizacao para esse empreendimento.';
-  }
-  if (requestedAxis == null) return null;
-  return 'No momento nao localizei essa informacao especifica no material disponivel.';
+  void requestedAxis;
+  return null;
 }
 
 function buildRepeatedMissingAxisReply(axis: CommercialAxis | null): string | null {
-  if (axis === 'financiamento') {
-    return 'Eu ainda nao tenho essa informacao de pagamento cadastrada para esse empreendimento. Posso te ajudar com outro ponto ou encaminhar para atendimento humano.';
-  }
-  if (axis === 'metragem_tipologia') {
-    return 'Eu ainda nao tenho essa informacao de metragem cadastrada para esse empreendimento. Posso te ajudar com outro ponto ou encaminhar para atendimento humano.';
-  }
-  if (axis === 'lazer') {
-    return 'Essas sao as areas de lazer que tenho cadastradas ate agora. Quer que eu te explique alguma delas melhor?';
-  }
+  void axis;
   return null;
 }
 
@@ -304,22 +266,8 @@ function hasBlockedGenericFallbackPhrase(text: string): boolean {
 }
 
 function buildDirectAxisFallbackReply(axis: CommercialAxis): string {
-  if (axis === 'metragem_tipologia') {
-    return 'Sobre metragem, eu te passo apenas o que esta validado no sistema para esse empreendimento.';
-  }
-  if (axis === 'financiamento') {
-    return 'Sobre formas de pagamento, eu te passo apenas o que esta validado no sistema para esse empreendimento.';
-  }
-  if (axis === 'preco') {
-    return 'Sobre preco, eu te passo apenas o que esta validado no sistema para esse empreendimento.';
-  }
-  if (axis === 'localizacao') {
-    return 'Sobre localizacao, eu te passo apenas o que esta validado no sistema para esse empreendimento.';
-  }
-  if (axis === 'lazer') {
-    return 'Sobre lazer, eu te passo apenas o que esta validado no sistema para esse empreendimento.';
-  }
-  return 'Sobre esse ponto, eu te passo apenas o que esta validado no sistema para esse empreendimento.';
+  void axis;
+  return '';
 }
 
 function axisHumanLabel(axis: CommercialAxis): string {
@@ -532,7 +480,7 @@ function buildNoAdditionalLazerReply(): string {
 function buildOnlyNewLazerItemsReply(newItems: string[]): string {
   const items = dedupeListItems(newItems).slice(0, 8);
   if (items.length === 0) return buildNoAdditionalLazerReply();
-  return `Tem sim. Alem das areas que eu ja te passei, tambem temos:\n${items.map((item) => `- ${item}`).join('\n')}\nSe quiser, eu te explico melhor uma delas.`;
+  return `Tem sim. Alem das areas que eu ja te passei, tambem temos:\n${items.map((item) => `- ${item}`).join('\n')}`;
 }
 
 function userAskedDirectOperationalAxis(
@@ -1372,8 +1320,7 @@ async function handleMaterialRequestTurn(params: {
     await sendMaterialFlowTextMessage({
       conversationId: params.conversationId,
       toPhoneNumber: params.toPhoneNumber,
-      text:
-        'No momento nao localizei esse material especifico. Posso te ajudar com as informacoes principais do empreendimento por aqui.',
+      text: pickMaterialUnavailableNeutralReply(params.lastAssistantMessage),
       replyPipelineToken: params.replyPipelineToken,
     });
     console.log('[MATERIAL_FLOW]', logPayload);
@@ -2176,6 +2123,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let ragChunksFound = 0;
     let ragRetrievalError: string | null = null;
     const ragSourceFiles = new Set<string>();
+    const ragChunkIds = new Set<number>();
     const knowledgeIds = ent != null ? [ent.id] : [];
     for (const eid of knowledgeIds) {
       const row = allActiveEnterprises.find((x) => x.id === eid);
@@ -2189,6 +2137,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ragRetrievalError = chunkMeta.retrievalError;
       }
       ragChunksFound += chunkMeta.selectedChunkCount;
+      for (const chunkId of chunkMeta.selectedChunkIds) ragChunkIds.add(chunkId);
       for (const fileName of chunkMeta.sourceFiles) ragSourceFiles.add(fileName);
       const kb = await loadAgentKnowledgeText(eid);
       const merged = [chunk, kb].filter(Boolean).join('\n\n');
@@ -2220,6 +2169,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       (f) => f.is_active && f.can_be_used_as_knowledge
     ).length;
     anaTurnDiagnostics.rag.evidenceChunkCount = ragChunksFound;
+    anaTurnDiagnostics.rag.evidenceChunkIds = Array.from(ragChunkIds).slice(0, 80);
     anaTurnDiagnostics.rag.sourceFiles = Array.from(ragSourceFiles).slice(0, 20);
     anaTurnDiagnostics.rag.reason =
       ragRetrievalError != null
@@ -2238,6 +2188,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       {
         knowledgeIds,
         evidenceChunkCount: ragChunksFound,
+        evidenceChunkIds: anaTurnDiagnostics.rag.evidenceChunkIds,
         sourceFiles: anaTurnDiagnostics.rag.sourceFiles,
         reason: anaTurnDiagnostics.rag.reason,
       }
@@ -2392,6 +2343,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     anaTurnAuditDecisionJson = {
       ...anaDecision,
       repetitionAudit: anaRepetitionAudit,
+      ragAudit: {
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        retrievedChunkCount: ragChunksFound,
+        retrievedChunkIds: anaTurnDiagnostics.rag.evidenceChunkIds,
+        sourceFiles: anaTurnDiagnostics.rag.sourceFiles,
+        retry: false,
+        emptyFallbackBlocked: false,
+        finalResponsePreview: null,
+      },
     };
     console.log('[ANA_REPETITION_AUDIT]', {
       conversationId,
@@ -2952,7 +2912,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     );
 
     const openAiCalled = true;
-    let replySource: 'openai' | 'technical_fallback' | 'policy_missing_information' | 'policy_material_unavailable' = 'openai';
+    let replySource:
+      | 'openai'
+      | 'technical_fallback'
+      | 'policy_missing_information'
+      | 'policy_material_unavailable'
+      | 'rag_empty_fallback_retry' = 'openai';
     let fallbackReason: string | null = null;
     const rawContent = result.content ?? '';
     const rawTrimmed = rawContent.trim();
@@ -3524,14 +3489,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const missingAxisReply = repeatedMissingReply ?? buildSpecificMissingAxisReply(missingAxis);
       structured = {
         ...structured,
-        reply: missingAxisReply ?? ANA_MISSING_INFORMATION_REPLY,
         send_file_category: null,
       };
-      replySource = 'policy_missing_information';
       console.log('[ANA_POLICY_MISSING_INFORMATION_REPLY]', {
         conversationId,
         missingInformationSubject: anaDecision.missingInformationSubject ?? null,
         shouldCreateInfoGapFlag: anaDecision.shouldCreateInfoGapFlag,
+        substitutedReply: false,
+        retryExpectedIfFinalAnswerIsEmpty: true,
       });
       if (missingAxis != null && missingAxisReply != null) {
         console.log('[ANA_GENERIC_FALLBACK_DEBUG]', {
@@ -4368,8 +4333,234 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         });
       }
     }
+    const shouldRunEmptyFallbackGuard = !shouldAttemptDocSend && !operationalResolverFired;
+    let finalEmptyFallbackGuard = shouldRunEmptyFallbackGuard
+      ? evaluateAnaEmptyFallbackGuard({
+          reply: finalOutboundEval.text,
+          userMessage: trimmed,
+          lastAssistantMessage: lastAssistantPlain,
+        })
+      : { blocked: false, reason: null as string | null };
+    const shouldRetryEmptyFallbackGuard =
+      shouldRunEmptyFallbackGuard &&
+      (
+        (finalOutboundEval.valid && finalEmptyFallbackGuard.blocked) ||
+        (!finalOutboundEval.valid &&
+          (finalOutboundEval.reason === 'empty_text' || finalOutboundEval.reason === 'punctuation_only_or_placeholder'))
+      );
+    if (shouldRetryEmptyFallbackGuard) {
+      if (!finalEmptyFallbackGuard.blocked) {
+        finalEmptyFallbackGuard = { blocked: true, reason: finalOutboundEval.reason };
+      }
+      const retryAudit: Record<string, unknown> = {
+        blocked: true,
+        reason: finalEmptyFallbackGuard.reason,
+        retried: false,
+        retryChunkCount: 0,
+        retryChunkIds: [],
+        retryAccepted: false,
+      };
+      console.log('[ANA_EMPTY_FALLBACK_GUARD]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        reason: finalEmptyFallbackGuard.reason,
+        replyPreview: finalOutboundEval.text.slice(0, 220),
+      });
+
+      if (ent) {
+        const expandedHint = [
+          ent.name,
+          userMessageForReasoning,
+          fullUserUtterances,
+          `Resposta anterior bloqueada: ${finalOutboundEval.text}`,
+          `Motivo do bloqueio: ${finalEmptyFallbackGuard.reason ?? 'empty_fallback'}`,
+        ]
+          .filter(Boolean)
+          .join('\n')
+          .slice(0, 16_000);
+        const expandedMeta = await loadRankedKnowledgeChunksForPromptWithMeta(ent.id, expandedHint, {
+          targetCity: muni?.n ?? ent.city ?? null,
+          expanded: true,
+        });
+        const expandedSourceFiles = new Set<string>(expandedMeta.sourceFiles);
+        const expandedChunkIds = new Set<number>(expandedMeta.selectedChunkIds);
+        const expandedKb = await loadAgentKnowledgeText(ent.id);
+        const expandedKnowledgeText = [
+          expandedMeta.promptText,
+          expandedKb,
+        ].filter(Boolean).join('\n\n').slice(0, 52_000);
+
+        for (const chunkId of expandedMeta.selectedChunkIds) ragChunkIds.add(chunkId);
+        for (const fileName of expandedMeta.sourceFiles) ragSourceFiles.add(fileName);
+        ragChunksFound = ragChunkIds.size;
+        anaTurnDiagnostics.rag.evidenceChunkCount = ragChunkIds.size;
+        anaTurnDiagnostics.rag.evidenceChunkIds = Array.from(ragChunkIds).slice(0, 80);
+        anaTurnDiagnostics.rag.sourceFiles = Array.from(ragSourceFiles).slice(0, 20);
+        anaTurnDiagnostics.rag.includedInPrompt = expandedKnowledgeText.trim().length > 0;
+        anaRagWasLoadedForAudit = anaRagWasLoadedForAudit || expandedKnowledgeText.trim().length > 0;
+        retryAudit.retried = true;
+        retryAudit.retryChunkCount = expandedMeta.selectedChunkCount;
+        retryAudit.retryChunkIds = Array.from(expandedChunkIds).slice(0, 80);
+        retryAudit.retrySourceFiles = Array.from(expandedSourceFiles).slice(0, 20);
+
+        const retryPrompt = buildAnaSystemPrompt({
+          ...promptOpts,
+          knowledgeText: expandedKnowledgeText,
+        });
+        const retryMessages: ChatMessage[] = [
+          { role: 'system', content: retryPrompt },
+          {
+            role: 'system',
+            content:
+              'A resposta anterior foi genérica e não respondeu diretamente o cliente. Reescreva usando somente as evidências recuperadas e responda primeiro a pergunta feita. Não use "posso te explicar", "posso apresentar", "principais pontos", "qual ponto você quer" nem "morar ou investir" como desvio.',
+          },
+        ];
+        if (policyRuntimeDirectives) {
+          retryMessages.push({ role: 'system', content: policyRuntimeDirectives });
+        }
+        for (const h of history) retryMessages.push({ role: h.role, content: h.content });
+        retryMessages.push({ role: 'user', content: userMessageForReasoning });
+
+        const ragRetryResult = await generateChatCompletion({
+          apiKey: aiConfig.openaiApiKey,
+          baseUrl: aiConfig.openaiBaseUrl,
+          model,
+          messages: retryMessages,
+          temperature: Math.min(aiConfig.temperature ?? 0.45, 0.55),
+          maxTokens: Math.max(aiConfig.maxTokens ?? 600, 800),
+          responseFormatJson: true,
+          costTracking: {
+            ...baseAnaCostTracking,
+            purpose: 'ana_rag_empty_fallback_retry',
+            metadata: {
+              responseFormatJson: true,
+              attempt: 5,
+              strategy: 'rag_empty_fallback_retry',
+              blockedReason: finalEmptyFallbackGuard.reason,
+              expandedChunkCount: expandedMeta.selectedChunkCount,
+              expandedChunkIds: expandedMeta.selectedChunkIds,
+            },
+          },
+        });
+        generationResults.push(ragRetryResult);
+        let retryStructured: AnaStructuredReply | null = null;
+        const retryRaw = (ragRetryResult.content || '').trim();
+        if (ragRetryResult.success && retryRaw) {
+          retryStructured = parseAnaJson(ragRetryResult.content || '', {
+            conversationId,
+            messageId: inboundMetaMessageId,
+          });
+        }
+        recordAnaGenerationAttempt({
+          diagnostics: anaTurnDiagnostics,
+          attempt: 5,
+          strategy: 'rag_empty_fallback_retry',
+          result: ragRetryResult,
+          parsed: retryStructured != null,
+          failureReason:
+            retryStructured != null
+              ? null
+              : computeAnaTechnicalFallbackTraceReason(ragRetryResult, ragRetryResult.success && retryRaw.length > 0),
+          model,
+        });
+
+        if (retryStructured?.reply?.trim()) {
+          let retryReply = retryStructured.reply.trim();
+          const retryFinancialGuard = !anaDecision.canMentionPaymentSimulation
+            ? sanitizeFinancialNegotiationOverreach(retryReply)
+            : { text: retryReply, replacedFinancialSentences: 0 };
+          retryReply = retryFinancialGuard.text;
+          const retryAxisGuard = applyAnaCommercialSingleAxisGuard({
+            reply: retryReply,
+            userMessage: trimmed,
+            isFirstAnaReply,
+            enterpriseName: ent?.name ?? null,
+            conversationId,
+            resolvedPurchaseIntent: resolvedPurchaseIntentForTurn,
+            lastAssistantMessage: lastAssistantPlain,
+          });
+          const retryEvidenceGuard = applyAnaEvidenceGuardToReply(retryAxisGuard.text, enterpriseEvidence, {
+            allowMaterialOffer: explicitMaterialRequestThisTurn,
+          });
+          const retryFinalText = finalizeAnaReplyText(retryEvidenceGuard.text, {
+            userMessage: trimmed,
+            conversationMode: mode,
+            isFirstAnaReply,
+          });
+          const retryLimited = applyAnaHardLengthGuard({
+            text: retryFinalText,
+            enterpriseName: ent?.name ?? null,
+            maxChars: ANA_OUTBOUND_MAX_CHARS,
+          });
+          const retryEval = evaluateAnaOutboundText({
+            reply: retryLimited,
+            technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+            conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+            enterpriseName: ent?.name ?? null,
+          });
+          const retryEmptyGuard = evaluateAnaEmptyFallbackGuard({
+            reply: retryEval.text,
+            userMessage: trimmed,
+            lastAssistantMessage: lastAssistantPlain,
+          });
+          retryAudit.retryAccepted = retryEval.valid && !retryEmptyGuard.blocked;
+          retryAudit.retryEvalReason = retryEval.reason;
+          retryAudit.retryBlockedReason = retryEmptyGuard.reason;
+          if (retryEval.valid && !retryEmptyGuard.blocked) {
+            finalTextGuard = retryEval.text;
+            finalOutboundEval = retryEval;
+            finalEmptyFallbackGuard = retryEmptyGuard;
+            replySource = 'rag_empty_fallback_retry';
+            anaTurnAuditGuardsApplied.outboundReason = retryEval.reason;
+          }
+        }
+      }
+
+      anaTurnAuditGuardsApplied.emptyFallbackGuard = retryAudit;
+      anaTurnAuditDecisionJson = {
+        ...anaTurnAuditDecisionJson,
+        ragAudit: {
+          enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+          retrievedChunkCount: anaTurnDiagnostics.rag.evidenceChunkCount,
+          retrievedChunkIds: anaTurnDiagnostics.rag.evidenceChunkIds,
+          sourceFiles: anaTurnDiagnostics.rag.sourceFiles,
+          retry: retryAudit.retried === true,
+          emptyFallbackBlocked: true,
+          finalResponsePreview: finalOutboundEval.text.slice(0, 260),
+        },
+        emptyFallbackGuard: retryAudit,
+      };
+
+      if (finalEmptyFallbackGuard.blocked) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = `empty_fallback_guard_${finalEmptyFallbackGuard.reason ?? 'blocked'}`;
+        anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
+        anaTurnDiagnostics.finalResponse.replySource = null;
+        anaTurnDiagnostics.finalResponse.handoffUsed = true;
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+          replySource: null,
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: anaTurnAuditBlockedReason,
+          retryAttempted: retryAudit.retried === true,
+        });
+        await applyAnaConversationUpdate(conversationId, {
+          classification: 'Handoff',
+          handoff: true,
+        });
+        console.log('[ANA_EMPTY_FALLBACK_BLOCKED]', {
+          conversationId,
+          enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+          reason: finalEmptyFallbackGuard.reason,
+          retryAttempted: retryAudit.retried === true,
+          chunkCount: anaTurnDiagnostics.rag.evidenceChunkCount,
+          chunkIds: anaTurnDiagnostics.rag.evidenceChunkIds,
+        });
+        return;
+      }
+    }
     if (!finalOutboundEval.valid) {
-      if (finalOutboundEval.reason !== 'conversation_type_corretor') {
+      if (false && finalOutboundEval.reason !== 'conversation_type_corretor') {
         const recoveredReplyRaw = buildSafeOutboundRecoveryReply({
           userMessage: trimmed,
           knownCustomerName: effectiveConv.customer_name,
@@ -4525,7 +4716,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     } else if (sameAxisAsLast && asksForMoreThisTurnNormalized && alreadyAnswered) {
       const axisLabel = currentAxisForRepetition != null ? axisHumanLabel(currentAxisForRepetition) : 'esse ponto';
       replyText =
-        `Essas sao as informacoes que tenho cadastradas ate agora sobre ${axisLabel}. Posso te explicar melhor algum ponto especifico?`;
+        `Essas sao as informacoes que tenho cadastradas ate agora sobre ${axisLabel}.`;
       reasonForNotRepeatingAnswer = 'no_additional_axis_evidence';
     }
 
@@ -4564,6 +4755,70 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         replyText = postPolicyEval.text;
         anaTurnAuditGuardsApplied.outboundReason = postPolicyEval.reason;
       }
+    }
+
+    const greetingStyled = applyFirstUsefulGreetingStyle({
+      text: replyText,
+      isFirstAnaReply,
+      referenceNow: lastUserMessageAt,
+    });
+    if (greetingStyled.changed) {
+      const greetingLimited = applyAnaHardLengthGuard({
+        text: greetingStyled.text,
+        enterpriseName: ent?.name ?? null,
+        maxChars: ANA_OUTBOUND_MAX_CHARS,
+      });
+      const greetingEval = evaluateAnaOutboundText({
+        reply: greetingLimited,
+        technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+        conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+        enterpriseName: ent?.name ?? null,
+      });
+      if (greetingEval.valid) {
+        replyText = greetingEval.text;
+        anaTurnAuditGuardsApplied.firstUsefulGreetingStyle = {
+          applied: true,
+          greeting: greetingStyled.greeting,
+        };
+      }
+    }
+
+    const postPolicyEmptyGuard = shouldRunEmptyFallbackGuard
+      ? evaluateAnaEmptyFallbackGuard({
+          reply: replyText,
+          userMessage: trimmed,
+          lastAssistantMessage: lastAssistantPlain,
+        })
+      : { blocked: false, reason: null as string | null };
+    if (postPolicyEmptyGuard.blocked) {
+      anaTurnAuditOutcome = 'blocked';
+      anaTurnAuditBlockedReason = `empty_fallback_guard_${postPolicyEmptyGuard.reason ?? 'blocked'}`;
+      anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
+      anaTurnAuditGuardsApplied.emptyFallbackGuard = {
+        ...(typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' && anaTurnAuditGuardsApplied.emptyFallbackGuard !== null
+          ? anaTurnAuditGuardsApplied.emptyFallbackGuard as Record<string, unknown>
+          : {}),
+        blockedAfterPostPolicy: true,
+        postPolicyReason: postPolicyEmptyGuard.reason,
+      };
+      anaTurnDiagnostics.finalResponse.replySource = null;
+      anaTurnDiagnostics.finalResponse.handoffUsed = true;
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+        replySource: null,
+        outboundStatus: anaTurnAuditOutcome,
+        blockedReason: anaTurnAuditBlockedReason,
+      });
+      await applyAnaConversationUpdate(conversationId, {
+        classification: 'Handoff',
+        handoff: true,
+      });
+      console.log('[ANA_EMPTY_FALLBACK_BLOCKED_AFTER_POST_POLICY]', {
+        conversationId,
+        reason: postPolicyEmptyGuard.reason,
+        replyPreview: replyText.slice(0, 220),
+      });
+      return;
     }
 
     if (
@@ -4664,10 +4919,37 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     anaTurnAuditDecisionJson = {
       ...anaTurnAuditDecisionJson,
       turnDecisionAudit,
+      ragAudit: {
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        retrievedChunkCount: anaTurnDiagnostics.rag.evidenceChunkCount,
+        retrievedChunkIds: anaTurnDiagnostics.rag.evidenceChunkIds,
+        sourceFiles: anaTurnDiagnostics.rag.sourceFiles,
+        retry:
+          typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' &&
+          anaTurnAuditGuardsApplied.emptyFallbackGuard !== null &&
+          (anaTurnAuditGuardsApplied.emptyFallbackGuard as Record<string, unknown>).retried === true,
+        emptyFallbackBlocked: blockedGenericFallback,
+        finalResponsePreview: replyText.slice(0, 260),
+      },
     };
     console.log('[ANA_TURN_DECISION_AUDIT]', {
       conversationId,
       ...turnDecisionAudit,
+    });
+    console.log('[ANA_RAG_TURN_AUDIT]', {
+      conversationId,
+      enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+      retrievedChunkCount: anaTurnDiagnostics.rag.evidenceChunkCount,
+      retrievedChunkIds: anaTurnDiagnostics.rag.evidenceChunkIds,
+      sourceFiles: anaTurnDiagnostics.rag.sourceFiles,
+      retry:
+        typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' &&
+        anaTurnAuditGuardsApplied.emptyFallbackGuard !== null &&
+        (anaTurnAuditGuardsApplied.emptyFallbackGuard as Record<string, unknown>).retried === true,
+      emptyFallbackBlocked:
+        typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' &&
+        anaTurnAuditGuardsApplied.emptyFallbackGuard !== null,
+      finalResponse: replyText,
     });
 
     anaEngineTrace('final_reply_choice_after', {
@@ -4807,6 +5089,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         fallbackReason,
         ...(openAiApiError && { openAiApiError, openAiHttpStatus }),
         replySource,
+        rag: {
+          enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+          retrievedChunkCount: anaTurnDiagnostics.rag.evidenceChunkCount,
+          retrievedChunkIds: anaTurnDiagnostics.rag.evidenceChunkIds,
+          retry:
+            typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' &&
+            anaTurnAuditGuardsApplied.emptyFallbackGuard !== null &&
+            (anaTurnAuditGuardsApplied.emptyFallbackGuard as Record<string, unknown>).retried === true,
+          emptyFallbackBlocked:
+            typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' &&
+            anaTurnAuditGuardsApplied.emptyFallbackGuard !== null,
+        },
         stateAfter,
       });
       console.log('[ANA_MSG]', {

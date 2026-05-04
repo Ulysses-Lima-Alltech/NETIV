@@ -332,19 +332,12 @@ function ensureEnterpriseMention(text: string, enterpriseName: string | undefine
 }
 
 function buildAdvanceReplyAfterResolvedPurchaseIntent(
-  intent: PurchaseIntent,
+  intent: PurchaseIntent | null,
   enterpriseName: string | undefined
 ): string {
-  const name = (enterpriseName || '').trim();
-  const place = name ? `no ${name}` : 'nesse empreendimento';
-  if (intent === 'INVESTIMENTO') {
-    return enforceShortShape(
-      `Perfeito. Pensando em investimento ${place}, voce quer entender mais sobre valores, potencial de valorizacao ou condicoes de pagamento?`
-    );
-  }
-  return enforceShortShape(
-    `Perfeito. Pensando em moradia ${place}, o que pesa mais pra voce agora: valores, planta ou localizacao?`
-  );
+  void intent;
+  void enterpriseName;
+  return '';
 }
 
 /** Tenta manter só frases que falam exclusivamente do eixo escolhido (+ saudação curta no início). */
@@ -391,18 +384,20 @@ function buildRewrittenReply(
     return { text: withEnterprise.text, enterprisePreserved: withEnterprise.preserved };
   }
 
+  return { text: '', enterprisePreserved: false };
+
   let rewritten: string;
   switch (target) {
     case 'preco': {
       const price = extractPriceSnippet(original);
       if (price) {
         rewritten = enforceShortShape(
-          `Sobre ${name}, o valor que aparece aqui começa em ${price}. Se você quiser, eu te explico o próximo ponto de forma bem direta.`
+          ``
         );
         break;
       }
       rewritten = enforceShortShape(
-        `Sobre ${name}, eu te explico os valores de forma direta. Me diz só o que pesa mais pra você agora?`
+        ``
       );
       break;
     }
@@ -411,27 +406,27 @@ function buildRewrittenReply(
         resolvedPurchaseIntent != null
           ? buildAdvanceReplyAfterResolvedPurchaseIntent(resolvedPurchaseIntent, enterpriseName)
           : enforceShortShape(
-              `Pra eu te orientar melhor no ${name}, você está olhando mais pra morar ou investir?`
+              ``
             );
       break;
     case 'localizacao':
       rewritten = enforceShortShape(
-        `Sobre a localização do ${name}, eu te explico de forma prática. Qual ponto você quer que eu detalhe primeiro?`
+        ``
       );
       break;
     case 'metragem_tipologia':
       rewritten = enforceShortShape(
-        `No ${name}, as plantas funcionam assim e eu te explico de forma clara. Me diz só o que faz mais sentido pra sua rotina hoje?`
+        ``
       );
       break;
     case 'lazer':
       rewritten = enforceShortShape(
-        `No ${name}, o lazer é um ponto importante. O que você quer que eu detalhe primeiro nessa parte?`
+        ``
       );
       break;
     case 'financiamento':
       rewritten = enforceShortShape(
-        `Sobre condições, eu te explico de forma prática dentro do que consigo por aqui. Qual ponto você quer entender melhor primeiro?`
+        ``
       );
       break;
     case 'disponibilidade':

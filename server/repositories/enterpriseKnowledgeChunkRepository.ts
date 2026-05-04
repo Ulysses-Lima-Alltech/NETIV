@@ -10,6 +10,8 @@ const MAX_CONTEXT_CHARS = 48_000;
 /** Garante contexto mínimo no modo focado mesmo quando o overlap lexical com a mensagem é fraco. */
 const MIN_CHUNKS_IN_PROMPT = 5;
 const MAX_CHUNKS_IN_PROMPT = 16;
+const EXPANDED_MIN_CHUNKS_IN_PROMPT = 10;
+const EXPANDED_MAX_CHUNKS_IN_PROMPT = 28;
 
 function normWords(s: string): Set<string> {
   const n = s
@@ -179,6 +181,7 @@ export async function replaceEnterpriseFileChunks(
 }
 
 type RankedChunkRow = {
+  id: number;
   content: string;
   original_name: string;
   chunk_index: number;
@@ -198,7 +201,7 @@ type RankedChunkRow = {
 export async function loadRankedKnowledgeChunksForPrompt(
   enterpriseId: number,
   hintText: string,
-  opts?: { targetCity?: string | null }
+  opts?: { targetCity?: string | null; expanded?: boolean }
 ): Promise<string> {
   const result = await loadRankedKnowledgeChunksForPromptWithMeta(enterpriseId, hintText, opts);
   return result.promptText;
@@ -207,10 +210,11 @@ export async function loadRankedKnowledgeChunksForPrompt(
 export async function loadRankedKnowledgeChunksForPromptWithMeta(
   enterpriseId: number,
   hintText: string,
-  opts?: { targetCity?: string | null }
+  opts?: { targetCity?: string | null; expanded?: boolean }
 ): Promise<{
   promptText: string;
   selectedChunkCount: number;
+  selectedChunkIds: number[];
   sourceFiles: string[];
   retrievalError: string | null;
 }> {
@@ -219,7 +223,7 @@ export async function loadRankedKnowledgeChunksForPromptWithMeta(
   let rows: RankedChunkRow[] = [];
   try {
     const q = await query<RankedChunkRow>(
-      `SELECT c.content, c.chunk_index, f.original_name,
+      `SELECT c.id, c.content, c.chunk_index, f.original_name,
               c.knowledge_block, c.block_priority, c.city_hint, c.intent_tags, c.temporal_status, c.source_confidence,
               COALESCE(v.source_priority, 0) AS source_priority
        FROM enterprise_knowledge_chunks c
@@ -250,6 +254,7 @@ export async function loadRankedKnowledgeChunksForPromptWithMeta(
     return {
       promptText: '',
       selectedChunkCount: 0,
+      selectedChunkIds: [],
       sourceFiles: [],
       retrievalError,
     };
@@ -258,6 +263,7 @@ export async function loadRankedKnowledgeChunksForPromptWithMeta(
     return {
       promptText: '',
       selectedChunkCount: 0,
+      selectedChunkIds: [],
       sourceFiles: [],
       retrievalError: null,
     };
@@ -278,6 +284,7 @@ export async function loadRankedKnowledgeChunksForPromptWithMeta(
   if (hintWords.size > 0) scored.sort((a, b) => b.score - a.score || a.dbOrder - b.dbOrder);
 
   const used = new Set<string>();
+  const usedChunkIds: number[] = [];
   const sourceFiles = new Set<string>();
   const byBlock: Record<KnowledgeBlock, string[]> = {
     ana_rules: [],
@@ -289,7 +296,6 @@ export async function loadRankedKnowledgeChunksForPromptWithMeta(
   const pushRow = (r: (typeof scored)[0]) => {
     const key = `${r.original_name}#${r.chunk_index}`;
     if (used.has(key)) return false;
-    used.add(key);
     const label =
       r.knowledge_block === 'ana_rules'
         ? 'REGRAS_ANA'
@@ -301,6 +307,8 @@ export async function loadRankedKnowledgeChunksForPromptWithMeta(
     const header = `\n--- [${label}] ${r.original_name} (trecho) ---\n`;
     const piece = header + r.content;
     if (n + piece.length > MAX_CONTEXT_CHARS) return false;
+    used.add(key);
+    usedChunkIds.push(r.id);
     const block = r.knowledge_block ?? 'facts';
     byBlock[block].push(piece);
     sourceFiles.add(r.original_name);
@@ -308,17 +316,19 @@ export async function loadRankedKnowledgeChunksForPromptWithMeta(
     return true;
   };
 
+  const minChunks = opts?.expanded ? EXPANDED_MIN_CHUNKS_IN_PROMPT : MIN_CHUNKS_IN_PROMPT;
+  const maxChunks = opts?.expanded ? EXPANDED_MAX_CHUNKS_IN_PROMPT : MAX_CHUNKS_IN_PROMPT;
   let added = 0;
   for (const r of scored) {
-    if (added >= MAX_CHUNKS_IN_PROMPT) break;
+    if (added >= maxChunks) break;
     if (r.score > 0 && pushRow(r)) added++;
   }
 
-  if (added < MIN_CHUNKS_IN_PROMPT) {
+  if (added < minChunks) {
     const byStable = [...scored].sort((a, b) => a.dbOrder - b.dbOrder);
     for (const r of byStable) {
-      if (added >= MAX_CHUNKS_IN_PROMPT) break;
-      if (added >= MIN_CHUNKS_IN_PROMPT && r.score === 0) {
+      if (added >= maxChunks) break;
+      if (added >= minChunks && r.score === 0) {
         /* já temos o mínimo; não precisa continuar enchendo com trechos irrelevantes */
         break;
       }
@@ -339,6 +349,7 @@ export async function loadRankedKnowledgeChunksForPromptWithMeta(
   return {
     promptText: parts.join('\n').trim(),
     selectedChunkCount: used.size,
+    selectedChunkIds: usedChunkIds,
     sourceFiles: Array.from(sourceFiles),
     retrievalError: null,
   };

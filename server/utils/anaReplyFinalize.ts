@@ -43,7 +43,7 @@ export function pickDuplicateFallbackReply(
 ): string {
   const name = (opts?.focusedEnterpriseName || '').trim();
   if (opts?.scoped && name.length >= 2) {
-    return `Vou focar no ${name}: qual ponto você quer aprofundar agora — valor, localização ou lazer?`;
+    return '';
   }
   const names = allEnterpriseNames ?? [];
   if (names.length > 0) {
@@ -474,6 +474,76 @@ export function evaluateAnaOutboundText(opts: {
   return { text: raw.slice(0, 4000), valid: true, reason: 'valid_semantic_text' };
 }
 
+function normFinalGuard(text: string): string {
+  return (text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function userAskedObjectiveQuestion(text: string | null | undefined): boolean {
+  const n = normFinalGuard(text || '');
+  if (!n) return false;
+  return (
+    /\?/.test(text || '') ||
+    /\b(qual|quais|quanto|custa|valor|preco|metragem|metros|m2|m²|onde fica|localizacao|endereco|lazer|area de lazer|areas de lazer|financiamento|pagamento|entrada|parcela|disponibilidade)\b/.test(n)
+  );
+}
+
+export function evaluateAnaEmptyFallbackGuard(opts: {
+  reply: string;
+  userMessage: string | null | undefined;
+  lastAssistantMessage?: string | null;
+}): { blocked: boolean; reason: string | null } {
+  const n = normFinalGuard(opts.reply || '');
+  if (!n) return { blocked: true, reason: 'empty_after_guards' };
+
+  const badPatterns: Array<[RegExp, string]> = [
+    [/\bposso te explicar\b/, 'empty_phrase_posso_te_explicar'],
+    [/\bposso apresentar\b/, 'empty_phrase_posso_apresentar'],
+    [/\bprincipais pontos\b/, 'empty_phrase_principais_pontos'],
+    [/\bqual ponto voce quer\b/, 'empty_phrase_qual_ponto_voce_quer'],
+  ];
+  for (const [re, reason] of badPatterns) {
+    if (re.test(n)) return { blocked: true, reason };
+  }
+
+  if (/\bmorar ou investir\b/.test(n) && userAskedObjectiveQuestion(opts.userMessage)) {
+    return { blocked: true, reason: 'empty_phrase_morar_ou_investir_after_objective_ask' };
+  }
+
+  return { blocked: false, reason: null };
+}
+
+function contextualGreeting(referenceNow?: Date | string | null): 'Bom dia' | 'Boa tarde' | 'Boa noite' {
+  const d = referenceNow instanceof Date ? referenceNow : referenceNow ? new Date(referenceNow) : new Date();
+  const hourText = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    hour12: false,
+  }).format(d);
+  const hour = Number(hourText.replace(/\D/g, ''));
+  if (Number.isFinite(hour) && hour >= 5 && hour < 12) return 'Bom dia';
+  if (Number.isFinite(hour) && hour >= 12 && hour < 18) return 'Boa tarde';
+  return 'Boa noite';
+}
+
+export function applyFirstUsefulGreetingStyle(opts: {
+  text: string;
+  isFirstAnaReply?: boolean;
+  referenceNow?: Date | string | null;
+}): { text: string; changed: boolean; greeting: string | null } {
+  const raw = (opts.text || '').trim();
+  if (!raw || opts.isFirstAnaReply !== true) return { text: raw, changed: false, greeting: null };
+  if (/^(oi|ola|olá|bom dia|boa tarde|boa noite)\b/i.test(raw)) {
+    return { text: raw, changed: false, greeting: null };
+  }
+  const greeting = contextualGreeting(opts.referenceNow);
+  return { text: `${greeting}! ${raw}`.trim(), changed: true, greeting };
+}
+
 /**
  * Guard leve da primeira resposta: remove apenas trechos de preço/parcelamento/entrada
  * quando o cliente não pediu isso explicitamente.
@@ -595,7 +665,7 @@ export function sanitizeFirstReplyCommercialLeak(reply: string): {
 
   if (kept.length === 0) {
     return {
-      text: 'Posso te explicar por partes, bem direitinho. Por onde você quer começar: valor, planta ou localização?',
+      text: '',
       removedCommercialSentences: removed,
     };
   }
@@ -878,14 +948,12 @@ export function isSimpleOpeningGreeting(text: string): boolean {
 
 const GREETING_REPLY_NO_NAME = [
   'Oi, tudo bem? Eu sou a Ana e posso te ajudar com as informações. O que você quer entender melhor primeiro?',
-  'Claro, eu te explico sim. Posso te passar um panorama rápido com as informações disponíveis.',
-  'Posso te passar um resumo direto e a gente aprofunda no que for mais importante para você.',
+  'Oi, tudo bem? Eu sou a Ana. Me diz qual informação você quer confirmar.',
 ];
 
 const GREETING_REPLY_WITH_NAME = (name: string) => [
   `Oi, ${name}, tudo bem? Eu sou a Ana e posso te ajudar com as informações. O que você quer entender melhor primeiro?`,
-  `Claro, ${name}. Eu te explico sim com as informações disponíveis agora.`,
-  `Perfeito, ${name}. Posso te passar um panorama rápido e depois a gente aprofunda no que for mais importante para você.`,
+  `Oi, ${name}. Me diz qual informação você quer confirmar.`,
 ];
 
 /** Resposta acolhedora para saudação simples (sem chamar a API). */

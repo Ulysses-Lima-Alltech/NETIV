@@ -41,6 +41,7 @@ export interface AnaTurnDiagnostics {
     enterpriseId: number | null;
     activeKnowledgeFileCount: number;
     evidenceChunkCount: number;
+    evidenceChunkIds: number[];
     sourceFiles: string[];
     includedInPrompt: boolean;
     reason: string | null;
@@ -98,6 +99,7 @@ export function createAnaTurnDiagnostics(input: {
       enterpriseId: null,
       activeKnowledgeFileCount: 0,
       evidenceChunkCount: 0,
+      evidenceChunkIds: [],
       sourceFiles: [],
       includedInPrompt: false,
       reason: null,

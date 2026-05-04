@@ -5,7 +5,7 @@ import { hasAnaEvidenceForNeed, type AnaEnterpriseEvidence } from './anaEnterpri
 export const ANA_DECISION_POLICY_VERSION = 'v2';
 
 export const ANA_MISSING_INFORMATION_REPLY =
-  'No momento nao localizei essa informacao especifica. Posso te ajudar com outras informacoes do empreendimento.';
+  '';
 
 export type AnaDecisionResponseMode = 'short' | 'structured';
 export type AnaDecisionCurrentAxis = CommercialAxis | 'material' | 'geral' | 'outro';

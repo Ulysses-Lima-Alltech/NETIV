@@ -156,20 +156,12 @@ export function applyAnaEvidenceGuardToReply(
   const reason = blockReasonForReply(reply, evidence, opts);
   if (!reason) return { text: reply, changed: false, blockedOfferReason: null };
 
-  let safe =
-    'Essa informação eu não tenho aqui agora, mas vou buscar e te retorno com os detalhes o quanto antes. Enquanto isso, posso te ajudar com outras informações?';
-  if (reason === 'book_not_sendable') {
-    safe = 'Agora eu nao tenho material enviavel para te mandar desse empreendimento.';
-  } else if (reason === 'floorplan_not_sendable') {
-    safe = 'Agora eu nao tenho uma planta enviavel para te mandar com seguranca.';
-  } else if (reason === 'exact_location_not_available') {
-    safe =
-      'Essa informação eu não tenho aqui agora, mas vou buscar e te retorno com os detalhes o quanto antes. Enquanto isso, posso te ajudar com outras informações?';
-  } else if (reason === 'unsupported_indirect_promise') {
-    safe = 'Para te responder com seguranca, eu fico no que ja esta validado no sistema.';
-  } else if (reason === 'unsolicited_material_offer') {
-    safe = 'Posso te explicar os principais pontos por aqui de forma objetiva.';
-  }
+  const pieces = (reply || '')
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const filtered = pieces.filter((sentence) => !blockReasonForReply(sentence, evidence, opts));
+  const stripped = filtered.join(' ').replace(/\s+/g, ' ').trim();
 
-  return { text: safe, changed: true, blockedOfferReason: reason };
+  return { text: stripped, changed: true, blockedOfferReason: reason };
 }
