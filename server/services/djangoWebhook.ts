@@ -3,6 +3,7 @@
 
 import type { ConversationRow } from '../repositories/conversationRepository.js';
 import { createServiceJwt } from './jwtService.js';
+import { normalizePhoneE164 } from '../utils/phone.js';
 
 /** Timeout por chamada (ms). Cabe folgado dentro do tick de 10s do worker. */
 const FETCH_TIMEOUT_MS = 8000;
@@ -63,6 +64,19 @@ export async function notifyDjango(
 }
 
 /**
+ * Converte telefone para o formato nacional brasileiro (10 ou 11 dígitos),
+ * removendo o prefixo '55' do país. Formato esperado pelo Django CRM.
+ */
+function toNationalPhone(input: string | null | undefined): string {
+  const normalized = normalizePhoneE164(input);
+  if (!normalized) return '';
+  if (normalized.startsWith('55') && normalized.length >= 12) {
+    return normalized.slice(2);
+  }
+  return normalized;
+}
+
+/**
  * Monta payload do webhook de leads NETIV → Django.
  *
  * IMPORTANTE — fallback do nome:
@@ -82,7 +96,7 @@ export function buildLeadPayload(
     contactFullName?: string | null;
   }
 ): Record<string, unknown> {
-  const phone = conv.contact_phone || conv.external_contact_id;
+  const phone = toNationalPhone(conv.contact_phone || conv.external_contact_id);
   const name =
     conv.customer_name?.trim() ||
     fallbacks?.whatsappDisplayName?.trim() ||
