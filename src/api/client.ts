@@ -915,6 +915,8 @@ export interface DashboardOverview {
     handoffs: number;
     carteiras: number;
     llmCostUsd: number | null;
+    llmTrackedCostUsd: number | null;
+    llmEstimatedCostUsd: number | null;
     llmCalls: number;
     llmInputTokens: number;
     llmOutputTokens: number;

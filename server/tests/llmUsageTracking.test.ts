@@ -211,26 +211,59 @@ test('dashboard agrega custo por empreendimento apenas no periodo e inclui grupo
   const source = readFileSync(new URL('../repositories/dashboardRepository.js', import.meta.url), 'utf8');
 
   assert.match(source, /llm_usage_events/);
+  assert.match(source, /llm_cost_backfills/);
   assert.match(source, /SUM\(ue\.estimated_cost_usd\)/);
   assert.match(source, /ue\.created_at AT TIME ZONE/);
   assert.doesNotMatch(source, /FULL\s+(?:OUTER\s+)?JOIN/i);
   assert.match(source, /COALESCE\(c\.enterprise_id::text, '__NO_ENTERPRISE__'\) AS group_key/);
   assert.match(source, /COALESCE\(ue\.enterprise_id::text, '__NO_ENTERPRISE__'\) AS group_key/);
+  assert.match(source, /COALESCE\(COALESCE\(a\.resolved_enterprise_id, a\.enterprise_id, c\.enterprise_id\)::text, '__NO_ENTERPRISE__'\) AS group_key/);
   assert.match(source, /combined AS \(/);
-  assert.match(source, /SELECT \* FROM conv_groups\s+UNION ALL\s+SELECT \* FROM usage_groups/);
+  assert.match(source, /SELECT \* FROM conv_groups\s+UNION ALL\s+SELECT \* FROM usage_groups\s+UNION ALL\s+SELECT \* FROM backfill_groups/);
   assert.match(source, /GROUP BY group_key/);
   assert.match(source, /\(sem empreendimento\)/);
 });
 
-test('dashboard query combina linhas apenas comerciais, apenas llm, ambos e enterprise_id null via group_key', () => {
+test('dashboard query combina linhas apenas comerciais, apenas llm, apenas backfill, ambos e enterprise_id null via group_key', () => {
   const source = readFileSync(new URL('../repositories/dashboardRepository.js', import.meta.url), 'utf8');
 
   assert.match(source, /conv_groups AS \([\s\S]*0::bigint AS llm_calls/);
   assert.match(source, /usage_groups AS \([\s\S]*0::bigint AS total/);
+  assert.match(source, /backfill_groups AS \([\s\S]*0::bigint AS total/);
   assert.match(source, /SUM\(total\)::text AS total/);
   assert.match(source, /SUM\(llm_calls\)::text AS llm_calls/);
+  assert.match(source, /SUM\(llm_tracked_cost_usd\)::numeric\(12,6\)::text AS llm_tracked_cost_usd/);
+  assert.match(source, /SUM\(llm_estimated_cost_usd\)::numeric\(12,6\)::text AS llm_estimated_cost_usd/);
+  assert.match(source, /\(SUM\(llm_tracked_cost_usd\) \+ SUM\(llm_estimated_cost_usd\)\)::numeric\(12,6\)::text AS llm_cost_usd/);
   assert.match(source, /CASE WHEN group_key = '__NO_ENTERPRISE__' THEN NULL ELSE MAX\(enterprise_id\) END AS enterprise_id/);
   assert.match(source, /WHEN group_key = '__NO_ENTERPRISE__' THEN '\(sem empreendimento\)'/);
+});
+
+test('dashboard soma custo rastreado e estimado historico com rateio por esforco', () => {
+  const source = readFileSync(new URL('../repositories/dashboardRepository.js', import.meta.url), 'utf8');
+
+  assert.match(source, /eligible_backfills AS \(/);
+  assert.match(source, /b\.is_active = TRUE/);
+  assert.match(source, /b\.start_at < pb\.period_end/);
+  assert.match(source, /b\.end_at > pb\.period_start/);
+  assert.match(source, /COUNT\(\*\) FILTER \(WHERE m\.role = 'user'\)::numeric \* 1\.0/);
+  assert.match(source, /COUNT\(\*\) FILTER \(WHERE m\.role = 'assistant'\)::numeric \* 3\.0/);
+  assert.match(source, /COUNT\(\*\)::numeric \* 0\.25/);
+  assert.match(source, /COUNT\(\*\)::numeric \* 2\.0 AS effort/);
+  assert.match(source, /NULLIF\(SUM\(beg\.effort\) OVER \(PARTITION BY beg\.backfill_id\), 0\)/);
+  assert.match(source, /SUM\(ba\.allocated_cost_usd\)::numeric\(12,6\) AS llm_estimated_cost_usd/);
+});
+
+test('migration e script de backfill existem sem seed automatico', () => {
+  const migration = readFileSync('db/migrations/pg/052_llm_cost_backfills.sql', 'utf8');
+  const script = readFileSync('scripts/addLlmCostBackfill.js', 'utf8');
+
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS llm_cost_backfills/);
+  assert.match(migration, /tracked_cost_handling TEXT NOT NULL DEFAULT 'additive'/);
+  assert.match(migration, /CREATE INDEX IF NOT EXISTS idx_llm_cost_backfills_period/);
+  assert.doesNotMatch(migration, /INSERT INTO llm_cost_backfills/i);
+  assert.match(script, /--total-cost-usd/);
+  assert.match(script, /INSERT INTO llm_cost_backfills/);
 });
 
 test('contrato do dashboard retorna campos novos sem remover os antigos', () => {
@@ -241,6 +274,8 @@ test('contrato do dashboard retorna campos novos sem remover os antigos', () => 
   }
   for (const field of [
     'llmCostUsd',
+    'llmTrackedCostUsd',
+    'llmEstimatedCostUsd',
     'llmCalls',
     'llmInputTokens',
     'llmOutputTokens',
@@ -258,5 +293,9 @@ test('frontend renderiza Custo IA e Custo/contato', () => {
   assert.match(source, /Custo IA/);
   assert.match(source, /Custo\/contato/);
   assert.match(source, /formatUsd\(row\.llmCostUsd\)/);
+  assert.match(source, /formatUsd\(row\.llmTrackedCostUsd\)/);
+  assert.match(source, /formatUsd\(row\.llmEstimatedCostUsd\)/);
+  assert.match(source, /Rastreado:/);
+  assert.match(source, /Estimado histórico:/);
   assert.match(source, /formatUsd\(row\.llmCostPerContact\)/);
 });

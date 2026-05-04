@@ -62,6 +62,10 @@ function formatUsd(value: number | null | undefined): string {
   return `US$ ${value.toFixed(2)}`;
 }
 
+function formatAiCostTitle(row: DashboardOverview['enterprises'][number]): string {
+  return `Rastreado: ${formatUsd(row.llmTrackedCostUsd)} | Estimado histórico: ${formatUsd(row.llmEstimatedCostUsd)}`;
+}
+
 function TimelineChart({ data }: { data: DashboardOverview['timeline'] }) {
   const max = useMemo(() => Math.max(1, ...data.map((d) => d.newConversations)), [data]);
   const w = 640;
@@ -388,7 +392,10 @@ export function DashboardPage() {
 
             <section className={card}>
               <h2 className={heading}>Desempenho por empreendimento</h2>
-              <p className={sub}>Visão <strong>atual</strong> por empreendimento (totais e classificações no estado de hoje).</p>
+              <p className={sub}>
+                Visão <strong>atual</strong> por empreendimento (totais e classificações no estado de hoje). Custo IA pode incluir rastreio real e
+                estimativa histórica.
+              </p>
               <div className="overflow-x-auto">
                 <table className="w-full text-[13px] text-left">
                   <thead>
@@ -417,7 +424,7 @@ export function DashboardPage() {
                           <td className="py-3 pr-4 text-right tabular-nums">{row.qualified}</td>
                           <td className="py-3 pr-4 text-right tabular-nums">{row.handoffs}</td>
                           <td className="py-3 pr-4 text-right tabular-nums">{row.carteiras}</td>
-                          <td className="py-3 pr-4 text-right tabular-nums whitespace-nowrap">
+                          <td className="py-3 pr-4 text-right tabular-nums whitespace-nowrap" title={formatAiCostTitle(row)}>
                             {formatUsd(row.llmCostUsd)}
                           </td>
                           <td className="py-3 text-right tabular-nums whitespace-nowrap">
