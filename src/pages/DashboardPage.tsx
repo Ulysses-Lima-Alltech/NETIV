@@ -57,6 +57,11 @@ function KpiCard({
   );
 }
 
+function formatUsd(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `US$ ${value.toFixed(2)}`;
+}
+
 function TimelineChart({ data }: { data: DashboardOverview['timeline'] }) {
   const max = useMemo(() => Math.max(1, ...data.map((d) => d.newConversations)), [data]);
   const w = 640;
@@ -392,13 +397,15 @@ export function DashboardPage() {
                       <th className="py-3 pr-4 font-semibold text-right">Total</th>
                       <th className="py-3 pr-4 font-semibold text-right">Qualif.</th>
                       <th className="py-3 pr-4 font-semibold text-right">Handoff</th>
-                      <th className="py-3 font-semibold text-right">Carteira</th>
+                      <th className="py-3 pr-4 font-semibold text-right">Carteira</th>
+                      <th className="py-3 pr-4 font-semibold text-right">Custo IA</th>
+                      <th className="py-3 font-semibold text-right">Custo/contato</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.enterprises.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="py-8 text-[#9CA3AF] text-center">
+                        <td colSpan={7} className="py-8 text-[#9CA3AF] text-center">
                           Nenhuma conversa com o filtro atual.
                         </td>
                       </tr>
@@ -409,7 +416,13 @@ export function DashboardPage() {
                           <td className="py-3 pr-4 text-right tabular-nums">{row.total}</td>
                           <td className="py-3 pr-4 text-right tabular-nums">{row.qualified}</td>
                           <td className="py-3 pr-4 text-right tabular-nums">{row.handoffs}</td>
-                          <td className="py-3 text-right tabular-nums">{row.carteiras}</td>
+                          <td className="py-3 pr-4 text-right tabular-nums">{row.carteiras}</td>
+                          <td className="py-3 pr-4 text-right tabular-nums whitespace-nowrap">
+                            {formatUsd(row.llmCostUsd)}
+                          </td>
+                          <td className="py-3 text-right tabular-nums whitespace-nowrap">
+                            {formatUsd(row.llmCostPerContact)}
+                          </td>
                         </tr>
                       ))
                     )}

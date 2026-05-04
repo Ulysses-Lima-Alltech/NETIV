@@ -29,6 +29,30 @@ export interface MessageRow {
   delete_scope?: string | null;
 }
 
+export interface ConversationMessageCounts {
+  inbound_count: string;
+  ana_outbound_count: string;
+}
+
+export async function getConversationMessageCounts(conversationId: number): Promise<{
+  inboundCount: number;
+  anaOutboundCount: number;
+}> {
+  const { rows } = await query<ConversationMessageCounts>(
+    `SELECT
+       COUNT(*) FILTER (WHERE role = 'user' AND deleted_at IS NULL)::text AS inbound_count,
+       COUNT(*) FILTER (WHERE role = 'assistant' AND deleted_at IS NULL)::text AS ana_outbound_count
+     FROM messages
+     WHERE conversation_id = $1`,
+    [conversationId]
+  );
+  const row = rows[0];
+  return {
+    inboundCount: parseInt(row?.inbound_count ?? '0', 10) || 0,
+    anaOutboundCount: parseInt(row?.ana_outbound_count ?? '0', 10) || 0,
+  };
+}
+
 export async function insertMessage(
   conversationId: number,
   role: 'user' | 'assistant',

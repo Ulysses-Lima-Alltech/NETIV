@@ -3,7 +3,11 @@ import { getConversationById, type ConversationRow } from '../repositories/conve
 import { touchContactInteractionByConversation } from '../repositories/contactsRepository.js';
 import { getLastUserMessageRow, getLastVisibleMessageRoleAndId } from '../repositories/messageRepository.js';
 import { conversationHasActiveAppointmentForReengageBlock } from '../repositories/appointmentRepository.js';
-import { sendTextMessage } from './whatsappMetaService.js';
+import {
+  ANA_OUTBOUND_QUOTA_EXCEEDED_REASON,
+  isAnaOutboundQuotaBlocked,
+  sendAnaTextMessageWithQuota,
+} from './anaOutboundQuotaService.js';
 import {
   computeEligibleReengagementAtUtc,
   isReengagementDueNow,
@@ -200,7 +204,21 @@ async function trySendReengagementForConversation(conversationId: number): Promi
       return;
     }
 
-    const sendRes = await sendTextMessage(to, body);
+    const sendRes = await sendAnaTextMessageWithQuota({
+      conversationId,
+      to,
+      text: body,
+      phase: 'ana_reengagement',
+    });
+    if (isAnaOutboundQuotaBlocked(sendRes)) {
+      await client.query('ROLLBACK');
+      console.log('[ANA_REENGAGE_SKIP]', {
+        conversationId,
+        reason: ANA_OUTBOUND_QUOTA_EXCEEDED_REASON,
+        quota: sendRes.quota ?? null,
+      });
+      return;
+    }
     if (!sendRes.success || !sendRes.metaMessageId) {
       await client.query('ROLLBACK');
       console.log('[ANA_REENGAGE_ERROR]', {
