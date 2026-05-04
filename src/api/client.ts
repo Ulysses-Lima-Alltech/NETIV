@@ -914,6 +914,13 @@ export interface DashboardOverview {
     qualified: number;
     handoffs: number;
     carteiras: number;
+    llmCostUsd: number | null;
+    llmCalls: number;
+    llmInputTokens: number;
+    llmOutputTokens: number;
+    llmTotalTokens: number;
+    llmCostPerContact: number | null;
+    llmCostPerConversation: number | null;
   }[];
 }
 

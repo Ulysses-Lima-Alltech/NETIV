@@ -2870,6 +2870,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       model,
       messagesCount: messages.length,
     });
+    const baseAnaCostTracking = {
+      conversationId,
+      contactId: effectiveConv.contact_id ?? null,
+      enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? enterpriseResolution.enterpriseId ?? null,
+      inboundMessageId: lastUserRowForLog?.id ?? null,
+      modelReason: anaModelResolution.selectionReason,
+    };
     const result = await generateChatCompletion({
       apiKey: aiConfig.openaiApiKey,
       baseUrl: aiConfig.openaiBaseUrl,
@@ -2878,6 +2885,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       temperature: Math.min(aiConfig.temperature ?? 0.5, 0.75),
       maxTokens: Math.max(aiConfig.maxTokens ?? 600, 800),
       responseFormatJson: true,
+      costTracking: {
+        ...baseAnaCostTracking,
+        purpose: 'ana_main_reply',
+        metadata: {
+          responseFormatJson: true,
+          attempt: 1,
+          strategy: 'primary_json',
+        },
+      },
     });
     anaEngineTrace('generateChatCompletion_after', {
       conversationId,
@@ -3032,6 +3048,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         temperature: Math.min(aiConfig.temperature ?? 0.5, 0.65),
         maxTokens: Math.max(aiConfig.maxTokens ?? 600, 800),
         responseFormatJson: true,
+        costTracking: {
+          ...baseAnaCostTracking,
+          purpose: 'ana_structured_retry',
+          metadata: {
+            responseFormatJson: true,
+            attempt: 2,
+            strategy: 'same_context_retry',
+          },
+        },
       });
       generationResults.push(retryResult);
       const retryRaw = (retryResult.content || '').trim();
@@ -3116,6 +3141,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         temperature: Math.min(aiConfig.temperature ?? 0.45, 0.55),
         maxTokens: 140,
         responseFormatJson: false,
+        costTracking: {
+          ...baseAnaCostTracking,
+          purpose: 'ana_regen',
+          metadata: {
+            responseFormatJson: false,
+            attempt: 3,
+            strategy: 'json_repair',
+          },
+        },
       });
       generationResults.push(regenResult);
       const regenRaw = (regenResult.content || '').trim();
@@ -3175,6 +3209,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           temperature: Math.min(aiConfig.temperature ?? 0.5, 0.55),
           maxTokens: Math.max(aiConfig.maxTokens ?? 600, 800),
           responseFormatJson: true,
+          costTracking: {
+            ...baseAnaCostTracking,
+            purpose: 'ana_provider_fallback',
+            metadata: {
+              responseFormatJson: true,
+              attempt: 4,
+              strategy: 'secondary_provider',
+              primaryModel: model,
+              secondaryProvider: secondaryProvider.provider,
+            },
+          },
         });
         generationResults.push(secondaryResult);
         const secondaryRaw = (secondaryResult.content || '').trim();

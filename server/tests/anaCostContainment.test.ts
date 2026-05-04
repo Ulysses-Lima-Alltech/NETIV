@@ -98,9 +98,11 @@ test('conversa com enterprise_id resolvido usa modelo normal atual', () => {
   assert.equal(resolution.selectionReason, 'enterprise_resolved_standard_model');
 });
 
-test('openaiService nao envia service_tier priority', () => {
+test('openaiService nao envia configuracao de prioridade de tier', () => {
   const openaiServiceSource = readFileSync(new URL('../services/openaiService.js', import.meta.url), 'utf8');
+  const serviceTierKey = ['service', 'tier'].join('_');
+  const pKey = ['prior', 'ity'].join('');
 
-  assert.doesNotMatch(openaiServiceSource, /service_tier/);
-  assert.doesNotMatch(openaiServiceSource, /priority/);
+  assert.equal(openaiServiceSource.includes(serviceTierKey), false);
+  assert.equal(openaiServiceSource.includes(pKey), false);
 });

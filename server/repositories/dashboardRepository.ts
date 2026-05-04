@@ -59,6 +59,13 @@ export interface DashboardOverview {
     qualified: number;
     handoffs: number;
     carteiras: number;
+    llmCostUsd: number | null;
+    llmCalls: number;
+    llmInputTokens: number;
+    llmOutputTokens: number;
+    llmTotalTokens: number;
+    llmCostPerContact: number | null;
+    llmCostPerConversation: number | null;
   }[];
 }
 
@@ -77,6 +84,12 @@ export interface DashboardAttentionItemsResponse {
 
 function entClause(paramIndex: number): string {
   return ` AND ($${paramIndex}::int IS NULL OR c.enterprise_id = $${paramIndex}::int)`;
+}
+
+function parseNullableNumber(value: string | number | null | undefined): number | null {
+  if (value == null || value === '') return null;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 export interface DashboardCsvRow {
@@ -362,20 +375,67 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
     qualified: string;
     handoffs: string;
     carteiras: string;
+    llm_cost_usd: string | null;
+    llm_calls: string | null;
+    llm_input_tokens: string | null;
+    llm_output_tokens: string | null;
+    llm_total_tokens: string | null;
+    llm_cost_per_contact: string | null;
+    llm_cost_per_conversation: string | null;
   }>(
-    `SELECT c.enterprise_id,
-      COALESCE(e.name, '(sem empreendimento)') AS name,
-      COUNT(*)::text AS total,
-      SUM(CASE WHEN c.classification = 'Qualificado' THEN 1 ELSE 0 END)::text AS qualified,
-      SUM(CASE WHEN c.classification = 'Handoff' THEN 1 ELSE 0 END)::text AS handoffs,
-      SUM(CASE WHEN c.classification = 'Carteira' THEN 1 ELSE 0 END)::text AS carteiras
-    FROM conversations c
-    LEFT JOIN enterprises e ON e.id = c.enterprise_id
-    WHERE 1=1 ${ent}
-    GROUP BY c.enterprise_id, e.name
-    ORDER BY COUNT(*) DESC NULLS LAST, name NULLS LAST
+    `WITH conv_groups AS (
+      SELECT c.enterprise_id,
+        e.name,
+        COUNT(*)::bigint AS total,
+        SUM(CASE WHEN c.classification = 'Qualificado' THEN 1 ELSE 0 END)::bigint AS qualified,
+        SUM(CASE WHEN c.classification = 'Handoff' THEN 1 ELSE 0 END)::bigint AS handoffs,
+        SUM(CASE WHEN c.classification = 'Carteira' THEN 1 ELSE 0 END)::bigint AS carteiras
+      FROM conversations c
+      LEFT JOIN enterprises e ON e.id = c.enterprise_id
+      WHERE 1=1 ${ent}
+      GROUP BY c.enterprise_id, e.name
+    ),
+    usage_groups AS (
+      SELECT ue.enterprise_id::int AS enterprise_id,
+        e.name,
+        COUNT(*)::bigint AS llm_calls,
+        SUM(ue.input_tokens)::bigint AS llm_input_tokens,
+        SUM(ue.output_tokens)::bigint AS llm_output_tokens,
+        SUM(ue.total_tokens)::bigint AS llm_total_tokens,
+        SUM(ue.estimated_cost_usd)::numeric(12,6) AS llm_cost_usd,
+        COUNT(DISTINCT ue.contact_id) FILTER (WHERE ue.contact_id IS NOT NULL)::bigint AS llm_contacts,
+        COUNT(DISTINCT ue.conversation_id) FILTER (WHERE ue.conversation_id IS NOT NULL)::bigint AS llm_conversations
+      FROM llm_usage_events ue
+      LEFT JOIN enterprises e ON e.id = ue.enterprise_id::int
+      WHERE (ue.created_at AT TIME ZONE '${TZ}')::date >= (CURRENT_TIMESTAMP AT TIME ZONE '${TZ}')::date - $2::int
+        AND (ue.created_at AT TIME ZONE '${TZ}')::date <= (CURRENT_TIMESTAMP AT TIME ZONE '${TZ}')::date
+        AND ($1::int IS NULL OR ue.enterprise_id = $1::int)
+      GROUP BY ue.enterprise_id, e.name
+    )
+    SELECT COALESCE(cg.enterprise_id, ug.enterprise_id) AS enterprise_id,
+      COALESCE(cg.name, ug.name, '(sem empreendimento)') AS name,
+      COALESCE(cg.total, 0)::text AS total,
+      COALESCE(cg.qualified, 0)::text AS qualified,
+      COALESCE(cg.handoffs, 0)::text AS handoffs,
+      COALESCE(cg.carteiras, 0)::text AS carteiras,
+      ug.llm_cost_usd::text AS llm_cost_usd,
+      COALESCE(ug.llm_calls, 0)::text AS llm_calls,
+      COALESCE(ug.llm_input_tokens, 0)::text AS llm_input_tokens,
+      COALESCE(ug.llm_output_tokens, 0)::text AS llm_output_tokens,
+      COALESCE(ug.llm_total_tokens, 0)::text AS llm_total_tokens,
+      CASE WHEN COALESCE(ug.llm_contacts, 0) > 0
+        THEN (ug.llm_cost_usd / ug.llm_contacts)::numeric(12,6)::text
+        ELSE NULL
+      END AS llm_cost_per_contact,
+      CASE WHEN COALESCE(ug.llm_conversations, 0) > 0
+        THEN (ug.llm_cost_usd / ug.llm_conversations)::numeric(12,6)::text
+        ELSE NULL
+      END AS llm_cost_per_conversation
+    FROM conv_groups cg
+    FULL OUTER JOIN usage_groups ug ON ug.enterprise_id IS NOT DISTINCT FROM cg.enterprise_id
+    ORDER BY COALESCE(cg.total, 0) DESC, COALESCE(cg.name, ug.name) NULLS LAST
     LIMIT 50`,
-    paramsE
+    [eid, daysBack]
   );
 
   const periodStartIso = new Date(Date.now() - daysBack * 86400000).toISOString();
@@ -410,6 +470,13 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
       qualified: parseInt(row.qualified, 10) || 0,
       handoffs: parseInt(row.handoffs, 10) || 0,
       carteiras: parseInt(row.carteiras, 10) || 0,
+      llmCostUsd: parseNullableNumber(row.llm_cost_usd),
+      llmCalls: parseInt(row.llm_calls ?? '0', 10) || 0,
+      llmInputTokens: parseInt(row.llm_input_tokens ?? '0', 10) || 0,
+      llmOutputTokens: parseInt(row.llm_output_tokens ?? '0', 10) || 0,
+      llmTotalTokens: parseInt(row.llm_total_tokens ?? '0', 10) || 0,
+      llmCostPerContact: parseNullableNumber(row.llm_cost_per_contact),
+      llmCostPerConversation: parseNullableNumber(row.llm_cost_per_conversation),
     })),
   };
 }
