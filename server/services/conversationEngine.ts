@@ -16,7 +16,12 @@ import {
   mergeConfirmedCustomerNameIfEmpty,
   markAnaAskedForCustomerName,
 } from '../repositories/conversationRepository.js';
-import { sendTextMessage, sendLocalMediaToWhatsApp } from './whatsappMetaService.js';
+import {
+  ANA_OUTBOUND_QUOTA_EXCEEDED_REASON,
+  isAnaOutboundQuotaBlocked,
+  sendAnaLocalMediaToWhatsAppWithQuota as sendLocalMediaToWhatsApp,
+  sendAnaTextMessageWithQuota as sendTextMessage,
+} from './anaOutboundQuotaService.js';
 import {
   pickMaterialUnavailableNeutralReply,
   pickMaterialSendFailedNeutralReply,
@@ -1039,8 +1044,15 @@ async function sendAnaEnterpriseMediaFirst(params: {
     preResolvedFileName: file.originalName,
     preResolvedFilePath: file.path,
   });
-  const mediaRes = await sendLocalMediaToWhatsApp(toPhoneNumber, file.path, file.originalName, file.mime, {
-    logCtx: {
+  const mediaRes = await sendLocalMediaToWhatsApp({
+    conversationId,
+    to: toPhoneNumber,
+    filePath: file.path,
+    filename: file.originalName,
+    mimeFromDb: file.mime,
+    phase: 'ana_media_first',
+    options: {
+      logCtx: {
       enterpriseId: enterpriseIdForFile,
       enterpriseName: ent.name,
       conversationId,
@@ -1048,8 +1060,9 @@ async function sendAnaEnterpriseMediaFirst(params: {
       enterpriseFileId: file.id,
       relativeStoragePath: file.relativeStoragePath,
       absolutePath: file.path,
+      },
+      caption: null,
     },
-    caption: null,
   });
   console.log('[ANA_DOC_UPLOAD_RESULT]', {
     conversationId,
@@ -1217,7 +1230,12 @@ async function sendMaterialFlowTextMessage(params: {
   if (isPipelineStale(params.conversationId, params.replyPipelineToken)) {
     return false;
   }
-  const sendResult = await sendTextMessage(params.toPhoneNumber, params.text);
+  const sendResult = await sendTextMessage({
+    conversationId: params.conversationId,
+    to: params.toPhoneNumber,
+    text: params.text,
+    phase: 'material_flow_text',
+  });
   if (!sendResult.success || !sendResult.metaMessageId) {
     return false;
   }
@@ -1676,7 +1694,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         phase: 'handoff_intent_confirm',
         textLen: confirmMsgSafe.length,
       });
-      const sendResult = await sendTextMessage(toPhoneNumber, confirmMsgSafe);
+      const sendResult = await sendTextMessage({
+        conversationId,
+        to: toPhoneNumber,
+        text: confirmMsgSafe,
+        phase: 'handoff_intent_confirm',
+      });
       if (sendResult.success && sendResult.metaMessageId) {
         await insertMessage(conversationId, 'assistant', confirmMsgSafe, sendResult.metaMessageId);
         console.log('[ANA_PIPELINE] engine_send_success', {
@@ -1716,7 +1739,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         toPhoneTail: anaPhoneTail(toPhoneNumber),
       });
       try {
-        const diagSend = await sendTextMessage(toPhoneNumber, ANA_ENGINE_DIAGNOSTIC_TEXT);
+        const diagSend = await sendTextMessage({
+          conversationId,
+          to: toPhoneNumber,
+          text: ANA_ENGINE_DIAGNOSTIC_TEXT,
+          phase: 'engine_diagnostic_fixed_reply',
+        });
         if (diagSend.success && diagSend.metaMessageId) {
           await insertMessage(conversationId, 'assistant', ANA_ENGINE_DIAGNOSTIC_TEXT, diagSend.metaMessageId);
           console.log('[ANA_ENGINE_DIAGNOSTIC] sent_success', {
@@ -1867,7 +1895,26 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
         return;
       }
-      const sendClarification = await sendTextMessage(toPhoneNumber, deterministicReply);
+      const sendClarification = await sendTextMessage({
+        conversationId,
+        to: toPhoneNumber,
+        text: deterministicReply,
+        phase: 'enterprise_resolution_clarification',
+      });
+      if (isAnaOutboundQuotaBlocked(sendClarification)) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
+        anaTurnAuditGuardsApplied.outboundReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
+        anaTurnDiagnostics.finalResponse.replySource = 'enterprise_resolution_clarification';
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+          replySource: 'enterprise_resolution_clarification',
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: anaTurnAuditBlockedReason,
+          quota: sendClarification.quota ?? null,
+        });
+        return;
+      }
       if (sendClarification.success && sendClarification.metaMessageId) {
         await insertMessage(conversationId, 'assistant', deterministicReply, sendClarification.metaMessageId);
         anaTurnAuditOutcome = 'sent';
@@ -2549,7 +2596,26 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
         return;
       }
-      const sendVisitResult = await sendTextMessage(toPhoneNumber, deterministicVisitReply);
+      const sendVisitResult = await sendTextMessage({
+        conversationId,
+        to: toPhoneNumber,
+        text: deterministicVisitReply,
+        phase: 'deterministic_visit_scheduling',
+      });
+      if (isAnaOutboundQuotaBlocked(sendVisitResult)) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
+        anaTurnAuditGuardsApplied.outboundReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
+        anaTurnDiagnostics.finalResponse.replySource = 'deterministic_visit_scheduling';
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+          replySource: 'deterministic_visit_scheduling',
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: anaTurnAuditBlockedReason,
+          quota: sendVisitResult.quota ?? null,
+        });
+        return;
+      }
       if (!sendVisitResult.success || !sendVisitResult.metaMessageId) {
         anaTurnAuditOutcome = 'send_failed';
         anaTurnAuditBlockedReason = 'direct_visit_scheduling_send_failed';
@@ -2676,9 +2742,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     };
 
     const rawModels = await getIntegrationModelStringsRaw();
+    const enterpriseResolvedForModel =
+      effectiveConv.enterprise_id != null ||
+      enterpriseResolution.enterpriseId != null ||
+      linkedContact?.enterprise_id != null ||
+      effectiveConv.enterprise_origin_id != null;
     const anaModelResolution = resolveAnaOpenAIModel({
       modelHotLeadFromDb: rawModels.modelHotLead,
       modelColdLeadFromDb: rawModels.modelColdLead,
+      enterpriseResolved: enterpriseResolvedForModel,
     });
     const model = anaModelResolution.finalModel;
 
@@ -2687,8 +2759,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       messageId: inboundMetaMessageId,
       configuredModelFromDb: anaModelResolution.configuredModelFromDb,
       configuredModelFromEnv: anaModelResolution.configuredModelFromEnv,
+      configuredUnclassifiedEnterpriseModelFromEnv:
+        anaModelResolution.configuredUnclassifiedEnterpriseModelFromEnv,
       finalModel: anaModelResolution.finalModel,
       sourceOfFinalModel: anaModelResolution.sourceOfFinalModel,
+      selectionReason: anaModelResolution.selectionReason,
+      enterpriseResolvedForModel,
     });
 
     console.log('[ANA_CHAT_AUDIT]', {
@@ -2715,6 +2791,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     anaTurnDiagnostics.rag.includedInPrompt = knowledgeText.trim().length > 0;
     markAnaTurnStage(anaTurnDiagnostics, 'prompt_build', 'passed', {
       mode,
+      model,
+      modelSelectionReason: anaModelResolution.selectionReason,
+      enterpriseResolvedForModel,
       knowledgeTextLength: knowledgeText.length,
       knowledgeIncludedInPrompt: anaTurnDiagnostics.rag.includedInPrompt,
       messagesPlanned: history.length + 2,
@@ -3923,7 +4002,26 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         return;
       }
       anaEngineTrace('final_send_start', { conversationId, phase: 'doc_ack', replyLen: ackText.length });
-      const sendAckResult = await sendTextMessage(toPhoneNumber, ackText);
+      const sendAckResult = await sendTextMessage({
+        conversationId,
+        to: toPhoneNumber,
+        text: ackText,
+        phase: 'doc_ack_after_media',
+      });
+      if (isAnaOutboundQuotaBlocked(sendAckResult)) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
+        anaTurnAuditGuardsApplied.outboundReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
+        anaTurnDiagnostics.finalResponse.replySource = 'doc_ack';
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+          replySource: 'doc_ack',
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: anaTurnAuditBlockedReason,
+          quota: sendAckResult.quota ?? null,
+        });
+        return;
+      }
       if (isPipelineStale(conversationId, replyPipelineToken)) {
         console.log('[ANA_DOC_PIPELINE_STALE_ABORT]', {
           conversationId,
@@ -4586,7 +4684,26 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       phase: 'ana_main_reply',
       replyLen: replyText.length,
     });
-    const sendResult = await sendTextMessage(toPhoneNumber, replyText);
+    const sendResult = await sendTextMessage({
+      conversationId,
+      to: toPhoneNumber,
+      text: replyText,
+      phase: 'ana_main_reply',
+    });
+    if (isAnaOutboundQuotaBlocked(sendResult)) {
+      anaTurnAuditOutcome = 'blocked';
+      anaTurnAuditBlockedReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
+      anaTurnAuditGuardsApplied.outboundReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
+      anaTurnDiagnostics.finalResponse.replySource = replySource;
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+        replySource,
+        outboundStatus: anaTurnAuditOutcome,
+        blockedReason: anaTurnAuditBlockedReason,
+        quota: sendResult.quota ?? null,
+      });
+      return;
+    }
     if (sendResult.success && sendResult.metaMessageId) {
       await insertMessage(conversationId, 'assistant', replyText, sendResult.metaMessageId);
       anaEngineTrace('final_send_success', {
