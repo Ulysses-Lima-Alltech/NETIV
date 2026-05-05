@@ -22,8 +22,24 @@ import {
   getEnterpriseById,
   enterpriseToPublic,
   getVariablesMap,
+  createEnterprise,
+  updateEnterprise,
   type EnterpriseRow,
 } from '../repositories/enterpriseRepository.js';
+import { query } from '../db/pg.js';
+import { z } from 'zod';
+
+const enterpriseFromDjangoSchema = z.object({
+  name: z.string().min(1).max(200),
+  tipo: z.enum(['LOTEAMENTO', 'APARTAMENTO', 'MCMV']).optional(),
+  status: z.enum(['ativo', 'inativo']).optional(),
+  city: z.string().max(160).optional().nullable(),
+  stateUf: z.string().max(2).optional().nullable(),
+  commercialRegion: z.string().max(240).optional().nullable(),
+  ibgeCode: z.string().max(12).optional().nullable(),
+  languageStyle: z.enum(['informal', 'natural', 'formal', 'culta']).optional(),
+  exclusivo: z.boolean().optional(),
+});
 
 const router = Router();
 
@@ -354,6 +370,95 @@ router.get('/enterprises/:id', requireServiceJwt(['django']), async (req: JwtReq
   } catch (error) {
     console.error('[API Django] GET /enterprises/:id error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// === Enterprises (POST) — criação a partir do Django (idempotente por nome) ===
+router.post('/enterprises', requireServiceJwt(['django']), async (req: JwtRequest, res: Response) => {
+  try {
+    const parsed = enterpriseFromDjangoSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues.map((i) => i.message).join('; ') || 'Dados inválidos.';
+      return res.status(400).json({ error: msg });
+    }
+    const d = parsed.data;
+    const name = d.name.trim();
+
+    // Idempotência: se já existe pelo nome, atualiza extras e retorna 200 com o id existente
+    const dup = await query<{ id: number }>(
+      `SELECT id FROM enterprises WHERE name = $1`,
+      [name]
+    );
+    if (dup.rows.length) {
+      const existingId = dup.rows[0].id;
+      const updated = await updateEnterprise(existingId, {
+        status: d.status,
+        tipo: d.tipo,
+        city: d.city ?? undefined,
+        stateUf: d.stateUf ?? undefined,
+        commercialRegion: d.commercialRegion ?? undefined,
+        ibgeCode: d.ibgeCode ?? undefined,
+      });
+      const vars = await getVariablesMap(existingId);
+      return res.status(200).json(serializeEnterprise(updated!, vars));
+    }
+
+    // Criação: createEnterprise só aceita um subset → completamos campos extras com updateEnterprise
+    const created = await createEnterprise(name, {
+      languageStyle: d.languageStyle,
+      tipo: d.tipo,
+      exclusivo: d.exclusivo,
+    });
+    const final =
+      d.status || d.city || d.stateUf || d.commercialRegion || d.ibgeCode
+        ? await updateEnterprise(created.id, {
+            status: d.status,
+            city: d.city ?? undefined,
+            stateUf: d.stateUf ?? undefined,
+            commercialRegion: d.commercialRegion ?? undefined,
+            ibgeCode: d.ibgeCode ?? undefined,
+          })
+        : created;
+
+    const vars = await getVariablesMap(created.id);
+    res.status(201).json(serializeEnterprise(final ?? created, vars));
+  } catch (error) {
+    console.error('[API Django] POST /enterprises:', error);
+    res.status(500).json({ error: 'Erro ao criar empreendimento.' });
+  }
+});
+
+// === Enterprises (PATCH) — atualização a partir do Django ===
+router.patch('/enterprises/:id', requireServiceJwt(['django']), async (req: JwtRequest, res: Response) => {
+  try {
+    const id = parseRouteId(req.params.id);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+
+    const parsed = enterpriseFromDjangoSchema.partial().safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues.map((i) => i.message).join('; ') || 'Dados inválidos.';
+      return res.status(400).json({ error: msg });
+    }
+    const d = parsed.data;
+
+    const updated = await updateEnterprise(id, {
+      name: d.name?.trim(),
+      status: d.status,
+      tipo: d.tipo,
+      languageStyle: d.languageStyle,
+      exclusivo: d.exclusivo,
+      city: d.city ?? undefined,
+      stateUf: d.stateUf ?? undefined,
+      commercialRegion: d.commercialRegion ?? undefined,
+      ibgeCode: d.ibgeCode ?? undefined,
+    });
+    if (!updated) return res.status(404).json({ error: 'Empreendimento não encontrado.' });
+
+    const vars = await getVariablesMap(id);
+    res.json(serializeEnterprise(updated, vars));
+  } catch (error) {
+    console.error('[API Django] PATCH /enterprises/:id:', error);
+    res.status(500).json({ error: 'Erro ao atualizar empreendimento.' });
   }
 });
 
