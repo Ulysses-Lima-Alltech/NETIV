@@ -168,10 +168,13 @@ export function pickOperationalSafeReply(userText: string): string {
 // ─── API principal ─────────────────────────────────────────────────────────────
 
 export interface OperationalFactGuardResult {
-  /** Texto final (original ou substituído) */
+  /** Texto final (sempre original; o engine decide retry/bloqueio). */
   text: string;
-  /** true se o reply foi substituído por resposta neutra */
+  /** Mantido por compatibilidade: este guard não substitui mais atendimento. */
   replaced: boolean;
+  /** true quando há risco factual e o outbound deve ser bloqueado/reprocessado. */
+  blocked: boolean;
+  blockedReason: string | null;
   /** Claims não ancorados que causaram a substituição */
   unsupportedClaims: string[];
   /** Claims encontrados que tinham âncora oficial (passaram) */
@@ -193,7 +196,7 @@ export function applyOperationalFactGuard(
   const { found, matchedLabels } = scanOperationalClaims(replyText);
 
   if (!found) {
-    return { text: replyText, replaced: false, unsupportedClaims: [], groundedClaims: [] };
+    return { text: replyText, replaced: false, blocked: false, blockedReason: null, unsupportedClaims: [], groundedClaims: [] };
   }
 
   const groundedClaims: string[] = [];
@@ -208,14 +211,16 @@ export function applyOperationalFactGuard(
   }
 
   if (unsupportedClaims.length === 0) {
-    // Todos os claims têm base oficial — deixa passar
-    return { text: replyText, replaced: false, unsupportedClaims: [], groundedClaims };
+    // Todos os claims têm base oficial — deixa passar sem reescrever.
+    return { text: replyText, replaced: false, blocked: false, blockedReason: null, unsupportedClaims: [], groundedClaims };
   }
 
-  // Substituir por resposta contextual ancorada na ausência de dado oficial
+  // Sem fallback determinístico: o engine deve tentar repair/retry ou bloquear outbound.
   return {
-    text: pickOperationalSafeReply(userText),
-    replaced: true,
+    text: replyText,
+    replaced: false,
+    blocked: true,
+    blockedReason: 'unsupported_operational_claim',
     unsupportedClaims,
     groundedClaims,
   };

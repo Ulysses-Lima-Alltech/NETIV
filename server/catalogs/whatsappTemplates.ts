@@ -98,7 +98,7 @@ export const WHATSAPP_TEMPLATES_CATALOG: WhatsAppTemplateCatalogItem[] = [
     messageBodyTemplate:
       'Olá, {{1}}! Tudo bem?\n\n' +
       'Meu nome é Ana. Estive revisando minha base e encontrei seu contato com interesse em alguns imóveis.\n\n' +
-      'Me diz uma coisa: você já comprou seu imóvel ou ainda está buscando? Estamos com uma ótima oportunidade de Feirão que pode fazer sentido para você e queria te contar um pouco mais. Posso te explicar rapidinho por aqui?',
+      'Me diz uma coisa: você já comprou seu imóvel ou ainda está buscando? Estamos com uma ótima oportunidade de Feirão que pode fazer sentido para você. Se fizer sentido, me responda por aqui que eu sigo com você.',
   },
   CONVITE_MEETING_ECOGARDEN_TEMPLATE,
 ];

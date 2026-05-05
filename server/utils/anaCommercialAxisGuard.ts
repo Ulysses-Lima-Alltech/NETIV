@@ -458,98 +458,30 @@ export function applyAnaCommercialSingleAxisGuard(opts: {
 }): { text: string; changed: boolean; detected: CommercialAxis[]; chosen: CommercialAxis | null } {
   const raw = (opts.reply || '').trim();
   if (!raw) return { text: raw, changed: false, detected: [], chosen: null };
-
-  const userResolvedPurchaseIntent = inferResolvedPurchaseIntent(opts.userMessage);
-  const effectiveResolvedPurchaseIntent = userResolvedPurchaseIntent ?? opts.resolvedPurchaseIntent ?? null;
-  const lastAssistantAskedPurchaseIntent = isPurchaseIntentAxisQuestion(opts.lastAssistantMessage ?? '');
-  const shouldBlockRepeatedPurchaseIntentQuestion = (candidateText: string): boolean => {
-    if (!isPurchaseIntentAxisQuestion(candidateText)) return false;
-    if (effectiveResolvedPurchaseIntent != null) return true;
-    if (lastAssistantAskedPurchaseIntent && userResolvedPurchaseIntent != null) return true;
-    return false;
-  };
-  const applyPurchaseIntentLoopProtection = (candidateText: string): string => {
-    if (!shouldBlockRepeatedPurchaseIntentQuestion(candidateText)) return candidateText;
-    if (effectiveResolvedPurchaseIntent == null) return candidateText;
-    return buildAdvanceReplyAfterResolvedPurchaseIntent(
-      effectiveResolvedPurchaseIntent,
-      opts.enterpriseName ?? undefined
-    );
-  };
-
   const detected = detectCommercialAxes(raw);
-  if (detected.length <= 1) {
-    const protectedSingleAxisText = applyPurchaseIntentLoopProtection(raw);
-    if (protectedSingleAxisText !== raw) {
-      console.log('[ANA_AXIS_GUARD] purchase_intent_loop_prevented=true');
-    }
-    return {
-      text: protectedSingleAxisText,
-      changed: protectedSingleAxisText !== raw,
-      detected,
-      chosen: detected[0] ?? null,
-    };
-  }
-
   const userAxis = inferUserRequestedAxis(opts.userMessage);
-  const target = pickTargetAxis(detected, userAxis, opts.isFirstAnaReply, opts.userMessage || '');
-
-  const originalHasEnterprise = hasEnterpriseMention(raw, opts.enterpriseName ?? undefined);
-  let rewriteResult = buildRewrittenReply(
-    target,
-    raw,
-    opts.enterpriseName ?? undefined,
-    effectiveResolvedPurchaseIntent
-  );
-  let rewritten = rewriteResult.text;
-  let finalAxes = detectCommercialAxes(rewritten);
-  if (finalAxes.length > 1) {
-    // Se o usuário pediu eixo explícito (ex.: lazer), não degradar para preço.
-    const fallbackAxis = userAxis ?? target;
-    rewriteResult = buildRewrittenReply(
-      fallbackAxis,
-      raw,
-      opts.enterpriseName ?? undefined,
-      effectiveResolvedPurchaseIntent
-    );
-    rewritten = rewriteResult.text;
-    finalAxes = detectCommercialAxes(rewritten);
-  }
-  if (finalAxes.length > 1 && userAxis == null) {
-    rewriteResult = buildRewrittenReply(
-      'intencao_compra',
-      raw,
-      opts.enterpriseName ?? undefined,
-      effectiveResolvedPurchaseIntent
-    );
-    rewritten = rewriteResult.text;
-    finalAxes = detectCommercialAxes(rewritten);
-  }
-
-  const text = applyPurchaseIntentLoopProtection(enforceShortShape(rewritten));
-  const sanitizedHasEnterprise = hasEnterpriseMention(text, opts.enterpriseName ?? undefined);
-  const enterprisePreserved = originalHasEnterprise ? sanitizedHasEnterprise : false;
+  const chosen =
+    detected.length === 0
+      ? null
+      : userAxis && detected.includes(userAxis)
+        ? userAxis
+        : detected[0] ?? null;
 
   const cid = opts.conversationId;
-  console.log(`[ANA_AXIS_GUARD] detected_axes=${detected.join('|') || 'none'}`);
-  console.log(`[ANA_AXIS_GUARD] chosen_axis=${target}`);
-  console.log(`[ANA_AXIS_GUARD] enterprise_preserved=${enterprisePreserved}`);
-  console.log(`[ANA_AXIS_GUARD] original_reply=${raw.slice(0, 500)}`);
-  console.log(`[ANA_AXIS_GUARD] sanitized_reply=${text.slice(0, 500)}`);
-  console.log(
-    `[ANA_AXIS_GUARD] purchase_intent_state=${opts.resolvedPurchaseIntent ?? 'none'} purchase_intent_user=${userResolvedPurchaseIntent ?? 'none'} last_asked_purchase_intent=${lastAssistantAskedPurchaseIntent}`
-  );
-  console.log(
-    `[ANA_AXIS_GUARD] detected_axes=${detected.join('|')} chosen_axis=${target} user_requested_axis=${userAxis ?? 'none'} conversationId=${cid ?? 'n/a'}`
-  );
-  console.log('[ANA_AXIS_GUARD]', {
-    conversationId: cid ?? null,
-    detected_axes: detected,
-    chosen_axis: target,
-    user_requested_axis: userAxis,
-    original_reply: raw.slice(0, 500),
-    sanitized_reply: text.slice(0, 500),
-  });
+  if (detected.length > 1 || isPurchaseIntentAxisQuestion(raw)) {
+    console.log('[ANA_AXIS_GUARD]', {
+      conversationId: cid ?? null,
+      mode: 'validation_only_no_rewrite',
+      detected_axes: detected,
+      chosen_axis: chosen,
+      user_requested_axis: userAxis,
+      reply_preview: raw.slice(0, 500),
+      isFirstAnaReply: opts.isFirstAnaReply,
+      enterpriseName: opts.enterpriseName ?? null,
+      resolvedPurchaseIntent: opts.resolvedPurchaseIntent ?? null,
+      lastAssistantAskedPurchaseIntent: isPurchaseIntentAxisQuestion(opts.lastAssistantMessage ?? ''),
+    });
+  }
 
-  return { text, changed: text !== raw, detected, chosen: target };
+  return { text: raw, changed: false, detected, chosen };
 }

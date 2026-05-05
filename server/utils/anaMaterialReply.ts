@@ -54,12 +54,14 @@ function pickFirstNotSimilarToLast(options: readonly string[], lastAssistantMess
 
 /** Quando o cliente pediu material mas não há arquivo resolvível no empreendimento. */
 export function pickMaterialUnavailableNeutralReply(lastAssistantMessage?: string | null): string {
-  return pickFirstNotSimilarToLast(MATERIAL_UNAVAILABLE_NEUTRAL, lastAssistantMessage);
+  void lastAssistantMessage;
+  return '';
 }
 
 /** Quando há arquivo mas o envio (Meta/WhatsApp) falhou. */
 export function pickMaterialSendFailedNeutralReply(lastAssistantMessage?: string | null): string {
-  return pickFirstNotSimilarToLast(MATERIAL_SEND_FAILED_NEUTRAL, lastAssistantMessage);
+  void lastAssistantMessage;
+  return '';
 }
 
 function norm(s: string): string {

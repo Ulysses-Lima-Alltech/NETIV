@@ -474,13 +474,12 @@ function stripGenericAxisFollowupQuestion(text: string): string {
 }
 
 function buildNoAdditionalLazerReply(): string {
-  return 'Essas sao as areas de lazer que tenho cadastradas ate agora. Quer que eu te explique alguma delas melhor?';
+  return '';
 }
 
 function buildOnlyNewLazerItemsReply(newItems: string[]): string {
-  const items = dedupeListItems(newItems).slice(0, 8);
-  if (items.length === 0) return buildNoAdditionalLazerReply();
-  return `Tem sim. Alem das areas que eu ja te passei, tambem temos:\n${items.map((item) => `- ${item}`).join('\n')}`;
+  void newItems;
+  return '';
 }
 
 function userAskedDirectOperationalAxis(
@@ -829,19 +828,13 @@ function userExplicitlyAskedPriceInCurrentTurn(message: string): boolean {
 }
 
 function buildNoEnterpriseResolvedReply(userMessage: string): string {
-  return userExplicitlyAskedPriceInCurrentTurn(userMessage)
-    ? 'Claro. De qual empreendimento você quer saber os valores?'
-    : 'Oi! Sou a Ana. Sobre qual empreendimento você quer informações?';
+  void userMessage;
+  return '';
 }
 
 function buildAmbiguousEnterpriseReply(candidates: AnaEnterpriseResolution['candidates']): string {
-  const names = candidates.map((candidate) => candidate.enterpriseName).filter(Boolean);
-  if (names.length === 0) return 'Sobre qual empreendimento você quer informações?';
-  const formatted =
-    names.length === 1
-      ? names[0]
-      : `${names.slice(0, -1).join(', ')} ou ${names[names.length - 1]}`;
-  return `Encontrei mais de uma possibilidade: ${formatted}. Qual desses empreendimentos você quer conhecer?`;
+  void candidates;
+  return '';
 }
 
 function looksLikeStandaloneNameReply(message: string): boolean {
@@ -1268,12 +1261,7 @@ async function handleMaterialRequestTurn(params: {
       lastMaterialSentId: null,
     });
     await mergeConversationCommercialFlowState(params.conversationId, state);
-    await sendMaterialFlowTextMessage({
-      conversationId: params.conversationId,
-      toPhoneNumber: params.toPhoneNumber,
-      text: 'Me confirma de qual empreendimento voce quer o material para eu enviar certo.',
-      replyPipelineToken: params.replyPipelineToken,
-    });
+    // Sem fallback determinístico: o engine vai bloquear outbound e acionar handoff operacional.
     console.log('[MATERIAL_FLOW]', logPayload);
     return { handled: true, status: 'ENTERPRISE_NOT_RESOLVED', log: logPayload };
   }
@@ -1289,12 +1277,7 @@ async function handleMaterialRequestTurn(params: {
       lastMaterialSentId: null,
     });
     await mergeConversationCommercialFlowState(params.conversationId, state);
-    await sendMaterialFlowTextMessage({
-      conversationId: params.conversationId,
-      toPhoneNumber: params.toPhoneNumber,
-      text: 'Me confirma se voce quer o book, a planta ou a tabela para eu enviar certo.',
-      replyPipelineToken: params.replyPipelineToken,
-    });
+    // Sem fallback determinístico: o engine vai bloquear outbound e acionar handoff operacional.
     console.log('[MATERIAL_FLOW]', logPayload);
     return { handled: true, status: 'MATERIAL_TYPE_NOT_RESOLVED', log: logPayload };
   }
@@ -1317,12 +1300,7 @@ async function handleMaterialRequestTurn(params: {
       lastMaterialSentId: null,
     });
     await mergeConversationCommercialFlowState(params.conversationId, state);
-    await sendMaterialFlowTextMessage({
-      conversationId: params.conversationId,
-      toPhoneNumber: params.toPhoneNumber,
-      text: pickMaterialUnavailableNeutralReply(params.lastAssistantMessage),
-      replyPipelineToken: params.replyPipelineToken,
-    });
+    // Sem fallback determinístico: material indisponível vira bloqueio/handoff.
     console.log('[MATERIAL_FLOW]', logPayload);
     return { handled: true, status: 'MATERIAL_NOT_FOUND', log: logPayload };
   }
@@ -1360,12 +1338,7 @@ async function handleMaterialRequestTurn(params: {
       lastMaterialSentId: null,
     });
     await mergeConversationCommercialFlowState(params.conversationId, state);
-    await sendMaterialFlowTextMessage({
-      conversationId: params.conversationId,
-      toPhoneNumber: params.toPhoneNumber,
-      text: pickMaterialSendFailedNeutralReply(params.lastAssistantMessage),
-      replyPipelineToken: params.replyPipelineToken,
-    });
+    // Sem fallback determinístico: falha de envio vira bloqueio/handoff.
     console.log('[MATERIAL_FLOW]', logPayload);
     return { handled: true, status: 'SEND_FAILED', log: logPayload };
   }
@@ -1778,8 +1751,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const lastUserRowForLog = [...rows].reverse().find((r) => r.role === 'user');
     const inboundMetaMessageId = lastUserRowForLog?.meta_message_id ?? inboundMetaFromCtx ?? null;
 
-    if (enterpriseResolution.source === 'ambiguous' || enterpriseResolution.source === 'unresolved') {
-      const deterministicReply =
+    // Legado desativado: esclarecimento sem empreendimento também deve passar pelo LLM/policy.
+    if (false && (enterpriseResolution.source === 'ambiguous' || enterpriseResolution.source === 'unresolved')) {
+      const deterministicReply: string =
         enterpriseResolution.source === 'ambiguous'
           ? buildAmbiguousEnterpriseReply(enterpriseResolution.candidates)
           : buildNoEnterpriseResolvedReply(trimmed);
@@ -1863,7 +1837,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         return;
       }
       if (sendClarification.success && sendClarification.metaMessageId) {
-        await insertMessage(conversationId, 'assistant', deterministicReply, sendClarification.metaMessageId);
+        await insertMessage(conversationId, 'assistant', deterministicReply, sendClarification.metaMessageId ?? null);
         anaTurnAuditOutcome = 'sent';
         anaTurnAuditBlockedReason = null;
         anaTurnDiagnostics.finalResponse.replySource = 'enterprise_resolution_clarification';
@@ -2068,11 +2042,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         anaTurnAuditOutcome = 'material_sent';
         anaTurnAuditBlockedReason = null;
       } else if (materialTurnResult.status === 'SEND_FAILED') {
-        anaTurnAuditOutcome = 'send_failed';
-        anaTurnAuditBlockedReason = 'material_flow_send_failed';
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'material_flow_send_failed_handoff';
       } else {
-        anaTurnAuditOutcome = 'material_failed';
-        anaTurnAuditBlockedReason = materialTurnResult.status.toLowerCase();
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = `material_flow_${materialTurnResult.status.toLowerCase()}_handoff`;
+      }
+      if (materialTurnResult.status !== 'MATERIAL_SENT') {
+        await applyAnaConversationUpdate(conversationId, {
+          classification: 'Handoff',
+          handoff: true,
+        });
+        console.log('[ANA_MATERIAL_FLOW_BLOCKED]', {
+          conversationId,
+          status: materialTurnResult.status,
+          blockedReason: anaTurnAuditBlockedReason,
+        });
       }
       return;
     }
@@ -3559,12 +3544,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       structured = { ...structured, send_file_category: null };
       fileResolutionSkipReason = userMaterialAsk ? 'policy_blocked_material_send' : 'no_material_intent_this_turn';
       if (userMaterialAsk) {
-        structured = {
-          ...structured,
-          reply: pickMaterialUnavailableNeutralReply(lastAssistantPlain),
-          send_file_category: null,
-        };
-        replySource = 'policy_material_unavailable';
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'material_policy_blocked_handoff';
+        anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
+        anaTurnDiagnostics.finalResponse.replySource = null;
+        anaTurnDiagnostics.finalResponse.handoffUsed = true;
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        await applyAnaConversationUpdate(conversationId, {
+          classification: 'Handoff',
+          handoff: true,
+        });
+        console.log('[ANA_DOC_SEND_BLOCKED_NO_FALLBACK]', {
+          conversationId,
+          reason: anaTurnAuditBlockedReason,
+        });
+        return;
       }
       console.log('[ANA_DOC_SEND_SKIPPED]', {
         conversationId,
@@ -3743,27 +3737,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let operationalResolverFired = false;
     let operationalResolverTopic: OperationalTopic | null = null;
     {
-      const resolution = resolveOperationalFactAnswer(trimmed, knowledgeText, vars, {
-        enterpriseName: ent?.name ?? null,
-        hintedTopic:
-          asksForMoreThisTurnNormalized && currentAxisForRepetition === 'lazer'
-            ? 'portaria_lazer'
-            : null,
-      });
-      if (resolution !== null) {
-        operationalResolverFired = true;
-        operationalResolverTopic = resolution.topic;
-        anaTurnAuditGuardsApplied.operationalResolverFired = true;
-        console.log('[ANA_OPERATIONAL_RESOLVER]', {
-          conversationId,
-          topic: resolution.topic,
-          dataFound: resolution.dataFound,
-          fragment: resolution.fragment?.slice(0, 100) ?? null,
-          answer_preview: resolution.answer.slice(0, 100),
-          original_llm_preview: replyBody.slice(0, 100),
-        });
-        replyBody = resolution.answer;
-      }
+      // O resolver determinístico antigo não escreve mais atendimento. O LLM responde com RAG;
+      // guards abaixo apenas bloqueiam claims operacionais sem âncora.
+      void resolveOperationalFactAnswer;
     }
 
     // --- ANA OPERATIONAL FACT GUARD (seguranca adicional) ---
@@ -3780,16 +3756,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
       const guardResult = applyOperationalFactGuard(replyBody, trimmed, officialData);
 
-      if (guardResult.replaced) {
-        anaTurnAuditGuardsApplied.operationalFactGuardReplaced = true;
+      if (guardResult.blocked) {
+        anaTurnAuditGuardsApplied.operationalFactGuardBlocked = true;
+        anaTurnAuditGuardsApplied.outboundReason = guardResult.blockedReason ?? 'unsupported_operational_claim';
         console.log('[ANA_OPERATIONAL_FACT_GUARD]', {
           conversationId,
-          replaced: true,
+          blocked: true,
           unsupported_claims: guardResult.unsupportedClaims,
           grounded_claims: guardResult.groundedClaims,
           original_preview: replyBody.slice(0, 120),
         });
-        replyBody = guardResult.text;
+        replyBody = '';
       } else if (guardResult.groundedClaims.length > 0) {
         anaTurnAuditGuardsApplied.operationalFactGuardReplaced = false;
         console.log('[ANA_OPERATIONAL_FACT_GUARD]', {
@@ -4149,23 +4126,28 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     let replyText: string;
     if (shouldAttemptDocSend) {
-      if (mediaOutcome != null && !mediaOutcome.ok) {
-        replyText = pickMaterialSendFailedNeutralReply(lastAsstDup?.content ?? null);
-        console.log('[ANA_DOC_HARD_FAIL_NO_FALLBACK]', {
-          conversationId,
-          branch: 'meta_send_failed',
-        });
-      } else {
-        replyText = pickMaterialUnavailableNeutralReply(lastAsstDup?.content ?? null);
-        const branch =
-          !ent || !hasSendableFiles
+      const branch =
+        mediaOutcome != null && !mediaOutcome.ok
+          ? 'meta_send_failed'
+          : !ent || !hasSendableFiles
             ? 'no_enterprise_or_no_sendable_files'
             : 'file_not_found_after_category_try';
-        console.log('[ANA_DOC_HARD_FAIL_NO_FALLBACK]', {
-          conversationId,
-          branch,
-        });
-      }
+      anaTurnAuditOutcome = 'blocked';
+      anaTurnAuditBlockedReason = `material_send_blocked_${branch}`;
+      anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
+      anaTurnDiagnostics.finalResponse.replySource = null;
+      anaTurnDiagnostics.finalResponse.handoffUsed = true;
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      await applyAnaConversationUpdate(conversationId, {
+        classification: 'Handoff',
+        handoff: true,
+      });
+      console.log('[ANA_DOC_HARD_FAIL_NO_FALLBACK]', {
+        conversationId,
+        branch,
+        outboundBlocked: true,
+      });
+      return;
     } else {
       replyText =
         anaDecision.responseMode === 'structured'
@@ -4188,7 +4170,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       mediaOutcome?.ok === true;
     if (!materialSendProofAvailable && textHasMaterialDeliveryClaim(replyText)) {
       const stripped = stripMaterialDeliveryClaims(replyText).trim();
-      replyText = stripped || pickMaterialUnavailableNeutralReply(lastAsstDup?.content ?? null);
+      replyText = stripped;
       console.log('[MATERIAL_FLOW]', {
         userMessage: trimmed.slice(0, 500),
         detectedMaterialRequest: explicitMaterialRequestThisTurn || isFollowupMaterialCommand(trimmed),
@@ -4339,6 +4321,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           reply: finalOutboundEval.text,
           userMessage: trimmed,
           lastAssistantMessage: lastAssistantPlain,
+          isFirstAnaReply,
+          knowledgeText,
         })
       : { blocked: false, reason: null as string | null };
     const shouldRetryEmptyFallbackGuard =
@@ -4502,6 +4486,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             reply: retryEval.text,
             userMessage: trimmed,
             lastAssistantMessage: lastAssistantPlain,
+            isFirstAnaReply,
+            knowledgeText: expandedKnowledgeText,
           });
           retryAudit.retryAccepted = retryEval.valid && !retryEmptyGuard.blocked;
           retryAudit.retryEvalReason = retryEval.reason;
@@ -4788,6 +4774,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           reply: replyText,
           userMessage: trimmed,
           lastAssistantMessage: lastAssistantPlain,
+          isFirstAnaReply,
+          knowledgeText,
         })
       : { blocked: false, reason: null as string | null };
     if (postPolicyEmptyGuard.blocked) {
