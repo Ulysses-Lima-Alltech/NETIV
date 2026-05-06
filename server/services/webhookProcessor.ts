@@ -9,9 +9,14 @@ import { insertMessage, findMessageByMetaId } from '../repositories/messageRepos
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { scheduleWhatsAppAiAfterUserMessage } from './whatsappAiDebounce.js';
+import { handleIncomingMessage } from './conversationEngine.js';
 import { leadOriginFromMetaWhatsAppMessage } from './leadOriginResolver.js';
 import { sendTextMessage } from './whatsappMetaService.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
+import {
+  isAnaEmergencyHandoffEnabled,
+  sendAnaEmergencyHandoff,
+} from '../utils/anaEmergencyHandoff.js';
 
 /** TEMP diagnóstico: ignorar `integration_settings.ai_enabled` no agendamento da Ana. Remover após investigação. */
 const ANA_FORCE_AI_DIAGNOSTIC = true;
@@ -203,11 +208,16 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
     return;
   }
 
-  const aiConfig = await getOpenAIConfig();
-  const hasOpenaiKey = !!aiConfig?.openaiApiKey?.trim();
-  const aiEnabledInDb = aiConfig?.aiEnabled === true;
-  const aiReady = hasOpenaiKey && (ANA_FORCE_AI_DIAGNOSTIC || aiEnabledInDb);
-  if (ANA_FORCE_AI_DIAGNOSTIC) {
+  const anaEmergencyHandoffActive = isAnaEmergencyHandoffEnabled();
+  const aiConfig = anaEmergencyHandoffActive ? null : await getOpenAIConfig();
+  const hasOpenaiKey = !anaEmergencyHandoffActive && !!aiConfig?.openaiApiKey?.trim();
+  const aiEnabledInDb = !anaEmergencyHandoffActive && aiConfig?.aiEnabled === true;
+  const aiReady = anaEmergencyHandoffActive || (hasOpenaiKey && (ANA_FORCE_AI_DIAGNOSTIC || aiEnabledInDb));
+  if (anaEmergencyHandoffActive) {
+    console.log('[ANA_EMERGENCY_HANDOFF] webhook_ai_gate_bypassed', {
+      reason: 'emergency_handoff_active',
+    });
+  } else if (ANA_FORCE_AI_DIAGNOSTIC) {
     console.log('[ANA_FORCE_AI]', {
       enabled: true,
       bypassWhere: 'webhookProcessor.integration_ai_gate',
@@ -221,9 +231,12 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
     hasOpenaiKey,
     aiEnabled: aiEnabledInDb,
     ana_force_ai: ANA_FORCE_AI_DIAGNOSTIC,
-    note: ANA_FORCE_AI_DIAGNOSTIC
-      ? 'TEMP: ai_enabled ignorado; aiReady = hasOpenaiKey'
-      : 'Modo ANA no inbox (handoff=false) e diferente de integration_settings.ai_enabled; se aiReady=false, nao ha scheduleWhatsAppAiAfterUserMessage',
+    ana_emergency_handoff: anaEmergencyHandoffActive,
+    note: anaEmergencyHandoffActive
+      ? 'ANA_EMERGENCY_HANDOFF ativo; engine sera chamado sem consultar configuracao OpenAI.'
+      : ANA_FORCE_AI_DIAGNOSTIC
+        ? 'TEMP: ai_enabled ignorado; aiReady = hasOpenaiKey'
+        : 'Modo ANA no inbox (handoff=false) e diferente de integration_settings.ai_enabled; se aiReady=false, nao ha scheduleWhatsAppAiAfterUserMessage',
   });
   const waReady = await canSendWhatsAppText();
 
@@ -358,6 +371,23 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
 
           if (type !== 'text' || !bodyText?.trim()) {
             console.log('[ANA_PIPELINE] non_text_branch', { conversationId: conv.id, metaMessageId: mid, type });
+            if (anaEmergencyHandoffActive) {
+              const emergencyResult = await sendAnaEmergencyHandoff({
+                conversationId: conv.id,
+                toPhoneNumber: String(msg.from),
+                sendTextMessage,
+                insertAssistantMessage: (conversationId, text, metaMessageId) =>
+                  insertMessage(conversationId, 'assistant', text, metaMessageId),
+              });
+              console.log('[ANA_EMERGENCY_HANDOFF] non_text_handled', {
+                conversationId: conv.id,
+                metaMessageId: mid,
+                sent: emergencyResult.sent,
+                outboundMetaMessageId: emergencyResult.metaMessageId,
+                error: emergencyResult.error,
+              });
+              continue;
+            }
             if (waReady) {
               try {
                 const r = await sendTextMessage(String(msg.from), NON_TEXT_MESSAGE);
@@ -475,6 +505,22 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
               }
               continue;
             }
+          }
+
+          if (anaEmergencyHandoffActive) {
+            console.log('[ANA_EMERGENCY_HANDOFF] engine_direct_call', {
+              conversationId: conv.id,
+              metaMessageId: mid,
+              fromTail: phoneDigitsTail(msg.from, 4),
+            });
+            await handleIncomingMessage({
+              conversationId: conv.id,
+              userMessage: text,
+              toPhoneNumber: String(msg.from),
+              trailingUserBubbles: 1,
+              inboundMetaMessageId: mid,
+            });
+            continue;
           }
 
           if (!aiReady) {

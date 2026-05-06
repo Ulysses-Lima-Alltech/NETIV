@@ -12,6 +12,7 @@ import {
   computeEligibleReengagementAtUtc,
   isReengagementDueNow,
 } from '../utils/anaReengagementSchedule.js';
+import { isAnaEmergencyHandoffEnabled } from '../utils/anaEmergencyHandoff.js';
 
 const SCAN_LIMIT = 150;
 
@@ -54,6 +55,11 @@ function isBlockedClassification(c: string): boolean {
  * Uma passada do worker: tenta reengajamento para conversas candidatas (com lock por linha).
  */
 export async function processAnaReengagementScan(): Promise<void> {
+  if (isAnaEmergencyHandoffEnabled()) {
+    console.log('[ANA_REENGAGE_SKIP]', { reason: 'ana_emergency_handoff_active' });
+    return;
+  }
+
   const { rows } = await query<{ id: number }>(
     `SELECT id FROM conversations
      WHERE channel = 'whatsapp'
