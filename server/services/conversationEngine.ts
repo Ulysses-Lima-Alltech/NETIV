@@ -22,6 +22,7 @@ import {
   sendAnaLocalMediaToWhatsAppWithQuota as sendLocalMediaToWhatsApp,
   sendAnaTextMessageWithQuota as sendTextMessage,
 } from './anaOutboundQuotaService.js';
+import { sendTextMessage as sendMetaTextMessage } from './whatsappMetaService.js';
 import {
   pickMaterialUnavailableNeutralReply,
   pickMaterialSendFailedNeutralReply,
@@ -176,6 +177,12 @@ import {
   markAnaTurnStage,
   type AnaTurnDiagnostics,
 } from '../utils/anaTurnDiagnostics.js';
+import {
+  ANA_EMERGENCY_HANDOFF_MESSAGE,
+  isAnaEmergencyHandoffEnabled,
+  sendAnaEmergencyHandoff,
+  type AnaEmergencyHandoffSendResult,
+} from '../utils/anaEmergencyHandoff.js';
 
 /** TEMP diagnóstico: ignorar `integration_settings.ai_enabled` no motor da Ana. Remover após investigação. */
 const ANA_FORCE_AI_DIAGNOSTIC = true;
@@ -186,6 +193,29 @@ const ANA_ENGINE_DIAGNOSTIC_TEXT = 'Diagnóstico: cheguei no conversation engine
 const ANA_PROVIDER_FAILURE_HANDOFF_REPLY =
   'Vou encaminhar seu atendimento para um consultor te ajudar com essa informação certinho.';
 const MAX_ANA_GENERATION_ATTEMPTS = 5;
+
+type AnaEmergencyHandoffTransport = {
+  sendTextMessage: (to: string, text: string) => Promise<AnaEmergencyHandoffSendResult>;
+  insertAssistantMessage: (conversationId: number, text: string, metaMessageId: string) => Promise<unknown>;
+};
+
+const defaultAnaEmergencyHandoffTransport: AnaEmergencyHandoffTransport = {
+  sendTextMessage: sendMetaTextMessage,
+  insertAssistantMessage: (conversationId, text, metaMessageId) =>
+    insertMessage(conversationId, 'assistant', text, metaMessageId),
+};
+
+let anaEmergencyHandoffTransport: AnaEmergencyHandoffTransport = defaultAnaEmergencyHandoffTransport;
+
+export function __setAnaEmergencyHandoffTransportForTest(
+  overrides: Partial<AnaEmergencyHandoffTransport>
+): () => void {
+  const previous = anaEmergencyHandoffTransport;
+  anaEmergencyHandoffTransport = { ...previous, ...overrides };
+  return () => {
+    anaEmergencyHandoffTransport = previous;
+  };
+}
 
 type AnaGenerationStrategy =
   | 'primary_json'
@@ -717,6 +747,10 @@ export interface IncomingMessageContext {
 /** Reprocessa a última mensagem do usuário sem resposta quando handoff muda true→false. */
 export async function reprocessLastUserMessage(conversationId: number): Promise<void> {
   console.log('[ANA REPROCESS]', { conversationId });
+  if (isAnaEmergencyHandoffEnabled()) {
+    console.log('[ANA_EMERGENCY_HANDOFF] reprocess_skipped', { conversationId });
+    return;
+  }
   const conv = await getConversationById(conversationId);
   if (!conv) return;
   const toPhoneNumber = (conv.contact_phone || conv.external_contact_id || '').trim();
@@ -1394,6 +1428,40 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
   console.log('[ANA DEBUG] handleIncomingMessage start', { conversationId, toPhoneNumber });
 
+  const trimmed = userMessage.trim();
+  if (!trimmed) {
+    console.log('[ANA_PIPELINE] engine_skip', {
+      reason: 'empty_user_message_after_trim',
+      conversationId,
+      replyPipelineToken: replyPipelineToken ?? null,
+    });
+    console.log('[ANA DEBUG] mensagem vazia apos trim - ignorando');
+    return;
+  }
+
+  if (isAnaEmergencyHandoffEnabled()) {
+    console.log('[ANA_EMERGENCY_HANDOFF] active', {
+      conversationId,
+      toPhoneTail: anaPhoneTail(toPhoneNumber),
+      inboundMetaMessageId: inboundMetaFromCtx ?? null,
+      replyPipelineToken: replyPipelineToken ?? null,
+    });
+    const emergencyResult = await sendAnaEmergencyHandoff({
+      conversationId,
+      toPhoneNumber,
+      sendTextMessage: anaEmergencyHandoffTransport.sendTextMessage,
+      insertAssistantMessage: anaEmergencyHandoffTransport.insertAssistantMessage,
+    });
+    console.log('[ANA_EMERGENCY_HANDOFF] handled', {
+      conversationId,
+      sent: emergencyResult.sent,
+      outboundMetaMessageId: emergencyResult.metaMessageId,
+      error: emergencyResult.error,
+      replyLen: ANA_EMERGENCY_HANDOFF_MESSAGE.length,
+    });
+    return;
+  }
+
   const release = await acquireConversationLock(conversationId);
   let anaTurnAuditId: number | null = null;
   let anaTurnAuditOutcome: AnaTurnAuditOutboundStatus = 'silent';
@@ -1422,16 +1490,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       trailingUserBubbles: trailingUserBubbles ?? 1,
     });
 
-    const trimmed = userMessage.trim();
-    if (!trimmed) {
-      console.log('[ANA_PIPELINE] engine_skip', {
-        reason: 'empty_user_message_after_trim',
-        conversationId,
-        replyPipelineToken: replyPipelineToken ?? null,
-      });
-      console.log('[ANA DEBUG] mensagem vazia apos trim - ignorando');
-      return;
-    }
     markAnaTurnStage(anaTurnDiagnostics, 'inbound_received', 'passed', {
       conversationId,
       userMessageLength: trimmed.length,
