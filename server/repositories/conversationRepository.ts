@@ -421,6 +421,9 @@ export interface ListConversationsFilters {
   search?: string;
   brokerId?: number;  // NOVO — filtra por assigned_broker_id
   contactType?: 'CLIENT' | 'INTERNO';
+  // NOVO: lista de empreendimentos permitidos.
+  // undefined = sem restrição. [] = bloqueia tudo (sem permissões).
+  allowedEnterpriseIds?: number[];
 }
 
 export async function listConversationsWithPreview(
@@ -448,6 +451,17 @@ export async function listConversationsWithPreview(
     conditions.push(`c.enterprise_id = $${paramIndex}`);
     params.push(filters.enterpriseId);
     paramIndex += 1;
+  }
+
+  if (filters?.allowedEnterpriseIds !== undefined) {
+    if (filters.allowedEnterpriseIds.length === 0) {
+      // Lista vazia → bloqueia tudo. SQL "FALSE" garante zero linhas.
+      conditions.push('FALSE');
+    } else {
+      conditions.push(`c.enterprise_id = ANY($${paramIndex}::int[])`);
+      params.push(filters.allowedEnterpriseIds);
+      paramIndex += 1;
+    }
   }
 
   if (filters?.search && filters.search.trim() !== '') {

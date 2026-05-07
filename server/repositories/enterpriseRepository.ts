@@ -106,6 +106,7 @@ function slugify(name: string): string {
 export interface ListEnterprisesFilters {
   tipo?: EnterpriseTipo;
   exclusivo?: boolean;
+  allowedEnterpriseIds?: number[];
 }
 
 export async function listEnterprises(
@@ -125,6 +126,14 @@ export async function listEnterprises(
   if (filters?.exclusivo !== undefined) {
     conds.push(`exclusivo = $${i++}`);
     params.push(filters.exclusivo);
+  }
+  if (filters?.allowedEnterpriseIds !== undefined) {
+    if (filters.allowedEnterpriseIds.length === 0) {
+      conds.push('FALSE');
+    } else {
+      conds.push(`id = ANY($${i++}::int[])`);
+      params.push(filters.allowedEnterpriseIds);
+    }
   }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const sql = `SELECT * FROM enterprises ${where} ORDER BY name`;

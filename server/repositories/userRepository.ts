@@ -27,14 +27,57 @@ export function parseStoredUserRole(raw: string): UserRole {
   return 'COLLABORATOR';
 }
 
+// Adicionar logo abaixo de parseStoredUserRole (~linha 28)
+function mapUserRow(row: {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  active: boolean;
+  broker_id: number | null;
+  django_user_id: number | null;
+  qmape_company_id: number | null;
+  qmape_company_name: string | null;
+  qmape_central_id: number | null;
+  scope_kind: string | null;
+  allowed_enterprise_ids: number[] | null;
+  created_at: Date;
+  updated_at: Date;
+}): AppUser {
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    role: parseStoredUserRole(row.role),
+    active: row.active,
+    broker_id: row.broker_id,
+    django_user_id: row.django_user_id,
+    qmape_company_id: row.qmape_company_id,
+    qmape_company_name: row.qmape_company_name,
+    qmape_central_id: row.qmape_central_id,
+    // Defesa: se vier null, tratar como 'all' (não filtra ninguém)
+    scope_kind: row.scope_kind === 'company' ? 'company' : 'all',
+    // Defesa: se vier null, tratar como array vazio
+    allowed_enterprise_ids: Array.isArray(row.allowed_enterprise_ids)
+      ? row.allowed_enterprise_ids
+      : [],
+  } as AppUser & { created_at: Date; updated_at: Date };
+}
+
 export interface AppUser {
   id: number;
   name: string;
   email: string;
   role: UserRole;
   active: boolean;
-  broker_id: number | null;    // NOVO
-  django_user_id: number | null; // NOVO
+  broker_id: number | null;
+  django_user_id: number | null;
+  // NOVOS — escopo por equipe vindo do SSO QMAPE:
+  qmape_company_id: number | null;
+  qmape_company_name: string | null;
+  qmape_central_id: number | null;
+  scope_kind: 'all' | 'company';
+  allowed_enterprise_ids: number[];
   created_at: Date;
   updated_at: Date;
 }
@@ -76,15 +119,25 @@ export async function findByEmail(email: string): Promise<(AppUser & { password_
     active: boolean;
     broker_id: number | null;
     django_user_id: number | null;
+    qmape_company_id: number | null;
+    qmape_company_name: string | null;
+    qmape_central_id: number | null;
+    scope_kind: string | null;
+    allowed_enterprise_ids: number[] | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `SELECT id, name, email, password_hash, role, active, broker_id, django_user_id, created_at, updated_at
+    `SELECT id, name, email, password_hash, role, active, broker_id, django_user_id,
+            qmape_company_id, qmape_company_name, qmape_central_id,
+            scope_kind, allowed_enterprise_ids,
+            created_at, updated_at
      FROM app_users WHERE LOWER(email) = $1 AND active = true`,
     [normalized]
   );
   const row = result.rows[0];
-  return row ? { ...row, role: parseStoredUserRole(row.role) } : null;
+  if (!row) return null;
+  const user = mapUserRow(row);
+  return { ...user, password_hash: row.password_hash };
 }
 
 /**
@@ -104,17 +157,25 @@ export async function findEmbeddedDefaultUser(): Promise<AppUser | null> {
     active: boolean;
     broker_id: number | null;
     django_user_id: number | null;
+    qmape_company_id: number | null;
+    qmape_company_name: string | null;
+    qmape_central_id: number | null;
+    scope_kind: string | null;
+    allowed_enterprise_ids: number[] | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `SELECT id, name, email, role, active, broker_id, django_user_id, created_at, updated_at
+    `SELECT id, name, email, role, active, broker_id, django_user_id,
+            qmape_company_id, qmape_company_name, qmape_central_id,
+            scope_kind, allowed_enterprise_ids,
+            created_at, updated_at
      FROM app_users
      WHERE active = true
      ORDER BY CASE role WHEN 'ADMIN' THEN 0 WHEN 'MANAGERIAL' THEN 1 ELSE 2 END, id ASC
      LIMIT 1`
   );
   const row = result.rows[0];
-  return row ? { ...row, role: parseStoredUserRole(row.role) } : null;
+  return row ? mapUserRow(row) : null;
 }
 
 export async function findById(id: number): Promise<AppUser | null> {
@@ -126,15 +187,23 @@ export async function findById(id: number): Promise<AppUser | null> {
     active: boolean;
     broker_id: number | null;
     django_user_id: number | null;
+    qmape_company_id: number | null;
+    qmape_company_name: string | null;
+    qmape_central_id: number | null;
+    scope_kind: string | null;
+    allowed_enterprise_ids: number[] | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `SELECT id, name, email, role, active, broker_id, django_user_id, created_at, updated_at
+    `SELECT id, name, email, role, active, broker_id, django_user_id,
+            qmape_company_id, qmape_company_name, qmape_central_id,
+            scope_kind, allowed_enterprise_ids,
+            created_at, updated_at
      FROM app_users WHERE id = $1 AND active = true`,
     [id]
   );
   const row = result.rows[0];
-  return row ? { ...row, role: parseStoredUserRole(row.role) } : null;
+  return row ? mapUserRow(row) : null;
 }
 
 export async function findByIdIncludingInactive(id: number): Promise<AppUser | null> {
@@ -146,15 +215,23 @@ export async function findByIdIncludingInactive(id: number): Promise<AppUser | n
     active: boolean;
     broker_id: number | null;
     django_user_id: number | null;
+    qmape_company_id: number | null;
+    qmape_company_name: string | null;
+    qmape_central_id: number | null;
+    scope_kind: string | null;
+    allowed_enterprise_ids: number[] | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `SELECT id, name, email, role, active, broker_id, django_user_id, created_at, updated_at
+    `SELECT id, name, email, role, active, broker_id, django_user_id,
+            qmape_company_id, qmape_company_name, qmape_central_id,
+            scope_kind, allowed_enterprise_ids,
+            created_at, updated_at
      FROM app_users WHERE id = $1`,
     [id]
   );
   const row = result.rows[0];
-  return row ? { ...row, role: parseStoredUserRole(row.role) } : null;
+  return row ? mapUserRow(row) : null;
 }
 
 export async function listAllUsers(): Promise<AppUser[]> {
@@ -166,13 +243,21 @@ export async function listAllUsers(): Promise<AppUser[]> {
     active: boolean;
     broker_id: number | null;
     django_user_id: number | null;
+    qmape_company_id: number | null;
+    qmape_company_name: string | null;
+    qmape_central_id: number | null;
+    scope_kind: string | null;
+    allowed_enterprise_ids: number[] | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `SELECT id, name, email, role, active, broker_id, django_user_id, created_at, updated_at
+    `SELECT id, name, email, role, active, broker_id, django_user_id,
+            qmape_company_id, qmape_company_name, qmape_central_id,
+            scope_kind, allowed_enterprise_ids,
+            created_at, updated_at
      FROM app_users ORDER BY name ASC`
   );
-  return result.rows.map((row) => ({ ...row, role: parseStoredUserRole(row.role) }));
+  return result.rows.map((row) => mapUserRow(row));
 }
 
 export async function findByEmailIncludingInactive(email: string): Promise<(AppUser & { password_hash: string }) | null> {
@@ -186,15 +271,25 @@ export async function findByEmailIncludingInactive(email: string): Promise<(AppU
     active: boolean;
     broker_id: number | null;
     django_user_id: number | null;
+    qmape_company_id: number | null;
+    qmape_company_name: string | null;
+    qmape_central_id: number | null;
+    scope_kind: string | null;
+    allowed_enterprise_ids: number[] | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `SELECT id, name, email, password_hash, role, active, broker_id, django_user_id, created_at, updated_at
+    `SELECT id, name, email, password_hash, role, active, broker_id, django_user_id,
+            qmape_company_id, qmape_company_name, qmape_central_id,
+            scope_kind, allowed_enterprise_ids,
+            created_at, updated_at
      FROM app_users WHERE LOWER(email) = $1`,
     [normalized]
   );
   const row = result.rows[0];
-  return row ? { ...row, role: parseStoredUserRole(row.role) } : null;
+  if (!row) return null;
+  const user = mapUserRow(row);
+  return { ...user, password_hash: row.password_hash };
 }
 
 export interface CreateUserInput {
@@ -203,6 +298,14 @@ export interface CreateUserInput {
   password: string;
   role: UserRole;
   active: boolean;
+  // Opcionais — quando vier do SSO carregam o escopo já no INSERT
+  broker_id?: number | null;
+  django_user_id?: number | null;
+  qmape_company_id?: number | null;
+  qmape_company_name?: string | null;
+  qmape_central_id?: number | null;
+  scope_kind?: 'all' | 'company';
+  allowed_enterprise_ids?: number[];
 }
 
 export async function createUser(input: CreateUserInput): Promise<AppUser> {
@@ -216,17 +319,43 @@ export async function createUser(input: CreateUserInput): Promise<AppUser> {
     active: boolean;
     broker_id: number | null;
     django_user_id: number | null;
+    qmape_company_id: number | null;
+    qmape_company_name: string | null;
+    qmape_central_id: number | null;
+    scope_kind: string | null;
+    allowed_enterprise_ids: number[] | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `INSERT INTO app_users (name, email, password_hash, role, active, broker_id, django_user_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING id, name, email, role, active, broker_id, django_user_id, created_at, updated_at`,
-    [input.name.trim(), email, hash, input.role, input.active, null, null]
+    `INSERT INTO app_users (
+       name, email, password_hash, role, active,
+       broker_id, django_user_id,
+       qmape_company_id, qmape_company_name, qmape_central_id,
+       scope_kind, allowed_enterprise_ids
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::int[])
+     RETURNING id, name, email, role, active, broker_id, django_user_id,
+               qmape_company_id, qmape_company_name, qmape_central_id,
+               scope_kind, allowed_enterprise_ids,
+               created_at, updated_at`,
+    [
+      input.name.trim(),
+      email,
+      hash,
+      input.role,
+      input.active,
+      input.broker_id ?? null,
+      input.django_user_id ?? null,
+      input.qmape_company_id ?? null,
+      input.qmape_company_name ?? null,
+      input.qmape_central_id ?? null,
+      input.scope_kind ?? 'all',
+      input.allowed_enterprise_ids ?? [],
+    ]
   );
   const row = result.rows[0];
   if (!row) throw new Error('Falha ao criar usuário.');
-  return { ...row, role: parseStoredUserRole(row.role) };
+  return mapUserRow(row);
 }
 
 export interface UpdateUserInput {
@@ -234,8 +363,13 @@ export interface UpdateUserInput {
   email?: string;
   role?: UserRole;
   active?: boolean;
-  broker_id?: number | null;      // NOVO
-  django_user_id?: number | null; // NOVO
+  broker_id?: number | null;
+  django_user_id?: number | null;
+  qmape_company_id?: number | null;
+  qmape_company_name?: string | null;
+  qmape_central_id?: number | null;
+  scope_kind?: 'all' | 'company';
+  allowed_enterprise_ids?: number[];
 }
 
 export async function updateUser(id: number, input: UpdateUserInput): Promise<AppUser | null> {
@@ -247,9 +381,27 @@ export async function updateUser(id: number, input: UpdateUserInput): Promise<Ap
   const active = input.active !== undefined ? input.active : current.active;
   const broker_id = input.broker_id !== undefined ? input.broker_id : current.broker_id;
   const django_user_id = input.django_user_id !== undefined ? input.django_user_id : current.django_user_id;
+  const qmape_company_id = input.qmape_company_id !== undefined ? input.qmape_company_id : current.qmape_company_id;
+  const qmape_company_name = input.qmape_company_name !== undefined ? input.qmape_company_name : current.qmape_company_name;
+  const qmape_central_id = input.qmape_central_id !== undefined ? input.qmape_central_id : current.qmape_central_id;
+  const scope_kind = input.scope_kind ?? current.scope_kind;
+  const allowed_enterprise_ids = input.allowed_enterprise_ids ?? current.allowed_enterprise_ids;
+
   await query(
-    `UPDATE app_users SET name = $1, email = $2, role = $3, active = $4, broker_id = $5, django_user_id = $6, updated_at = NOW() WHERE id = $7`,
-    [name, email, role, active, broker_id, django_user_id, id]
+    `UPDATE app_users SET
+       name = $1, email = $2, role = $3, active = $4,
+       broker_id = $5, django_user_id = $6,
+       qmape_company_id = $7, qmape_company_name = $8, qmape_central_id = $9,
+       scope_kind = $10, allowed_enterprise_ids = $11::int[],
+       updated_at = NOW()
+     WHERE id = $12`,
+    [
+      name, email, role, active,
+      broker_id, django_user_id,
+      qmape_company_id, qmape_company_name, qmape_central_id,
+      scope_kind, allowed_enterprise_ids,
+      id,
+    ]
   );
   return findByIdIncludingInactive(id);
 }
@@ -280,17 +432,25 @@ export async function getSessionUser(token: string): Promise<AppUser | null> {
     active: boolean;
     broker_id: number | null;
     django_user_id: number | null;
+    qmape_company_id: number | null;
+    qmape_company_name: string | null;
+    qmape_central_id: number | null;
+    scope_kind: string | null;
+    allowed_enterprise_ids: number[] | null;
     created_at: Date;
     updated_at: Date;
   }>(
-    `SELECT u.id, u.name, u.email, u.role, u.active, u.broker_id, u.django_user_id, u.created_at, u.updated_at
+    `SELECT u.id, u.name, u.email, u.role, u.active, u.broker_id, u.django_user_id,
+            u.qmape_company_id, u.qmape_company_name, u.qmape_central_id,
+            u.scope_kind, u.allowed_enterprise_ids,
+            u.created_at, u.updated_at
      FROM app_sessions s
      JOIN app_users u ON u.id = s.user_id AND u.active = true
      WHERE s.token = $1 AND s.expires_at > NOW()`,
     [token]
   );
   const row = result.rows[0];
-  return row ? { ...row, role: parseStoredUserRole(row.role) } : null;
+  return row ? mapUserRow(row) : null;
 }
 
 export async function deleteSession(token: string): Promise<void> {

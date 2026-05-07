@@ -15,6 +15,7 @@ import {
   listImportBatches,
   previewImportFromCsv,
 } from '../services/contactImportService.js';
+import { applyTeamScope } from '../services/teamScope.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -95,6 +96,11 @@ router.get('/', async (req, res) => {
       limit: pageSize,
       offset: Math.max(offset, 0),
     });
+    
+    // NOVO: aplicar escopo de equipe (se a flag estiver ligada)
+    const u = (req as any).user;
+    if (u) applyTeamScope(filters, u);
+    
     const total = await countContacts(filters);
     const ownerIds = [...new Set(rows.map((r) => r.owner_user_id).filter((x): x is number => x != null))];
     const ownerMap = new Map<number, string>();

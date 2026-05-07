@@ -28,6 +28,7 @@ import {
   type EnterpriseTipo,
   parseAddons,
 } from '../repositories/enterpriseRepository.js';
+import { applyTeamScope } from '../services/teamScope.js';
 import { createProjectSchema, updateProjectSchema, patchKnowledgeFileSchema } from '../validators/projects.js';
 import { insertPromptAddonsHistory, listPromptAddonsHistory } from '../repositories/promptAddonsHistoryRepository.js';
 import { getKnowledgeBackfillJob, startKnowledgeBackfill } from '../services/knowledgeBackfillService.js';
@@ -96,7 +97,7 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 },
 });
 
-function parseListFilters(req: Request): { tipo?: EnterpriseTipo; exclusivo?: boolean } {
+function parseListFilters(req: Request): { tipo?: EnterpriseTipo; exclusivo?: boolean; allowedEnterpriseIds?: number[] } {
   const tipoRaw = typeof req.query.tipo === 'string' ? req.query.tipo.toUpperCase() : '';
   const tipo = ENTERPRISE_TIPOS.includes(tipoRaw as EnterpriseTipo) ? (tipoRaw as EnterpriseTipo) : undefined;
   let exclusivo: boolean | undefined;
@@ -109,6 +110,11 @@ router.get('/', async (req, res) => {
   try {
     const activeOnly = req.query.active !== '0' && req.query.active !== 'false';
     const filters = parseListFilters(req);
+    
+    // NOVO: aplicar escopo de equipe (se a flag estiver ligada)
+    const u = (req as any).user;
+    if (u) applyTeamScope(filters, u);
+    
     const rows = await listEnterprises(activeOnly, Object.keys(filters).length ? filters : undefined);
     const out = await Promise.all(
       rows.map(async (r) => enterpriseToPublic(r, await getVariablesMap(r.id)))

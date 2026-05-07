@@ -258,6 +258,7 @@ export async function listContacts(params: {
   withoutEnterprise?: boolean;
   limit?: number;
   offset?: number;
+  allowedEnterpriseIds?: number[];
 }): Promise<Array<ContactRow & { enterprise_display_name?: string | null }>> {
   const conds: string[] = ['c.archived_at IS NULL'];
   const vals: unknown[] = [];
@@ -278,6 +279,15 @@ export async function listContacts(params: {
     conds.push(`c.enterprise_id = $${idx}`);
     vals.push(params.enterpriseId);
     idx++;
+  }
+  if (params.allowedEnterpriseIds !== undefined) {
+    if (params.allowedEnterpriseIds.length === 0) {
+      conds.push('FALSE');
+    } else {
+      conds.push(`c.enterprise_id = ANY($${idx}::int[])`);
+      vals.push(params.allowedEnterpriseIds);
+      idx++;
+    }
   }
   const brokerId = params.brokerId ?? params.ownerUserId;
   if (brokerId != null) {

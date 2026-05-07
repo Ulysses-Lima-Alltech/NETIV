@@ -25,6 +25,7 @@ export interface ListAppointmentsParams {
   brokerId?: number;
   status?: string;
   date?: string;
+  allowedEnterpriseIds?: number[];
 }
 
 export async function listAppointments(params: ListAppointmentsParams = {}): Promise<AppointmentRow[]> {
@@ -34,6 +35,14 @@ export async function listAppointments(params: ListAppointmentsParams = {}): Pro
   if (params.enterpriseId != null) {
     conditions.push(`enterprise_id = $${i++}`);
     values.push(params.enterpriseId);
+  }
+  if (params.allowedEnterpriseIds !== undefined) {
+    if (params.allowedEnterpriseIds.length === 0) {
+      conditions.push('FALSE');
+    } else {
+      conditions.push(`enterprise_id = ANY($${i++}::int[])`);
+      values.push(params.allowedEnterpriseIds);
+    }
   }
   if (params.brokerId != null) {
     conditions.push(`broker_id = $${i++}`);

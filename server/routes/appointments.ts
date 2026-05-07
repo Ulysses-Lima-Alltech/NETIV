@@ -13,6 +13,7 @@ import {
   updateAppointmentStatusSchema,
 } from '../validators/appointments.js';
 import { APPOINTMENT_STATUSES } from '../repositories/appointmentRepository.js';
+import { applyTeamScope } from '../services/teamScope.js';
 
 const router = Router();
 
@@ -104,7 +105,19 @@ router.get('/', async (req, res) => {
     const brokerId = req.query.brokerId != null ? parseInt(String(req.query.brokerId), 10) : undefined;
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
     const date = typeof req.query.date === 'string' ? req.query.date : undefined;
-    const rows = await listAppointments({ enterpriseId, brokerId, status, date });
+    
+    const params: { enterpriseId?: number; brokerId?: number; status?: string; date?: string; allowedEnterpriseIds?: number[] } = {
+      enterpriseId,
+      brokerId,
+      status,
+      date,
+    };
+    
+    // NOVO: aplicar escopo de equipe (se a flag estiver ligada)
+    const u = (req as any).user;
+    if (u) applyTeamScope(params, u);
+    
+    const rows = await listAppointments(params);
     res.json({
       appointments: rows.map(toAppointmentDto),
     });

@@ -61,6 +61,7 @@ import {
   getConversationWhatsAppWindowStatus,
   getPhoneWhatsAppWindowStatus,
 } from '../services/whatsappWindowService.js';
+import { applyTeamScope, isTeamScopeEnforced } from '../services/teamScope.js';
 
 const router = Router();
 
@@ -375,6 +376,11 @@ router.get('/conversations', async (req, res) => {
     if (search && search.trim() !== '') filters.search = search.trim();
     if (brokerId != null) filters.brokerId = brokerId;
     filters.contactType = type as 'CLIENT' | 'INTERNO';
+    
+    // NOVO: aplicar escopo de equipe (se a flag estiver ligada)
+    const u = (req as any).user;
+    if (u) applyTeamScope(filters, u);
+    
     const hasFilters = Object.keys(filters).length > 0;
     const rows = await listConversationsWithPreview(channel, limit, hasFilters ? filters : undefined);
     console.log('[INBOX_CONTACT_TYPE_FILTER]', { requestedType: type, returned: rows.length });
@@ -400,6 +406,21 @@ router.get('/conversations/:id', async (req, res) => {
       res.status(404).json({ error: 'Conversa não encontrada.' });
       return;
     }
+    
+    // NOVO: bloqueia acesso direto a conversa fora do escopo
+    const u = (req as any).user;
+    if (
+      isTeamScopeEnforced() &&
+      u &&
+      u.scope_kind !== 'all' &&
+      row.enterprise_id != null &&
+      !u.allowed_enterprise_ids.includes(row.enterprise_id)
+    ) {
+      // 404 (não 403) para não revelar a existência da conversa
+      res.status(404).json({ error: 'Conversa não encontrada.' });
+      return;
+    }
+    
     res.json(mapConversationWithPreviewRow(row));
   } catch (e) {
     console.error('[WhatsApp] GET conversation:', e);

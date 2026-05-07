@@ -115,6 +115,23 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     const brokerId = typeof payload.broker_id === 'number' ? payload.broker_id : null;
     const djangoUserId = typeof payload.django_user_id === 'number' ? payload.django_user_id : null;
 
+    // NOVOS — escopo por equipe (vem do QMAPE quando atualizado)
+    const companyId   = typeof payload.company_id   === 'number' ? payload.company_id : null;
+    const companyName = typeof payload.company_name === 'string' ? payload.company_name : null;
+    const centralId   = typeof payload.central_id   === 'number' ? payload.central_id : null;
+
+    // Default: 'all' (não filtra ninguém). Só vira 'company' se o Django sinalizar explicitamente.
+    // Isso garante que JWTs antigos (Django sem PR 2 ainda) continuam funcionando como antes.
+    const rawScope = typeof payload.scope === 'string' ? payload.scope : null;
+    const scopeKind: 'all' | 'company' =
+      rawScope === 'company' ? 'company' :
+      rawScope === 'all'     ? 'all'     :
+      'all'; // fallback para JWT pré-Parte-1
+
+    const allowedEnterpriseIds = Array.isArray(payload.enterprise_ids)
+      ? (payload.enterprise_ids as unknown[]).filter((n): n is number => typeof n === 'number')
+      : [];
+
     if (!email) {
       res.status(400).json({ error: 'Email é obrigatório no JWT.' });
       return;
@@ -126,14 +143,23 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     // ── PASSO 4: Buscar ou criar o usuário ──
     let user: AppUser | null = await findByEmail(email);
 
+    const scopeFields = {
+      qmape_company_id: companyId,
+      qmape_company_name: companyName,
+      qmape_central_id: centralId,
+      scope_kind: scopeKind,
+      allowed_enterprise_ids: allowedEnterpriseIds,
+    };
+
     if (user) {
-      // Usuário já existe → atualizar nome, role, broker_id e django_user_id
+      // Usuário já existe → atualizar nome, role, broker_id, django_user_id e escopo
       await updateUser(user.id, {
         name: name || user.name,
         role: safeRole,
         active: true,
         broker_id: brokerId,
         django_user_id: djangoUserId,
+        ...scopeFields,
       });
     } else {
       // Verificar se existe mas está inativo
@@ -146,6 +172,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
           active: true,
           broker_id: brokerId,
           django_user_id: djangoUserId,
+          ...scopeFields,
         });
         user = await findByEmail(email);
       } else {
@@ -157,12 +184,11 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
           password: randomPassword,
           role: safeRole,
           active: true,
-        });
-        // Após criar, atualizar broker_id e django_user_id
-        await updateUser(user.id, {
           broker_id: brokerId,
           django_user_id: djangoUserId,
+          ...scopeFields,
         });
+        // updateUser separado removido — agora tudo entra no INSERT
       }
     }
 
