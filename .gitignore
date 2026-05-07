@@ -28,3 +28,7 @@ server/data
 *.njsproj
 *.sln
 *.sw?
+
+network-config.json
+run-report-enterprise-overrides.json
+run-report-overrides.json

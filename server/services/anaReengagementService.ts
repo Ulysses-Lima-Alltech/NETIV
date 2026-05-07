@@ -3,11 +3,16 @@ import { getConversationById, type ConversationRow } from '../repositories/conve
 import { touchContactInteractionByConversation } from '../repositories/contactsRepository.js';
 import { getLastUserMessageRow, getLastVisibleMessageRoleAndId } from '../repositories/messageRepository.js';
 import { conversationHasActiveAppointmentForReengageBlock } from '../repositories/appointmentRepository.js';
-import { sendTextMessage } from './whatsappMetaService.js';
+import {
+  ANA_OUTBOUND_QUOTA_EXCEEDED_REASON,
+  isAnaOutboundQuotaBlocked,
+  sendAnaTextMessageWithQuota,
+} from './anaOutboundQuotaService.js';
 import {
   computeEligibleReengagementAtUtc,
   isReengagementDueNow,
 } from '../utils/anaReengagementSchedule.js';
+import { isAnaEmergencyHandoffEnabled } from '../utils/anaEmergencyHandoff.js';
 
 const SCAN_LIMIT = 150;
 
@@ -50,6 +55,11 @@ function isBlockedClassification(c: string): boolean {
  * Uma passada do worker: tenta reengajamento para conversas candidatas (com lock por linha).
  */
 export async function processAnaReengagementScan(): Promise<void> {
+  if (isAnaEmergencyHandoffEnabled()) {
+    console.log('[ANA_REENGAGE_SKIP]', { reason: 'ana_emergency_handoff_active' });
+    return;
+  }
+
   const { rows } = await query<{ id: number }>(
     `SELECT id FROM conversations
      WHERE channel = 'whatsapp'
@@ -200,7 +210,21 @@ async function trySendReengagementForConversation(conversationId: number): Promi
       return;
     }
 
-    const sendRes = await sendTextMessage(to, body);
+    const sendRes = await sendAnaTextMessageWithQuota({
+      conversationId,
+      to,
+      text: body,
+      phase: 'ana_reengagement',
+    });
+    if (isAnaOutboundQuotaBlocked(sendRes)) {
+      await client.query('ROLLBACK');
+      console.log('[ANA_REENGAGE_SKIP]', {
+        conversationId,
+        reason: ANA_OUTBOUND_QUOTA_EXCEEDED_REASON,
+        quota: sendRes.quota ?? null,
+      });
+      return;
+    }
     if (!sendRes.success || !sendRes.metaMessageId) {
       await client.query('ROLLBACK');
       console.log('[ANA_REENGAGE_ERROR]', {

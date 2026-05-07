@@ -26,8 +26,8 @@ export function stripMaterialDeliveryClaims(text: string): string {
   return out;
 }
 
-const HONEST_FALLBACK_PURE = 'Claro. Posso te adiantar os principais pontos por aqui. Seu foco é morar ou investir?';
-const HONEST_FALLBACK_MARKER = 'Seu foco é morar ou investir?';
+const HONEST_FALLBACK_PURE = '';
+const HONEST_FALLBACK_MARKER = '';
 
 /** Turno hard-send: arquivo não encontrado / sem envio — sem pergunta, sem desvio de assunto. */
 const MATERIAL_UNAVAILABLE_NEUTRAL: readonly string[] = [
@@ -54,12 +54,14 @@ function pickFirstNotSimilarToLast(options: readonly string[], lastAssistantMess
 
 /** Quando o cliente pediu material mas não há arquivo resolvível no empreendimento. */
 export function pickMaterialUnavailableNeutralReply(lastAssistantMessage?: string | null): string {
-  return pickFirstNotSimilarToLast(MATERIAL_UNAVAILABLE_NEUTRAL, lastAssistantMessage);
+  void lastAssistantMessage;
+  return '';
 }
 
 /** Quando há arquivo mas o envio (Meta/WhatsApp) falhou. */
 export function pickMaterialSendFailedNeutralReply(lastAssistantMessage?: string | null): string {
-  return pickFirstNotSimilarToLast(MATERIAL_SEND_FAILED_NEUTRAL, lastAssistantMessage);
+  void lastAssistantMessage;
+  return '';
 }
 
 function norm(s: string): string {
@@ -86,32 +88,15 @@ export function buildHumanMaterialFallback(params: {
   customerAskedForBook?: boolean;
   lastAssistantMessage?: string | null;
 }): string {
-  const ent = (params.enterpriseName ?? '').trim();
-  const templates: string[] = ent
-    ? [
-        `Perfeito. Sobre ${ent}, eu te adianto os principais pontos por aqui. Seu foco é morar ou investir?`,
-        `Claro. Sobre ${ent}, eu te explico os detalhes por aqui. O que você quer entender primeiro?`,
-        `Perfeito. No ${ent}, eu te passo os pontos principais por aqui. Seu foco é morar ou investir?`,
-        `Claro. Sobre ${ent}, posso te explicar por aqui. O que você quer entender primeiro?`,
-      ]
-    : [
-        `Claro. Posso te adiantar os principais pontos por aqui. Seu foco é morar ou investir?`,
-        `Perfeito. Eu te explico os detalhes por aqui. O que você quer entender primeiro?`,
-        `Claro. Posso te adiantar os pontos principais por aqui. Seu foco é morar ou investir?`,
-      ];
-
-  // Anti repetição: evita candidato igual/parecido com a última mensagem da Ana.
-  for (const t of templates) {
-    if (!isTooSimilarToLast(t, params.lastAssistantMessage)) return t;
-  }
-  return templates[0] ?? HONEST_FALLBACK_PURE;
+  void params;
+  return '';
 }
 
 export function mergeHonestMaterialFallbackWhenNoFile(reply: string): string {
   const base = (reply || '').trim();
   if (!base) return HONEST_FALLBACK_PURE;
   if (DELIVERY_PROMISE_RE.test(base)) {
-    return `${base}\n\n${HONEST_FALLBACK_PURE}`.slice(0, 3800);
+    return stripMaterialDeliveryClaims(base).slice(0, 3800);
   }
   return base;
 }
@@ -124,13 +109,12 @@ export function mergeHonestMaterialFallbackWhenNoFile(reply: string): string {
 export function forceHonestMaterialFallbackWhenNoFile(reply: string): string {
   const base = (reply || '').trim();
   if (!base) return HONEST_FALLBACK_PURE;
-  if (base.includes(HONEST_FALLBACK_MARKER)) return base;
+  if (HONEST_FALLBACK_MARKER && base.includes(HONEST_FALLBACK_MARKER)) return base;
 
-  // Se houver sinais de promessa de envio/material/anexo, substitui pelo fallback honesto puro.
-  if (DELIVERY_PROMISE_RE.test(base)) return HONEST_FALLBACK_PURE.slice(0, 3800);
+  // Se houver sinais de promessa de envio/material/anexo, remove a promessa e deixa o motor decidir retry/handoff.
+  if (DELIVERY_PROMISE_RE.test(base)) return stripMaterialDeliveryClaims(base).slice(0, 3800);
 
-  // Se não houver sinais, preserva texto natural e anexa fallback honesto.
-  return `${base}\n\n${HONEST_FALLBACK_PURE}`.slice(0, 3800);
+  return base.slice(0, 3800);
 }
 
 /** Texto único após falha real de upload/envio WhatsApp — não afirma que o arquivo foi entregue. */

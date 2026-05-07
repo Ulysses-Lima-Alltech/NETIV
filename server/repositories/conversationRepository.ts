@@ -1,4 +1,4 @@
-import { query } from '../db/pg.js';
+import { getPool, query } from '../db/pg.js';
 import { getActiveEnterpriseById } from './enterpriseRepository.js';
 import { getCorretorById } from './corretorRepository.js';
 import { assignBrokerForHandoffConversation } from '../services/handoffQueueService.js';
@@ -247,10 +247,192 @@ export async function findLatestWhatsAppConversationByPhoneDigits(phoneDigits: s
   return rows[0] ?? null;
 }
 
-/** Exclui a conversa e suas mensagens (CASCADE). Retorna true se excluiu. */
-export async function deleteConversation(id: number): Promise<boolean> {
-  const result = await query(`DELETE FROM conversations WHERE id = $1`, [id]);
+type ConversationDeleteClient = {
+  query: <T = Record<string, unknown>>(text: string, values?: unknown[]) => Promise<{ rows: T[]; rowCount: number | null }>;
+};
+
+interface ConversationDeleteSnapshot {
+  id: number;
+  contact_id: number | null;
+  enterprise_id: number | null;
+  enterprise_origin_id?: number | null;
+  lead_source_raw?: unknown | null;
+}
+
+interface ContactDeleteSnapshot {
+  id: number;
+  enterprise_id: number | null;
+  enterprise_interest: string | null;
+}
+
+interface ConversationDeleteAudit {
+  conversationId: number;
+  contactId: number | null;
+  previousConversationEnterpriseId: number | null;
+  previousConversationEnterpriseOriginId: number | null;
+  previousConversationLeadSourceRaw: unknown | null;
+  previousContactEnterpriseId: number | null;
+  previousContactEnterpriseInterest: string | null;
+  contactUnlinked: boolean;
+  strategy: 'delete' | 'hard_reset';
+  deletedRows: Record<string, number>;
+}
+
+async function hardResetConversationForDelete(
+  client: ConversationDeleteClient,
+  conversationId: number
+): Promise<Record<string, number>> {
+  const deletedRows: Record<string, number> = {};
+
+  deletedRows.information_gap_tickets =
+    (await client.query(`DELETE FROM information_gap_tickets WHERE conversation_id = $1`, [conversationId])).rowCount ?? 0;
+  deletedRows.ana_turn_audit =
+    (await client.query(`DELETE FROM ana_turn_audit WHERE conversation_id = $1`, [conversationId])).rowCount ?? 0;
+  deletedRows.conversation_state =
+    (await client.query(`DELETE FROM conversation_state WHERE conversation_id = $1`, [conversationId])).rowCount ?? 0;
+  deletedRows.sent_files_log =
+    (await client.query(`DELETE FROM sent_files_log WHERE conversation_id = $1`, [conversationId])).rowCount ?? 0;
+  deletedRows.messages =
+    (await client.query(`DELETE FROM messages WHERE conversation_id = $1`, [conversationId])).rowCount ?? 0;
+  deletedRows.appointments_unlinked =
+    (await client.query(`UPDATE appointments SET conversation_id = NULL, updated_at = NOW() WHERE conversation_id = $1`, [
+      conversationId,
+    ])).rowCount ?? 0;
+
+  return deletedRows;
+}
+
+async function resetConversationCommercialStateForDelete(
+  client: ConversationDeleteClient,
+  conversationId: number
+): Promise<boolean> {
+  const result = await client.query(
+    `UPDATE conversations SET
+       customer_name = NULL,
+       ana_asked_customer_name = false,
+       enterprise_id = NULL,
+       enterprise_origin_id = NULL,
+       lead_source_raw = NULL,
+       classification = 'Novo',
+       classification_before_handoff = NULL,
+       lead_temperature = NULL,
+       handoff = false,
+       reserve_reason = NULL,
+       reserve_desired_city = NULL,
+       reserve_price_min = NULL,
+       reserve_price_max = NULL,
+       reserve_property_type = NULL,
+       reserve_bedrooms = NULL,
+       reserve_interest_type = NULL,
+       reserve_follow_up_moment = NULL,
+       reserve_commercial_notes = NULL,
+       assigned_broker_id = NULL,
+       ana_customer_name_mentions = 0,
+       handoff_deferred_until = NULL,
+       handoff_deferred_broker_id = NULL,
+       commercial_flow_state = '{}'::jsonb,
+       manual_closed_at = NULL,
+       manual_closed_by_user_id = NULL,
+       manual_closed_reason = NULL,
+       reengagement_sent_at = NULL,
+       reengagement_for_user_message_id = NULL,
+       reengagement_count = 0,
+       updated_at = NOW()
+     WHERE id = $1`,
+    [conversationId]
+  );
   return (result.rowCount ?? 0) > 0;
+}
+
+export async function deleteConversationInTransaction(
+  client: ConversationDeleteClient,
+  id: number
+): Promise<ConversationDeleteAudit | null> {
+  const { rows } = await client.query<ConversationDeleteSnapshot>(
+    `SELECT id, contact_id, enterprise_id, enterprise_origin_id, lead_source_raw
+     FROM conversations
+     WHERE id = $1
+     FOR UPDATE`,
+    [id]
+  );
+  const conversation = rows[0] ?? null;
+  if (!conversation) return null;
+
+  let contact: ContactDeleteSnapshot | null = null;
+  if (conversation.contact_id != null) {
+    const contactResult = await client.query<ContactDeleteSnapshot>(
+      `SELECT id, enterprise_id, enterprise_interest
+       FROM contacts
+       WHERE id = $1
+       FOR UPDATE`,
+      [conversation.contact_id]
+    );
+    contact = contactResult.rows[0] ?? null;
+  }
+
+  const deletedRows = await hardResetConversationForDelete(client, id);
+
+  let strategy: ConversationDeleteAudit['strategy'] = 'delete';
+  await client.query('SAVEPOINT delete_conversation_row');
+  try {
+    const deleteResult = await client.query(`DELETE FROM conversations WHERE id = $1`, [id]);
+    deletedRows.conversations = deleteResult.rowCount ?? 0;
+  } catch (error) {
+    await client.query('ROLLBACK TO SAVEPOINT delete_conversation_row');
+    strategy = 'hard_reset';
+    deletedRows.conversations = 0;
+    const reset = await resetConversationCommercialStateForDelete(client, id);
+    deletedRows.conversations_reset = reset ? 1 : 0;
+  } finally {
+    await client.query('RELEASE SAVEPOINT delete_conversation_row');
+  }
+
+  let contactUnlinked = false;
+  if (contact != null) {
+    const contactUpdate = await client.query(
+      `UPDATE contacts
+       SET enterprise_id = NULL,
+           enterprise_interest = NULL,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [contact.id]
+    );
+    contactUnlinked = (contactUpdate.rowCount ?? 0) > 0;
+  }
+
+  return {
+    conversationId: conversation.id,
+    contactId: conversation.contact_id ?? null,
+    previousConversationEnterpriseId: conversation.enterprise_id ?? null,
+    previousConversationEnterpriseOriginId: conversation.enterprise_origin_id ?? null,
+    previousConversationLeadSourceRaw: conversation.lead_source_raw ?? null,
+    previousContactEnterpriseId: contact?.enterprise_id ?? null,
+    previousContactEnterpriseInterest: contact?.enterprise_interest ?? null,
+    contactUnlinked,
+    strategy,
+    deletedRows,
+  };
+}
+
+/** Exclui a conversa e limpa o vínculo comercial do contato relacionado. Retorna true se excluiu/resetou. */
+export async function deleteConversation(id: number): Promise<boolean> {
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const audit = await deleteConversationInTransaction(client, id);
+    if (!audit) {
+      await client.query('ROLLBACK');
+      return false;
+    }
+    await client.query('COMMIT');
+    console.log('[WhatsApp] DELETE conversation hard cleanup:', audit);
+    return true;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /**

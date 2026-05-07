@@ -1,3 +1,4 @@
+import { query } from '../db/pg.js';
 import { listEnterprises, type EnterpriseRow } from './enterpriseRepository.js';
 
 export function normEnterpriseMatchText(s: string): string {
@@ -8,6 +9,49 @@ export function normEnterpriseMatchText(s: string): string {
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+export type EnterpriseResolutionSource =
+  | 'message_alias'
+  | 'conversation'
+  | 'campaign'
+  | 'contact'
+  | 'unresolved'
+  | 'ambiguous';
+
+export interface EnterpriseResolutionCandidate {
+  enterpriseId: number;
+  enterpriseName: string;
+  matchedAliases: string[];
+}
+
+export interface EnterpriseMessageAliasResolution {
+  source: 'message_alias' | 'unresolved' | 'ambiguous';
+  enterpriseId: number | null;
+  enterpriseName: string | null;
+  candidates: EnterpriseResolutionCandidate[];
+  reasonWhenNoEnterprise: string | null;
+}
+
+export interface AnaEnterpriseResolution {
+  source: EnterpriseResolutionSource;
+  enterpriseId: number | null;
+  enterpriseName: string | null;
+  candidates: EnterpriseResolutionCandidate[];
+  reasonWhenNoEnterprise: string | null;
+}
+
+interface EnterpriseAliasRow {
+  enterprise_id: number;
+  alias: string;
+  normalized_alias: string | null;
+}
+
+interface EnterpriseAliasCandidate {
+  enterpriseId: number;
+  enterpriseName: string;
+  alias: string;
+  normalizedAlias: string;
 }
 
 /** Palavras genéricas no nome do empreendimento — não bastam sozinhas para match (evita falso positivo). */
@@ -27,6 +71,21 @@ const GENERIC_NAME_TOKENS = new Set([
   'village',
   'park',
   'club',
+]);
+
+const GENERIC_ALIAS_TOKENS = new Set([
+  ...GENERIC_NAME_TOKENS,
+  'condominio',
+  'condominios',
+  'lote',
+  'lotes',
+  'terreno',
+  'terrenos',
+  'apartamento',
+  'apartamentos',
+  'unidade',
+  'unidades',
+  'pirituba',
 ]);
 
 const VARIANT_NAME_TOKENS = new Set([
@@ -69,6 +128,214 @@ const MESSAGE_STOPWORDS = new Set([
   'residencial',
   'condominio',
 ]);
+
+export function normalizeEnterpriseAliasText(input: string): string {
+  return normEnterpriseMatchText(input);
+}
+
+function isGenericEnterpriseAlias(normalizedAlias: string): boolean {
+  const words = normalizedAlias.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  return words.every((word) => GENERIC_ALIAS_TOKENS.has(word));
+}
+
+function addAliasCandidate(
+  target: EnterpriseAliasCandidate[],
+  seen: Set<string>,
+  enterprise: EnterpriseRow,
+  alias: string
+): void {
+  const normalizedAlias = normalizeEnterpriseAliasText(alias);
+  if (normalizedAlias.length < 3) return;
+  if (isGenericEnterpriseAlias(normalizedAlias)) return;
+  const key = `${enterprise.id}:${normalizedAlias}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  target.push({
+    enterpriseId: enterprise.id,
+    enterpriseName: enterprise.name,
+    alias: alias.trim(),
+    normalizedAlias,
+  });
+}
+
+function firstDistinctiveNameToken(enterpriseName: string): string | null {
+  const tokens = normalizeEnterpriseAliasText(enterpriseName).split(/\s+/).filter(Boolean);
+  return tokens.find((token) => token.length >= 3 && !GENERIC_ALIAS_TOKENS.has(token)) ?? null;
+}
+
+function buildAliasCandidates(
+  enterprises: EnterpriseRow[],
+  aliasRows: EnterpriseAliasRow[]
+): EnterpriseAliasCandidate[] {
+  const byEnterprise = new Map<number, EnterpriseRow>();
+  for (const enterprise of enterprises) byEnterprise.set(enterprise.id, enterprise);
+
+  const out: EnterpriseAliasCandidate[] = [];
+  const seen = new Set<string>();
+  for (const enterprise of enterprises) {
+    addAliasCandidate(out, seen, enterprise, enterprise.name);
+    addAliasCandidate(out, seen, enterprise, enterprise.slug || '');
+    const firstToken = firstDistinctiveNameToken(enterprise.name);
+    if (firstToken) addAliasCandidate(out, seen, enterprise, firstToken);
+  }
+  for (const row of aliasRows) {
+    const enterprise = byEnterprise.get(row.enterprise_id);
+    if (!enterprise) continue;
+    addAliasCandidate(out, seen, enterprise, row.alias || row.normalized_alias || '');
+  }
+  return out;
+}
+
+export async function listEnterpriseAliasRowsForActiveEnterprises(
+  enterpriseIds: number[]
+): Promise<EnterpriseAliasRow[]> {
+  if (enterpriseIds.length === 0) return [];
+  try {
+    const { rows } = await query<EnterpriseAliasRow>(
+      `SELECT enterprise_id, alias, normalized_alias
+       FROM enterprise_aliases
+       WHERE enterprise_id = ANY($1::int[])`,
+      [enterpriseIds]
+    );
+    return rows;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/enterprise_aliases/i.test(message)) return [];
+    throw error;
+  }
+}
+
+function aliasAppearsInMessage(messageNorm: string, aliasNorm: string): boolean {
+  if (!messageNorm || !aliasNorm) return false;
+  const escaped = aliasNorm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|\\s)${escaped}(\\s|$)`).test(messageNorm);
+}
+
+export function resolveEnterpriseFromMessageAliases(
+  userMessage: string,
+  enterprises: EnterpriseRow[],
+  aliasRows: EnterpriseAliasRow[] = []
+): EnterpriseMessageAliasResolution {
+  const messageNorm = normalizeEnterpriseAliasText(userMessage);
+  if (!messageNorm || enterprises.length === 0) {
+    return {
+      source: 'unresolved',
+      enterpriseId: null,
+      enterpriseName: null,
+      candidates: [],
+      reasonWhenNoEnterprise: 'message_without_enterprise_alias',
+    };
+  }
+
+  const candidatesByEnterprise = new Map<number, EnterpriseResolutionCandidate>();
+  for (const aliasCandidate of buildAliasCandidates(enterprises, aliasRows)) {
+    if (!aliasAppearsInMessage(messageNorm, aliasCandidate.normalizedAlias)) continue;
+    const current = candidatesByEnterprise.get(aliasCandidate.enterpriseId);
+    if (current) {
+      if (!current.matchedAliases.includes(aliasCandidate.alias)) {
+        current.matchedAliases.push(aliasCandidate.alias);
+      }
+      continue;
+    }
+    candidatesByEnterprise.set(aliasCandidate.enterpriseId, {
+      enterpriseId: aliasCandidate.enterpriseId,
+      enterpriseName: aliasCandidate.enterpriseName,
+      matchedAliases: [aliasCandidate.alias],
+    });
+  }
+
+  const candidates = Array.from(candidatesByEnterprise.values()).sort((a, b) =>
+    a.enterpriseName.localeCompare(b.enterpriseName, 'pt-BR')
+  );
+  if (candidates.length === 1) {
+    const only = candidates[0]!;
+    return {
+      source: 'message_alias',
+      enterpriseId: only.enterpriseId,
+      enterpriseName: only.enterpriseName,
+      candidates,
+      reasonWhenNoEnterprise: null,
+    };
+  }
+  if (candidates.length > 1) {
+    return {
+      source: 'ambiguous',
+      enterpriseId: null,
+      enterpriseName: null,
+      candidates,
+      reasonWhenNoEnterprise: 'message_alias_ambiguous',
+    };
+  }
+  return {
+    source: 'unresolved',
+    enterpriseId: null,
+    enterpriseName: null,
+    candidates: [],
+    reasonWhenNoEnterprise: 'message_without_enterprise_alias',
+  };
+}
+
+export async function resolveEnterpriseForAnaTurn(params: {
+  userMessage: string;
+  activeEnterprises: EnterpriseRow[];
+  conversationEnterpriseId?: number | null;
+  campaignEnterpriseId?: number | null;
+  contactEnterpriseId?: number | null;
+}): Promise<AnaEnterpriseResolution> {
+  const activeById = new Map(params.activeEnterprises.map((enterprise) => [enterprise.id, enterprise]));
+  const aliasRows = await listEnterpriseAliasRowsForActiveEnterprises(params.activeEnterprises.map((e) => e.id));
+  const messageResolution = resolveEnterpriseFromMessageAliases(
+    params.userMessage,
+    params.activeEnterprises,
+    aliasRows
+  );
+  if (messageResolution.source !== 'unresolved') return messageResolution;
+
+  const fromConversation =
+    params.conversationEnterpriseId != null ? activeById.get(params.conversationEnterpriseId) ?? null : null;
+  if (fromConversation) {
+    return {
+      source: 'conversation',
+      enterpriseId: fromConversation.id,
+      enterpriseName: fromConversation.name,
+      candidates: [],
+      reasonWhenNoEnterprise: null,
+    };
+  }
+
+  const fromCampaign =
+    params.campaignEnterpriseId != null ? activeById.get(params.campaignEnterpriseId) ?? null : null;
+  if (fromCampaign) {
+    return {
+      source: 'campaign',
+      enterpriseId: fromCampaign.id,
+      enterpriseName: fromCampaign.name,
+      candidates: [],
+      reasonWhenNoEnterprise: null,
+    };
+  }
+
+  const fromContact =
+    params.contactEnterpriseId != null ? activeById.get(params.contactEnterpriseId) ?? null : null;
+  if (fromContact) {
+    return {
+      source: 'contact',
+      enterpriseId: fromContact.id,
+      enterpriseName: fromContact.name,
+      candidates: [],
+      reasonWhenNoEnterprise: null,
+    };
+  }
+
+  return {
+    source: 'unresolved',
+    enterpriseId: null,
+    enterpriseName: null,
+    candidates: [],
+    reasonWhenNoEnterprise: 'no_enterprise_resolved_from_message_conversation_campaign_or_contact',
+  };
+}
 
 function hasVariantMarker(nameNorm: string): boolean {
   const words = nameNorm.split(/\s+/).filter(Boolean);

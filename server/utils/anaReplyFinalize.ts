@@ -15,11 +15,8 @@ export function sleepMs(ms: number): Promise<void> {
 
 /** Resposta segura quando o modelo repete saudação genérica sem conteúdo útil. */
 export function buildGreetingSafeFallback(customerName?: string | null): string {
-  const n = (customerName ?? '').trim();
-  if (n.length >= 2) {
-    return `Oi, ${n}, tudo bem? Eu sou a Ana e posso te ajudar com as informações. O que você quer entender melhor primeiro?`;
-  }
-  return 'Oi, tudo bem? Eu sou a Ana e posso te ajudar com as informações. O que você quer entender melhor primeiro?';
+  void customerName;
+  return '';
 }
 
 const DUPLICATE_FALLBACKS_GENERIC = [
@@ -41,19 +38,10 @@ export function pickDuplicateFallbackReply(
   allEnterpriseNames?: string[],
   opts?: PickDuplicateFallbackOpts
 ): string {
-  const name = (opts?.focusedEnterpriseName || '').trim();
-  if (opts?.scoped && name.length >= 2) {
-    return `Vou focar no ${name}: qual ponto você quer aprofundar agora — valor, localização ou lazer?`;
-  }
-  const names = allEnterpriseNames ?? [];
-  if (names.length > 0) {
-    return buildCatalogListMessage(names, {
-      recentContext,
-      closingQuestion: 'Qual deles você quer explorar primeiro?',
-    });
-  }
-  const pool = DUPLICATE_FALLBACKS_GENERIC;
-  return pool[Math.floor(Math.random() * pool.length)]!;
+  void recentContext;
+  void allEnterpriseNames;
+  void opts;
+  return '';
 }
 
 function fingerprintReply(s: string): string {
@@ -301,9 +289,7 @@ function sanitizeLeadingLabelPrefix(text: string, enterpriseName?: string | null
   const normalizedEnterprise = normalizeLabelToken(enterpriseName || '');
   const isEnterpriseLabel = normalizedEnterprise.length >= 2 && normalizedLabel === normalizedEnterprise;
 
-  if (!body || isGreetingLikeReply(body)) {
-    return buildGreetingSafeFallback(null);
-  }
+  if (!body || isGreetingLikeReply(body)) return body || raw;
   if (isEnterpriseLabel) return body;
   return body;
 }
@@ -474,6 +460,169 @@ export function evaluateAnaOutboundText(opts: {
   return { text: raw.slice(0, 4000), valid: true, reason: 'valid_semantic_text' };
 }
 
+function normFinalGuard(text: string): string {
+  return (text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function userAskedObjectiveQuestion(text: string | null | undefined): boolean {
+  const n = normFinalGuard(text || '');
+  if (!n) return false;
+  return (
+    /\?/.test(text || '') ||
+    /\b(qual|quais|quanto|custa|valor|preco|metragem|metros|m2|m²|onde fica|localizacao|endereco|lazer|area de lazer|areas de lazer|financiamento|pagamento|entrada|parcela|disponibilidade)\b/.test(n)
+  );
+}
+
+function userSentOnlyGreeting(text: string | null | undefined): boolean {
+  const n = normFinalGuard(text || '');
+  if (!n || n.length > 48) return false;
+  return /^(oi|ola|oie|opa|bom dia|boa tarde|boa noite|tudo bem|td bem)[!.? ]*$/.test(n);
+}
+
+function replyStartsWithGreeting(text: string): boolean {
+  return /^(oi|ola|olá|bom dia|boa tarde|boa noite|opa)\b/i.test((text || '').trim());
+}
+
+function countQuestions(text: string): number {
+  return ((text || '').match(/\?/g) || []).length;
+}
+
+function hasAxisAnswerSignal(replyNorm: string, userNorm: string): boolean {
+  if (!replyNorm || !userNorm) return false;
+  if (/\b(valor|preco|quanto|custa|r\$)\b/.test(userNorm)) {
+    return /\b(r\$|valor|preco|a partir de|entrada|parcela|condic)/.test(replyNorm);
+  }
+  if (/\b(metragem|metros|m2|m²|tamanho|planta|tipologia)\b/.test(userNorm)) {
+    return /\b(metragem|metros|m2|m²|planta|tipologia|quarto|dormitorio|\d+\s*m)/.test(replyNorm);
+  }
+  if (/\b(lazer|area de lazer|areas de lazer|areas comuns|amenidades)\b/.test(userNorm)) {
+    return /\b(lazer|piscina|academia|quadra|salao|playground|areas comuns|area comum|churrasqueira|coworking|pet|fitness)\b/.test(replyNorm);
+  }
+  if (/\b(onde fica|localizacao|endereco|bairro|cidade)\b/.test(userNorm)) {
+    return /\b(fica|localizacao|endereco|bairro|cidade|rua|avenida)\b/.test(replyNorm);
+  }
+  if (/\b(financiamento|pagamento|entrada|parcela|condic)\b/.test(userNorm)) {
+    return /\b(financiamento|pagamento|entrada|parcela|condic|corretor)\b/.test(replyNorm);
+  }
+  return true;
+}
+
+function saysInfoMissingDespiteEvidence(replyNorm: string, knowledgeNorm: string): boolean {
+  if (!replyNorm || !knowledgeNorm) return false;
+  const missingClaim =
+    /\b(nao encontrei|nao consta|nao tenho essa informacao|nao achei|nao localizei|preciso confirmar)\b/.test(replyNorm);
+  if (!missingClaim) return false;
+  const evidenceMarkers = [
+    /\br\$\s*\d/,
+    /\bvalor(?:es)?\b/,
+    /\bpreco\b/,
+    /\bmetragem\b/,
+    /\b\d+\s*m(?:2|²)?\b/,
+    /\blazer\b/,
+    /\bpiscina\b/,
+    /\bacademia\b/,
+    /\bquadra\b/,
+    /\bfica em\b/,
+    /\bendereco\b/,
+    /\bentrega\b/,
+  ];
+  return evidenceMarkers.some((re) => re.test(knowledgeNorm));
+}
+
+export function evaluateAnaEmptyFallbackGuard(opts: {
+  reply: string;
+  userMessage: string | null | undefined;
+  lastAssistantMessage?: string | null;
+  isFirstAnaReply?: boolean;
+  knowledgeText?: string | null;
+}): { blocked: boolean; reason: string | null } {
+  const n = normFinalGuard(opts.reply || '');
+  if (!n) return { blocked: true, reason: 'empty_after_guards' };
+  const userNorm = normFinalGuard(opts.userMessage || '');
+
+  const badPatterns: Array<[RegExp, string]> = [
+    [/\bposso te explicar\b/, 'empty_phrase_posso_te_explicar'],
+    [/\bposso apresentar\b/, 'empty_phrase_posso_apresentar'],
+    [/\bprincipais pontos\b/, 'empty_phrase_principais_pontos'],
+    [/\bqual ponto voce quer\b/, 'empty_phrase_qual_ponto_voce_quer'],
+    [/\bforma objetiva\b/, 'empty_phrase_forma_objetiva'],
+    [/\bquer que eu detalhe\b/, 'empty_phrase_quer_que_eu_detalhe'],
+    [/\bqualquer coisa estou a disposicao\b/, 'empty_closure_vague_disposition'],
+    [/\bveja bem\b/, 'empty_phrase_veja_bem'],
+  ];
+  for (const [re, reason] of badPatterns) {
+    if (re.test(n)) return { blocked: true, reason };
+  }
+
+  if (/\bmorar ou investir\b/.test(n) && userAskedObjectiveQuestion(opts.userMessage)) {
+    return { blocked: true, reason: 'empty_phrase_morar_ou_investir_after_objective_ask' };
+  }
+  if (countQuestions(opts.reply || '') > 1) {
+    return { blocked: true, reason: 'too_many_questions' };
+  }
+  if (opts.isFirstAnaReply === true && !replyStartsWithGreeting(opts.reply || '')) {
+    return { blocked: true, reason: 'first_reply_missing_greeting' };
+  }
+  if (/^(oi|ola|bom dia|boa tarde|boa noite)[!. ]*(eu sou|sou)?\s*(a\s*)?ana[!. ]*$/.test(n)) {
+    return { blocked: true, reason: 'dry_robotic_greeting' };
+  }
+  if (userSentOnlyGreeting(opts.userMessage) && n.split(/\s+/).filter(Boolean).length < 7) {
+    return { blocked: true, reason: 'too_dry_for_opening_greeting' };
+  }
+  if (userAskedObjectiveQuestion(opts.userMessage) && countQuestions(opts.reply || '') > 0 && n.split(/\s+/).filter(Boolean).length <= 5) {
+    return { blocked: true, reason: 'objective_question_turned_into_question' };
+  }
+  if (userAskedObjectiveQuestion(opts.userMessage) && !hasAxisAnswerSignal(n, userNorm)) {
+    return { blocked: true, reason: 'objective_question_not_answered' };
+  }
+  if (
+    userAskedObjectiveQuestion(opts.userMessage) &&
+    /\b(encaminhar|vou passar|passar para|um consultor|um corretor|atendente)\b/.test(n) &&
+    !hasAxisAnswerSignal(n, userNorm)
+  ) {
+    return { blocked: true, reason: 'handoff_before_helping' };
+  }
+  if (/\b(como ja expliquei|obviamente|voce precisa entender|nao foi isso que eu disse|ja falei)\b/.test(n)) {
+    return { blocked: true, reason: 'defensive_or_superior_tone' };
+  }
+  if (/\b(nao posso fazer nada|isso nao e comigo|voce deve procurar|sem essa informacao nao consigo ajudar)\b/.test(n)) {
+    return { blocked: true, reason: 'cold_or_unhelpful_tone' };
+  }
+  if (saysInfoMissingDespiteEvidence(n, normFinalGuard(opts.knowledgeText || ''))) {
+    return { blocked: true, reason: 'claims_missing_info_present_in_rag' };
+  }
+
+  return { blocked: false, reason: null };
+}
+
+function contextualGreeting(referenceNow?: Date | string | null): 'Bom dia' | 'Boa tarde' | 'Boa noite' {
+  const d = referenceNow instanceof Date ? referenceNow : referenceNow ? new Date(referenceNow) : new Date();
+  const hourText = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    hour12: false,
+  }).format(d);
+  const hour = Number(hourText.replace(/\D/g, ''));
+  if (Number.isFinite(hour) && hour >= 5 && hour < 12) return 'Bom dia';
+  if (Number.isFinite(hour) && hour >= 12 && hour < 18) return 'Boa tarde';
+  return 'Boa noite';
+}
+
+export function applyFirstUsefulGreetingStyle(opts: {
+  text: string;
+  isFirstAnaReply?: boolean;
+  referenceNow?: Date | string | null;
+}): { text: string; changed: boolean; greeting: string | null } {
+  const raw = (opts.text || '').trim();
+  void opts;
+  return { text: raw, changed: false, greeting: null };
+}
+
 /**
  * Guard leve da primeira resposta: remove apenas trechos de preço/parcelamento/entrada
  * quando o cliente não pediu isso explicitamente.
@@ -595,7 +744,7 @@ export function sanitizeFirstReplyCommercialLeak(reply: string): {
 
   if (kept.length === 0) {
     return {
-      text: 'Posso te explicar por partes, bem direitinho. Por onde você quer começar: valor, planta ou localização?',
+      text: '',
       removedCommercialSentences: removed,
     };
   }
@@ -699,23 +848,15 @@ export function sanitizeFinancialNegotiationOverreach(reply: string): {
     /\bvou\s+montar\s+(?:esse\s+)?cenario\b/,
   ];
 
-  const safeRedirect =
-    'Sobre entrada, parcelas, prazo e simulação, isso precisa ser validado diretamente com o corretor.';
-
   const sentences = splitSentences(base);
   const kept: string[] = [];
   let replaced = 0;
-  let redirectInserted = false;
   for (const s of sentences) {
     const n = norm(s);
     if (!n) continue;
     const prohibited = prohibitedPatterns.some((re) => re.test(n));
     if (prohibited && !isAlreadyBrokerRedirect(n)) {
       replaced += 1;
-      if (!redirectInserted) {
-        kept.push(safeRedirect);
-        redirectInserted = true;
-      }
       continue;
     }
     kept.push(s.trim());
@@ -724,7 +865,7 @@ export function sanitizeFinancialNegotiationOverreach(reply: string): {
   if (replaced === 0) return { text: base, replacedFinancialSentences: 0 };
   if (kept.length === 0) {
     return {
-      text: safeRedirect,
+      text: '',
       replacedFinancialSentences: replaced,
     };
   }
@@ -749,6 +890,7 @@ export function sanitizeFirstCampaignReplyShape(reply: string): {
 } {
   const base = normalizeWhitespacePreservingLines(stripMarkdownArtifactsForWhatsApp((reply || '').trim()));
   if (!base) return { text: base, trimmedSentences: 0, removedQuestions: 0 };
+  return { text: base, trimmedSentences: 0, removedQuestions: 0 };
 
   const splitSentences = (text: string): string[] => {
     const out: string[] = [];
@@ -878,24 +1020,18 @@ export function isSimpleOpeningGreeting(text: string): boolean {
 
 const GREETING_REPLY_NO_NAME = [
   'Oi, tudo bem? Eu sou a Ana e posso te ajudar com as informações. O que você quer entender melhor primeiro?',
-  'Claro, eu te explico sim. Posso te passar um panorama rápido com as informações disponíveis.',
-  'Posso te passar um resumo direto e a gente aprofunda no que for mais importante para você.',
+  'Oi, tudo bem? Eu sou a Ana. Me diz qual informação você quer confirmar.',
 ];
 
 const GREETING_REPLY_WITH_NAME = (name: string) => [
   `Oi, ${name}, tudo bem? Eu sou a Ana e posso te ajudar com as informações. O que você quer entender melhor primeiro?`,
-  `Claro, ${name}. Eu te explico sim com as informações disponíveis agora.`,
-  `Perfeito, ${name}. Posso te passar um panorama rápido e depois a gente aprofunda no que for mais importante para você.`,
+  `Oi, ${name}. Me diz qual informação você quer confirmar.`,
 ];
 
 /** Resposta acolhedora para saudação simples (sem chamar a API). */
 export function pickRandomGreetingReply(knownCustomerName: string | null | undefined): string {
-  const nm = (knownCustomerName || '').trim();
-  if (nm.length >= 2) {
-    const pool = GREETING_REPLY_WITH_NAME(nm);
-    return pool[Math.floor(Math.random() * pool.length)]!;
-  }
-  return GREETING_REPLY_NO_NAME[Math.floor(Math.random() * GREETING_REPLY_NO_NAME.length)]!;
+  void knownCustomerName;
+  return '';
 }
 
 /** Conta menções ao nome do cliente no texto (normalizado, trechos curtos). */

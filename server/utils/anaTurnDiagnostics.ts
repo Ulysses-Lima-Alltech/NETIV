@@ -11,6 +11,21 @@ export type AnaTurnStage =
 
 export type AnaTurnStageStatus = 'passed' | 'failed' | 'skipped';
 
+export interface AnaLlmGenerationAttempt {
+  attempt: number;
+  strategy: string;
+  provider: LlmProvider | null;
+  model: string | null;
+  success: boolean;
+  parsed: boolean;
+  httpStatus: number | null;
+  errorCode: string | null;
+  errorType: string | null;
+  sanitizedMessage: string | null;
+  failureReason: string | null;
+  rawLength: number;
+}
+
 export interface AnaTurnDiagnostics {
   schemaVersion: number;
   contactId: number | null;
@@ -26,9 +41,21 @@ export interface AnaTurnDiagnostics {
     enterpriseId: number | null;
     activeKnowledgeFileCount: number;
     evidenceChunkCount: number;
+    evidenceChunkIds: number[];
     sourceFiles: string[];
     includedInPrompt: boolean;
     reason: string | null;
+  };
+  scheduling?: {
+    enterpriseId: number | null;
+    enterpriseSource: string | null;
+    resolvedIntent: string | null;
+    primaryAxis: string | null;
+    pendingVisitScheduling: boolean;
+    extractedDateLabel: string | null;
+    extractedTime: string | null;
+    deterministicSchedulingHandled: boolean;
+    schedulingHandledReason: string | null;
   };
   llm: {
     provider: LlmProvider;
@@ -39,6 +66,10 @@ export interface AnaTurnDiagnostics {
     sanitizedMessage: string | null;
     canGenerate: boolean | null;
     providerFallbackAttempted: boolean;
+    maxAttempts: number | null;
+    attempts: AnaLlmGenerationAttempt[];
+    finalFailureReason: string | null;
+    humanInterventionRequired: boolean;
   };
   finalResponse: {
     replySource: string | null;
@@ -68,6 +99,7 @@ export function createAnaTurnDiagnostics(input: {
       enterpriseId: null,
       activeKnowledgeFileCount: 0,
       evidenceChunkCount: 0,
+      evidenceChunkIds: [],
       sourceFiles: [],
       includedInPrompt: false,
       reason: null,
@@ -81,6 +113,10 @@ export function createAnaTurnDiagnostics(input: {
       sanitizedMessage: null,
       canGenerate: null,
       providerFallbackAttempted: false,
+      maxAttempts: null,
+      attempts: [],
+      finalFailureReason: null,
+      humanInterventionRequired: false,
     },
     finalResponse: {
       replySource: null,

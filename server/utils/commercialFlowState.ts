@@ -51,6 +51,14 @@ export interface CommercialFlowState {
   last_material_sent_id?: number | null;
   /** Último status de envio de material no fluxo determinístico. */
   last_material_send_status?: MaterialSendStatus | null;
+  /** Fluxo determinístico de visita aguardando complemento do cliente. */
+  pendingVisitScheduling?: boolean;
+  /** Rótulo humano da data pendente (ex.: "hoje", "amanhã"). */
+  pendingVisitDateLabel?: string | null;
+  /** Data pendente normalizada em America/Sao_Paulo (YYYY-MM-DD). */
+  pendingVisitDate?: string | null;
+  /** Empreendimento usado no fluxo pendente de visita. */
+  pendingVisitEnterpriseId?: number | null;
 }
 
 /** Zera shortlist e hints de foco ao sair do escopo ou trocar empreendimento por menção explícita. */
@@ -69,6 +77,10 @@ export function resetCommercialScopeHints(prev: CommercialFlowState | null): Com
   delete next.last_material_request_at;
   delete next.last_material_sent_id;
   delete next.last_material_send_status;
+  delete next.pendingVisitScheduling;
+  delete next.pendingVisitDateLabel;
+  delete next.pendingVisitDate;
+  delete next.pendingVisitEnterpriseId;
   next.clearedAt = new Date().toISOString();
   next.updatedAt = new Date().toISOString();
   return next;

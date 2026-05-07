@@ -59,6 +59,15 @@ export interface DashboardOverview {
     qualified: number;
     handoffs: number;
     carteiras: number;
+    llmCostUsd: number | null;
+    llmTrackedCostUsd: number | null;
+    llmEstimatedCostUsd: number | null;
+    llmCalls: number;
+    llmInputTokens: number;
+    llmOutputTokens: number;
+    llmTotalTokens: number;
+    llmCostPerContact: number | null;
+    llmCostPerConversation: number | null;
   }[];
 }
 
@@ -77,6 +86,12 @@ export interface DashboardAttentionItemsResponse {
 
 function entClause(paramIndex: number): string {
   return ` AND ($${paramIndex}::int IS NULL OR c.enterprise_id = $${paramIndex}::int)`;
+}
+
+function parseNullableNumber(value: string | number | null | undefined): number | null {
+  if (value == null || value === '') return null;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 export interface DashboardCsvRow {
@@ -362,20 +377,198 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
     qualified: string;
     handoffs: string;
     carteiras: string;
+    llm_cost_usd: string | null;
+    llm_tracked_cost_usd: string | null;
+    llm_estimated_cost_usd: string | null;
+    llm_calls: string | null;
+    llm_input_tokens: string | null;
+    llm_output_tokens: string | null;
+    llm_total_tokens: string | null;
+    llm_cost_per_contact: string | null;
+    llm_cost_per_conversation: string | null;
   }>(
-    `SELECT c.enterprise_id,
-      COALESCE(e.name, '(sem empreendimento)') AS name,
-      COUNT(*)::text AS total,
-      SUM(CASE WHEN c.classification = 'Qualificado' THEN 1 ELSE 0 END)::text AS qualified,
-      SUM(CASE WHEN c.classification = 'Handoff' THEN 1 ELSE 0 END)::text AS handoffs,
-      SUM(CASE WHEN c.classification = 'Carteira' THEN 1 ELSE 0 END)::text AS carteiras
-    FROM conversations c
-    LEFT JOIN enterprises e ON e.id = c.enterprise_id
-    WHERE 1=1 ${ent}
-    GROUP BY c.enterprise_id, e.name
-    ORDER BY COUNT(*) DESC NULLS LAST, name NULLS LAST
+    `WITH period_bounds AS (
+      SELECT
+        (((CURRENT_TIMESTAMP AT TIME ZONE '${TZ}')::date - $2::int)::timestamp AT TIME ZONE '${TZ}') AS period_start,
+        (((CURRENT_TIMESTAMP AT TIME ZONE '${TZ}')::date + 1)::timestamp AT TIME ZONE '${TZ}') AS period_end
+    ),
+    conv_groups AS (
+      SELECT COALESCE(c.enterprise_id::text, '__NO_ENTERPRISE__') AS group_key,
+        c.enterprise_id,
+        e.name,
+        COUNT(*)::bigint AS total,
+        SUM(CASE WHEN c.classification = 'Qualificado' THEN 1 ELSE 0 END)::bigint AS qualified,
+        SUM(CASE WHEN c.classification = 'Handoff' THEN 1 ELSE 0 END)::bigint AS handoffs,
+        SUM(CASE WHEN c.classification = 'Carteira' THEN 1 ELSE 0 END)::bigint AS carteiras,
+        0::bigint AS llm_calls,
+        0::bigint AS llm_input_tokens,
+        0::bigint AS llm_output_tokens,
+        0::bigint AS llm_total_tokens,
+        0::numeric(12,6) AS llm_tracked_cost_usd,
+        0::numeric(12,6) AS llm_estimated_cost_usd,
+        0::bigint AS llm_contacts,
+        0::bigint AS llm_conversations
+      FROM conversations c
+      LEFT JOIN enterprises e ON e.id = c.enterprise_id
+      WHERE 1=1 ${ent}
+      GROUP BY c.enterprise_id, e.name
+    ),
+    usage_groups AS (
+      SELECT COALESCE(ue.enterprise_id::text, '__NO_ENTERPRISE__') AS group_key,
+        ue.enterprise_id::int AS enterprise_id,
+        e.name,
+        0::bigint AS total,
+        0::bigint AS qualified,
+        0::bigint AS handoffs,
+        0::bigint AS carteiras,
+        COUNT(*)::bigint AS llm_calls,
+        SUM(ue.input_tokens)::bigint AS llm_input_tokens,
+        SUM(ue.output_tokens)::bigint AS llm_output_tokens,
+        SUM(ue.total_tokens)::bigint AS llm_total_tokens,
+        SUM(ue.estimated_cost_usd)::numeric(12,6) AS llm_tracked_cost_usd,
+        0::numeric(12,6) AS llm_estimated_cost_usd,
+        COUNT(DISTINCT ue.contact_id) FILTER (WHERE ue.contact_id IS NOT NULL)::bigint AS llm_contacts,
+        COUNT(DISTINCT ue.conversation_id) FILTER (WHERE ue.conversation_id IS NOT NULL)::bigint AS llm_conversations
+      FROM llm_usage_events ue
+      LEFT JOIN enterprises e ON e.id = ue.enterprise_id::int
+      WHERE (ue.created_at AT TIME ZONE '${TZ}')::date >= (CURRENT_TIMESTAMP AT TIME ZONE '${TZ}')::date - $2::int
+        AND (ue.created_at AT TIME ZONE '${TZ}')::date <= (CURRENT_TIMESTAMP AT TIME ZONE '${TZ}')::date
+        AND ($1::int IS NULL OR ue.enterprise_id = $1::int)
+      GROUP BY ue.enterprise_id, e.name
+    ),
+    eligible_backfills AS (
+      SELECT b.id,
+        b.total_cost_usd,
+        GREATEST(b.start_at, pb.period_start) AS allocation_start_at,
+        LEAST(b.end_at, pb.period_end) AS allocation_end_at,
+        CASE
+          WHEN EXTRACT(EPOCH FROM (b.end_at - b.start_at)) > 0
+            THEN (
+              b.total_cost_usd
+              * EXTRACT(EPOCH FROM (LEAST(b.end_at, pb.period_end) - GREATEST(b.start_at, pb.period_start)))
+              / EXTRACT(EPOCH FROM (b.end_at - b.start_at))
+            )::numeric(12,6)
+          ELSE 0::numeric(12,6)
+        END AS period_cost_usd
+      FROM llm_cost_backfills b
+      CROSS JOIN period_bounds pb
+      WHERE b.is_active = TRUE
+        AND b.start_at < pb.period_end
+        AND b.end_at > pb.period_start
+    ),
+    backfill_effort_sources AS (
+      SELECT eb.id AS backfill_id,
+        COALESCE(c.enterprise_id::text, '__NO_ENTERPRISE__') AS group_key,
+        c.enterprise_id,
+        (
+          COUNT(*) FILTER (WHERE m.role = 'user')::numeric * 1.0
+          + COUNT(*) FILTER (WHERE m.role = 'assistant')::numeric * 3.0
+          + COUNT(*)::numeric * 0.25
+        ) AS effort,
+        COUNT(DISTINCT c.contact_id) FILTER (WHERE c.contact_id IS NOT NULL)::bigint AS llm_contacts,
+        COUNT(DISTINCT c.id)::bigint AS llm_conversations
+      FROM eligible_backfills eb
+      JOIN messages m ON m.created_at >= eb.allocation_start_at
+        AND m.created_at < eb.allocation_end_at
+      JOIN conversations c ON c.id = m.conversation_id
+      WHERE ($1::int IS NULL OR c.enterprise_id = $1::int)
+      GROUP BY eb.id, c.enterprise_id
+      UNION ALL
+      SELECT eb.id AS backfill_id,
+        COALESCE(COALESCE(a.resolved_enterprise_id, a.enterprise_id, c.enterprise_id)::text, '__NO_ENTERPRISE__') AS group_key,
+        COALESCE(a.resolved_enterprise_id, a.enterprise_id, c.enterprise_id) AS enterprise_id,
+        COUNT(*)::numeric * 2.0 AS effort,
+        COUNT(DISTINCT COALESCE(a.contact_id, c.contact_id)) FILTER (WHERE COALESCE(a.contact_id, c.contact_id) IS NOT NULL)::bigint AS llm_contacts,
+        COUNT(DISTINCT a.conversation_id)::bigint AS llm_conversations
+      FROM eligible_backfills eb
+      JOIN ana_turn_audit a ON a.created_at >= eb.allocation_start_at
+        AND a.created_at < eb.allocation_end_at
+      LEFT JOIN conversations c ON c.id = a.conversation_id
+      WHERE ($1::int IS NULL OR COALESCE(a.resolved_enterprise_id, a.enterprise_id, c.enterprise_id) = $1::int)
+      GROUP BY eb.id, COALESCE(a.resolved_enterprise_id, a.enterprise_id, c.enterprise_id)
+    ),
+    backfill_effort_groups AS (
+      SELECT backfill_id,
+        group_key,
+        enterprise_id,
+        SUM(effort)::numeric AS effort,
+        SUM(llm_contacts)::bigint AS llm_contacts,
+        SUM(llm_conversations)::bigint AS llm_conversations
+      FROM backfill_effort_sources
+      WHERE effort > 0
+      GROUP BY backfill_id, group_key, enterprise_id
+    ),
+    backfill_allocations AS (
+      SELECT beg.group_key,
+        beg.enterprise_id,
+        (eb.period_cost_usd * beg.effort / NULLIF(SUM(beg.effort) OVER (PARTITION BY beg.backfill_id), 0))::numeric(12,6) AS allocated_cost_usd,
+        beg.llm_contacts,
+        beg.llm_conversations
+      FROM backfill_effort_groups beg
+      JOIN eligible_backfills eb ON eb.id = beg.backfill_id
+    ),
+    backfill_groups AS (
+      SELECT ba.group_key,
+        ba.enterprise_id,
+        e.name,
+        0::bigint AS total,
+        0::bigint AS qualified,
+        0::bigint AS handoffs,
+        0::bigint AS carteiras,
+        0::bigint AS llm_calls,
+        0::bigint AS llm_input_tokens,
+        0::bigint AS llm_output_tokens,
+        0::bigint AS llm_total_tokens,
+        0::numeric(12,6) AS llm_tracked_cost_usd,
+        SUM(ba.allocated_cost_usd)::numeric(12,6) AS llm_estimated_cost_usd,
+        SUM(ba.llm_contacts)::bigint AS llm_contacts,
+        SUM(ba.llm_conversations)::bigint AS llm_conversations
+      FROM backfill_allocations ba
+      LEFT JOIN enterprises e ON e.id = ba.enterprise_id
+      GROUP BY ba.group_key, ba.enterprise_id, e.name
+    ),
+    combined AS (
+      SELECT * FROM conv_groups
+      UNION ALL
+      SELECT * FROM usage_groups
+      UNION ALL
+      SELECT * FROM backfill_groups
+    )
+    SELECT CASE WHEN group_key = '__NO_ENTERPRISE__' THEN NULL ELSE MAX(enterprise_id) END AS enterprise_id,
+      CASE
+        WHEN group_key = '__NO_ENTERPRISE__' THEN '(sem empreendimento)'
+        ELSE COALESCE(MAX(name), '(sem empreendimento)')
+      END AS name,
+      SUM(total)::text AS total,
+      SUM(qualified)::text AS qualified,
+      SUM(handoffs)::text AS handoffs,
+      SUM(carteiras)::text AS carteiras,
+      SUM(llm_tracked_cost_usd)::numeric(12,6)::text AS llm_tracked_cost_usd,
+      SUM(llm_estimated_cost_usd)::numeric(12,6)::text AS llm_estimated_cost_usd,
+      (SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd))::numeric(12,6)::text AS llm_cost_usd,
+      SUM(llm_calls)::text AS llm_calls,
+      SUM(llm_input_tokens)::text AS llm_input_tokens,
+      SUM(llm_output_tokens)::text AS llm_output_tokens,
+      SUM(llm_total_tokens)::text AS llm_total_tokens,
+      CASE
+        WHEN SUM(llm_contacts) > 0
+          THEN ((SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd)) / SUM(llm_contacts))::numeric(12,6)::text
+        WHEN SUM(total) > 0
+          THEN ((SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd)) / SUM(total))::numeric(12,6)::text
+        ELSE NULL
+      END AS llm_cost_per_contact,
+      CASE
+        WHEN SUM(llm_conversations) > 0
+          THEN ((SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd)) / SUM(llm_conversations))::numeric(12,6)::text
+        WHEN SUM(total) > 0
+          THEN ((SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd)) / SUM(total))::numeric(12,6)::text
+        ELSE NULL
+      END AS llm_cost_per_conversation
+    FROM combined
+    GROUP BY group_key
+    ORDER BY SUM(total) DESC, name NULLS LAST
     LIMIT 50`,
-    paramsE
+    [eid, daysBack]
   );
 
   const periodStartIso = new Date(Date.now() - daysBack * 86400000).toISOString();
@@ -410,6 +603,15 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
       qualified: parseInt(row.qualified, 10) || 0,
       handoffs: parseInt(row.handoffs, 10) || 0,
       carteiras: parseInt(row.carteiras, 10) || 0,
+      llmCostUsd: parseNullableNumber(row.llm_cost_usd),
+      llmTrackedCostUsd: parseNullableNumber(row.llm_tracked_cost_usd),
+      llmEstimatedCostUsd: parseNullableNumber(row.llm_estimated_cost_usd),
+      llmCalls: parseInt(row.llm_calls ?? '0', 10) || 0,
+      llmInputTokens: parseInt(row.llm_input_tokens ?? '0', 10) || 0,
+      llmOutputTokens: parseInt(row.llm_output_tokens ?? '0', 10) || 0,
+      llmTotalTokens: parseInt(row.llm_total_tokens ?? '0', 10) || 0,
+      llmCostPerContact: parseNullableNumber(row.llm_cost_per_contact),
+      llmCostPerConversation: parseNullableNumber(row.llm_cost_per_conversation),
     })),
   };
 }

@@ -65,6 +65,14 @@ export async function extractLeadDataFromConversation(
   if (transcript.length < 20) return;
 
   const model = aiConfig.modelColdLead || 'gpt-4.1-mini';
+  const { rows: conversationMetaRows } = await query<{
+    contact_id: number | null;
+    enterprise_id: number | null;
+  }>(
+    `SELECT contact_id, enterprise_id FROM conversations WHERE id = $1`,
+    [conversationId]
+  );
+  const conversationMeta = conversationMetaRows[0] ?? null;
   const messages: ChatMessage[] = [
     {
       role: 'system',
@@ -84,6 +92,20 @@ export async function extractLeadDataFromConversation(
     temperature: 0.2,
     maxTokens: 600,
     responseFormatJson: true,
+    costTracking: {
+      purpose: 'ana_lead_wallet_extraction',
+      modelReason:
+        conversationMeta?.enterprise_id != null
+          ? 'enterprise_resolved_standard_model'
+          : 'unclassified_enterprise_low_cost_model',
+      conversationId,
+      contactId: conversationMeta?.contact_id ?? null,
+      enterpriseId: conversationMeta?.enterprise_id ?? null,
+      metadata: {
+        responseFormatJson: true,
+        source: 'lead_wallet_extraction',
+      },
+    },
   });
   if (!result.success || !result.content) return;
   const patch = parseExtractJson(result.content);

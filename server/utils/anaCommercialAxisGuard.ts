@@ -332,19 +332,12 @@ function ensureEnterpriseMention(text: string, enterpriseName: string | undefine
 }
 
 function buildAdvanceReplyAfterResolvedPurchaseIntent(
-  intent: PurchaseIntent,
+  intent: PurchaseIntent | null,
   enterpriseName: string | undefined
 ): string {
-  const name = (enterpriseName || '').trim();
-  const place = name ? `no ${name}` : 'nesse empreendimento';
-  if (intent === 'INVESTIMENTO') {
-    return enforceShortShape(
-      `Perfeito. Pensando em investimento ${place}, voce quer entender mais sobre valores, potencial de valorizacao ou condicoes de pagamento?`
-    );
-  }
-  return enforceShortShape(
-    `Perfeito. Pensando em moradia ${place}, o que pesa mais pra voce agora: valores, planta ou localizacao?`
-  );
+  void intent;
+  void enterpriseName;
+  return '';
 }
 
 /** Tenta manter só frases que falam exclusivamente do eixo escolhido (+ saudação curta no início). */
@@ -391,18 +384,20 @@ function buildRewrittenReply(
     return { text: withEnterprise.text, enterprisePreserved: withEnterprise.preserved };
   }
 
+  return { text: '', enterprisePreserved: false };
+
   let rewritten: string;
   switch (target) {
     case 'preco': {
       const price = extractPriceSnippet(original);
       if (price) {
         rewritten = enforceShortShape(
-          `Sobre ${name}, o valor que aparece aqui começa em ${price}. Se você quiser, eu te explico o próximo ponto de forma bem direta.`
+          ``
         );
         break;
       }
       rewritten = enforceShortShape(
-        `Sobre ${name}, eu te explico os valores de forma direta. Me diz só o que pesa mais pra você agora?`
+        ``
       );
       break;
     }
@@ -411,27 +406,27 @@ function buildRewrittenReply(
         resolvedPurchaseIntent != null
           ? buildAdvanceReplyAfterResolvedPurchaseIntent(resolvedPurchaseIntent, enterpriseName)
           : enforceShortShape(
-              `Pra eu te orientar melhor no ${name}, você está olhando mais pra morar ou investir?`
+              ``
             );
       break;
     case 'localizacao':
       rewritten = enforceShortShape(
-        `Sobre a localização do ${name}, eu te explico de forma prática. Qual ponto você quer que eu detalhe primeiro?`
+        ``
       );
       break;
     case 'metragem_tipologia':
       rewritten = enforceShortShape(
-        `No ${name}, as plantas funcionam assim e eu te explico de forma clara. Me diz só o que faz mais sentido pra sua rotina hoje?`
+        ``
       );
       break;
     case 'lazer':
       rewritten = enforceShortShape(
-        `No ${name}, o lazer é um ponto importante. O que você quer que eu detalhe primeiro nessa parte?`
+        ``
       );
       break;
     case 'financiamento':
       rewritten = enforceShortShape(
-        `Sobre condições, eu te explico de forma prática dentro do que consigo por aqui. Qual ponto você quer entender melhor primeiro?`
+        ``
       );
       break;
     case 'disponibilidade':
@@ -463,98 +458,30 @@ export function applyAnaCommercialSingleAxisGuard(opts: {
 }): { text: string; changed: boolean; detected: CommercialAxis[]; chosen: CommercialAxis | null } {
   const raw = (opts.reply || '').trim();
   if (!raw) return { text: raw, changed: false, detected: [], chosen: null };
-
-  const userResolvedPurchaseIntent = inferResolvedPurchaseIntent(opts.userMessage);
-  const effectiveResolvedPurchaseIntent = userResolvedPurchaseIntent ?? opts.resolvedPurchaseIntent ?? null;
-  const lastAssistantAskedPurchaseIntent = isPurchaseIntentAxisQuestion(opts.lastAssistantMessage ?? '');
-  const shouldBlockRepeatedPurchaseIntentQuestion = (candidateText: string): boolean => {
-    if (!isPurchaseIntentAxisQuestion(candidateText)) return false;
-    if (effectiveResolvedPurchaseIntent != null) return true;
-    if (lastAssistantAskedPurchaseIntent && userResolvedPurchaseIntent != null) return true;
-    return false;
-  };
-  const applyPurchaseIntentLoopProtection = (candidateText: string): string => {
-    if (!shouldBlockRepeatedPurchaseIntentQuestion(candidateText)) return candidateText;
-    if (effectiveResolvedPurchaseIntent == null) return candidateText;
-    return buildAdvanceReplyAfterResolvedPurchaseIntent(
-      effectiveResolvedPurchaseIntent,
-      opts.enterpriseName ?? undefined
-    );
-  };
-
   const detected = detectCommercialAxes(raw);
-  if (detected.length <= 1) {
-    const protectedSingleAxisText = applyPurchaseIntentLoopProtection(raw);
-    if (protectedSingleAxisText !== raw) {
-      console.log('[ANA_AXIS_GUARD] purchase_intent_loop_prevented=true');
-    }
-    return {
-      text: protectedSingleAxisText,
-      changed: protectedSingleAxisText !== raw,
-      detected,
-      chosen: detected[0] ?? null,
-    };
-  }
-
   const userAxis = inferUserRequestedAxis(opts.userMessage);
-  const target = pickTargetAxis(detected, userAxis, opts.isFirstAnaReply, opts.userMessage || '');
-
-  const originalHasEnterprise = hasEnterpriseMention(raw, opts.enterpriseName ?? undefined);
-  let rewriteResult = buildRewrittenReply(
-    target,
-    raw,
-    opts.enterpriseName ?? undefined,
-    effectiveResolvedPurchaseIntent
-  );
-  let rewritten = rewriteResult.text;
-  let finalAxes = detectCommercialAxes(rewritten);
-  if (finalAxes.length > 1) {
-    // Se o usuário pediu eixo explícito (ex.: lazer), não degradar para preço.
-    const fallbackAxis = userAxis ?? target;
-    rewriteResult = buildRewrittenReply(
-      fallbackAxis,
-      raw,
-      opts.enterpriseName ?? undefined,
-      effectiveResolvedPurchaseIntent
-    );
-    rewritten = rewriteResult.text;
-    finalAxes = detectCommercialAxes(rewritten);
-  }
-  if (finalAxes.length > 1 && userAxis == null) {
-    rewriteResult = buildRewrittenReply(
-      'intencao_compra',
-      raw,
-      opts.enterpriseName ?? undefined,
-      effectiveResolvedPurchaseIntent
-    );
-    rewritten = rewriteResult.text;
-    finalAxes = detectCommercialAxes(rewritten);
-  }
-
-  const text = applyPurchaseIntentLoopProtection(enforceShortShape(rewritten));
-  const sanitizedHasEnterprise = hasEnterpriseMention(text, opts.enterpriseName ?? undefined);
-  const enterprisePreserved = originalHasEnterprise ? sanitizedHasEnterprise : false;
+  const chosen =
+    detected.length === 0
+      ? null
+      : userAxis && detected.includes(userAxis)
+        ? userAxis
+        : detected[0] ?? null;
 
   const cid = opts.conversationId;
-  console.log(`[ANA_AXIS_GUARD] detected_axes=${detected.join('|') || 'none'}`);
-  console.log(`[ANA_AXIS_GUARD] chosen_axis=${target}`);
-  console.log(`[ANA_AXIS_GUARD] enterprise_preserved=${enterprisePreserved}`);
-  console.log(`[ANA_AXIS_GUARD] original_reply=${raw.slice(0, 500)}`);
-  console.log(`[ANA_AXIS_GUARD] sanitized_reply=${text.slice(0, 500)}`);
-  console.log(
-    `[ANA_AXIS_GUARD] purchase_intent_state=${opts.resolvedPurchaseIntent ?? 'none'} purchase_intent_user=${userResolvedPurchaseIntent ?? 'none'} last_asked_purchase_intent=${lastAssistantAskedPurchaseIntent}`
-  );
-  console.log(
-    `[ANA_AXIS_GUARD] detected_axes=${detected.join('|')} chosen_axis=${target} user_requested_axis=${userAxis ?? 'none'} conversationId=${cid ?? 'n/a'}`
-  );
-  console.log('[ANA_AXIS_GUARD]', {
-    conversationId: cid ?? null,
-    detected_axes: detected,
-    chosen_axis: target,
-    user_requested_axis: userAxis,
-    original_reply: raw.slice(0, 500),
-    sanitized_reply: text.slice(0, 500),
-  });
+  if (detected.length > 1 || isPurchaseIntentAxisQuestion(raw)) {
+    console.log('[ANA_AXIS_GUARD]', {
+      conversationId: cid ?? null,
+      mode: 'validation_only_no_rewrite',
+      detected_axes: detected,
+      chosen_axis: chosen,
+      user_requested_axis: userAxis,
+      reply_preview: raw.slice(0, 500),
+      isFirstAnaReply: opts.isFirstAnaReply,
+      enterpriseName: opts.enterpriseName ?? null,
+      resolvedPurchaseIntent: opts.resolvedPurchaseIntent ?? null,
+      lastAssistantAskedPurchaseIntent: isPurchaseIntentAxisQuestion(opts.lastAssistantMessage ?? ''),
+    });
+  }
 
-  return { text, changed: text !== raw, detected, chosen: target };
+  return { text: raw, changed: false, detected, chosen };
 }

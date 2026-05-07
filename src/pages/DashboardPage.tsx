@@ -57,6 +57,15 @@ function KpiCard({
   );
 }
 
+function formatUsd(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `US$ ${value.toFixed(2)}`;
+}
+
+function formatAiCostTitle(row: DashboardOverview['enterprises'][number]): string {
+  return `Rastreado: ${formatUsd(row.llmTrackedCostUsd)} | Estimado histórico: ${formatUsd(row.llmEstimatedCostUsd)}`;
+}
+
 function TimelineChart({ data }: { data: DashboardOverview['timeline'] }) {
   const max = useMemo(() => Math.max(1, ...data.map((d) => d.newConversations)), [data]);
   const w = 640;
@@ -383,7 +392,10 @@ export function DashboardPage() {
 
             <section className={card}>
               <h2 className={heading}>Desempenho por empreendimento</h2>
-              <p className={sub}>Visão <strong>atual</strong> por empreendimento (totais e classificações no estado de hoje).</p>
+              <p className={sub}>
+                Visão <strong>atual</strong> por empreendimento (totais e classificações no estado de hoje). Custo IA pode incluir rastreio real e
+                estimativa histórica.
+              </p>
               <div className="overflow-x-auto">
                 <table className="w-full text-[13px] text-left">
                   <thead>
@@ -392,13 +404,15 @@ export function DashboardPage() {
                       <th className="py-3 pr-4 font-semibold text-right">Total</th>
                       <th className="py-3 pr-4 font-semibold text-right">Qualif.</th>
                       <th className="py-3 pr-4 font-semibold text-right">Handoff</th>
-                      <th className="py-3 font-semibold text-right">Carteira</th>
+                      <th className="py-3 pr-4 font-semibold text-right">Carteira</th>
+                      <th className="py-3 pr-4 font-semibold text-right">Custo IA</th>
+                      <th className="py-3 font-semibold text-right">Custo/contato</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.enterprises.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="py-8 text-[#9CA3AF] text-center">
+                        <td colSpan={7} className="py-8 text-[#9CA3AF] text-center">
                           Nenhuma conversa com o filtro atual.
                         </td>
                       </tr>
@@ -409,7 +423,13 @@ export function DashboardPage() {
                           <td className="py-3 pr-4 text-right tabular-nums">{row.total}</td>
                           <td className="py-3 pr-4 text-right tabular-nums">{row.qualified}</td>
                           <td className="py-3 pr-4 text-right tabular-nums">{row.handoffs}</td>
-                          <td className="py-3 text-right tabular-nums">{row.carteiras}</td>
+                          <td className="py-3 pr-4 text-right tabular-nums">{row.carteiras}</td>
+                          <td className="py-3 pr-4 text-right tabular-nums whitespace-nowrap" title={formatAiCostTitle(row)}>
+                            {formatUsd(row.llmCostUsd)}
+                          </td>
+                          <td className="py-3 text-right tabular-nums whitespace-nowrap">
+                            {formatUsd(row.llmCostPerContact)}
+                          </td>
                         </tr>
                       ))
                     )}
