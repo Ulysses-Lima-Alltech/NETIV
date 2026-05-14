@@ -1,4 +1,4 @@
-import { query } from '../db/pg.js';
+﻿import { query } from '../db/pg.js';
 import {
   getWhatsAppTemplateByKey,
   renderTemplateTextForInbox,
@@ -384,7 +384,7 @@ export async function sendBatchTemplate(params: {
       phoneDisplay: normalizedPhone,
       source: 'whatsapp',
     });
-    if (template.key === 'convite_meeting_ecogarden' || template.key === 'novo_agendamento_corretor') {
+    if (template.category === 'CORRETOR' || template.category === 'ADMIN') {
       await updateContactType(contact.id, 'INTERNO');
     }
 
@@ -548,3 +548,4 @@ export async function sendBatchTemplateTest(params: {
     metaMessageId: result.metaMessageId,
   };
 }
+
