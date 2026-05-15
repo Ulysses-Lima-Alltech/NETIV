@@ -22,6 +22,7 @@ import {
 } from '../components/InboxFilterBar';
 
 const INBOX_READ_STATE_KEY = 'inbox_read_state_v1';
+const INBOX_POLL_INTERVAL_MS = 3000;
 
 type InboxReadStateMap = Record<string, string>;
 
@@ -181,8 +182,10 @@ export function InboxPage() {
   const deepLinkConsumedParamRef = useRef<string | null>(null);
   const selectedIdRef = useRef<string | null>(null);
   const conversationsRequestIdRef = useRef(0);
+  const messagesRequestIdRef = useRef(0);
   const lastLoadedConversationIdRef = useRef<string | null>(null);
   const pendingScrollModeRef = useRef<'none' | 'force' | 'if-near'>('none');
+  const pollInFlightRef = useRef(false);
 
   const rawConversationParam = searchParams.get('conversationId')?.trim() ?? '';
   const parsedConversationId = useMemo(() => {
@@ -277,15 +280,18 @@ export function InboxPage() {
 
   const loadMessages = useCallback((convId: string, silent?: boolean) => {
     const id = parseInt(convId, 10);
-    if (Number.isNaN(id)) return;
+    if (Number.isNaN(id)) return Promise.resolve();
     const shouldScroll = isUserAtBottom();
     const conversationChanged = lastLoadedConversationIdRef.current !== convId;
+    const requestId = ++messagesRequestIdRef.current;
     if (!silent) setMessagesLoading(true);
     if (!silent) setMessagesError(null);
     if (!silent) setSendError(null);
-    whatsappApi
+    return whatsappApi
       .getConversationMessages(id)
       .then((data) => {
+        if (requestId !== messagesRequestIdRef.current) return;
+        if (selectedIdRef.current !== convId) return;
         const windowStatus: WhatsAppWindowStatus | undefined = data.window;
         setConversations((prev) =>
           prev.map((c) => (c.id === convId ? { ...c, whatsappWindow: windowStatus ?? c.whatsappWindow } : c))
@@ -295,6 +301,7 @@ export function InboxPage() {
           .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
         let isNewConversation = false;
         setMessages((prev) => {
+          if (selectedIdRef.current !== convId) return prev;
           const currentConvMessages = prev.filter((m) => m.conversationId === convId);
           if (currentConvMessages.length === 0) {
             isNewConversation = true;
@@ -319,8 +326,14 @@ export function InboxPage() {
         const latestMessageAt = apiMapped.length > 0 ? apiMapped[apiMapped.length - 1]?.createdAt : null;
         markConversationAsRead(convId, latestMessageAt);
       })
-      .catch(() => { if (!silent) setMessagesError('Falha ao carregar'); })
-      .finally(() => { if (!silent) setMessagesLoading(false); });
+      .catch(() => {
+        if (requestId !== messagesRequestIdRef.current) return;
+        if (!silent) setMessagesError('Falha ao carregar');
+      })
+      .finally(() => {
+        if (requestId !== messagesRequestIdRef.current) return;
+        if (!silent) setMessagesLoading(false);
+      });
   }, [isUserAtBottom, markConversationAsRead]);
 
   useLayoutEffect(() => {
@@ -338,6 +351,44 @@ export function InboxPage() {
   }, [messages, messagesLoading, selectedId, scheduleScrollToBottom]);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
+
+  useEffect(() => {
+    let stopped = false;
+    let intervalId: number | null = null;
+
+    const pollTick = async () => {
+      if (stopped) return;
+      if (document.visibilityState !== 'visible') return;
+      if (pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
+      try {
+        await loadConversations(true);
+        const sid = selectedIdRef.current;
+        if (!sid) return;
+        await loadMessages(sid, true);
+      } finally {
+        pollInFlightRef.current = false;
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void pollTick();
+      }
+    };
+
+    intervalId = window.setInterval(() => {
+      void pollTick();
+    }, INBOX_POLL_INTERVAL_MS);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      stopped = true;
+      pollInFlightRef.current = false;
+      if (intervalId != null) window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [loadConversations, loadMessages]);
 
   const handleTabChange = useCallback((tab: 'CLIENT' | 'INTERNO') => {
     if (tab === activeTab) return;
