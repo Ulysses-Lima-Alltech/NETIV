@@ -84,6 +84,7 @@ import {
 } from './anaAgentService.js';
 import {
   finalizeAnaReplyText,
+  containsInternalLimitationLanguage,
   applyAnaHardLengthGuard,
   evaluateAnaOutboundText,
   repliesSemanticallySimilar,
@@ -654,6 +655,66 @@ function containsProhibitedTechnicalFallbackText(text: string): boolean {
     'sobre metragem eu te passo apenas o que esta validado',
     'sobre formas de pagamento eu te passo apenas o que esta validado',
   ].some((phrase) => n.includes(phrase));
+}
+
+function isMultiTopicCommercialMessage(userMessage: string): boolean {
+  const raw = (userMessage || '').trim();
+  if (!raw) return false;
+  const hasTopicFormatting = /\n/.test(raw) || /(?:^|\n)\s*[-*•]\s+/u.test(raw);
+  const n = normText(raw);
+  const topics = [
+    /\blocalizacao\b/,
+    /\bonde fica\b/,
+    /\bpaviment/,
+    /\basfalto\b/,
+    /\binfra\b/,
+    /\bestrutura\b/,
+    /\blazer\b/,
+    /\bseguranca\b/,
+    /\bvalor(?:es)?\b/,
+    /\bpreco\b/,
+    /\bdisponibilidade\b/,
+    /\bvisita\b/,
+  ];
+  const matched = topics.filter((re) => re.test(n)).length;
+  return hasTopicFormatting && matched >= 2;
+}
+
+function buildSafeCommercialPartialReply(params: {
+  userMessage: string;
+  enterpriseName: string | null;
+  enterpriseCity: string | null;
+}): string {
+  const n = normText(params.userMessage || '');
+  const name = (params.enterpriseName || 'o empreendimento').trim();
+  const city = (params.enterpriseCity || '').trim();
+  const blocks: string[] = [];
+
+  if (/\blocalizacao\b|\bonde fica\b/.test(n)) {
+    if (city) blocks.push(`${name} fica em ${city}.`);
+    else blocks.push(`Sobre localizacao, te explico os acessos e a regiao principal de ${name} no atendimento.`);
+  }
+
+  if (/\bpaviment|\basfalto|infra|estrutura|lazer|seguranca\b/.test(n)) {
+    blocks.push('Sobre a estrutura, e um empreendimento com infraestrutura planejada, lazer e seguranca.');
+  }
+
+  if (/\bvalor(?:es)?|preco|disponibilidade|simul|desconto|condic|entrada|parcela\b/.test(n)) {
+    blocks.push(
+      'Esses detalhes variam conforme as opcoes disponiveis. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?'
+    );
+    console.log('ANA_UNSUPPORTED_DETAIL_ROUTED_TO_BROKER', {
+      detailType: 'pricing_or_availability_or_custom_condition',
+    });
+  }
+
+  if (blocks.length === 0) {
+    blocks.push(
+      'Consigo te adiantar os pontos gerais do empreendimento e, para os detalhes especificos, o corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?'
+    );
+  }
+
+  return blocks.join('\n\n');
 }
 
 function diagnosticsHasTechnicalGenerationFailure(diagnostics: AnaTurnDiagnostics): boolean {
@@ -4240,6 +4301,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         genericFallbackBlocked: true,
       });
     }
+    if (containsInternalLimitationLanguage(finalTextGuard)) {
+      console.log('ANA_INTERNAL_LIMITATION_PHRASE_REMOVED', {
+        conversationId,
+        phase: 'pre_outbound_eval',
+      });
+      finalTextGuard = finalizeAnaReplyText(finalTextGuard, {
+        userMessage: trimmed,
+        conversationMode: mode,
+        isFirstAnaReply,
+      });
+    }
     const preserveListFormatting =
       anaDecision.responseMode === 'structured' ||
       (operationalResolverFired && /\n\s*(?:-|\*)\s+/.test(finalTextGuard));
@@ -4604,31 +4676,50 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       };
 
       if (finalEmptyFallbackGuard.blocked) {
-        anaTurnAuditOutcome = 'blocked';
-        anaTurnAuditBlockedReason = `empty_fallback_guard_${finalEmptyFallbackGuard.reason ?? 'blocked'}`;
-        anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
-        anaTurnDiagnostics.finalResponse.replySource = null;
-        anaTurnDiagnostics.finalResponse.handoffUsed = true;
-        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-          replySource: null,
-          outboundStatus: anaTurnAuditOutcome,
-          blockedReason: anaTurnAuditBlockedReason,
-          retryAttempted: retryAudit.retried === true,
-        });
-        await applyAnaConversationUpdate(conversationId, {
-          classification: 'Handoff',
-          handoff: true,
-        });
-        console.log('[ANA_EMPTY_FALLBACK_BLOCKED]', {
-          conversationId,
-          enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
-          reason: finalEmptyFallbackGuard.reason,
-          retryAttempted: retryAudit.retried === true,
-          chunkCount: anaTurnDiagnostics.rag.evidenceChunkCount,
-          chunkIds: anaTurnDiagnostics.rag.evidenceChunkIds,
-        });
-        return;
+        if (isMultiTopicCommercialMessage(trimmed)) {
+          const rescue = buildSafeCommercialPartialReply({
+            userMessage: trimmed,
+            enterpriseName: ent?.name ?? null,
+            enterpriseCity: ent?.city ?? null,
+          });
+          finalOutboundEval = evaluateAnaOutboundText({
+            reply: rescue,
+            technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+            conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+            enterpriseName: ent?.name ?? null,
+          });
+          finalEmptyFallbackGuard = { blocked: false, reason: null };
+          anaTurnAuditGuardsApplied.outboundReason = finalOutboundEval.reason;
+          replySource = 'rag_empty_fallback_retry';
+          console.log('ANA_MULTI_TOPIC_MESSAGE_HANDLED', { conversationId, phase: 'empty_fallback_guard_rescue' });
+          console.log('ANA_PARTIAL_COMMERCIAL_REPLY_ALLOWED', { conversationId, reason: 'empty_fallback_guard_blocked' });
+        } else {
+          anaTurnAuditOutcome = 'blocked';
+          anaTurnAuditBlockedReason = `empty_fallback_guard_${finalEmptyFallbackGuard.reason ?? 'blocked'}`;
+          anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
+          anaTurnDiagnostics.finalResponse.replySource = null;
+          anaTurnDiagnostics.finalResponse.handoffUsed = true;
+          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+          markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+            replySource: null,
+            outboundStatus: anaTurnAuditOutcome,
+            blockedReason: anaTurnAuditBlockedReason,
+            retryAttempted: retryAudit.retried === true,
+          });
+          await applyAnaConversationUpdate(conversationId, {
+            classification: 'Handoff',
+            handoff: true,
+          });
+          console.log('[ANA_EMPTY_FALLBACK_BLOCKED]', {
+            conversationId,
+            enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+            reason: finalEmptyFallbackGuard.reason,
+            retryAttempted: retryAudit.retried === true,
+            chunkCount: anaTurnDiagnostics.rag.evidenceChunkCount,
+            chunkIds: anaTurnDiagnostics.rag.evidenceChunkIds,
+          });
+          return;
+        }
       }
     }
     if (!finalOutboundEval.valid) {
@@ -4873,40 +4964,59 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         })
       : { blocked: false, reason: null as string | null };
     if (postPolicyEmptyGuard.blocked) {
-      anaTurnAuditOutcome = 'blocked';
-      anaTurnAuditBlockedReason = `empty_fallback_guard_${postPolicyEmptyGuard.reason ?? 'blocked'}`;
-      anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
-      anaTurnAuditGuardsApplied.emptyFallbackGuard = {
-        ...(typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' && anaTurnAuditGuardsApplied.emptyFallbackGuard !== null
-          ? anaTurnAuditGuardsApplied.emptyFallbackGuard as Record<string, unknown>
-          : {}),
-        blockedAfterPostPolicy: true,
-        postPolicyReason: postPolicyEmptyGuard.reason,
-      };
-      anaTurnDiagnostics.finalResponse.replySource = null;
-      anaTurnDiagnostics.finalResponse.handoffUsed = true;
-      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-      markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-        replySource: null,
-        outboundStatus: anaTurnAuditOutcome,
-        blockedReason: anaTurnAuditBlockedReason,
-      });
-      await applyAnaConversationUpdate(conversationId, {
-        classification: 'Handoff',
-        handoff: true,
-      });
-      console.log('[ANA_EMPTY_FALLBACK_BLOCKED_AFTER_POST_POLICY]', {
-        conversationId,
-        reason: postPolicyEmptyGuard.reason,
-        replyPreview: replyText.slice(0, 220),
-      });
-      return;
+      if (isMultiTopicCommercialMessage(trimmed)) {
+        replyText = buildSafeCommercialPartialReply({
+          userMessage: trimmed,
+          enterpriseName: ent?.name ?? null,
+          enterpriseCity: ent?.city ?? null,
+        });
+        console.log('ANA_MULTI_TOPIC_MESSAGE_HANDLED', { conversationId, phase: 'post_policy_empty_guard_rescue' });
+        console.log('ANA_PARTIAL_COMMERCIAL_REPLY_ALLOWED', { conversationId, reason: 'post_policy_empty_guard_blocked' });
+      } else {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = `empty_fallback_guard_${postPolicyEmptyGuard.reason ?? 'blocked'}`;
+        anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
+        anaTurnAuditGuardsApplied.emptyFallbackGuard = {
+          ...(typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' && anaTurnAuditGuardsApplied.emptyFallbackGuard !== null
+            ? anaTurnAuditGuardsApplied.emptyFallbackGuard as Record<string, unknown>
+            : {}),
+          blockedAfterPostPolicy: true,
+          postPolicyReason: postPolicyEmptyGuard.reason,
+        };
+        anaTurnDiagnostics.finalResponse.replySource = null;
+        anaTurnDiagnostics.finalResponse.handoffUsed = true;
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+          replySource: null,
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: anaTurnAuditBlockedReason,
+        });
+        await applyAnaConversationUpdate(conversationId, {
+          classification: 'Handoff',
+          handoff: true,
+        });
+        console.log('[ANA_EMPTY_FALLBACK_BLOCKED_AFTER_POST_POLICY]', {
+          conversationId,
+          reason: postPolicyEmptyGuard.reason,
+          replyPreview: replyText.slice(0, 220),
+        });
+        return;
+      }
     }
 
     if (
       diagnosticsHasTechnicalGenerationFailure(anaTurnDiagnostics) &&
       containsProhibitedTechnicalFallbackText(replyText)
     ) {
+      if (isMultiTopicCommercialMessage(trimmed)) {
+        replyText = buildSafeCommercialPartialReply({
+          userMessage: trimmed,
+          enterpriseName: ent?.name ?? null,
+          enterpriseCity: ent?.city ?? null,
+        });
+        console.log('ANA_MULTI_TOPIC_MESSAGE_HANDLED', { conversationId, phase: 'technical_fallback_phrase_rescue' });
+        console.log('ANA_PARTIAL_COMMERCIAL_REPLY_ALLOWED', { conversationId, reason: 'technical_fallback_phrase_guard' });
+      } else {
       const guardFailureReason =
         anaTurnDiagnostics.llm.attempts.find((attempt) => attempt.failureReason != null)?.failureReason ??
         'unexpected_error';
@@ -4960,6 +5070,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         blockedReason: anaTurnAuditBlockedReason,
       });
       return;
+      }
     }
 
     if (anaRepetitionAudit) {

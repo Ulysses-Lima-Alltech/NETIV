@@ -371,6 +371,78 @@ function applyShortMaterialReplyPolicy(
   return keepTwoShortSentencesMax(text);
 }
 
+const BROKER_DETAIL_ROUTING_TEXT =
+  'Esses detalhes variam conforme as opcoes disponiveis. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?';
+
+function removeInternalLimitationSentences(text: string): { text: string; changed: boolean } {
+  const lines = (text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return { text, changed: false };
+  const forbidden = [
+    /\bnao tenho essa informacao liberada\b/i,
+    /\bnao tenho acesso\b/i,
+    /\bnao consta na base\b/i,
+    /\bmaterial liberad/i,
+    /\bbase da ana\b/i,
+    /\binformacao nao liberada\b/i,
+    /\bnao fui autorizad/i,
+    /\bno material de apoio\b/i,
+    /\bnao encontrei\b/i,
+    /\bnao localizei\b/i,
+  ];
+  let changed = false;
+  const kept = lines.filter((line) => {
+    const hit = forbidden.some((re) => re.test(line));
+    if (hit) changed = true;
+    return !hit;
+  });
+  if (!changed) return { text, changed: false };
+  const next = kept.join('\n').trim();
+  if (!next) return { text: BROKER_DETAIL_ROUTING_TEXT, changed: true };
+  return { text: `${next}\n\n${BROKER_DETAIL_ROUTING_TEXT}`, changed: true };
+}
+
+function sanitizeUnsupportedSpecificOffers(text: string): { text: string; changed: boolean } {
+  const raw = (text || '').trim();
+  if (!raw) return { text: raw, changed: false };
+  const forbiddenOfferPatterns = [
+    /\bplanta(?:s)? dos lotes?\b/i,
+    /\bmodelos? de construc/i,
+    /\btabela\b/i,
+    /\bvalores? exatos?\b/i,
+    /\bdisponibilidade em tempo real\b/i,
+    /\bsimulac/i,
+    /\bdesconto\b/i,
+    /\bdetalhes? juridic/i,
+    /\bdetalhes? contratuais?\b/i,
+  ];
+  if (!forbiddenOfferPatterns.some((re) => re.test(raw))) return { text: raw, changed: false };
+  const replaced = raw.replace(
+    /.*(?:planta(?:s)? dos lotes?|modelos? de construc[aã]o|tabela|valores? exatos?|disponibilidade em tempo real|simulac[aã]o|desconto|detalhes? juridic[oa]s?|detalhes? contratuais?).*/gi,
+    'Se quiser, eu te explico localizacao, estrutura, lazer e seguranca, e ja te ajudo a marcar visita.'
+  ).replace(/\s+/g, ' ').trim();
+  return { text: replaced || 'Se quiser, eu te explico os diferenciais gerais e ja te ajudo a marcar visita.', changed: true };
+}
+
+export function containsInternalLimitationLanguage(text: string): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return (
+    n.includes('nao tenho essa informacao liberada') ||
+    n.includes('nao tenho acesso') ||
+    n.includes('nao consta na base') ||
+    n.includes('material liberado') ||
+    n.includes('base da ana') ||
+    n.includes('informacao nao liberada') ||
+    n.includes('nao fui autorizada') ||
+    n.includes('no material de apoio') ||
+    n.includes('nao encontrei') ||
+    n.includes('nao localizei')
+  );
+}
+
 export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOptions): string {
   const isFirstAnaReply = opts?.isFirstAnaReply === true;
   const base = normalizeWhitespacePreservingLines(stripMarkdownArtifactsForWhatsApp((text || '').trim()));
@@ -380,7 +452,9 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   const evoraLocation = forceEvoraLocationReplyWhenNeeded(compact, opts?.userMessage ?? null);
   const humanLazer = humanizeLazerReplyWhenNeeded(evoraLocation, opts?.userMessage ?? null);
   const withOpenQuestion = appendOpenQuestionForGeneralEnterpriseIntro(humanLazer, opts?.userMessage ?? null);
-  return withOpenQuestion.slice(0, 4000);
+  const sanitized = removeInternalLimitationSentences(withOpenQuestion);
+  const safeOffers = sanitizeUnsupportedSpecificOffers(sanitized.text);
+  return safeOffers.text.slice(0, 4000);
 }
 
 function truncateAtWordBoundary(text: string, maxLen: number): string {
