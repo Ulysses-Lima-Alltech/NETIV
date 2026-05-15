@@ -4,10 +4,12 @@ import {
   findOpenAppointmentForConversationAndEnterprise,
   updateAppointmentSchedule,
 } from '../repositories/appointmentRepository.js';
-import { scheduleDeferredHandoffAfterAppointment } from '../repositories/conversationRepository.js';
+import { getConversationById, scheduleDeferredHandoffAfterAppointment } from '../repositories/conversationRepository.js';
+import { findContactById } from '../repositories/contactsRepository.js';
 import { assignAppointment } from './appointmentService.js';
 import { formatAppointmentCanonicalPtBr, parseAppointmentStartEndInSaoPaulo } from '../utils/appointmentDateNormalize.js';
 import { resolveAppointmentDateTimeFromContext } from '../utils/appointmentRelativeDateResolve.js';
+import { hasHumanResolvedName, resolveOperationalCustomerNameParts } from '../utils/customerNameResolver.js';
 
 async function persistBrokerOnConversationIfUnset(conversationId: number, brokerId: number | null | undefined): Promise<void> {
   if (brokerId == null || brokerId <= 0) return;
@@ -15,6 +17,19 @@ async function persistBrokerOnConversationIfUnset(conversationId: number, broker
     `UPDATE conversations SET assigned_broker_id = COALESCE(assigned_broker_id, $1), updated_at = NOW() WHERE id = $2`,
     [brokerId, conversationId]
   );
+}
+
+function appendCustomerNameToAppointmentNotes(
+  baseNotes: string,
+  resolvedName: string,
+  source: ReturnType<typeof resolveOperationalCustomerNameParts>['source']
+): string {
+  const cleanBase = (baseNotes || '').trim();
+  if (!hasHumanResolvedName(source)) return cleanBase;
+  const prefix = `Cliente: ${resolvedName}.`;
+  if (!cleanBase) return prefix;
+  if (cleanBase.toLowerCase().includes(`cliente: ${resolvedName.toLowerCase()}`)) return cleanBase;
+  return `${prefix} ${cleanBase}`.slice(0, 4000);
 }
 
 export interface RegisterAnaAppointmentResult {
@@ -68,6 +83,16 @@ export async function registerAnaAppointmentIfConfirmed(args: {
   if (!parsed) return { persisted: false };
 
   const canonicalLine = `Registrado no sistema: ${formatAppointmentCanonicalPtBr(parsed.startAt)}.`;
+  const conv = await getConversationById(args.conversationId);
+  const contact = conv?.contact_id != null ? await findContactById(conv.contact_id) : null;
+  const resolvedCustomerName = resolveOperationalCustomerNameParts({
+    conversationCustomerName: conv?.customer_name ?? args.customerName ?? null,
+    whatsappDisplayName: conv?.whatsapp_display_name ?? null,
+    contactFullName: contact?.full_name ?? null,
+    contactFirstName: contact?.first_name ?? null,
+    phone: (args.customerPhone || conv?.contact_phone || conv?.external_contact_id || '').trim(),
+    fallbackLabel: 'Cliente',
+  });
 
   const conversationBroker =
     args.brokerId != null && args.brokerId > 0 ? args.brokerId : null;
@@ -75,16 +100,24 @@ export async function registerAnaAppointmentIfConfirmed(args: {
   const existing = await findOpenAppointmentForConversationAndEnterprise(args.conversationId, args.enterpriseId);
 
   if (existing) {
-    const notes =
-      args.notes?.trim() ||
-      existing.notes ||
-      'Agendamento atualizado pelo chat pela Ana.';
+    const notes = appendCustomerNameToAppointmentNotes(
+      args.notes?.trim() || existing.notes || 'Agendamento atualizado pelo chat pela Ana.',
+      resolvedCustomerName.value,
+      resolvedCustomerName.source
+    );
     const updated = await updateAppointmentSchedule(existing.id, {
       startAt: parsed.startAt,
       endAt: parsed.endAt,
       notes,
     });
     if (updated) {
+      const currentName = (updated.customer_name || '').trim().toLowerCase();
+      if (!currentName || currentName === 'cliente') {
+        await query(
+          `UPDATE appointments SET customer_name = $1, updated_at = NOW() WHERE id = $2`,
+          [resolvedCustomerName.value, updated.id]
+        );
+      }
       console.log('[ANA APPT] reagendamento (UPDATE)', {
         conversationId: args.conversationId,
         appointmentId: existing.id,
@@ -110,13 +143,17 @@ export async function registerAnaAppointmentIfConfirmed(args: {
 
   try {
     const result = await assignAppointment({
-      customerName: args.customerName || 'Cliente',
+      customerName: resolvedCustomerName.value,
       customerPhone: args.customerPhone || '',
       enterpriseId: args.enterpriseId,
       city: args.city || '',
       startAt: parsed.startAt,
       endAt: parsed.endAt,
-      notes: args.notes?.trim() || 'Agendamento confirmado no chat pela Ana.',
+      notes: appendCustomerNameToAppointmentNotes(
+        args.notes?.trim() || 'Agendamento confirmado no chat pela Ana.',
+        resolvedCustomerName.value,
+        resolvedCustomerName.source
+      ),
       source: 'ANA',
       brokerId: conversationBroker ?? undefined,
       conversationId: args.conversationId,

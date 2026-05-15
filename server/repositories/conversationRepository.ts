@@ -780,6 +780,7 @@ export async function updateClassification(
         notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row, {
           whatsappDisplayName: row.whatsapp_display_name ?? null,
           contactFullName: contact?.full_name ?? null,
+          contactFirstName: contact?.first_name ?? null,
         }));
         await assignBrokerForHandoffConversation(conversationId);
       }
@@ -831,6 +832,7 @@ export async function updateClassification(
       notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row, {
         whatsappDisplayName: row.whatsapp_display_name ?? null,
         contactFullName: contact?.full_name ?? null,
+        contactFirstName: contact?.first_name ?? null,
       }));
       await assignBrokerForHandoffConversation(conversationId);
     }
@@ -939,7 +941,12 @@ export async function applyAnaConversationUpdate(
   if (handoff) {
     const updatedConv = await getConversationById(conversationId);
     if (updatedConv) {
-      notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(updatedConv));
+      const contact = updatedConv.contact_id != null ? await findContactById(updatedConv.contact_id) : null;
+      notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(updatedConv, {
+        whatsappDisplayName: updatedConv.whatsapp_display_name ?? null,
+        contactFullName: contact?.full_name ?? null,
+        contactFirstName: contact?.first_name ?? null,
+      }));
     }
     await assignBrokerForHandoffConversation(conversationId);
   }
@@ -1020,7 +1027,12 @@ export async function applyHandoffAfterAppointmentConfirmation(
   // NOVO: Notificar Django sobre o lead
   const updatedConv = await getConversationById(conversationId);
   if (updatedConv) {
-    notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(updatedConv));
+    const contact = updatedConv.contact_id != null ? await findContactById(updatedConv.contact_id) : null;
+    notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(updatedConv, {
+      whatsappDisplayName: updatedConv.whatsapp_display_name ?? null,
+      contactFullName: contact?.full_name ?? null,
+      contactFirstName: contact?.first_name ?? null,
+    }));
   }
 }
 

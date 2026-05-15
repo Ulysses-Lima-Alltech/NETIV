@@ -152,6 +152,36 @@ export async function findOrCreateContactByPhone(data: {
   });
 }
 
+/**
+ * Preenche nome no contato somente quando campos ainda estão vazios.
+ * Não sobrescreve nome curado/manual já existente.
+ */
+export async function mergeContactNameIfMissing(contactId: number, fullNameRaw: string): Promise<boolean> {
+  const fullName = (fullNameRaw || '').trim();
+  if (fullName.length < 2) return false;
+  const firstName = toFirstName(fullName);
+  const result = await query(
+    `UPDATE contacts
+     SET full_name = CASE
+           WHEN full_name IS NULL OR trim(full_name) = '' THEN $2
+           ELSE full_name
+         END,
+         first_name = CASE
+           WHEN first_name IS NULL OR trim(first_name) = '' THEN $3
+           ELSE first_name
+         END,
+         updated_at = NOW()
+     WHERE id = $1
+       AND (
+         full_name IS NULL OR trim(full_name) = ''
+         OR first_name IS NULL OR trim(first_name) = ''
+       )
+     RETURNING id`,
+    [contactId, fullName, firstName]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
 export async function assignContactToConversation(conversationId: number, contactId: number, db?: Queryable): Promise<void> {
   await q(db).query(
     `UPDATE conversations

@@ -4,6 +4,7 @@
 import type { ConversationRow } from '../repositories/conversationRepository.js';
 import { createServiceJwt } from './jwtService.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
+import { resolveOperationalCustomerName } from '../utils/customerNameResolver.js';
 
 /** Timeout por chamada (ms). Cabe folgado dentro do tick de 10s do worker. */
 const FETCH_TIMEOUT_MS = 8000;
@@ -94,15 +95,18 @@ export function buildLeadPayload(
   fallbacks?: {
     whatsappDisplayName?: string | null;
     contactFullName?: string | null;
+    contactFirstName?: string | null;
   }
 ): Record<string, unknown> {
   const phone = toNationalPhone(conv.contact_phone || conv.external_contact_id);
-  const name =
-    conv.customer_name?.trim() ||
-    fallbacks?.whatsappDisplayName?.trim() ||
-    fallbacks?.contactFullName?.trim() ||
-    phone; // último recurso: telefone como nome (Django nunca recebe null)
-
+  const name = resolveOperationalCustomerName({
+    conversationCustomerName: conv.customer_name ?? null,
+    whatsappDisplayName: conv.whatsapp_display_name ?? fallbacks?.whatsappDisplayName ?? null,
+    contactFullName: fallbacks?.contactFullName ?? null,
+    contactFirstName: fallbacks?.contactFirstName ?? null,
+    phone,
+    fallbackLabel: 'Cliente',
+  });
   return {
     phone,
     name,
@@ -114,3 +118,4 @@ export function buildLeadPayload(
     contact_id: conv.contact_id,
   };
 }
+

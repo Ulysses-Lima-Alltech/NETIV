@@ -589,6 +589,8 @@ export interface BuildAnaSystemPromptOpts {
   allEnterpriseNames?: string[];
   /** Nome já conhecido do cliente (para contagem de menções). */
   knownCustomerName?: string | null;
+  /** Nome de perfil do WhatsApp (provável; não confirmado). */
+  probableCustomerName?: string | null;
   /** Quantas vezes a Ana já mencionou o nome do cliente nas respostas anteriores. */
   customerNameMentionsSoFar?: number;
   /** Se já foi feita a pergunta inicial pelo nome confirmado (evita repetir a mesma formulação). */
@@ -659,6 +661,7 @@ ${ap.reschedule ? '- Remarcação: atualize sem recomeçar do zero.\n' : ''}${ap
 
 function buildCustomerNameInstructions(opts: BuildAnaSystemPromptOpts): string {
   const nm = (opts.knownCustomerName || '').trim();
+  const probable = (opts.probableCustomerName || '').trim();
   const mentions = opts.customerNameMentionsSoFar ?? 0;
   const asked = opts.anaAskedCustomerName === true;
   if (opts.postOutboundTemplateBatch === true && opts.mode === 'scoped') {
@@ -687,12 +690,14 @@ Nome: "${nm}". Objetivo de menções ao nome já atingido; cite só quando soar 
   if (!asked) {
     return `--- NOME DO CLIENTE (ainda não confirmado no sistema) ---
 "Socando" ou saudando "Ana" não é nome do cliente — é a você (atendente). Não assuma nome do lead em saudações genéricas.
+${probable.length >= 2 ? `Nome de perfil do WhatsApp (provável): "${probable}". Trate apenas como pista, não como confirmação.` : ''}
 Se for primeiro contato, você pode usar uma apresentação curta como "Sou a Ana". Fora disso, não se reapresente.
 Nunca envie abertura mínima sem conteúdo útil (ex.: "Oi! Sou a Ana."). Se se apresentar, na mesma mensagem já responda o ponto do cliente ou conduza o próximo passo com uma pergunta natural.
 Peça o nome de forma cordial com no máximo UMA pergunta (ex.: "Como posso te chamar?"). Se o cliente já trouxe pergunta objetiva (empreendimento, preço, local), responda primeiro ao conteúdo e só então peça o nome na mesma mensagem, sem mais de uma pergunta no total.
 `;
   }
   return `--- NOME DO CLIENTE (ainda não confirmado) ---
+${probable.length >= 2 ? `Nome de perfil do WhatsApp (provável): "${probable}". Não tratar como confirmação.` : ''}
 Você já pediu o nome antes; continue com naturalidade e, se couber, reforce sem repetir a mesma frase literal. No máximo uma pergunta por mensagem.
 `;
 }

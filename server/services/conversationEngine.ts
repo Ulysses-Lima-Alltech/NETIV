@@ -131,7 +131,7 @@ import {
   findOpenAppointmentForConversationAndEnterprise,
   type AppointmentRow,
 } from '../repositories/appointmentRepository.js';
-import { findContactById } from '../repositories/contactsRepository.js';
+import { findContactById, mergeContactNameIfMissing } from '../repositories/contactsRepository.js';
 import {
   parseCommercialFlowState,
   computeNextCommercialFlowState,
@@ -1765,6 +1765,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           conv = refreshedAfterName;
         }
       }
+      if (effectiveConv.contact_id != null) {
+        await mergeContactNameIfMissing(effectiveConv.contact_id, trustedCustomerName);
+      }
     }
     let lastUserMessageAt = new Date();
     for (let i = rows.length - 1; i >= 0; i--) {
@@ -2560,7 +2563,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             const convForApptRegister = await getConversationById(conversationId);
             await registerAnaAppointmentIfConfirmed({
               conversationId,
-              customerName: (convForApptRegister?.customer_name || trustedCustomerName || '').trim() || 'Cliente',
+              customerName: (convForApptRegister?.customer_name || trustedCustomerName || '').trim(),
               customerPhone: (convForApptRegister?.contact_phone || convForApptRegister?.external_contact_id || '').replace(/\D/g, ''),
               enterpriseId: ent.id,
               city: '',
@@ -2728,6 +2731,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       allEnterpriseNames,
       requestedProductType: promptProductTypeForPrompt,
       knownCustomerName: effectiveConv.customer_name,
+      probableCustomerName:
+        !(effectiveConv.customer_name || '').trim() ? effectiveConv.whatsapp_display_name ?? null : null,
       customerNameMentionsSoFar: effectiveConv.ana_customer_name_mentions ?? 0,
       anaAskedCustomerName: effectiveConv.ana_asked_customer_name === true,
       conversationClassification: effectiveConv.classification,
@@ -3736,7 +3741,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       try {
         const apptRes = await registerAnaAppointmentIfConfirmed({
           conversationId,
-          customerName: (convForApptRegister?.customer_name || trustedCustomerName || '').trim() || 'Cliente',
+          customerName: (convForApptRegister?.customer_name || trustedCustomerName || '').trim(),
           customerPhone: (convForApptRegister?.contact_phone || convForApptRegister?.external_contact_id || '').replace(/\D/g, ''),
           enterpriseId: ent.id,
           city: '',

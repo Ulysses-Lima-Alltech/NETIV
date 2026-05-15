@@ -22,6 +22,7 @@ let isRunning = false;
 
 interface PendingRow extends ConversationRow {
   contact_full_name: string | null;
+  contact_first_name: string | null;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -37,7 +38,7 @@ function sleep(ms: number): Promise<void> {
  */
 async function selectPending(): Promise<PendingRow[]> {
   const { rows } = await query<PendingRow>(
-    `SELECT c.*, ct.full_name AS contact_full_name
+    `SELECT c.*, ct.full_name AS contact_full_name, ct.first_name AS contact_first_name
        FROM conversations c
        LEFT JOIN contacts ct ON ct.id = c.contact_id
       WHERE c.enterprise_id IS NOT NULL
@@ -78,6 +79,7 @@ async function processOne(row: PendingRow): Promise<{ ok: boolean; status?: numb
   const payload = buildLeadPayload(row, {
     whatsappDisplayName: row.whatsapp_display_name ?? null,
     contactFullName: row.contact_full_name ?? null,
+    contactFirstName: row.contact_first_name ?? null,
   });
 
   const result = await notifyDjango('api/webhook/netiv-lead/', payload);

@@ -49,6 +49,7 @@ import {
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { reprocessLastUserMessage } from '../services/conversationEngine.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
+import { findContactById } from '../repositories/contactsRepository.js';
 import {
   insertMessage,
   getMessagesByConversationId,
@@ -57,6 +58,7 @@ import {
 } from '../repositories/messageRepository.js';
 import { getCorretorById } from '../repositories/corretorRepository.js';
 import { sendMessageSchema, updateClassificationSchema } from '../validators/whatsapp.js';
+import { resolveSafeDisplayName } from '../utils/customerNameResolver.js';
 import {
   getConversationWhatsAppWindowStatus,
   getPhoneWhatsAppWindowStatus,
@@ -524,8 +526,17 @@ router.post('/conversations/:id/send', conditionalManualFileUpload, async (req, 
     if (!to) return res.status(400).json({ success: false, error: 'Sem número de telefone na conversa.' });
 
     if (templateKey) {
+      const linkedContact = conv.contact_id != null ? await findContactById(conv.contact_id) : null;
+      const resolvedTemplateCustomerName = resolveSafeDisplayName({
+        conversationCustomerName: conv.customer_name ?? null,
+        whatsappDisplayName: conv.whatsapp_display_name ?? null,
+        contactFullName: linkedContact?.full_name ?? null,
+        contactFirstName: linkedContact?.first_name ?? null,
+        phone: conv.contact_phone ?? conv.external_contact_id,
+        fallbackLabel: 'Cliente',
+      });
       const result = await sendTemplateMessage(to, templateKey, {
-        customerName: conv.customer_name ?? conv.whatsapp_display_name ?? conv.contact_phone ?? conv.external_contact_id,
+        customerName: resolvedTemplateCustomerName,
         enterpriseName: conv.enterprise_id ? (await getEnterpriseById(conv.enterprise_id))?.name ?? null : null,
       });
       if (result.success && result.metaMessageId) {
