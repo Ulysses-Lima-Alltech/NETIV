@@ -6,6 +6,7 @@ import {
   whatsappApi,
   projectsApi,
   ApiError,
+  getStoredAuthToken,
   type ReserveSegmentationPatchBody,
   type WhatsAppWindowStatus,
 } from '../api/client';
@@ -22,9 +23,11 @@ import {
 } from '../components/InboxFilterBar';
 
 const INBOX_READ_STATE_KEY = 'inbox_read_state_v1';
-const INBOX_POLL_INTERVAL_MS = 3000;
-
 type InboxReadStateMap = Record<string, string>;
+const API_ROOT =
+  import.meta.env.VITE_API_URL != null && String(import.meta.env.VITE_API_URL).trim() !== ''
+    ? `${String(import.meta.env.VITE_API_URL).replace(/\/$/, '')}/api`
+    : '/api';
 
 function toMillis(value: string | null | undefined): number | null {
   if (!value) return null;
@@ -160,6 +163,33 @@ function mapApiMessageToMessage(m: MessageListItem, conversationId: string): Mes
   };
 }
 
+function upsertMessageList(prev: Message[], incoming: Message): Message[] {
+  const tempIdx = prev.findIndex(
+    (m) =>
+      (String(m.id).startsWith('temp-') || String(m.id).startsWith('sent-')) &&
+      m.sender === incoming.sender &&
+      (m.text || '') === (incoming.text || '')
+  );
+  if (tempIdx >= 0) {
+    const next = [...prev];
+    next[tempIdx] = { ...incoming };
+    return next.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  }
+  const idx = prev.findIndex(
+    (m) =>
+      m.id === incoming.id ||
+      (m.createdAt === incoming.createdAt &&
+        m.sender === incoming.sender &&
+        (m.text || '') === (incoming.text || ''))
+  );
+  if (idx >= 0) {
+    const next = [...prev];
+    next[idx] = { ...next[idx], ...incoming };
+    return next;
+  }
+  return [...prev, incoming].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+}
+
 export function InboxPage() {
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<'CLIENT' | 'INTERNO'>('CLIENT');
@@ -185,7 +215,6 @@ export function InboxPage() {
   const messagesRequestIdRef = useRef(0);
   const lastLoadedConversationIdRef = useRef<string | null>(null);
   const pendingScrollModeRef = useRef<'none' | 'force' | 'if-near'>('none');
-  const pollInFlightRef = useRef(false);
 
   const rawConversationParam = searchParams.get('conversationId')?.trim() ?? '';
   const parsedConversationId = useMemo(() => {
@@ -353,42 +382,116 @@ export function InboxPage() {
   useEffect(() => { loadConversations(); }, [loadConversations]);
 
   useEffect(() => {
-    let stopped = false;
-    let intervalId: number | null = null;
+    const token = getStoredAuthToken();
+    if (!token) return;
+    const eventsUrl = `${API_ROOT}/whatsapp/events?access_token=${encodeURIComponent(token)}`;
+    const es = new EventSource(eventsUrl);
 
-    const pollTick = async () => {
-      if (stopped) return;
-      if (document.visibilityState !== 'visible') return;
-      if (pollInFlightRef.current) return;
-      pollInFlightRef.current = true;
+    const onMessageCreated = (evt: Event) => {
+      const sid = selectedIdRef.current;
+      const msgEvt = evt as MessageEvent;
+      let parsed: {
+        type: string;
+        payload: {
+          id: string;
+          conversationId: number;
+          role: 'user' | 'assistant';
+          content: string | null;
+          messageKind?: 'text' | 'document' | 'image';
+          attachment?: unknown;
+          createdAt: string;
+          deleted?: boolean;
+          deletedAt?: string | null;
+        };
+      } | null = null;
       try {
-        await loadConversations(true);
-        const sid = selectedIdRef.current;
-        if (!sid) return;
-        await loadMessages(sid, true);
-      } finally {
-        pollInFlightRef.current = false;
+        parsed = JSON.parse(msgEvt.data);
+      } catch {
+        return;
+      }
+      if (!parsed || parsed.type !== 'message.created') return;
+      const p = parsed.payload;
+      const convId = String(p.conversationId);
+      const incoming: Message = {
+        id: String(p.id),
+        conversationId: convId,
+        sender: p.role === 'user' ? 'LEAD' : 'AGENT',
+        text: p.deleted ? '' : (p.content ?? ''),
+        createdAt: p.createdAt,
+        messageType: p.messageKind === 'document' || p.messageKind === 'image' ? p.messageKind : 'text',
+        attachment:
+          p.deleted || !p.attachment || typeof p.attachment !== 'object'
+            ? null
+            : ({
+                fileName: (p.attachment as { fileName?: string }).fileName ?? '',
+                mimeType: (p.attachment as { mimeType?: string }).mimeType ?? 'application/octet-stream',
+                sizeBytes: (p.attachment as { sizeBytes?: number }).sizeBytes,
+                whatsappMediaId: (p.attachment as { whatsappMediaId?: string | null }).whatsappMediaId ?? null,
+                caption: (p.attachment as { caption?: string | null }).caption ?? null,
+                enterpriseFileId: (p.attachment as { enterpriseFileId?: number | null }).enterpriseFileId ?? null,
+              }),
+        deleted: p.deleted ?? false,
+        deletedAt: p.deletedAt ?? null,
+      };
+
+      const atBottom = isUserAtBottom();
+      setConversations((prev) => {
+        const idx = prev.findIndex((c) => c.id === convId);
+        if (idx < 0) return prev;
+        const row = prev[idx]!;
+        const nextUnread = sid === convId ? 0 : Math.max(1, row.unreadCount || 0);
+        const updatedRow: Conversation = {
+          ...row,
+          lastMessage: incoming.text || row.lastMessage,
+          updatedAt: incoming.createdAt,
+          unreadCount: nextUnread,
+        };
+        const next = [...prev];
+        next.splice(idx, 1);
+        next.unshift(updatedRow);
+        return next;
+      });
+
+      if (sid === convId) {
+        setMessages((prev) => upsertMessageList(prev, incoming));
+        markConversationAsRead(convId, incoming.createdAt);
+        if (atBottom) {
+          pendingScrollModeRef.current = 'if-near';
+        }
       }
     };
 
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        void pollTick();
+    const onMessageUpdated = (evt: Event) => {
+      const msgEvt = evt as MessageEvent;
+      try {
+        const parsed = JSON.parse(msgEvt.data) as {
+          type: string;
+          payload: { id: string; conversationId: number; deleted?: boolean; deletedAt?: string | null };
+        };
+        if (parsed.type !== 'message.updated') return;
+        const convId = String(parsed.payload.conversationId);
+        if (selectedIdRef.current !== convId) return;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === String(parsed?.payload.id)
+              ? { ...m, deleted: parsed.payload.deleted ?? true, deletedAt: parsed.payload.deletedAt ?? null, text: '', attachment: null }
+              : m
+          )
+        );
+      } catch {
+        // noop
       }
     };
 
-    intervalId = window.setInterval(() => {
-      void pollTick();
-    }, INBOX_POLL_INTERVAL_MS);
-    document.addEventListener('visibilitychange', onVisibilityChange);
+    es.addEventListener('message.created', onMessageCreated);
+    es.addEventListener('message.updated', onMessageUpdated);
 
     return () => {
-      stopped = true;
-      pollInFlightRef.current = false;
-      if (intervalId != null) window.clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
+      es.removeEventListener('message.created', onMessageCreated);
+      es.removeEventListener('message.updated', onMessageUpdated);
+      es.close();
     };
-  }, [loadConversations, loadMessages]);
+  }, [isUserAtBottom, markConversationAsRead]);
 
   const handleTabChange = useCallback((tab: 'CLIENT' | 'INTERNO') => {
     if (tab === activeTab) return;

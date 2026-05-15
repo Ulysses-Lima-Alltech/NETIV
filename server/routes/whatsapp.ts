@@ -63,8 +63,13 @@ import {
   getConversationWhatsAppWindowStatus,
   getPhoneWhatsAppWindowStatus,
 } from '../services/whatsappWindowService.js';
+import { registerWhatsAppEventsSse, emitWhatsAppEvent } from '../services/whatsappEvents.js';
 
 const router = Router();
+
+router.get('/events', (req, res) => {
+  registerWhatsAppEventsSse(req, res);
+});
 
 const manualAttachmentUpload = multer({
   storage: multer.memoryStorage(),
@@ -498,6 +503,12 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       assignedBrokerName: brokerRow?.full_name ?? null,
       ...conversationReserveToPublic(conv),
     });
+    emitWhatsAppEvent('conversation.updated', {
+      conversationId: conv.id,
+      classificationStatus: conv.classification ?? 'Novo',
+      handoff: conv.handoff ?? false,
+      updatedAt: conv.updated_at.toISOString(),
+    });
   } catch (e) {
     console.error('[WhatsApp] PATCH classification:', e);
     res.status(500).json({ error: 'Erro ao atualizar.' });
@@ -757,6 +768,11 @@ router.patch('/conversations/:id/customer-name', async (req, res) => {
     const name: string | null = typeof raw === 'string' ? raw.trim().slice(0, 80) || null : null;
 
     await setConversationCustomerName(id, name);
+    emitWhatsAppEvent('conversation.updated', {
+      conversationId: id,
+      customerName: name,
+      updatedAt: new Date().toISOString(),
+    });
     return res.json({ success: true, conversationId: id, customerName: name });
   } catch (e) {
     console.error('[WhatsApp] PATCH customer-name:', e);

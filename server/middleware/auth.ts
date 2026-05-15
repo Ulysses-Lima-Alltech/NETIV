@@ -20,6 +20,12 @@ function getToken(req: Request): string | null {
     const t = auth.slice(7).trim();
     return t.length > 0 ? t : null;
   }
+  // EventSource não permite Authorization customizado em todos os cenários.
+  // Permitimos token por query somente no stream SSE de WhatsApp.
+  if (req.method.toUpperCase() === 'GET' && req.path === '/whatsapp/events') {
+    const q = req.query?.access_token;
+    if (typeof q === 'string' && q.trim().length > 0) return q.trim();
+  }
   return null;
 }
 

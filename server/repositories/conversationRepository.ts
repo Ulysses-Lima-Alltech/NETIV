@@ -3,6 +3,7 @@ import { getActiveEnterpriseById } from './enterpriseRepository.js';
 import { getCorretorById } from './corretorRepository.js';
 import { assignBrokerForHandoffConversation } from '../services/handoffQueueService.js';
 import { notifyDjango, buildLeadPayload } from '../services/djangoWebhook.js';
+import { isAutoHandoffEnabled, logAutoHandoffBlocked } from '../utils/autoHandoffPolicy.js';
 import type { LeadOriginInput } from '../services/leadOriginResolver.js';
 import { resolveEnterpriseFromLeadSource } from '../services/leadOriginResolver.js';
 import { parseCommercialFlowState, type CommercialFlowState } from '../utils/commercialFlowState.js';
@@ -905,10 +906,12 @@ export async function applyAnaConversationUpdate(
   let classification = toValidClassification(meta.classification?.trim() || conv.classification);
 
   const requestedAutoHandoff = !!meta.handoff || classification === 'Handoff';
-  if (requestedAutoHandoff) {
-    console.warn('[ANA_HANDOFF_AUTO_DISABLED]', {
+  const autoHandoffEnabled = isAutoHandoffEnabled();
+  if (requestedAutoHandoff && !autoHandoffEnabled) {
+    logAutoHandoffBlocked({
       origin: 'applyAnaConversationUpdate',
       conversationId,
+      reason: 'ana_automatic_update_requested_handoff',
       requestedClassification: meta.classification ?? null,
       requestedHandoff: meta.handoff ?? null,
     });
@@ -916,9 +919,9 @@ export async function applyAnaConversationUpdate(
 
   // Handoff automático vindo da Ana/modelo temporariamente desativado.
   // Handoff manual pela tela continua preservado via updateClassification().
-  const handoff = false;
+  const handoff = autoHandoffEnabled ? !!meta.handoff : false;
 
-  if (classification === 'Handoff') {
+  if (!autoHandoffEnabled && classification === 'Handoff') {
     const restored = toValidClassification(conv.classification);
     classification = restored === 'Handoff' ? 'Novo' : restored;
   }
@@ -986,18 +989,21 @@ export async function scheduleDeferredHandoffAfterAppointment(
   conversationId: number,
   brokerId: number | null
 ): Promise<void> {
-  console.warn('[ANA_HANDOFF_AUTO_DISABLED]', {
+  logAutoHandoffBlocked({
     origin: 'scheduleDeferredHandoffAfterAppointment',
     conversationId,
-    brokerId,
+    reason: 'appointment_deferred_handoff_disabled',
+    requestedHandoff: true,
   });
   return;
 }
 
 /** Processa conversas com handoff diferido vencido (chamado periodicamente no servidor). */
 export async function processDueDeferredHandoffs(): Promise<number> {
-  console.warn('[ANA_HANDOFF_AUTO_DISABLED]', {
+  logAutoHandoffBlocked({
     origin: 'processDueDeferredHandoffs',
+    reason: 'deferred_handoff_worker_disabled',
+    requestedHandoff: true,
   });
   return 0;
 }
@@ -1010,11 +1016,13 @@ export async function applyHandoffAfterAppointmentConfirmation(
   conversationId: number,
   brokerId: number | null
 ): Promise<void> {
-  console.warn('[ANA_HANDOFF_AUTO_DISABLED]', {
+  logAutoHandoffBlocked({
     origin: 'applyHandoffAfterAppointmentConfirmation',
     conversationId,
-    brokerId,
+    reason: 'appointment_confirmation_auto_handoff_disabled',
+    requestedHandoff: true,
   });
+  void brokerId;
   return;
 }
 

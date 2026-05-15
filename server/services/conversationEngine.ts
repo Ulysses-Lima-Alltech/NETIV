@@ -1621,82 +1621,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         effectiveConv.lead_temperature,
         detectStrongPurchaseIntentForLeadTemperature(trimmed) ? 'quente' : null
       );
+      console.warn('auto_handoff_blocked_by_temporary_policy', {
+        origin: 'conversationEngine.hasExplicitHandoffIntent',
+        conversationId,
+        reason: 'explicit_human_handoff_intent_detected',
+        requestedHandoff: true,
+      });
       await applyAnaConversationUpdate(conversationId, {
         classification: 'Handoff',
         ...(mergedLeadOnHandoff != null ? { lead_temperature: mergedLeadOnHandoff } : {}),
         handoff: true,
       });
-      if (isPipelineStale(conversationId, replyPipelineToken)) {
-        console.log('[ANA_PIPELINE] engine_cancelled_stale', {
-          conversationId,
-          replyPipelineToken: replyPipelineToken ?? null,
-          phase: 'handoff_before_send',
-          inboundMetaMessageId: inboundMetaFromCtx ?? null,
-        });
-        return;
-      }
-      const confirmMsg = finalizeAnaReplyText(
-        'Entendido! Um atendente vai entrar em contato em breve. Enquanto isso, sua mensagem já foi registrada. Posso te ajudar com mais alguma coisa antes da transferência?'
-      );
-      const confirmOutboundEval = evaluateAnaOutboundText({
-        reply: confirmMsg,
-        technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
-        conversationType: effectiveConv.conversation_type ?? 'CLIENT',
-        enterpriseName: null,
-      });
-      if (!confirmOutboundEval.valid) {
-        logAnaOutboundBlocked({
-          reason: confirmOutboundEval.reason,
-          userMessage: trimmed,
-          conversationId,
-          replyCandidate: confirmMsg,
-        });
-        return;
-      }
-      const confirmMsgSafe = confirmOutboundEval.text;
-      await sleepMs(randomAnaReplyDelayMs({ replyLength: confirmMsgSafe.length }));
-      if (isPipelineStale(conversationId, replyPipelineToken)) {
-        console.log('[ANA_PIPELINE] engine_cancelled_stale', {
-          conversationId,
-          replyPipelineToken: replyPipelineToken ?? null,
-          phase: 'after_handoff_intent_delay',
-          inboundMetaMessageId: inboundMetaFromCtx ?? null,
-        });
-        return;
-      }
-      console.log('[ANA_PIPELINE] engine_send_attempt', {
-        conversationId,
-        toPhoneTail: anaPhoneTail(toPhoneNumber),
-        inboundMetaMessageId: inboundMetaFromCtx ?? null,
-        replyPipelineToken: replyPipelineToken ?? null,
-        phase: 'handoff_intent_confirm',
-        textLen: confirmMsgSafe.length,
-      });
-      const sendResult = await sendTextMessage({
-        conversationId,
-        to: toPhoneNumber,
-        text: confirmMsgSafe,
-        phase: 'handoff_intent_confirm',
-      });
-      if (sendResult.success && sendResult.metaMessageId) {
-        await insertMessage(conversationId, 'assistant', confirmMsgSafe, sendResult.metaMessageId);
-        console.log('[ANA_PIPELINE] engine_send_success', {
-          conversationId,
-          phase: 'handoff_intent_confirm',
-          outboundMetaMessageId: sendResult.metaMessageId,
-          inboundMetaMessageId: inboundMetaFromCtx ?? null,
-        });
-      } else {
-        console.log('[ANA_PIPELINE] engine_send_fail', {
-          conversationId,
-          phase: 'handoff_intent_confirm',
-          inboundMetaMessageId: inboundMetaFromCtx ?? null,
-          error: sendResult.error ?? null,
-          code: sendResult.code ?? null,
-          toPhoneTail: anaPhoneTail(toPhoneNumber),
-        });
-      }
-      return;
     }
 
     if (ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY) {

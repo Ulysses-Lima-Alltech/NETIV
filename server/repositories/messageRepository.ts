@@ -1,5 +1,6 @@
 import { query } from '../db/pg.js';
 import { touchContactInteractionByConversation } from './contactsRepository.js';
+import { emitWhatsAppEvent } from '../services/whatsappEvents.js';
 
 export type MessageKindDb = 'text' | 'document' | 'image' | 'video';
 
@@ -81,7 +82,27 @@ export async function insertMessage(
   );
   await query(`UPDATE conversations SET last_message_at = NOW(), updated_at = NOW() WHERE id = $1`, [conversationId]);
   await touchContactInteractionByConversation({ conversationId, role });
-  return rows[0];
+  const inserted = rows[0];
+  if (inserted) {
+    emitWhatsAppEvent('message.created', {
+      id: String(inserted.id),
+      conversationId: inserted.conversation_id,
+      role: inserted.role,
+      content: inserted.content,
+      metaMessageId: inserted.meta_message_id,
+      messageKind: inserted.message_kind ?? 'text',
+      attachment: inserted.attachment_json ?? null,
+      createdAt: inserted.created_at.toISOString(),
+      deleted: inserted.deleted_at != null,
+      deletedAt: inserted.deleted_at ? inserted.deleted_at.toISOString() : null,
+    });
+    emitWhatsAppEvent('conversation.updated', {
+      conversationId: inserted.conversation_id,
+      updatedAt: inserted.created_at.toISOString(),
+      lastMessagePreview: inserted.content ?? '',
+    });
+  }
+  return inserted;
 }
 
 export async function findMessageByMetaId(metaMessageId: string): Promise<MessageRow | null> {
@@ -183,7 +204,21 @@ export async function softDeleteMessage(
      RETURNING *`,
     [deletedByUserId, messageId],
   );
-  return rows[0] ?? null;
+  const deleted = rows[0] ?? null;
+  if (deleted) {
+    emitWhatsAppEvent('message.updated', {
+      id: String(deleted.id),
+      conversationId: deleted.conversation_id,
+      deleted: true,
+      deletedAt: deleted.deleted_at ? deleted.deleted_at.toISOString() : null,
+    });
+    emitWhatsAppEvent('conversation.updated', {
+      conversationId: deleted.conversation_id,
+      updatedAt: new Date().toISOString(),
+      lastMessagePreview: null,
+    });
+  }
+  return deleted;
 }
 
 export async function getLastUserMessageNeedingReply(conversationId: number): Promise<MessageRow | null> {
