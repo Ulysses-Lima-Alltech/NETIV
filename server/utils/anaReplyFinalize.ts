@@ -353,7 +353,8 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   const noReintro = stripMidConversationReintroduction(base, isFirstAnaReply);
   const materialShort = applyShortMaterialReplyPolicy(noReintro, opts?.userMessage ?? null);
   const compact = keepTwoShortSentencesMax(materialShort);
-  const withOpenQuestion = appendOpenQuestionForGeneralEnterpriseIntro(compact, opts?.userMessage ?? null);
+  const humanLazer = humanizeLazerReplyWhenNeeded(compact, opts?.userMessage ?? null);
+  const withOpenQuestion = appendOpenQuestionForGeneralEnterpriseIntro(humanLazer, opts?.userMessage ?? null);
   return withOpenQuestion.slice(0, 4000);
 }
 
@@ -1178,5 +1179,6 @@ export function countCustomerNameMentionsInText(reply: string, customerName: str
   }
   return count;
 }
+
 
 
