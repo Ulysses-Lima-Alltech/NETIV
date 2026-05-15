@@ -74,6 +74,61 @@ export function repliesSemanticallySimilar(a: string, b: string): boolean {
   return j >= 0.88;
 }
 
+const HUMAN_LAZER_REPLY =
+  'Tem uma estrutura de lazer bem completa, com piscinas, academia, salão de festas, playground, quadras e espaços de convivência. A ideia é atender tanto momentos em família quanto atividades do dia a dia. Quer que eu te conte mais sobre os espaços para família, esportes ou convivência?';
+
+function isUserAskingAboutLazer(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return /\b(lazer|area de lazer|área de lazer|piscina|piscinas|academia|salao de festas|salão de festas|playground|quadra|quadras|beach tennis|campo society|coworking|espaco zen|espaço zen|fireplace|praca interna|praça interna|area verde|área verde)\b/.test(n);
+}
+
+function looksLikeDryLazerList(reply: string): boolean {
+  const raw = (reply || '').trim();
+  const n = normClosure(raw);
+  if (!n) return false;
+
+  const hasLazerTerms =
+    /\b(piscina|piscinas|academia|salao de festas|playground|coworking|espaco zen|fireplace|beach tennis|campo society|praca interna|area verde|quadra|quadras)\b/.test(n);
+
+  if (!hasLazerTerms) return false;
+
+  const bulletCount = (raw.match(/(^|\n)\s*[-•*]\s+/g) || []).length;
+  const commaCount = (raw.match(/,/g) || []).length;
+
+  const lazerTermCount = [
+    'piscina',
+    'academia',
+    'salão de festas',
+    'salao de festas',
+    'playground',
+    'coworking',
+    'espaço zen',
+    'espaco zen',
+    'fireplace',
+    'beach tennis',
+    'campo society',
+    'praça interna',
+    'praca interna',
+    'área verde',
+    'area verde',
+    'quadra',
+    'quadras',
+  ].reduce((acc, term) => acc + (n.includes(normClosure(term)) ? 1 : 0), 0);
+
+  return bulletCount >= 3 || commaCount >= 5 || lazerTermCount >= 6;
+}
+
+function humanizeLazerReplyWhenNeeded(reply: string, userMessage?: string | null): string {
+  const clean = (reply || '').trim();
+  if (!clean) return clean;
+
+  if (!isUserAskingAboutLazer(userMessage)) return clean;
+  if (!looksLikeDryLazerList(clean)) return clean;
+
+  return HUMAN_LAZER_REPLY;
+}
+
 const GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION = 'Me conta, o que você gostaria de saber primeiro?';
 
 function replyAlreadyEndsWithQuestion(text: string): boolean {
@@ -1123,4 +1178,5 @@ export function countCustomerNameMentionsInText(reply: string, customerName: str
   }
   return count;
 }
+
 
