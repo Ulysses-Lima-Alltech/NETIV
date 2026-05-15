@@ -74,6 +74,30 @@ export function repliesSemanticallySimilar(a: string, b: string): boolean {
   return j >= 0.88;
 }
 
+const HUMAN_EVORA_LOCATION_REPLY =
+  'O Évora fica em Atibaia, em uma das melhores localizações da cidade, com fácil acesso pela Rodovia Dom Pedro I, perto da região da Pedreira. É uma região que combina tranquilidade, natureza e acesso rápido aos principais pontos da cidade. Me conta, você quer entender melhor o entorno, os acessos ou a estrutura do empreendimento?';
+
+function isUserAskingAboutLocation(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return /\b(localizacao|localização|onde fica|endereco|endereço|fica onde|qual a regiao|qual a região|como chegar|mapa|google maps|acesso|bairro)\b/.test(n);
+}
+
+function isEvoraContext(reply: string, userMessage?: string | null): boolean {
+  const combined = normClosure(`${reply || ''} ${userMessage || ''}`);
+  return /\b(evora|évora)\b/.test(combined);
+}
+
+function forceEvoraLocationReplyWhenNeeded(reply: string, userMessage?: string | null): string {
+  const clean = (reply || '').trim();
+  if (!clean) return clean;
+
+  if (!isUserAskingAboutLocation(userMessage)) return clean;
+  if (!isEvoraContext(clean, userMessage)) return clean;
+
+  return HUMAN_EVORA_LOCATION_REPLY;
+}
+
 const HUMAN_LAZER_REPLY =
   'Tem uma estrutura de lazer bem completa, com piscinas, academia, salão de festas, playground, quadras e espaços de convivência. A ideia é atender tanto momentos em família quanto atividades do dia a dia. Quer que eu te conte mais sobre os espaços para família, esportes ou convivência?';
 
@@ -129,7 +153,7 @@ function humanizeLazerReplyWhenNeeded(reply: string, userMessage?: string | null
   return HUMAN_LAZER_REPLY;
 }
 
-const GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION = 'Me conta, o que você gostaria de saber primeiro?';
+const GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION = 'Me conta, quais são suas dúvidas? Vou responder todas.';
 
 function replyAlreadyEndsWithQuestion(text: string): boolean {
   return /\?\s*$/.test((text || '').trim());
@@ -353,7 +377,8 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   const noReintro = stripMidConversationReintroduction(base, isFirstAnaReply);
   const materialShort = applyShortMaterialReplyPolicy(noReintro, opts?.userMessage ?? null);
   const compact = keepTwoShortSentencesMax(materialShort);
-  const humanLazer = humanizeLazerReplyWhenNeeded(compact, opts?.userMessage ?? null);
+  const evoraLocation = forceEvoraLocationReplyWhenNeeded(compact, opts?.userMessage ?? null);
+  const humanLazer = humanizeLazerReplyWhenNeeded(evoraLocation, opts?.userMessage ?? null);
   const withOpenQuestion = appendOpenQuestionForGeneralEnterpriseIntro(humanLazer, opts?.userMessage ?? null);
   return withOpenQuestion.slice(0, 4000);
 }
@@ -1179,6 +1204,8 @@ export function countCustomerNameMentionsInText(reply: string, customerName: str
   }
   return count;
 }
+
+
 
 
 
