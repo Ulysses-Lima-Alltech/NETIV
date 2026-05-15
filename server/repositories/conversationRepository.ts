@@ -1,4 +1,4 @@
-import { getPool, query } from '../db/pg.js';
+﻿import { getPool, query } from '../db/pg.js';
 import { getActiveEnterpriseById } from './enterpriseRepository.js';
 import { getCorretorById } from './corretorRepository.js';
 import { assignBrokerForHandoffConversation } from '../services/handoffQueueService.js';
@@ -970,29 +970,20 @@ export async function scheduleDeferredHandoffAfterAppointment(
   conversationId: number,
   brokerId: number | null
 ): Promise<void> {
-  await query(
-    `UPDATE conversations SET
-       handoff_deferred_until = NOW() + INTERVAL '5 minutes',
-       handoff_deferred_broker_id = $1,
-       assigned_broker_id = CASE WHEN $1 IS NOT NULL AND $1 > 0 THEN COALESCE(assigned_broker_id, $1) ELSE assigned_broker_id END,
-       updated_at = NOW()
-     WHERE id = $2`,
-    [brokerId, conversationId]
-  );
+  console.warn('[ANA_HANDOFF_AUTO_DISABLED]', {
+    origin: 'scheduleDeferredHandoffAfterAppointment',
+    conversationId,
+    brokerId,
+  });
+  return;
 }
 
 /** Processa conversas com handoff diferido vencido (chamado periodicamente no servidor). */
 export async function processDueDeferredHandoffs(): Promise<number> {
-  const { rows } = await query<{ id: number; handoff_deferred_broker_id: number | null }>(
-    `SELECT id, handoff_deferred_broker_id FROM conversations
-     WHERE handoff_deferred_until IS NOT NULL
-       AND handoff_deferred_until <= NOW()
-       AND handoff = false`
-  );
-  for (const r of rows) {
-    await applyHandoffAfterAppointmentConfirmation(r.id, r.handoff_deferred_broker_id);
-  }
-  return rows.length;
+  console.warn('[ANA_HANDOFF_AUTO_DISABLED]', {
+    origin: 'processDueDeferredHandoffs',
+  });
+  return 0;
 }
 
 /**
@@ -1003,37 +994,12 @@ export async function applyHandoffAfterAppointmentConfirmation(
   conversationId: number,
   brokerId: number | null
 ): Promise<void> {
-  const conv = await getConversationById(conversationId);
-  if (!conv) return;
-  const saveBeforeHandoff = conv.classification !== 'Handoff' ? toValidClassification(conv.classification) : null;
-  await query(
-    `UPDATE conversations SET classification = 'Handoff', lead_temperature = $1, handoff = true,
-     classification_before_handoff = CASE WHEN $2::text IS NOT NULL THEN $2::text ELSE classification_before_handoff END,
-     handoff_deferred_until = NULL,
-     handoff_deferred_broker_id = NULL,
-     updated_at = NOW() WHERE id = $3`,
-    [conv.lead_temperature, saveBeforeHandoff, conversationId]
-  );
-  if (brokerId != null && brokerId > 0) {
-    await query(`UPDATE conversations SET assigned_broker_id = $1, updated_at = NOW() WHERE id = $2`, [
-      brokerId,
-      conversationId,
-    ]);
-    await query(`UPDATE corretores SET last_assigned_at = NOW(), updated_at = NOW() WHERE id = $1`, [brokerId]);
-  } else {
-    await assignBrokerForHandoffConversation(conversationId);
-  }
-  
-  // NOVO: Notificar Django sobre o lead
-  const updatedConv = await getConversationById(conversationId);
-  if (updatedConv) {
-    const contact = updatedConv.contact_id != null ? await findContactById(updatedConv.contact_id) : null;
-    notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(updatedConv, {
-      whatsappDisplayName: updatedConv.whatsapp_display_name ?? null,
-      contactFullName: contact?.full_name ?? null,
-      contactFirstName: contact?.first_name ?? null,
-    }));
-  }
+  console.warn('[ANA_HANDOFF_AUTO_DISABLED]', {
+    origin: 'applyHandoffAfterAppointmentConfirmation',
+    conversationId,
+    brokerId,
+  });
+  return;
 }
 
 export async function incrementAnaCustomerNameMentions(conversationId: number, delta: number): Promise<void> {
@@ -1137,3 +1103,4 @@ export async function reopenConversationManual(conversationId: number): Promise<
   );
   return rows[0] ?? null;
 }
+
