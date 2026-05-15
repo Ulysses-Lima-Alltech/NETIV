@@ -903,10 +903,26 @@ export async function applyAnaConversationUpdate(
   const conv = await getConversationById(conversationId);
   if (!conv) return;
   let classification = toValidClassification(meta.classification?.trim() || conv.classification);
-  const handoff = !!meta.handoff;
-  if (handoff) {
-    classification = 'Handoff';
+
+  const requestedAutoHandoff = !!meta.handoff || classification === 'Handoff';
+  if (requestedAutoHandoff) {
+    console.warn('[ANA_HANDOFF_AUTO_DISABLED]', {
+      origin: 'applyAnaConversationUpdate',
+      conversationId,
+      requestedClassification: meta.classification ?? null,
+      requestedHandoff: meta.handoff ?? null,
+    });
   }
+
+  // Handoff automático vindo da Ana/modelo temporariamente desativado.
+  // Handoff manual pela tela continua preservado via updateClassification().
+  const handoff = false;
+
+  if (classification === 'Handoff') {
+    const restored = toValidClassification(conv.classification);
+    classification = restored === 'Handoff' ? 'Novo' : restored;
+  }
+
   let lead_temperature = conv.lead_temperature;
   if (typeof meta.lead_temperature === 'string') {
     const incoming = normalizeLeadTemperatureInput(meta.lead_temperature);
@@ -1103,4 +1119,5 @@ export async function reopenConversationManual(conversationId: number): Promise<
   );
   return rows[0] ?? null;
 }
+
 
