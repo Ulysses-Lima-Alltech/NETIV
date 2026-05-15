@@ -475,6 +475,36 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       assigned_broker_id,
     });
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
+    if (handoff === false) {
+      const clearedFields = {
+        handoff: conv.handoff === false,
+        classification: conv.classification !== 'Handoff',
+        classification_before_handoff: (conv.classification_before_handoff ?? null) === null,
+        assigned_broker_id: (conv.assigned_broker_id ?? null) === null,
+        handoff_deferred_until: (conv.handoff_deferred_until ?? null) === null,
+        handoff_deferred_broker_id: (conv.handoff_deferred_broker_id ?? null) === null,
+        manual_closed_at: (conv.manual_closed_at ?? null) === null,
+        manual_closed_by_user_id: (conv.manual_closed_by_user_id ?? null) === null,
+        manual_closed_reason: (conv.manual_closed_reason ?? null) === null,
+      };
+      console.log('handoff_state_cleared_by_operator', {
+        conversationId: id,
+        from: {
+          handoff: convBefore?.handoff ?? null,
+          classification: convBefore?.classification ?? null,
+        },
+        to: {
+          handoff: conv.handoff ?? false,
+          classification: conv.classification ?? 'Novo',
+        },
+        clearedFields,
+      });
+      console.log('manual_ana_mode_restored', {
+        conversationId: id,
+        handoff: conv.handoff ?? false,
+        classification: conv.classification ?? 'Novo',
+      });
+    }
     if (convBefore?.handoff === true && conv.handoff === false) {
       try {
         await reprocessLastUserMessage(id);

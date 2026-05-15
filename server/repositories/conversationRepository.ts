@@ -590,6 +590,37 @@ function applyFunnelQualificationRule(args: {
   return 'Qualificado';
 }
 
+export function resolveClassificationAndHandoffTransition(args: {
+  currentClassification: string | null | undefined;
+  currentClassificationBeforeHandoff: string | null | undefined;
+  requestedClassification: string | null | undefined;
+  requestedHandoff: boolean | undefined;
+}): {
+  classification: string;
+  handoff: boolean;
+  classificationBeforeHandoff: string | null;
+} {
+  let classification = toValidClassification(args.requestedClassification ?? args.currentClassification ?? 'Novo');
+  let handoff: boolean;
+  let classificationBeforeHandoff: string | null = null;
+  if (args.requestedHandoff !== undefined) {
+    handoff = Boolean(args.requestedHandoff);
+    if (handoff) {
+      if (classification !== 'Handoff') classificationBeforeHandoff = toValidClassification(classification);
+      classification = 'Handoff';
+    } else {
+      const restored = (args.currentClassificationBeforeHandoff ?? '').trim();
+      const candidate = toValidClassification(restored || 'Novo');
+      classification = candidate === 'Handoff' ? 'Novo' : candidate;
+      classificationBeforeHandoff = null;
+    }
+  } else {
+    handoff = classification === 'Handoff';
+  }
+  if (!handoff && classification === 'Handoff') classification = 'Novo';
+  return { classification, handoff, classificationBeforeHandoff };
+}
+
 export interface ConversationWithPreview extends ConversationRow {
   last_message_preview: string | null;
   enterprise_name: string | null;
@@ -713,6 +744,7 @@ export async function updateClassification(
   const cur = await getConversationById(conversationId);
   if (!cur) return null;
   const wasHandoff = cur.handoff === true;
+  void wasHandoff;
   let assigned_broker_id = cur.assigned_broker_id ?? null;
   if (u.assigned_broker_id !== undefined) {
     if (u.assigned_broker_id === null) {
@@ -736,24 +768,16 @@ export async function updateClassification(
   if (u.classification !== undefined && u.classification !== null && u.classification !== '') {
     classification = u.classification;
   }
-  let handoff: boolean;
-  let classificationBeforeHandoff: string | null = null;
   const curRow = cur as ConversationRow & { classification_before_handoff?: string | null };
-  if (u.handoff !== undefined) {
-    handoff = Boolean(u.handoff);
-    if (handoff) {
-      if (classification !== 'Handoff') classificationBeforeHandoff = toValidClassification(classification);
-      classification = 'Handoff';
-    } else {
-      // Modo ANA: garantir limpeza total. handoff=false → classification NUNCA pode ser Handoff.
-      const restored = curRow.classification_before_handoff?.trim();
-      const candidate = toValidClassification(restored || 'Novo');
-      classification = candidate === 'Handoff' ? 'Novo' : candidate;
-      classificationBeforeHandoff = null;
-    }
-  } else {
-    handoff = classification === 'Handoff';
-  }
+  const transition = resolveClassificationAndHandoffTransition({
+    currentClassification: cur.classification,
+    currentClassificationBeforeHandoff: curRow.classification_before_handoff ?? null,
+    requestedClassification: classification,
+    requestedHandoff: u.handoff,
+  });
+  let handoff = transition.handoff;
+  let classificationBeforeHandoff: string | null = transition.classificationBeforeHandoff;
+  classification = transition.classification;
   // Garantia final: se handoff=false, classification não pode ser Handoff
   if (!handoff && classification === 'Handoff') classification = 'Novo';
   const savedForHandoff = handoff ? (classificationBeforeHandoff ?? null) : null;
@@ -764,6 +788,13 @@ export async function updateClassification(
     leadTemperature: lead_temperature,
     handoff,
   });
+  const shouldClearHandoffState = u.handoff === false;
+  const assignedBrokerFinal = shouldClearHandoffState ? null : assigned_broker_id;
+  const manualClosedAtFinal = shouldClearHandoffState ? null : cur.manual_closed_at ?? null;
+  const manualClosedByUserIdFinal = shouldClearHandoffState ? null : cur.manual_closed_by_user_id ?? null;
+  const manualClosedReasonFinal = shouldClearHandoffState ? null : cur.manual_closed_reason ?? null;
+  const handoffDeferredUntilFinal = shouldClearHandoffState ? null : cur.handoff_deferred_until ?? null;
+  const handoffDeferredBrokerIdFinal = shouldClearHandoffState ? null : cur.handoff_deferred_broker_id ?? null;
 
   if (u.reserve === undefined) {
     const { rows } = await query<ConversationRow>(
@@ -771,8 +802,26 @@ export async function updateClassification(
        lead_temperature = $6,
        classification_before_handoff = CASE WHEN $3 = false THEN NULL ELSE COALESCE($5::text, classification_before_handoff) END,
        assigned_broker_id = $7,
+       handoff_deferred_until = $8,
+       handoff_deferred_broker_id = $9,
+       manual_closed_at = $10,
+       manual_closed_by_user_id = $11,
+       manual_closed_reason = $12,
        updated_at = NOW() WHERE id = $4 RETURNING *`,
-      [enterprise_id, classAfterFunnel, handoff, conversationId, savedForHandoff, lead_temperature, assigned_broker_id]
+      [
+        enterprise_id,
+        classAfterFunnel,
+        handoff,
+        conversationId,
+        savedForHandoff,
+        lead_temperature,
+        assignedBrokerFinal,
+        handoffDeferredUntilFinal,
+        handoffDeferredBrokerIdFinal,
+        manualClosedAtFinal,
+        manualClosedByUserIdFinal,
+        manualClosedReasonFinal,
+      ]
     );
     const row = rows[0] ?? null;
     if (row) {
@@ -806,6 +855,11 @@ export async function updateClassification(
      reserve_follow_up_moment = $13,
      reserve_commercial_notes = $14,
      assigned_broker_id = $16,
+     handoff_deferred_until = $17,
+     handoff_deferred_broker_id = $18,
+     manual_closed_at = $19,
+     manual_closed_by_user_id = $20,
+     manual_closed_reason = $21,
      updated_at = NOW() WHERE id = $4 RETURNING *`,
     [
       enterprise_id,
@@ -823,7 +877,12 @@ export async function updateClassification(
       mergedReserve.followUpMoment,
       mergedReserve.commercialNotes,
       lead_temperature,
-      assigned_broker_id,
+      assignedBrokerFinal,
+      handoffDeferredUntilFinal,
+      handoffDeferredBrokerIdFinal,
+      manualClosedAtFinal,
+      manualClosedByUserIdFinal,
+      manualClosedReasonFinal,
     ]
   );
   const row = rows[0] ?? null;
