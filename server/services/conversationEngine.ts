@@ -4323,6 +4323,53 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           knowledgeText,
         })
       : { blocked: false, reason: null as string | null };
+    if (
+      shouldRunEmptyFallbackGuard &&
+      finalOutboundEval.valid &&
+      finalEmptyFallbackGuard.blocked &&
+      finalEmptyFallbackGuard.reason === 'first_reply_missing_greeting'
+    ) {
+      const greetingPatch = applyFirstUsefulGreetingStyle({
+        text: finalOutboundEval.text,
+        isFirstAnaReply,
+        referenceNow: lastUserMessageAt,
+      });
+      if (greetingPatch.changed) {
+        const greetingPatchEval = evaluateAnaOutboundText({
+          reply: greetingPatch.text,
+          technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+          conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+          enterpriseName: ent?.name ?? null,
+        });
+        if (greetingPatchEval.valid) {
+          const patchedEmptyGuard = evaluateAnaEmptyFallbackGuard({
+            reply: greetingPatchEval.text,
+            userMessage: trimmed,
+            lastAssistantMessage: lastAssistantPlain,
+            isFirstAnaReply,
+            knowledgeText,
+          });
+          if (!patchedEmptyGuard.blocked) {
+            finalTextGuard = greetingPatchEval.text;
+            finalOutboundEval = greetingPatchEval;
+            finalEmptyFallbackGuard = patchedEmptyGuard;
+            anaTurnAuditGuardsApplied.outboundReason = greetingPatchEval.reason;
+            anaTurnAuditGuardsApplied.firstUsefulGreetingStyle = {
+              applied: true,
+              greeting: greetingPatch.greeting,
+            };
+            console.log('[ANA_FIRST_REPLY_GREETING_PATCHED]', {
+              conversationId,
+              enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+              phase: 'empty_fallback_pre_retry',
+              reason: 'first_reply_missing_greeting',
+              greeting: greetingPatch.greeting,
+              replyPreview: greetingPatchEval.text.slice(0, 220),
+            });
+          }
+        }
+      }
+    }
     const shouldRetryEmptyFallbackGuard =
       shouldRunEmptyFallbackGuard &&
       (
@@ -4474,19 +4521,60 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             enterpriseName: ent?.name ?? null,
             maxChars: ANA_OUTBOUND_MAX_CHARS,
           });
-          const retryEval = evaluateAnaOutboundText({
+          let retryEval = evaluateAnaOutboundText({
             reply: retryLimited,
             technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
             conversationType: effectiveConv.conversation_type ?? 'CLIENT',
             enterpriseName: ent?.name ?? null,
           });
-          const retryEmptyGuard = evaluateAnaEmptyFallbackGuard({
+          let retryEmptyGuard = evaluateAnaEmptyFallbackGuard({
             reply: retryEval.text,
             userMessage: trimmed,
             lastAssistantMessage: lastAssistantPlain,
             isFirstAnaReply,
             knowledgeText: expandedKnowledgeText,
           });
+          if (
+            retryEval.valid &&
+            retryEmptyGuard.blocked &&
+            retryEmptyGuard.reason === 'first_reply_missing_greeting'
+          ) {
+            const retryGreetingPatch = applyFirstUsefulGreetingStyle({
+              text: retryEval.text,
+              isFirstAnaReply,
+              referenceNow: lastUserMessageAt,
+            });
+            if (retryGreetingPatch.changed) {
+              const retryGreetingEval = evaluateAnaOutboundText({
+                reply: retryGreetingPatch.text,
+                technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+                conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+                enterpriseName: ent?.name ?? null,
+              });
+              if (retryGreetingEval.valid) {
+                const retryPatchedGuard = evaluateAnaEmptyFallbackGuard({
+                  reply: retryGreetingEval.text,
+                  userMessage: trimmed,
+                  lastAssistantMessage: lastAssistantPlain,
+                  isFirstAnaReply,
+                  knowledgeText: expandedKnowledgeText,
+                });
+                if (!retryPatchedGuard.blocked) {
+                  retryEval = retryGreetingEval;
+                  retryEmptyGuard = retryPatchedGuard;
+                  retryAudit.retryGreetingPatched = true;
+                  console.log('[ANA_FIRST_REPLY_GREETING_PATCHED]', {
+                    conversationId,
+                    enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+                    phase: 'empty_fallback_retry_result',
+                    reason: 'first_reply_missing_greeting',
+                    greeting: retryGreetingPatch.greeting,
+                    replyPreview: retryGreetingEval.text.slice(0, 220),
+                  });
+                }
+              }
+            }
+          }
           retryAudit.retryAccepted = retryEval.valid && !retryEmptyGuard.blocked;
           retryAudit.retryEvalReason = retryEval.reason;
           retryAudit.retryBlockedReason = retryEmptyGuard.reason;
@@ -4764,6 +4852,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           applied: true,
           greeting: greetingStyled.greeting,
         };
+        console.log('[ANA_FIRST_REPLY_GREETING_PATCHED]', {
+          conversationId,
+          enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+          phase: 'post_policy_before_send',
+          reason: 'first_reply_missing_greeting',
+          greeting: greetingStyled.greeting,
+          replyPreview: greetingEval.text.slice(0, 220),
+        });
       }
     }
 

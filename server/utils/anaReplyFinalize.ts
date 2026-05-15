@@ -766,8 +766,21 @@ export function applyFirstUsefulGreetingStyle(opts: {
   referenceNow?: Date | string | null;
 }): { text: string; changed: boolean; greeting: string | null } {
   const raw = (opts.text || '').trim();
-  void opts;
-  return { text: raw, changed: false, greeting: null };
+  void opts.referenceNow;
+  if (!raw) return { text: raw, changed: false, greeting: null };
+  if (opts.isFirstAnaReply !== true) return { text: raw, changed: false, greeting: null };
+  if (replyStartsWithGreeting(raw)) return { text: raw, changed: false, greeting: null };
+
+  const compact = raw.replace(/\s+/g, ' ').trim();
+  const words = compact.split(/\s+/).filter(Boolean);
+  const hasUsefulAndReasonableContent =
+    compact.length >= 24 &&
+    words.length >= 5 &&
+    /[\p{L}\p{N}]/u.test(compact);
+  if (!hasUsefulAndReasonableContent) return { text: raw, changed: false, greeting: null };
+
+  const greeting = 'Oi';
+  return { text: `${greeting}! ${raw}`, changed: true, greeting };
 }
 
 /**

@@ -13,6 +13,7 @@ import { applyAnaCommercialSingleAxisGuard } from '../utils/anaCommercialAxisGua
 import { pickMaterialUnavailableNeutralReply } from '../utils/anaMaterialReply.js';
 import { applyOperationalFactGuard } from '../utils/anaOperationalFactGuard.js';
 import {
+  applyFirstUsefulGreetingStyle,
   evaluateAnaEmptyFallbackGuard,
   evaluateAnaOutboundText,
 } from '../utils/anaReplyFinalize.js';
@@ -157,6 +158,42 @@ test('saudacao inicial seca ou robotica e bloqueada', () => {
   assert.equal(dry.blocked, true);
   assert.equal(good.blocked, false);
   assert.equal(multipleQuestions.blocked, true);
+});
+
+test('primeira resposta comercial util sem saudacao recebe patch local', () => {
+  const original =
+    'Temos unidades a partir de 250 m2 com lazer completo e condicoes atuais a partir de R$ 180.000.';
+  const blocked = evaluateAnaEmptyFallbackGuard({
+    reply: original,
+    userMessage: 'Qual o valor e metragem?',
+    isFirstAnaReply: true,
+  });
+  const patched = applyFirstUsefulGreetingStyle({
+    text: original,
+    isFirstAnaReply: true,
+  });
+  const afterPatch = evaluateAnaEmptyFallbackGuard({
+    reply: patched.text,
+    userMessage: 'Qual o valor e metragem?',
+    isFirstAnaReply: true,
+  });
+
+  assert.equal(blocked.blocked, true);
+  assert.equal(blocked.reason, 'first_reply_missing_greeting');
+  assert.equal(patched.changed, true);
+  assert.equal(patched.greeting, 'Oi');
+  assert.equal(patched.text.startsWith('Oi! '), true);
+  assert.equal(afterPatch.blocked, false);
+});
+
+test('patch local de saudacao nao mascara resposta curta e pouco util', () => {
+  const patched = applyFirstUsefulGreetingStyle({
+    text: 'Temos sim.',
+    isFirstAnaReply: true,
+  });
+
+  assert.equal(patched.changed, false);
+  assert.equal(patched.greeting, null);
 });
 
 test('pergunta objetiva nao pode virar permissao, formulario ou fallback', () => {
