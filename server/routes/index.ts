@@ -56,7 +56,7 @@ router.use('/openai', openaiTestRouter);
 router.use('/ai', aiChatRouter);
 router.use('/contacts', requireRole(...ROLES_SETTINGS_ADMIN), contactsRouter);
 router.use('/whatsapp-batch', requireRole(...ROLES_SETTINGS_ADMIN), whatsappBatchRouter);
-router.use('/reengagement', reengagementRouter);
+router.use('/reengagement', requireRole(...ROLES_ORG_ADMIN), reengagementRouter);
 router.use('/knowledge', requireRole(...ROLES_SETTINGS_ADMIN), knowledgeRouter);
 
 export default router;

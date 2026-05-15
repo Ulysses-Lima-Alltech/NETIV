@@ -47,6 +47,7 @@ import {
   type ConversationWithPreview,
 } from '../repositories/conversationRepository.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
+import { assertCanAccessConversation } from '../middleware/conversationAccess.js';
 import { reprocessLastUserMessage } from '../services/conversationEngine.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
 import { findContactById } from '../repositories/contactsRepository.js';
@@ -397,6 +398,7 @@ router.get('/conversations/:id', async (req, res) => {
       res.status(400).json({ error: 'ID inválido.' });
       return;
     }
+    if (!(await assertCanAccessConversation(req as AuthenticatedRequest, res, id))) return;
     const row = await getConversationWithPreviewById(id);
     if (!row) {
       res.status(404).json({ error: 'Conversa não encontrada.' });
@@ -411,6 +413,9 @@ router.get('/conversations/:id', async (req, res) => {
 
 router.delete('/conversations/by-phone/:phone', async (req, res) => {
   try {
+    if ((req as AuthenticatedRequest).user?.role === 'COLLABORATOR') {
+      return res.status(403).json({ error: 'Operação não permitida.' });
+    }
     const phone = (req.params.phone || '').trim();
     if (!phone || phone.replace(/\D/g, '').length < 8) {
       return res.status(400).json({ error: 'Número de telefone inválido.' });
@@ -428,6 +433,7 @@ router.delete('/conversations/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (!(await assertCanAccessConversation(req as AuthenticatedRequest, res, id))) return;
     const deleted = await deleteConversation(id);
     if (!deleted) return res.status(404).json({ error: 'Conversa não encontrada.' });
     res.json({ success: true });
@@ -441,6 +447,7 @@ router.post('/conversations/:id/reset', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (!(await assertCanAccessConversation(req as AuthenticatedRequest, res, id))) return;
     const ok = await resetConversationState(id);
     if (!ok) return res.status(404).json({ error: 'Conversa não encontrada.' });
     res.json({ success: true, conversationId: id });
@@ -454,6 +461,7 @@ router.patch('/conversations/:id/classification', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (!(await assertCanAccessConversation(req as AuthenticatedRequest, res, id))) return;
     const parsed = updateClassificationSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues.map((e: { message: string }) => e.message).join('; ') || 'Dados inválidos.';
@@ -509,6 +517,7 @@ router.post('/conversations/:id/send', conditionalManualFileUpload, async (req, 
     const idParam = req.params['id'];
     const id = parseInt(Array.isArray(idParam) ? idParam[0]! : String(idParam), 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (!(await assertCanAccessConversation(req as AuthenticatedRequest, res, id))) return;
     const templateKey = typeof req.body?.templateKey === 'string' ? req.body.templateKey.trim() : '';
     const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
     const file = req.file;
@@ -652,6 +661,7 @@ router.get('/conversations/:id/messages', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (!(await assertCanAccessConversation(req as AuthenticatedRequest, res, id))) return;
     const conv = await getConversationById(id);
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
     const rows = await getMessagesByConversationId(id);
@@ -696,6 +706,7 @@ router.patch('/conversations/:id/close', async (req, res) => {
       res.status(400).json({ error: 'ID inválido.' });
       return;
     }
+    if (!(await assertCanAccessConversation(authReq, res, id))) return;
     const reason = typeof authReq.body?.reason === 'string' ? authReq.body.reason.trim().slice(0, 500) : null;
     const updated = await closeConversationManual(id, authReq.user.id, reason || null);
     if (!updated) {
@@ -724,6 +735,7 @@ router.patch('/conversations/:id/reopen', async (req, res) => {
       res.status(400).json({ error: 'ID inválido.' });
       return;
     }
+    if (!(await assertCanAccessConversation(authReq, res, id))) return;
     const updated = await reopenConversationManual(id);
     if (!updated) {
       res.status(404).json({ error: 'Conversa não encontrada ou não estava encerrada.' });
@@ -746,6 +758,7 @@ router.patch('/conversations/:id/customer-name', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (!(await assertCanAccessConversation(req as AuthenticatedRequest, res, id))) return;
     const conv = await getConversationById(id);
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
 
@@ -769,6 +782,7 @@ router.delete('/conversations/:convId/messages/:msgId', async (req, res) => {
   try {
     const convId = parseInt(req.params.convId, 10);
     const msgId = parseInt(req.params.msgId, 10);
+    if (!Number.isNaN(convId) && !(await assertCanAccessConversation(req as AuthenticatedRequest, res, convId))) return;
     if (Number.isNaN(convId) || Number.isNaN(msgId)) {
       return res.status(400).json({ error: 'IDs inválidos.' });
     }

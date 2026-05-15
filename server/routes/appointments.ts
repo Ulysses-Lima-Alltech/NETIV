@@ -13,8 +13,45 @@ import {
   updateAppointmentStatusSchema,
 } from '../validators/appointments.js';
 import { APPOINTMENT_STATUSES } from '../repositories/appointmentRepository.js';
+import type { Response } from 'express';
+import type { AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
+
+/**
+ * Isolamento temporário por corretor: COLLABORATOR só pode operar nos próprios appointments.
+ * ADMIN/MANAGERIAL passam direto. Retorna false e responde 403/404 em caso de bloqueio.
+ */
+async function assertCanAccessAppointment(
+  req: AuthenticatedRequest,
+  res: Response,
+  appointmentId: number,
+): Promise<boolean> {
+  const user = req.user;
+  if (!user) {
+    res.status(401).json({ error: 'Não autenticado.' });
+    return false;
+  }
+  if (user.role !== 'COLLABORATOR') return true;
+  const appt = await getAppointmentById(appointmentId);
+  if (!appt) {
+    res.status(404).json({ error: 'Agendamento não encontrado.' });
+    return false;
+  }
+  if (user.broker_id == null || appt.broker_id !== user.broker_id) {
+    res.status(403).json({ error: 'Acesso negado a este agendamento.' });
+    return false;
+  }
+  return true;
+}
+
+function denyCollaboratorManagerial(req: AuthenticatedRequest, res: Response): boolean {
+  if (req.user?.role === 'COLLABORATOR') {
+    res.status(403).json({ error: 'Operação restrita a gestores.' });
+    return true;
+  }
+  return false;
+}
 
 function toAppointmentDto(row: {
   id: number;
@@ -51,6 +88,7 @@ function toAppointmentDto(row: {
 // POST /check-availability — antes de /:id
 router.post('/check-availability', async (req, res) => {
   try {
+    if (denyCollaboratorManagerial(req as AuthenticatedRequest, res)) return;
     const parsed = checkAvailabilitySchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
@@ -72,6 +110,7 @@ router.post('/check-availability', async (req, res) => {
 // POST /assign — antes de /:id
 router.post('/assign', async (req, res) => {
   try {
+    if (denyCollaboratorManagerial(req as AuthenticatedRequest, res)) return;
     const parsed = assignAppointmentSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
@@ -100,8 +139,16 @@ router.post('/assign', async (req, res) => {
 // GET /
 router.get('/', async (req, res) => {
   try {
+    const authReq = req as AuthenticatedRequest;
     const enterpriseId = req.query.enterpriseId != null ? parseInt(String(req.query.enterpriseId), 10) : undefined;
-    const brokerId = req.query.brokerId != null ? parseInt(String(req.query.brokerId), 10) : undefined;
+    let brokerId = req.query.brokerId != null ? parseInt(String(req.query.brokerId), 10) : undefined;
+    // COLLABORATOR: força filtro pelo próprio broker_id (ignora query)
+    if (authReq.user?.role === 'COLLABORATOR') {
+      if (authReq.user.broker_id == null) {
+        return res.json({ appointments: [] });
+      }
+      brokerId = authReq.user.broker_id;
+    }
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
     const date = typeof req.query.date === 'string' ? req.query.date : undefined;
     const rows = await listAppointments({ enterpriseId, brokerId, status, date });
@@ -119,6 +166,7 @@ router.post('/:id/assign', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (denyCollaboratorManagerial(req as AuthenticatedRequest, res)) return;
     const body = req.body as { brokerId?: number };
     const brokerId = body?.brokerId;
     if (brokerId == null || typeof brokerId !== 'number' || brokerId < 1) {
@@ -155,6 +203,7 @@ router.get('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (!(await assertCanAccessAppointment(req as AuthenticatedRequest, res, id))) return;
     const row = await getAppointmentById(id);
     if (!row) return res.status(404).json({ error: 'Agendamento não encontrado.' });
     res.json(toAppointmentDto(row));
@@ -167,6 +216,7 @@ router.get('/:id', async (req, res) => {
 // POST / — criação manual (usa assign internamente ou cria sem corretor)
 router.post('/', async (req, res) => {
   try {
+    if (denyCollaboratorManagerial(req as AuthenticatedRequest, res)) return;
     const parsed = createAppointmentSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
@@ -197,6 +247,7 @@ router.patch('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (!(await assertCanAccessAppointment(req as AuthenticatedRequest, res, id))) return;
     const body = req.body as Record<string, unknown>;
     if (body.status != null && typeof body.status === 'string') {
       if (!APPOINTMENT_STATUSES.includes(body.status as typeof APPOINTMENT_STATUSES[number])) {
@@ -218,6 +269,7 @@ router.patch('/:id/status', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (!(await assertCanAccessAppointment(req as AuthenticatedRequest, res, id))) return;
     const parsed = updateAppointmentStatusSchema.safeParse(req.body);
     if (!parsed.success) {
       const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
@@ -237,6 +289,7 @@ router.delete('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (denyCollaboratorManagerial(req as AuthenticatedRequest, res)) return;
     const deleted = await deleteAppointment(id);
     if (!deleted) return res.status(404).json({ error: 'Agendamento não encontrado.' });
     res.status(204).send();
