@@ -1,4 +1,4 @@
-import { buildCatalogListMessage } from './anaCatalogMessages.js';
+﻿import { buildCatalogListMessage } from './anaCatalogMessages.js';
 
 /** Sem delay artificial — resposta enviada imediatamente após geração. */
 export function randomAnaReplyDelayMs(_opts?: {
@@ -72,6 +72,70 @@ export function repliesSemanticallySimilar(a: string, b: string): boolean {
   const union = A.size + B.size - inter;
   const j = union > 0 ? inter / union : 0;
   return j >= 0.88;
+}
+
+const GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION = 'Me conta, o que você gostaria de saber primeiro?';
+
+function replyAlreadyEndsWithQuestion(text: string): boolean {
+  return /\?\s*$/.test((text || '').trim());
+}
+
+function hasQuestionNearEnd(text: string): boolean {
+  const t = (text || '').trim();
+  if (!t) return false;
+  const tail = t.slice(Math.max(0, t.length - 140));
+  return /\?/.test(tail);
+}
+
+function isSpecificCommercialOrOperationalTopic(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+
+  return /\b(valor|preco|preço|quanto custa|quanto e|quanto é|r\$|entrada|parcela|parcelamento|financiamento|tabela|condicao|condição|pagamento|desconto|disponibilidade|lote disponivel|lote disponível|reservar|reserva|documentacao|documentação|contrato|iptu|condominio|condomínio|taxa|obra|entrega|prazo|quando posso construir|book|material|foto|fotos|video|vídeo|planta|implantacao|implantação|visita|agendar|agenda|horario|horário|corretor|humano|atendente|endereco|endereço|localizacao|localização)\b/.test(n);
+}
+
+function isGeneralEnterpriseIntroUserMessage(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  if (isSpecificCommercialOrOperationalTopic(text)) return false;
+
+  return (
+    /\b(quero saber|queria saber|gostaria de saber|tenho interesse|me fala|me conte|me passa mais detalhes|mais informacoes|mais informações|saber mais|conhecer melhor|informacoes sobre|informações sobre)\b/.test(n) ||
+    /\b(o que e|o que é)\b.*\b(evora|empreendimento|loteamento|condominio|condomínio)\b/.test(n) ||
+    /\b(evora|évora)\b/.test(n)
+  );
+}
+
+function looksLikeGeneralEnterpriseIntroReply(text: string): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  if (replyAlreadyEndsWithQuestion(text) || hasQuestionNearEnd(text)) return false;
+  if (/\br\$\b|\br\$|\bvalor\b|\bpreco\b|\bpreço\b|\bentrada\b|\bparcela\b|\bfinanciamento\b|\btabela\b|\bpagamento\b/.test(n)) {
+    return false;
+  }
+
+  const hasEnterpriseShape = /\b(evora|évora|empreendimento|loteamento|condominio|condomínio)\b/.test(n);
+  const hasIntroFacts = /\b(atibaia|lotes?|360\s*m|360m|infraestrutura|lazer|seguranca|segurança|rodovia dom pedro|pedreira)\b/.test(n);
+
+  return hasEnterpriseShape && hasIntroFacts;
+}
+
+function appendOpenQuestionForGeneralEnterpriseIntro(
+  reply: string,
+  userMessage?: string | null
+): string {
+  const clean = (reply || '').trim();
+  if (!clean) return clean;
+  if (replyAlreadyEndsWithQuestion(clean) || hasQuestionNearEnd(clean)) return clean;
+
+  const shouldApplyByUser = isGeneralEnterpriseIntroUserMessage(userMessage);
+  const shouldApplyByReply = looksLikeGeneralEnterpriseIntroReply(clean);
+
+  if (!shouldApplyByUser && !shouldApplyByReply) return clean;
+
+  if (isSpecificCommercialOrOperationalTopic(userMessage)) return clean;
+
+  return `${clean} ${GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION}`;
 }
 
 function normClosure(s: string): string {
@@ -234,7 +298,8 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   const noReintro = stripMidConversationReintroduction(base, isFirstAnaReply);
   const materialShort = applyShortMaterialReplyPolicy(noReintro, opts?.userMessage ?? null);
   const compact = keepTwoShortSentencesMax(materialShort);
-  return compact.slice(0, 4000);
+  const withOpenQuestion = appendOpenQuestionForGeneralEnterpriseIntro(compact, opts?.userMessage ?? null);
+  return withOpenQuestion.slice(0, 4000);
 }
 
 function truncateAtWordBoundary(text: string, maxLen: number): string {
@@ -367,7 +432,8 @@ export function applyAnaHardLengthGuard(params: {
     }
   }
 
-  return sanitizeLeadingLabelPrefix(out.slice(0, maxChars).trim(), enterpriseName);
+  const sanitized = sanitizeLeadingLabelPrefix(out.slice(0, maxChars).trim(), enterpriseName);
+  return appendOpenQuestionForGeneralEnterpriseIntro(sanitized, null);
 }
 
 function normalizeForSemanticCheck(text: string): string {
@@ -1057,3 +1123,4 @@ export function countCustomerNameMentionsInText(reply: string, customerName: str
   }
   return count;
 }
+
