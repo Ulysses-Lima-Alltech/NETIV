@@ -4,8 +4,17 @@ import {
   findOrCreateConversation,
   applyInboundUserMessageResets,
   getConversationById,
+  getConversationManualClassificationOverrides,
+  saveLeadClassificationAudit,
+  setConversationEnterpriseId,
+  setConversationFunnelStatusAutomatic,
+  setConversationLeadTemperature,
 } from '../repositories/conversationRepository.js';
-import { insertMessage, findMessageByMetaId } from '../repositories/messageRepository.js';
+import {
+  insertMessage,
+  findMessageByMetaId,
+  getRecentConversationMessages,
+} from '../repositories/messageRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { scheduleWhatsAppAiAfterUserMessage } from './whatsappAiDebounce.js';
@@ -13,6 +22,9 @@ import { handleIncomingMessage } from './conversationEngine.js';
 import { leadOriginFromMetaWhatsAppMessage } from './leadOriginResolver.js';
 import { sendTextMessage } from './whatsappMetaService.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
+import { listEnterprises } from '../repositories/enterpriseRepository.js';
+import { listEnterpriseAliasRowsForActiveEnterprises } from '../repositories/enterpriseMatch.js';
+import { classifyLeadConversation } from './leadClassificationService.js';
 import {
   isAnaEmergencyHandoffEnabled,
   sendAnaEmergencyHandoff,
@@ -458,6 +470,96 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
             externalContactIdTail: phoneDigitsTail(conv.external_contact_id, 4),
             contactPhoneTail: phoneDigitsTail(conv.contact_phone, 4),
           });
+
+          try {
+            const liveConv = (await getConversationById(conv.id)) ?? conv;
+            const manualOverrides = getConversationManualClassificationOverrides(liveConv.commercial_flow_state);
+            const recentMessages = await getRecentConversationMessages(conv.id, 12);
+            const activeEnterprises = await listEnterprises(true);
+            const aliasRows =
+              activeEnterprises.length > 0
+                ? await listEnterpriseAliasRowsForActiveEnterprises(activeEnterprises.map((item) => item.id))
+                : [];
+            const decision = await classifyLeadConversation({
+              conversationId: conv.id,
+              contactId: liveConv.contact_id ?? null,
+              latestCustomerMessage: text,
+              recentMessages,
+              currentTemperature: liveConv.lead_temperature ?? null,
+              currentEnterpriseId: liveConv.enterprise_id ?? null,
+              currentFunnelStatus: liveConv.classification ?? null,
+              availableEnterprises: activeEnterprises,
+              enterpriseAliasRows: aliasRows,
+              manualOverrideFlags: manualOverrides,
+            });
+
+            const oldTemperature = liveConv.lead_temperature ?? null;
+            const oldEnterpriseId = liveConv.enterprise_id ?? null;
+            const oldFunnelStatus = liveConv.classification ?? null;
+            let appliedTemperature = false;
+            let appliedEnterprise = false;
+            let appliedFunnel = false;
+
+            if (decision.shouldUpdateTemperature) {
+              const tempLower = decision.temperature.toLowerCase();
+              if (tempLower === 'frio' || tempLower === 'morno' || tempLower === 'quente') {
+                await setConversationLeadTemperature(conv.id, tempLower);
+                appliedTemperature = true;
+              }
+            }
+            if (decision.shouldUpdateEnterprise && decision.enterpriseId != null) {
+              await setConversationEnterpriseId(conv.id, decision.enterpriseId);
+              appliedEnterprise = true;
+            }
+            if (decision.shouldUpdateFunnel && decision.funnelStatus != null) {
+              await setConversationFunnelStatusAutomatic(conv.id, decision.funnelStatus);
+              appliedFunnel = true;
+            }
+
+            const updatedAfterClassification = await getConversationById(conv.id);
+            const classificationAudit = {
+              oldTemperature,
+              newTemperature: updatedAfterClassification?.lead_temperature ?? oldTemperature,
+              oldEnterpriseId,
+              newEnterpriseId: updatedAfterClassification?.enterprise_id ?? oldEnterpriseId,
+              oldFunnelStatus,
+              newFunnelStatus: updatedAfterClassification?.classification ?? oldFunnelStatus,
+              confidence: {
+                temperature: decision.temperatureConfidence,
+                enterprise: decision.enterpriseConfidence,
+                funnel: decision.funnelConfidence,
+              },
+              reason: {
+                temperature: decision.temperatureReason,
+                enterprise: decision.enterpriseReason,
+                ignored: decision.ignoredReasons,
+              },
+              applied: {
+                temperature: appliedTemperature,
+                enterprise: appliedEnterprise,
+                funnel: appliedFunnel,
+              },
+              ignoredReason: decision.ignoredReasons.length > 0 ? decision.ignoredReasons.join(';') : null,
+              mainIntent: decision.mainIntent,
+              classifierSource: decision.source,
+            } as const;
+            await saveLeadClassificationAudit(conv.id, classificationAudit);
+            console.log('[LEAD_CLASSIFICATION]', {
+              conversationId: conv.id,
+              ...classificationAudit,
+              updates: {
+                shouldUpdateTemperature: decision.shouldUpdateTemperature,
+                shouldUpdateEnterprise: decision.shouldUpdateEnterprise,
+                shouldUpdateFunnel: decision.shouldUpdateFunnel,
+              },
+            });
+          } catch (classificationError) {
+            console.error('[LEAD_CLASSIFICATION] classify_or_persist_error', {
+              conversationId: conv.id,
+              detail:
+                classificationError instanceof Error ? classificationError.message : String(classificationError),
+            });
+          }
 
           if (ANA_DIAGNOSTIC_FIXED_REPLY) {
             const live = await getConversationById(conv.id);

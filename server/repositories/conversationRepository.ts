@@ -186,9 +186,9 @@ export async function findOrCreateConversation(
   const { rows } = await query<ConversationRow>(
     `INSERT INTO conversations (
        channel, external_contact_id, contact_phone, customer_name, whatsapp_display_name, meta_phone_number_id, contact_id, last_message_at,
-       enterprise_id, enterprise_origin_id, lead_source_raw
+       enterprise_id, enterprise_origin_id, lead_source_raw, lead_temperature
      )
-     VALUES ($1, $2, $3, NULL, $4, $5, $6, NOW(), $7, $8, $9::jsonb)
+     VALUES ($1, $2, $3, NULL, $4, $5, $6, NOW(), $7, $8, $9::jsonb, 'frio')
      ON CONFLICT (channel, external_contact_id) DO UPDATE SET
        contact_phone = COALESCE(EXCLUDED.contact_phone, conversations.contact_phone),
        whatsapp_display_name = CASE
@@ -415,6 +415,43 @@ export async function deleteConversationInTransaction(
   };
 }
 
+export interface ConversationManualClassificationOverrides {
+  temperature: boolean;
+  enterprise: boolean;
+}
+
+export function getConversationManualClassificationOverrides(
+  rawState: unknown
+): ConversationManualClassificationOverrides {
+  const state = parseCommercialFlowState(rawState);
+  const record = state && typeof state === 'object' ? (state as Record<string, unknown>) : null;
+  return {
+    temperature: record?.manualTemperatureOverride === true,
+    enterprise: record?.manualEnterpriseOverride === true,
+  };
+}
+
+async function markConversationManualClassificationOverrides(
+  conversationId: number,
+  opts: { temperature?: boolean; enterprise?: boolean }
+): Promise<void> {
+  let expr = `COALESCE(commercial_flow_state, '{}'::jsonb)`;
+  if (opts.temperature) {
+    expr = `jsonb_set(${expr}, '{manualTemperatureOverride}', 'true'::jsonb, true)`;
+  }
+  if (opts.enterprise) {
+    expr = `jsonb_set(${expr}, '{manualEnterpriseOverride}', 'true'::jsonb, true)`;
+  }
+  if (!opts.temperature && !opts.enterprise) return;
+  await query(
+    `UPDATE conversations
+       SET commercial_flow_state = ${expr},
+           updated_at = NOW()
+     WHERE id = $1`,
+    [conversationId]
+  );
+}
+
 /** Exclui a conversa e limpa o vínculo comercial do contato relacionado. Retorna true se excluiu/resetou. */
 export async function deleteConversation(id: number): Promise<boolean> {
   const client = await getPool().connect();
@@ -528,7 +565,15 @@ export async function deleteAllConversationsByPhone(phone: string): Promise<numb
   return deletedCount;
 }
 
-const VALID_CLASSIFICATIONS = new Set(['Novo', 'Qualificado', 'Carteira', 'Handoff']);
+const VALID_CLASSIFICATIONS = new Set([
+  'Novo',
+  'Qualificado',
+  'Em atendimento',
+  'Agendado',
+  'Perdido',
+  'Carteira',
+  'Handoff',
+]);
 
 function toValidClassification(s: string | null | undefined): string {
   const t = (s || '').trim();
@@ -743,6 +788,8 @@ export async function updateClassification(
 ): Promise<ConversationRow | null> {
   const cur = await getConversationById(conversationId);
   if (!cur) return null;
+  const manualTemperatureOverrideRequested = u.lead_temperature !== undefined;
+  const manualEnterpriseOverrideRequested = u.enterprise_id !== undefined;
   const wasHandoff = cur.handoff === true;
   void wasHandoff;
   let assigned_broker_id = cur.assigned_broker_id ?? null;
@@ -825,6 +872,10 @@ export async function updateClassification(
     );
     const row = rows[0] ?? null;
     if (row) {
+      await markConversationManualClassificationOverrides(conversationId, {
+        temperature: manualTemperatureOverrideRequested,
+        enterprise: manualEnterpriseOverrideRequested,
+      });
       if (handoff) {
         const contact = row.contact_id != null ? await findContactById(row.contact_id) : null;
         notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row, {
@@ -887,6 +938,10 @@ export async function updateClassification(
   );
   const row = rows[0] ?? null;
   if (row) {
+    await markConversationManualClassificationOverrides(conversationId, {
+      temperature: manualTemperatureOverrideRequested,
+      enterprise: manualEnterpriseOverrideRequested,
+    });
     if (handoff) {
       const contact = row.contact_id != null ? await findContactById(row.contact_id) : null;
       notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row, {
@@ -905,6 +960,12 @@ export async function setConversationEnterpriseId(
   conversationId: number,
   enterpriseId: number | null
 ): Promise<ConversationRow | null> {
+  const current = await getConversationById(conversationId);
+  if (!current) return null;
+  const manualOverrides = getConversationManualClassificationOverrides(current.commercial_flow_state);
+  if (manualOverrides.enterprise && current.enterprise_id !== enterpriseId) {
+    return current;
+  }
   if (enterpriseId != null) {
     const ok = await getActiveEnterpriseById(enterpriseId);
     if (!ok) return null;
@@ -938,6 +999,95 @@ export async function setConversationEnterpriseId(
         )).rows[0] ?? row;
   if (afterClass.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(afterClass.contact_id);
   return afterClass;
+}
+
+export async function setConversationLeadTemperature(
+  conversationId: number,
+  leadTemperature: 'quente' | 'morno' | 'frio'
+): Promise<ConversationRow | null> {
+  const conv = await getConversationById(conversationId);
+  if (!conv) return null;
+  const manualOverrides = getConversationManualClassificationOverrides(conv.commercial_flow_state);
+  if (manualOverrides.temperature) return conv;
+  const normalized = normalizeLeadTemperatureInput(leadTemperature);
+  if (!normalized) return conv;
+  if (normalizeLeadTemperatureInput(conv.lead_temperature) === normalized) return conv;
+  const { rows } = await query<ConversationRow>(
+    `UPDATE conversations
+        SET lead_temperature = $1,
+            updated_at = NOW()
+      WHERE id = $2
+      RETURNING *`,
+    [normalized, conversationId]
+  );
+  return rows[0] ?? conv;
+}
+
+export async function setConversationFunnelStatusAutomatic(
+  conversationId: number,
+  nextClassification: string
+): Promise<ConversationRow | null> {
+  const conv = await getConversationById(conversationId);
+  if (!conv) return null;
+  const normalizedNext = toValidClassification(nextClassification);
+  const normalizedCurrent = toValidClassification(conv.classification);
+  if (normalizedNext === normalizedCurrent) return conv;
+  if (normalizedCurrent === 'Handoff' || normalizedCurrent === 'Carteira') return conv;
+  if (normalizedNext === 'Handoff' || normalizedNext === 'Carteira') return conv;
+  const { rows } = await query<ConversationRow>(
+    `UPDATE conversations
+        SET classification = $1,
+            updated_at = NOW()
+      WHERE id = $2
+      RETURNING *`,
+    [normalizedNext, conversationId]
+  );
+  return rows[0] ?? conv;
+}
+
+export interface LeadClassificationAuditPayload {
+  oldTemperature: string | null;
+  newTemperature: string | null;
+  oldEnterpriseId: number | null;
+  newEnterpriseId: number | null;
+  oldFunnelStatus: string | null;
+  newFunnelStatus: string | null;
+  confidence: {
+    temperature: number;
+    enterprise: number;
+    funnel: number;
+  };
+  reason: {
+    temperature: string;
+    enterprise: string;
+    ignored: string[];
+  };
+  applied: {
+    temperature: boolean;
+    enterprise: boolean;
+    funnel: boolean;
+  };
+  ignoredReason: string | null;
+  mainIntent: string;
+  classifierSource: 'ai' | 'fallback';
+}
+
+export async function saveLeadClassificationAudit(
+  conversationId: number,
+  payload: LeadClassificationAuditPayload
+): Promise<void> {
+  await query(
+    `UPDATE conversations
+        SET commercial_flow_state = jsonb_set(
+          COALESCE(commercial_flow_state, '{}'::jsonb),
+          '{lastLeadClassificationAudit}',
+          $1::jsonb,
+          true
+        ),
+            updated_at = NOW()
+      WHERE id = $2`,
+    [JSON.stringify({ ...payload, at: new Date().toISOString() }), conversationId]
+  );
 }
 
 export async function updateConversationType(
@@ -985,8 +1135,10 @@ export async function applyAnaConversationUpdate(
     classification = restored === 'Handoff' ? 'Novo' : restored;
   }
 
-  let lead_temperature = conv.lead_temperature;
-  if (typeof meta.lead_temperature === 'string') {
+  const manualOverrides = getConversationManualClassificationOverrides(conv.commercial_flow_state);
+  let lead_temperature: 'quente' | 'morno' | 'frio' =
+    normalizeLeadTemperatureInput(conv.lead_temperature) ?? 'frio';
+  if (!manualOverrides.temperature && typeof meta.lead_temperature === 'string') {
     const incoming = normalizeLeadTemperatureInput(meta.lead_temperature);
     if (incoming) {
       lead_temperature = maxLeadTemperature(conv.lead_temperature, incoming) ?? incoming;

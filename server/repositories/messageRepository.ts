@@ -30,6 +30,11 @@ export interface MessageRow {
   delete_scope?: string | null;
 }
 
+export interface ConversationMessageSnippet {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface ConversationMessageCounts {
   inbound_count: string;
   ana_outbound_count: string;
@@ -118,6 +123,51 @@ export async function getMessagesByConversationId(conversationId: number): Promi
     [conversationId]
   );
   return rows;
+}
+
+export async function getRecentUserMessageTexts(
+  conversationId: number,
+  limit: number = 8
+): Promise<string[]> {
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(50, Math.floor(limit))) : 8;
+  const { rows } = await query<{ content: string | null }>(
+    `SELECT content
+       FROM messages
+      WHERE conversation_id = $1
+        AND role = 'user'
+        AND deleted_at IS NULL
+      ORDER BY created_at DESC, id DESC
+      LIMIT $2`,
+    [conversationId, safeLimit]
+  );
+  return rows
+    .map((row) => (row.content || '').trim())
+    .filter((text) => text.length > 0)
+    .reverse();
+}
+
+export async function getRecentConversationMessages(
+  conversationId: number,
+  limit: number = 12
+): Promise<ConversationMessageSnippet[]> {
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(60, Math.floor(limit))) : 12;
+  const { rows } = await query<{ role: string; content: string | null }>(
+    `SELECT role, content
+       FROM messages
+      WHERE conversation_id = $1
+        AND deleted_at IS NULL
+        AND role IN ('user', 'assistant')
+      ORDER BY created_at DESC, id DESC
+      LIMIT $2`,
+    [conversationId, safeLimit]
+  );
+  return rows
+    .map((row) => ({
+      role: row.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+      content: (row.content || '').trim(),
+    }))
+    .filter((row) => row.content.length > 0)
+    .reverse();
 }
 
 export async function getLastInboundUserMessageAt(conversationId: number): Promise<Date | null> {
