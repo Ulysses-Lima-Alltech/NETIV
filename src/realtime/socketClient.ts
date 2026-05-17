@@ -7,23 +7,54 @@ const API_URL = import.meta.env.VITE_API_URL != null && String(import.meta.env.V
 
 let socket: Socket | null = null;
 
+function buildSocketAuthOptions(): {
+  auth?: { token: string };
+  query?: { access_token: string };
+  authMode: 'token' | 'cookie';
+} {
+  const token = getStoredAuthToken()?.trim() ?? '';
+  if (token.length > 0) {
+    return {
+      auth: { token },
+      query: { access_token: token },
+      authMode: 'token',
+    };
+  }
+  return { authMode: 'cookie' };
+}
+
 export function getInboxSocket(): Socket {
   if (socket) return socket;
-  const token = getStoredAuthToken() ?? '';
+  const authOptions = buildSocketAuthOptions();
+  console.info('[realtime] socket init', {
+    apiUrl: API_URL,
+    authMode: authOptions.authMode,
+  });
   socket = io(API_URL, {
     path: '/socket.io',
     transports: ['websocket', 'polling'],
     autoConnect: true,
-    auth: { token },
-    query: { access_token: token },
+    ...(authOptions.auth ? { auth: authOptions.auth } : {}),
+    ...(authOptions.query ? { query: authOptions.query } : {}),
     withCredentials: true,
+  });
+  socket.on('connect', () => {
+    console.info('[realtime] socket connected', { socketId: socket?.id ?? null });
+  });
+  socket.on('connect_error', (error) => {
+    console.warn('[realtime] socket connect_error', { message: error.message });
+  });
+  socket.on('disconnect', (reason) => {
+    console.info('[realtime] socket disconnected', { reason });
   });
   return socket;
 }
 
 export function refreshInboxSocketAuth(): void {
   if (!socket) return;
-  const token = getStoredAuthToken() ?? '';
-  socket.auth = { token };
-  socket.io.opts.query = { access_token: token };
+  const authOptions = buildSocketAuthOptions();
+  if (authOptions.auth) socket.auth = authOptions.auth;
+  else socket.auth = {};
+  if (authOptions.query) socket.io.opts.query = authOptions.query;
+  else socket.io.opts.query = {};
 }
