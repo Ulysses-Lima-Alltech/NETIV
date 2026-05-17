@@ -203,6 +203,7 @@ export async function publishConversationCreated(conversationId: number): Promis
   try {
     const payload = await buildConversationPayload(conversationId);
     if (!payload) return;
+    console.info('[Realtime] publish conversation.created', { conversationId });
     emitSocketEvent('conversation.created', payload);
   } catch (error) {
     console.warn('[Realtime] publishConversationCreated_failed', {
@@ -216,6 +217,7 @@ export async function publishConversationUpdated(conversationId: number): Promis
   try {
     const payload = await buildConversationPayload(conversationId);
     if (!payload) return;
+    console.info('[Realtime] publish conversation.updated', { conversationId });
     emitSocketEvent('conversation.updated', payload);
   } catch (error) {
     console.warn('[Realtime] publishConversationUpdated_failed', {
@@ -227,6 +229,10 @@ export async function publishConversationUpdated(conversationId: number): Promis
 
 export function publishMessageCreated(message: RealtimeMessagePayload): void {
   try {
+    console.info('[Realtime] publish message.created', {
+      conversationId: message.conversationId,
+      messageId: message.id,
+    });
     emitSocketEvent('message.created', message);
   } catch (error) {
     console.warn('[Realtime] publishMessageCreated_failed', {

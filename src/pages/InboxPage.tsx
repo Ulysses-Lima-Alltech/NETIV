@@ -210,6 +210,7 @@ export function InboxPage() {
   const lastLoadedConversationIdRef = useRef<string | null>(null);
   const pendingScrollModeRef = useRef<'none' | 'force' | 'if-near'>('none');
   const [showNewMessageIndicator, setShowNewMessageIndicator] = useState(false);
+  const inflightRealtimeConversationFetchRef = useRef<Set<string>>(new Set());
 
   const rawConversationParam = searchParams.get('conversationId')?.trim() ?? '';
   const parsedConversationId = useMemo(() => {
@@ -252,6 +253,24 @@ export function InboxPage() {
       );
     });
   }, []);
+
+  const fetchAndMergeConversationById = useCallback((conversationId: string) => {
+    if (inflightRealtimeConversationFetchRef.current.has(conversationId)) return;
+    const numId = parseInt(conversationId, 10);
+    if (!Number.isFinite(numId) || numId <= 0) return;
+    inflightRealtimeConversationFetchRef.current.add(conversationId);
+    void whatsappApi
+      .getConversation(numId)
+      .then((item) => {
+        mergeConversation(mapApiConversationToConversation(item));
+      })
+      .catch(() => {
+        // noop: conversa pode estar fora de escopo/filtro no momento.
+      })
+      .finally(() => {
+        inflightRealtimeConversationFetchRef.current.delete(conversationId);
+      });
+  }, [mergeConversation]);
 
   const selectedConversation = selectedId
     ? conversations.find((c) => c.id === selectedId) ?? null
@@ -446,9 +465,13 @@ export function InboxPage() {
       };
 
       const atBottom = isUserAtBottom();
+      let conversationKnown = true;
       setConversations((prev) => {
         const idx = prev.findIndex((c) => c.id === convId);
-        if (idx < 0) return prev;
+        if (idx < 0) {
+          conversationKnown = false;
+          return prev;
+        }
         const row = prev[idx]!;
         const nextUnread = sid === convId ? 0 : Math.max(1, row.unreadCount || 0);
         const updatedRow: Conversation = {
@@ -462,6 +485,9 @@ export function InboxPage() {
         next.unshift(updatedRow);
         return next;
       });
+      if (!conversationKnown) {
+        fetchAndMergeConversationById(convId);
+      }
 
       if (sid === convId) {
         setMessages((prev) => upsertMessageList(prev, incoming));
