@@ -112,6 +112,8 @@ export interface ChatPanelProps {
   projects?: { id: number; name: string; active: boolean }[];
   isSending?: boolean;
   onScrollContainerRef?: (el: HTMLDivElement | null) => void;
+  showNewMessageIndicator?: boolean;
+  onJumpToLatest?: () => void;
 }
 
 export function ChatPanel({
@@ -129,6 +131,8 @@ export function ChatPanel({
   projects = [],
   isSending = false,
   onScrollContainerRef,
+  showNewMessageIndicator = false,
+  onJumpToLatest,
 }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -681,7 +685,8 @@ export function ChatPanel({
         )}
       </header>
 
-      <div ref={setRef} className="flex-1 min-h-0 overflow-y-auto bg-[#f7f9fc] px-5 pb-1 pt-5">
+      <div className="relative flex-1 min-h-0">
+      <div ref={setRef} className="h-full overflow-y-auto bg-[#f7f9fc] px-5 pb-1 pt-5">
         <div className="min-h-full flex flex-col">
           {loadError ? (
             <div className="flex-1 flex flex-col items-center justify-center py-12 text-center">
@@ -727,6 +732,16 @@ export function ChatPanel({
             </div>
           )}
         </div>
+      </div>
+      {showNewMessageIndicator && (
+        <button
+          type="button"
+          onClick={onJumpToLatest}
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-[#bfdbfe] bg-white px-3 py-1 text-[11px] font-medium text-[#1d4ed8] shadow-sm hover:bg-[#eff6ff]"
+        >
+          Nova mensagem
+        </button>
+      )}
       </div>
 
       {!loadError && (

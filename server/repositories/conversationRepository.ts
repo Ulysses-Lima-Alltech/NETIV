@@ -15,6 +15,10 @@ import {
   syncConversationOwnerFromContact,
   trySyncContactEnterpriseFromLinkedConversations,
 } from './contactsRepository.js';
+import {
+  publishConversationCreated,
+  publishConversationUpdated,
+} from '../realtime/realtimePublisher.js';
 
 export type { LeadOriginInput } from '../services/leadOriginResolver.js';
 
@@ -164,6 +168,11 @@ export async function findOrCreateConversation(
       effectiveContactPhone = canon;
     }
   }
+  const existingBefore = await query<{ id: number }>(
+    `SELECT id FROM conversations WHERE channel = $1 AND external_contact_id = $2 LIMIT 1`,
+    [channel, effectiveExternalId]
+  );
+  const createdNow = !existingBefore.rows[0];
   const normalizedPhone = normalizePhoneE164(effectiveContactPhone ?? effectiveExternalId);
   const contact =
     normalizedPhone != null
@@ -220,6 +229,10 @@ export async function findOrCreateConversation(
   if (contact?.id && conv.id) {
     await assignContactToConversation(conv.id, contact.id);
     await syncConversationOwnerFromContact(conv.id);
+  }
+  if (conv?.id) {
+    if (createdNow) void publishConversationCreated(conv.id);
+    else void publishConversationUpdated(conv.id);
   }
   return conv;
 }

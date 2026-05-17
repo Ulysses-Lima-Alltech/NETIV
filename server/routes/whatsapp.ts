@@ -63,7 +63,8 @@ import {
   getConversationWhatsAppWindowStatus,
   getPhoneWhatsAppWindowStatus,
 } from '../services/whatsappWindowService.js';
-import { registerWhatsAppEventsSse, emitWhatsAppEvent } from '../services/whatsappEvents.js';
+import { registerWhatsAppEventsSse } from '../services/whatsappEvents.js';
+import { publishConversationUpdated } from '../realtime/realtimePublisher.js';
 
 const router = Router();
 
@@ -448,6 +449,7 @@ router.post('/conversations/:id/reset', async (req, res) => {
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
     const ok = await resetConversationState(id);
     if (!ok) return res.status(404).json({ error: 'Conversa não encontrada.' });
+    void publishConversationUpdated(id);
     res.json({ success: true, conversationId: id });
   } catch (e) {
     console.error('[WhatsApp] POST reset:', e);
@@ -533,12 +535,7 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       assignedBrokerName: brokerRow?.full_name ?? null,
       ...conversationReserveToPublic(conv),
     });
-    emitWhatsAppEvent('conversation.updated', {
-      conversationId: conv.id,
-      classificationStatus: conv.classification ?? 'Novo',
-      handoff: conv.handoff ?? false,
-      updatedAt: conv.updated_at.toISOString(),
-    });
+    void publishConversationUpdated(conv.id);
   } catch (e) {
     console.error('[WhatsApp] PATCH classification:', e);
     res.status(500).json({ error: 'Erro ao atualizar.' });
@@ -744,6 +741,7 @@ router.patch('/conversations/:id/close', async (req, res) => {
       return;
     }
     console.log('[CONVERSATION_CLOSE]', { conversationId: id, userId: authReq.user.id });
+    void publishConversationUpdated(id);
     res.json({
       success: true,
       conversationId: id,
@@ -771,6 +769,7 @@ router.patch('/conversations/:id/reopen', async (req, res) => {
       return;
     }
     console.log('[CONVERSATION_REOPEN]', { conversationId: id, userId: authReq.user.id });
+    void publishConversationUpdated(id);
     res.json({
       success: true,
       conversationId: id,
@@ -798,11 +797,7 @@ router.patch('/conversations/:id/customer-name', async (req, res) => {
     const name: string | null = typeof raw === 'string' ? raw.trim().slice(0, 80) || null : null;
 
     await setConversationCustomerName(id, name);
-    emitWhatsAppEvent('conversation.updated', {
-      conversationId: id,
-      customerName: name,
-      updatedAt: new Date().toISOString(),
-    });
+    void publishConversationUpdated(id);
     return res.json({ success: true, conversationId: id, customerName: name });
   } catch (e) {
     console.error('[WhatsApp] PATCH customer-name:', e);
@@ -834,3 +829,4 @@ router.delete('/conversations/:convId/messages/:msgId', async (req, res) => {
 });
 
 export default router;
+

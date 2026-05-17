@@ -5,7 +5,6 @@ import {
   whatsappApi,
   projectsApi,
   ApiError,
-  getStoredAuthToken,
   type ReserveSegmentationPatchBody,
   type WhatsAppWindowStatus,
 } from '../api/client';
@@ -20,14 +19,10 @@ import {
   inboxFiltersToApiParams,
   type InboxFilters,
 } from '../components/inboxFilters';
+import { useRealtimeInbox } from '../hooks/useRealtimeInbox';
 
 const INBOX_READ_STATE_KEY = 'inbox_read_state_v1';
 type InboxReadStateMap = Record<string, string>;
-const API_ROOT =
-  import.meta.env.VITE_API_URL != null && String(import.meta.env.VITE_API_URL).trim() !== ''
-    ? `${String(import.meta.env.VITE_API_URL).replace(/\/$/, '')}/api`
-    : '/api';
-
 function toMillis(value: string | null | undefined): number | null {
   if (!value) return null;
   const t = new Date(value).getTime();
@@ -214,6 +209,7 @@ export function InboxPage() {
   const messagesRequestIdRef = useRef(0);
   const lastLoadedConversationIdRef = useRef<string | null>(null);
   const pendingScrollModeRef = useRef<'none' | 'force' | 'if-near'>('none');
+  const [showNewMessageIndicator, setShowNewMessageIndicator] = useState(false);
 
   const rawConversationParam = searchParams.get('conversationId')?.trim() ?? '';
   const parsedConversationId = useMemo(() => {
@@ -245,6 +241,17 @@ export function InboxPage() {
       });
     });
   }, [scrollToBottom]);
+
+  const mergeConversation = useCallback((incoming: Conversation) => {
+    setConversations((prev) => {
+      const idx = prev.findIndex((c) => c.id === incoming.id);
+      const nextRow = idx >= 0 ? { ...prev[idx]!, ...incoming } : incoming;
+      const without = idx >= 0 ? prev.filter((_, i) => i !== idx) : prev;
+      return [nextRow, ...without].sort(
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      );
+    });
+  }, []);
 
   const selectedConversation = selectedId
     ? conversations.find((c) => c.id === selectedId) ?? null
@@ -378,38 +385,43 @@ export function InboxPage() {
     }
   }, [messages, messagesLoading, selectedId, scheduleScrollToBottom]);
 
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 50) {
+        setShowNewMessageIndicator(false);
+      }
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [selectedId]);
+
   useEffect(() => { loadConversations(); }, [loadConversations]);
 
-  useEffect(() => {
-    const token = getStoredAuthToken();
-    if (!token) return;
-    const eventsUrl = `${API_ROOT}/whatsapp/events?access_token=${encodeURIComponent(token)}`;
-    const es = new EventSource(eventsUrl);
-
-    const onMessageCreated = (evt: Event) => {
+  useRealtimeInbox({
+    onConversationCreated: (payload) => {
+      if (!payload || typeof payload !== 'object') return;
+      mergeConversation(mapApiConversationToConversation(payload as ApiConversation));
+    },
+    onConversationUpdated: (payload) => {
+      if (!payload || typeof payload !== 'object') return;
+      mergeConversation(mapApiConversationToConversation(payload as ApiConversation));
+    },
+    onMessageCreated: (payload) => {
+      if (!payload || typeof payload !== 'object') return;
+      const p = payload as {
+        id: string;
+        conversationId: number;
+        role: 'user' | 'assistant';
+        content: string | null;
+        messageKind?: 'text' | 'document' | 'image';
+        attachment?: unknown;
+        createdAt: string;
+        deleted?: boolean;
+        deletedAt?: string | null;
+      };
       const sid = selectedIdRef.current;
-      const msgEvt = evt as MessageEvent;
-      let parsed: {
-        type: string;
-        payload: {
-          id: string;
-          conversationId: number;
-          role: 'user' | 'assistant';
-          content: string | null;
-          messageKind?: 'text' | 'document' | 'image';
-          attachment?: unknown;
-          createdAt: string;
-          deleted?: boolean;
-          deletedAt?: string | null;
-        };
-      } | null = null;
-      try {
-        parsed = JSON.parse(msgEvt.data);
-      } catch {
-        return;
-      }
-      if (!parsed || parsed.type !== 'message.created') return;
-      const p = parsed.payload;
       const convId = String(p.conversationId);
       const incoming: Message = {
         id: String(p.id),
@@ -456,41 +468,26 @@ export function InboxPage() {
         markConversationAsRead(convId, incoming.createdAt);
         if (atBottom) {
           pendingScrollModeRef.current = 'if-near';
+          setShowNewMessageIndicator(false);
+        } else {
+          setShowNewMessageIndicator(true);
         }
       }
-    };
-
-    const onMessageUpdated = (evt: Event) => {
-      const msgEvt = evt as MessageEvent;
-      try {
-        const parsed = JSON.parse(msgEvt.data) as {
-          type: string;
-          payload: { id: string; conversationId: number; deleted?: boolean; deletedAt?: string | null };
-        };
-        if (parsed.type !== 'message.updated') return;
-        const convId = String(parsed.payload.conversationId);
-        if (selectedIdRef.current !== convId) return;
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === String(parsed?.payload.id)
-              ? { ...m, deleted: parsed.payload.deleted ?? true, deletedAt: parsed.payload.deletedAt ?? null, text: '', attachment: null }
-              : m
-          )
-        );
-      } catch {
-        // noop
-      }
-    };
-
-    es.addEventListener('message.created', onMessageCreated);
-    es.addEventListener('message.updated', onMessageUpdated);
-
-    return () => {
-      es.removeEventListener('message.created', onMessageCreated);
-      es.removeEventListener('message.updated', onMessageUpdated);
-      es.close();
-    };
-  }, [isUserAtBottom, markConversationAsRead]);
+    },
+    onMessageUpdated: (payload) => {
+      if (!payload || typeof payload !== 'object') return;
+      const parsed = payload as { id: string; conversationId: number; deleted?: boolean; deletedAt?: string | null };
+      const convId = String(parsed.conversationId);
+      if (selectedIdRef.current !== convId) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === String(parsed.id)
+            ? { ...m, deleted: parsed.deleted ?? true, deletedAt: parsed.deletedAt ?? null, text: '', attachment: null }
+            : m
+        )
+      );
+    },
+  });
 
   const handleTabChange = useCallback((tab: 'CLIENT' | 'INTERNO') => {
     if (tab === activeTab) return;
@@ -546,6 +543,7 @@ export function InboxPage() {
 
   useEffect(() => {
     if (!selectedId) { setMessages([]); setMessagesError(null); return; }
+    setShowNewMessageIndicator(false);
     pendingScrollModeRef.current = 'force';
     setMessages([]);
     markConversationAsRead(selectedId);
@@ -590,7 +588,6 @@ export function InboxPage() {
       try {
         await whatsappApi.sendToConversation(id, text, file ?? null);
         setMessages((prev) => prev.map((m) => (m.id === tempMessage.id ? { ...tempMessage, id: `sent-${Date.now()}` } : m)));
-        loadConversations();
       } catch (e) {
         setMessages((prev) => prev.filter((m) => m.id !== tempMessage.id));
         if (e instanceof ApiError && e.code === 'WHATSAPP_WINDOW_CLOSED') {
@@ -604,16 +601,15 @@ export function InboxPage() {
         setSending(false);
       }
     },
-    [selectedId, selectedWindow, loadConversations, isUserAtBottom, scheduleScrollToBottom]
+    [selectedId, selectedWindow, isUserAtBottom, scheduleScrollToBottom]
   );
 
   const handleNewMessageSent = useCallback(
     (conversationId: number | undefined) => {
       setNewMessageOpen(false);
-      loadConversations();
       if (conversationId != null) setSelectedId(String(conversationId));
     },
-    [loadConversations]
+    []
   );
 
   const handleCloseConversation = useCallback(async () => {
@@ -676,15 +672,38 @@ export function InboxPage() {
       if (Number.isNaN(numId)) return;
       try {
         await whatsappApi.resetConversation(numId);
-        await loadConversations(true);
-        if (selectedIdRef.current === conversationIdStr) {
-          loadMessages(conversationIdStr, true);
-        }
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === conversationIdStr
+              ? {
+                  ...c,
+                  status: 'Novo',
+                  classificationStatus: 'Novo',
+                  handoff: false,
+                  temperatura: 'frio',
+                  projectId: null,
+                  projectName: null,
+                  empreendimento: null,
+                  assignedBrokerId: null,
+                  assignedBrokerName: null,
+                  reserveReason: null,
+                  reserveDesiredCity: null,
+                  reservePriceMin: null,
+                  reservePriceMax: null,
+                  reservePropertyType: null,
+                  reserveBedrooms: null,
+                  reserveInterestType: null,
+                  reserveFollowUpMoment: null,
+                  reserveCommercialNotes: null,
+                }
+              : c
+          )
+        );
       } catch (e) {
         console.error('[InboxPage] resetConversation:', e);
       }
     },
-    [loadConversations, loadMessages]
+    []
   );
 
   const handleUpdateCustomerName = useCallback(
@@ -895,6 +914,12 @@ export function InboxPage() {
             onReopenConversation={handleReopenConversation}
             projects={projects}
             onScrollContainerRef={(el) => { chatScrollRef.current = el; }}
+            showNewMessageIndicator={showNewMessageIndicator}
+            onJumpToLatest={() => {
+              setShowNewMessageIndicator(false);
+              pendingScrollModeRef.current = 'force';
+              scheduleScrollToBottom();
+            }}
           />
         </main>
       </div>

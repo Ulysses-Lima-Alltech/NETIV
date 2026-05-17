@@ -1,6 +1,10 @@
 import { query } from '../db/pg.js';
 import { touchContactInteractionByConversation } from './contactsRepository.js';
-import { emitWhatsAppEvent } from '../services/whatsappEvents.js';
+import {
+  publishConversationUpdated,
+  publishMessageCreated,
+  publishMessageUpdated,
+} from '../realtime/realtimePublisher.js';
 
 export type MessageKindDb = 'text' | 'document' | 'image' | 'video';
 
@@ -89,10 +93,10 @@ export async function insertMessage(
   await touchContactInteractionByConversation({ conversationId, role });
   const inserted = rows[0];
   if (inserted) {
-    emitWhatsAppEvent('message.created', {
+    publishMessageCreated({
       id: String(inserted.id),
       conversationId: inserted.conversation_id,
-      role: inserted.role,
+      role: inserted.role as 'user' | 'assistant',
       content: inserted.content,
       metaMessageId: inserted.meta_message_id,
       messageKind: inserted.message_kind ?? 'text',
@@ -101,11 +105,7 @@ export async function insertMessage(
       deleted: inserted.deleted_at != null,
       deletedAt: inserted.deleted_at ? inserted.deleted_at.toISOString() : null,
     });
-    emitWhatsAppEvent('conversation.updated', {
-      conversationId: inserted.conversation_id,
-      updatedAt: inserted.created_at.toISOString(),
-      lastMessagePreview: inserted.content ?? '',
-    });
+    void publishConversationUpdated(inserted.conversation_id);
   }
   return inserted;
 }
@@ -256,17 +256,13 @@ export async function softDeleteMessage(
   );
   const deleted = rows[0] ?? null;
   if (deleted) {
-    emitWhatsAppEvent('message.updated', {
+    publishMessageUpdated({
       id: String(deleted.id),
       conversationId: deleted.conversation_id,
       deleted: true,
       deletedAt: deleted.deleted_at ? deleted.deleted_at.toISOString() : null,
     });
-    emitWhatsAppEvent('conversation.updated', {
-      conversationId: deleted.conversation_id,
-      updatedAt: new Date().toISOString(),
-      lastMessagePreview: null,
-    });
+    void publishConversationUpdated(deleted.conversation_id);
   }
   return deleted;
 }

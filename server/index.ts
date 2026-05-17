@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import './express-augmentation.js';
 import express from 'express';
+import { createServer } from 'http';
 import cors from 'cors';
 import { config } from './config.js';
 import apiRouter from './routes/index.js';
@@ -13,8 +14,10 @@ import { processDueDeferredHandoffs } from './repositories/conversationRepositor
 import { processAnaReengagementScan } from './services/anaReengagementService.js';
 import { syncAllConversationOwnersFromContacts } from './repositories/contactsRepository.js';
 import { runDjangoSyncWorker } from './services/djangoSyncWorker.js';
+import { initSocketServer } from './realtime/socketServer.js';
 
 const app = express();
+const httpServer = createServer(app);
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -72,7 +75,8 @@ initPostgres()
     } catch (e) {
       console.warn('[startup] Não foi possível ler config do banco:', e instanceof Error ? e.message : e);
     }
-    app.listen(config.port, () => {
+    initSocketServer(httpServer);
+    httpServer.listen(config.port, () => {
       console.log(`Server http://localhost:${config.port}`);
     });
     setInterval(() => {
