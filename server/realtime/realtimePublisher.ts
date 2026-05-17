@@ -1,5 +1,4 @@
 import { query } from '../db/pg.js';
-import { emitWhatsAppEvent } from '../services/whatsappEvents.js';
 import { getInboxGlobalRoom, getSocketServer } from './socketServer.js';
 
 export interface RealtimeConversationPayload {
@@ -188,40 +187,53 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
 }
 
 function emitSocketEvent<T>(event: string, payload: T): void {
-  const io = getSocketServer();
-  if (!io) return;
-  io.to(getInboxGlobalRoom()).emit(event, payload);
+  try {
+    const io = getSocketServer();
+    if (!io) return;
+    io.to(getInboxGlobalRoom()).emit(event, payload);
+  } catch (error) {
+    console.warn('[Realtime] publish_emit_failed', {
+      event,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 export async function publishConversationCreated(conversationId: number): Promise<void> {
-  const payload = await buildConversationPayload(conversationId);
-  if (!payload) return;
-  emitSocketEvent('conversation.created', payload);
-  emitWhatsAppEvent('conversation.updated', {
-    conversationId,
-    updatedAt: payload.updatedAt,
-    lastMessagePreview: payload.lastMessagePreview ?? '',
-    classificationStatus: payload.classificationStatus,
-    handoff: payload.handoff,
-  });
+  try {
+    const payload = await buildConversationPayload(conversationId);
+    if (!payload) return;
+    emitSocketEvent('conversation.created', payload);
+  } catch (error) {
+    console.warn('[Realtime] publishConversationCreated_failed', {
+      conversationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 export async function publishConversationUpdated(conversationId: number): Promise<void> {
-  const payload = await buildConversationPayload(conversationId);
-  if (!payload) return;
-  emitSocketEvent('conversation.updated', payload);
-  emitWhatsAppEvent('conversation.updated', {
-    conversationId,
-    updatedAt: payload.updatedAt,
-    lastMessagePreview: payload.lastMessagePreview ?? '',
-    classificationStatus: payload.classificationStatus,
-    handoff: payload.handoff,
-  });
+  try {
+    const payload = await buildConversationPayload(conversationId);
+    if (!payload) return;
+    emitSocketEvent('conversation.updated', payload);
+  } catch (error) {
+    console.warn('[Realtime] publishConversationUpdated_failed', {
+      conversationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 export function publishMessageCreated(message: RealtimeMessagePayload): void {
-  emitSocketEvent('message.created', message);
-  emitWhatsAppEvent('message.created', message);
+  try {
+    emitSocketEvent('message.created', message);
+  } catch (error) {
+    console.warn('[Realtime] publishMessageCreated_failed', {
+      conversationId: message.conversationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 export function publishMessageUpdated(payload: {
@@ -230,6 +242,12 @@ export function publishMessageUpdated(payload: {
   deleted?: boolean;
   deletedAt?: string | null;
 }): void {
-  emitSocketEvent('message.updated', payload);
-  emitWhatsAppEvent('message.updated', payload);
+  try {
+    emitSocketEvent('message.updated', payload);
+  } catch (error) {
+    console.warn('[Realtime] publishMessageUpdated_failed', {
+      conversationId: payload.conversationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }

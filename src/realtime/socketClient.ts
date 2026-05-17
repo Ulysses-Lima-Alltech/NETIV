@@ -6,6 +6,8 @@ const API_URL = import.meta.env.VITE_API_URL != null && String(import.meta.env.V
   : window.location.origin;
 
 let socket: Socket | null = null;
+let realtimeLogged = false;
+const realtimeEnabled = String(import.meta.env.VITE_REALTIME_ENABLED ?? '').trim().toLowerCase() === 'true';
 
 function buildSocketAuthOptions(): {
   auth?: { token: string };
@@ -23,8 +25,16 @@ function buildSocketAuthOptions(): {
   return { authMode: 'cookie' };
 }
 
-export function getInboxSocket(): Socket {
+export function getInboxSocket(): Socket | null {
+  if (!realtimeEnabled) {
+    if (!realtimeLogged) {
+      console.info('[Realtime] disabled');
+      realtimeLogged = true;
+    }
+    return null;
+  }
   if (socket) return socket;
+  console.info('[Realtime] enabled');
   const authOptions = buildSocketAuthOptions();
   console.info('[realtime] socket init', {
     apiUrl: API_URL,
@@ -55,10 +65,15 @@ export function getInboxSocket(): Socket {
 }
 
 export function refreshInboxSocketAuth(): void {
+  if (!realtimeEnabled) return;
   if (!socket) return;
   const authOptions = buildSocketAuthOptions();
   if (authOptions.auth) socket.auth = authOptions.auth;
   else socket.auth = {};
   if (authOptions.query) socket.io.opts.query = authOptions.query;
   else socket.io.opts.query = {};
+}
+
+export function isRealtimeClientEnabled(): boolean {
+  return realtimeEnabled;
 }

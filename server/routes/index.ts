@@ -18,6 +18,7 @@ import apiDjangoRouter from './apiDjango.js';
 import whatsappBatchRouter from './whatsappBatch.js';
 import reengagementRouter from './reengagement.js';
 import knowledgeRouter from './knowledge.js';
+import realtimeRouter from './realtime.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { ROLES_ORG_ADMIN, ROLES_SETTINGS_ADMIN } from '../constants/roles.js';
 import { listWhatsAppTemplatesCatalog } from '../catalogs/whatsappTemplates.js';
@@ -38,6 +39,7 @@ router.use('/api/service', apiDjangoRouter);
 router.get('/whatsapp-batch/templates', (_req, res) => {
   res.json({ templates: listWhatsAppTemplatesCatalog() });
 });
+router.use('/realtime', realtimeRouter);
 
 router.use(requireAuth);
 

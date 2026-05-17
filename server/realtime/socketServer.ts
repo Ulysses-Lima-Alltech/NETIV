@@ -3,12 +3,14 @@ import { Server as SocketIOServer, type Socket } from 'socket.io';
 import { findEmbeddedDefaultUser, getSessionUser } from '../repositories/userRepository.js';
 
 const INBOX_GLOBAL_ROOM = 'inbox:global';
+const SOCKET_PATH = '/socket.io';
 const allowedOrigins = String(process.env.FRONTEND_URL ?? process.env.CORS_ORIGIN ?? '')
   .split(',')
   .map((value) => value.trim())
   .filter((value) => value.length > 0);
 
 let io: SocketIOServer | null = null;
+let realtimeEnabled = false;
 
 function isAuthBypassEnabled(): boolean {
   const raw = String(process.env.AUTH_BYPASS_ENABLED ?? '').trim().toLowerCase();
@@ -53,7 +55,7 @@ export function initSocketServer(server: HttpServer): SocketIOServer {
   if (io) return io;
 
   io = new SocketIOServer(server, {
-    path: '/socket.io',
+    path: SOCKET_PATH,
     cors: {
       origin: allowedOrigins.length > 0 ? allowedOrigins : true,
       credentials: true,
@@ -111,6 +113,18 @@ export function initSocketServer(server: HttpServer): SocketIOServer {
   });
 
   return io;
+}
+
+export function setRealtimeEnabled(value: boolean): void {
+  realtimeEnabled = value;
+}
+
+export function isRealtimeEnabled(): boolean {
+  return realtimeEnabled;
+}
+
+export function getSocketPath(): string {
+  return SOCKET_PATH;
 }
 
 export function getSocketServer(): SocketIOServer | null {

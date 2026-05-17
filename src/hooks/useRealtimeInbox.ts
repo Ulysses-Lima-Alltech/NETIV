@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { getInboxSocket, refreshInboxSocketAuth } from '../realtime/socketClient';
+import { getInboxSocket, isRealtimeClientEnabled, refreshInboxSocketAuth } from '../realtime/socketClient';
 
 interface UseRealtimeInboxArgs {
   onConversationCreated: (payload: unknown) => void;
@@ -25,8 +25,10 @@ export function useRealtimeInbox({
   messageUpdatedRef.current = onMessageUpdated;
 
   useEffect(() => {
+    if (!isRealtimeClientEnabled()) return;
     refreshInboxSocketAuth();
     const socket = getInboxSocket();
+    if (!socket) return;
 
     const handleCreated = (payload: unknown) => createdRef.current(payload);
     const handleUpdated = (payload: unknown) => updatedRef.current(payload);

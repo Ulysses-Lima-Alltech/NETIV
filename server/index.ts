@@ -14,10 +14,12 @@ import { processDueDeferredHandoffs } from './repositories/conversationRepositor
 import { processAnaReengagementScan } from './services/anaReengagementService.js';
 import { syncAllConversationOwnersFromContacts } from './repositories/contactsRepository.js';
 import { runDjangoSyncWorker } from './services/djangoSyncWorker.js';
-import { initSocketServer } from './realtime/socketServer.js';
+import { initSocketServer, setRealtimeEnabled } from './realtime/socketServer.js';
 
 const app = express();
 const httpServer = createServer(app);
+const realtimeEnabled = String(process.env.REALTIME_ENABLED ?? '').trim().toLowerCase() === 'true';
+setRealtimeEnabled(realtimeEnabled);
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -75,7 +77,13 @@ initPostgres()
     } catch (e) {
       console.warn('[startup] Não foi possível ler config do banco:', e instanceof Error ? e.message : e);
     }
-    initSocketServer(httpServer);
+    if (realtimeEnabled) {
+      console.log('[Realtime] enabled');
+      initSocketServer(httpServer);
+      console.log('[Realtime] socket server initialized');
+    } else {
+      console.log('[Realtime] disabled');
+    }
     httpServer.listen(config.port, () => {
       console.log(`Server http://localhost:${config.port}`);
     });
