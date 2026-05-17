@@ -17,7 +17,7 @@ const btnPrimary =
 const btnGhost =
   "inline-flex items-center justify-center text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8] transition-colors";
 
-const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "SÃ¡b"];
+const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
 export function CorretoresPage() {
   const [list, setList] = useState<Corretor[]>([]);
@@ -142,7 +142,7 @@ export function CorretoresPage() {
   };
 
   const removeSlot = (availabilityId: number) => {
-    if (editingId == null || !confirm("Remover este horÃ¡rio?")) return;
+    if (editingId == null || !confirm("Remover este horário?")) return;
     corretoresApi
       .deleteAvailability(editingId, availabilityId)
       .then(() =>
@@ -229,7 +229,7 @@ export function CorretoresPage() {
   const save = () => {
     const n = fullName.trim();
     if (!n) {
-      setErr("Nome completo Ã© obrigatÃ³rio.");
+      setErr("Nome completo é obrigatório.");
       return;
     }
     setSaving(true);
@@ -274,7 +274,7 @@ export function CorretoresPage() {
             results.forEach((r, i) => {
               if (r.status === "rejected") {
                 console.warn(
-                  "[CorretoresPage] Falha ao criar horÃ¡rio",
+                  "[CorretoresPage] Falha ao criar horário",
                   draftSlots[i],
                   r.reason,
                 );
@@ -338,7 +338,7 @@ export function CorretoresPage() {
           {loading ? (
             <div className="flex items-center gap-2 py-8 justify-center">
               <div className="h-5 w-5 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin" />
-              <span className="text-[13px] text-[#6B7280]">Carregandoâ€¦</span>
+              <span className="text-[13px] text-[#6B7280]">Carregando…</span>
             </div>
           ) : list.length === 0 ? (
             <div className="py-12 text-center">
@@ -346,7 +346,7 @@ export function CorretoresPage() {
                 Nenhum corretor cadastrado
               </p>
               <p className="text-[13px] text-[#6B7280] mb-4">
-                Clique em &quot;Novo corretor&quot; para comeÃ§ar.
+                Clique em &quot;Novo corretor&quot; para começar.
               </p>
               <button type="button" onClick={openNew} className={btnPrimary}>
                 Novo corretor
@@ -367,13 +367,13 @@ export function CorretoresPage() {
                       Telefone
                     </th>
                     <th className="py-3 px-4 text-[11px] font-bold text-[#9CA3AF] uppercase tracking-wider">
-                      ImobiliÃ¡ria
+                      Imobiliária
                     </th>
                     <th className="py-3 px-4 text-[11px] font-bold text-[#9CA3AF] uppercase tracking-wider">
                       Status
                     </th>
                     <th className="py-3 px-4 text-[11px] font-bold text-[#9CA3AF] uppercase tracking-wider">
-                      AÃ§Ãµes
+                      Ações
                     </th>
                   </tr>
                 </thead>
@@ -387,13 +387,13 @@ export function CorretoresPage() {
                         {c.fullName}
                       </td>
                       <td className="py-3.5 px-4 text-[13px] text-[#6B7280]">
-                        {c.city || "â€”"}
+                        {c.city || "—"}
                       </td>
                       <td className="py-3.5 px-4 text-[13px] text-[#6B7280]">
-                        {c.phone || "â€”"}
+                        {c.phone || "—"}
                       </td>
                       <td className="py-3.5 px-4 text-[13px] text-[#6B7280]">
-                        {c.realEstateAgency || "â€”"}
+                        {c.realEstateAgency || "—"}
                       </td>
                       <td className="py-3.5 px-4">
                         <span
@@ -461,7 +461,7 @@ export function CorretoresPage() {
                     className={field}
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Ex.: JoÃ£o Silva"
+                    placeholder="Ex.: João Silva"
                   />
                 </label>
                 <label>
@@ -470,7 +470,7 @@ export function CorretoresPage() {
                     className={field}
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
-                    placeholder="Ex.: SÃ£o Paulo"
+                    placeholder="Ex.: São Paulo"
                   />
                 </label>
                 <label>
@@ -483,12 +483,12 @@ export function CorretoresPage() {
                   />
                 </label>
                 <label>
-                  <span className={label}>ImobiliÃ¡ria</span>
+                  <span className={label}>Imobiliária</span>
                   <input
                     className={field}
                     value={realEstateAgency}
                     onChange={(e) => setRealEstateAgency(e.target.value)}
-                    placeholder="Ex.: ImobiliÃ¡ria XYZ"
+                    placeholder="Ex.: Imobiliária XYZ"
                   />
                 </label>
                 <div>
@@ -524,7 +524,7 @@ export function CorretoresPage() {
                 <div>
                   <span className={label}>Disponibilidade semanal</span>
                   <p className="text-[12px] text-[#9CA3AF] mb-2">
-                    HorÃ¡rios em que o corretor estÃ¡ disponÃ­vel para
+                    Horários em que o corretor está disponível para
                     agendamentos.
                   </p>
                   <button
@@ -532,7 +532,7 @@ export function CorretoresPage() {
                     onClick={applyHorarioComercial}
                     className="mb-3 text-[12px] font-medium text-[#3B82F6] hover:text-[#1D4ED8]"
                   >
-                    HorÃ¡rio comercial (Segâ€“Sex 09:00â€“18:00)
+                    Horário comercial (Seg–Sex 09:00–18:00)
                   </button>
                   {editingId != null ? (
                     <>
@@ -603,7 +603,7 @@ export function CorretoresPage() {
                               <>
                                 <span className="text-[13px] flex-1">
                                   {WEEKDAYS[s.weekday]}{" "}
-                                  {s.startTime.slice(0, 5)}â€“
+                                  {s.startTime.slice(0, 5)}—
                                   {s.endTime.slice(0, 5)}{" "}
                                   {!s.active && "(inativo)"}
                                 </span>
@@ -656,7 +656,7 @@ export function CorretoresPage() {
                             onClick={addSlot}
                             className={btnGhost + " text-[12px]"}
                           >
-                            Adicionar horÃ¡rio
+                            Adicionar horário
                           </button>
                         </div>
                       </div>
@@ -678,7 +678,7 @@ export function CorretoresPage() {
                           className="flex items-center gap-2 flex-wrap"
                         >
                           <span className="text-[13px] flex-1">
-                            {WEEKDAYS[s.weekday]} {s.startTime}â€“{s.endTime}
+                            {WEEKDAYS[s.weekday]} {s.startTime}—{s.endTime}
                           </span>
                           <button
                             type="button"
@@ -720,7 +720,7 @@ export function CorretoresPage() {
                           onClick={addDraftSlot}
                           className={btnGhost + " text-[12px]"}
                         >
-                          Adicionar horÃ¡rio
+                          Adicionar horário
                         </button>
                       </div>
                     </div>
@@ -736,7 +736,7 @@ export function CorretoresPage() {
                 className={btnPrimary}
               >
                 {saving
-                  ? "Salvandoâ€¦"
+                  ? "Salvando…"
                   : editingId != null
                     ? "Salvar"
                     : "Cadastrar"}
@@ -751,4 +751,6 @@ export function CorretoresPage() {
     </div>
   );
 }
+
+
 

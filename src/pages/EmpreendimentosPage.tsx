@@ -36,10 +36,10 @@ const LANGS: { v: EmpreendimentoDTO['languageStyle']; l: string }[] = [
 ];
 
 const LANG_DESC: Record<string, string> = {
-  informal: 'ComunicaÃ§Ã£o descontraÃ­da e prÃ³xima, ideal para pÃºblico jovem.',
-  natural: 'Tom equilibrado, amigÃ¡vel e profissional.',
+  informal: 'Comunicação descontraída e próxima, ideal para público jovem.',
+  natural: 'Tom equilibrado, amigável e profissional.',
   formal: 'Linguagem respeitosa e institucional.',
-  culta: 'ComunicaÃ§Ã£o sofisticada e cerimonial.',
+  culta: 'Comunicação sofisticada e cerimonial.',
 };
 
 const TIPO_LABEL: Record<EnterpriseTipo, string> = {
@@ -55,7 +55,7 @@ const emptyVars = (): ProjectVariables => ({
   observations: '',
 });
 
-/* â”€â”€ Shared style tokens â”€â”€ */
+/* Shared style tokens */
 
 const field =
   'w-full border border-[#E5E7EB] rounded-[10px] px-3.5 py-[10px] text-[14px] leading-5 text-[#111827] placeholder:text-[#9CA3AF] bg-white transition focus:border-[#3B82F6] focus:ring-[3px] focus:ring-[rgba(59,130,246,0.15)] focus:outline-none';
@@ -83,9 +83,9 @@ export function EmpreendimentosPage() {
   const [slug, setSlug] = useState('');
   const [city, setCity] = useState('');
   const [stateUf, setStateUf] = useState('');
-  /** RegiÃ£o geogrÃ¡fica intermediÃ¡ria (IBGE) â€” mesmo campo `commercialRegion` na API */
+  /** Região geográfica intermediária (IBGE) — mesmo campo `commercialRegion` na API */
   const [commercialRegion, setCommercialRegion] = useState('');
-  /** RegiÃ£o geogrÃ¡fica imediata (IBGE), sÃ³ exibiÃ§Ã£o */
+  /** Região geográfica imediata (IBGE), só exibição */
   const [ibgeRegiaoImediata, setIbgeRegiaoImediata] = useState('');
   const [ibgeCode, setIbgeCode] = useState('');
   const [status, setStatus] = useState<'ativo' | 'inativo'>('ativo');
@@ -119,7 +119,7 @@ export function EmpreendimentosPage() {
   const [historyItems, setHistoryItems] = useState<PromptAddonsHistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
-  /* â”€â”€ Data loading (unchanged) â”€â”€ */
+  /* Data loading (unchanged) */
 
   useEffect(() => {
     if (uploadFlagsTouched) return;
@@ -283,9 +283,9 @@ export function EmpreendimentosPage() {
       .deleteKnowledge(selectedId, fileId)
       .then((res) => {
         if (res.mode === 'hard_deleted' || res.removed === true) {
-          setKnowledgeNotice('Arquivo excluÃ­do definitivamente.');
+          setKnowledgeNotice('Arquivo excluído definitivamente.');
         } else if (res.deactivated && res.message) {
-          // fallback legado para ambientes ainda nÃ£o migrados.
+          // fallback legado para ambientes ainda não migrados.
           setKnowledgeNotice(res.message);
         } else if (res.message) {
           setKnowledgeNotice(res.message);
@@ -306,7 +306,7 @@ export function EmpreendimentosPage() {
     return Number.isFinite(n) && n > 0 ? n : null;
   }, [ibgeCode]);
 
-  /** Alinha regiÃ£o IBGE ao cÃ³digo do municÃ­pio (base local) */
+  /** Alinha região IBGE ao código do município (base local) */
   useEffect(() => {
     if (selectedId == null || detail == null) return;
     const id = selectedIbgeForMunicipio;
@@ -332,11 +332,11 @@ export function EmpreendimentosPage() {
     };
   }, [selectedId, detail?.id, selectedIbgeForMunicipio]);
 
-  /* â”€â”€ Render â”€â”€ */
+  /* Render */
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
-      {/* â”€â”€ Top bar â”€â”€ */}
+      {/* Top bar */}
       <header className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
         <div className="w-full max-w-none flex items-center gap-4 px-6 lg:px-8 h-14">
           <AppNav />
@@ -346,9 +346,7 @@ export function EmpreendimentosPage() {
 
       <div className="w-full max-w-none px-6 lg:px-8 py-8 flex flex-col md:flex-row gap-6 min-h-[calc(100vh-56px)]">
 
-        {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-            SIDEBAR
-        â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+        {/* SIDEBAR */}
         <aside className="w-full md:w-[240px] shrink-0 space-y-4">
           {/* List */}
           <div className={card}>
@@ -378,7 +376,7 @@ export function EmpreendimentosPage() {
                 >
                   <option value="all">Todos</option>
                   <option value="yes">Sim</option>
-                  <option value="no">NÃ£o</option>
+                  <option value="no">Não</option>
                 </select>
               </label>
             </div>
@@ -388,7 +386,7 @@ export function EmpreendimentosPage() {
             {loading ? (
               <div className="flex items-center gap-2 py-3">
                 <div className="h-4 w-4 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin" />
-                <span className="text-[13px] text-[#6B7280]">Carregandoâ€¦</span>
+                <span className="text-[13px] text-[#6B7280]">Carregando…</span>
               </div>
             ) : list.length === 0 ? (
               <p className="text-[13px] text-[#9CA3AF] py-2">Nenhum empreendimento ainda.</p>
@@ -459,7 +457,7 @@ export function EmpreendimentosPage() {
               <div className="flex gap-4 mt-1.5 text-[13px] text-[#374151]">
                 <label className="inline-flex items-center gap-2 cursor-pointer">
                   <input type="radio" name="new-exclusivo" checked={!newExclusivo} onChange={() => setNewExclusivo(false)} />
-                  NÃ£o
+                  Não
                 </label>
                 <label className="inline-flex items-center gap-2 cursor-pointer">
                   <input type="radio" name="new-exclusivo" checked={newExclusivo} onChange={() => setNewExclusivo(true)} />
@@ -473,14 +471,12 @@ export function EmpreendimentosPage() {
               disabled={creating || !newName.trim()}
               className={`${btnPrimary} w-full mt-3`}
             >
-              {creating ? 'Criandoâ€¦' : 'Criar empreendimento'}
+              {creating ? 'Criando…' : 'Criar empreendimento'}
             </button>
           </div>
         </aside>
 
-        {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-            MAIN PANEL
-        â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+        {/* MAIN PANEL */}
         <main className="flex-1 min-w-0">
           {/* Empty state */}
           {selectedId == null ? (
@@ -496,7 +492,7 @@ export function EmpreendimentosPage() {
           ) : detailLoading && !detail ? (
             <div className={`${card} flex flex-col items-center justify-center min-h-[420px]`}>
               <div className="h-6 w-6 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin mb-3" />
-              <p className="text-[13px] text-[#6B7280]">Carregando empreendimentoâ€¦</p>
+              <p className="text-[13px] text-[#6B7280]">Carregando empreendimento…</p>
             </div>
 
           /* Error state */
@@ -538,7 +534,7 @@ export function EmpreendimentosPage() {
                 </div>
               )}
 
-              {/* â”€â”€ Card 1: Dados gerais â”€â”€ */}
+              {/* Card 1: Dados gerais */}
               <section className={card}>
                 <h2 className={heading}>Dados gerais</h2>
                 <div className="grid gap-5 sm:grid-cols-2">
@@ -567,7 +563,7 @@ export function EmpreendimentosPage() {
                     <div className="flex gap-4 mt-1.5 text-[13px] text-[#374151]">
                       <label className="inline-flex items-center gap-2 cursor-pointer">
                         <input type="radio" name="edit-exclusivo" checked={!exclusivo} onChange={() => setExclusivo(false)} />
-                        NÃ£o
+                        Não
                       </label>
                       <label className="inline-flex items-center gap-2 cursor-pointer">
                         <input type="radio" name="edit-exclusivo" checked={exclusivo} onChange={() => setExclusivo(true)} />
@@ -576,7 +572,7 @@ export function EmpreendimentosPage() {
                     </div>
                   </div>
                   <div className="block sm:col-span-2">
-                    <span className={label}>Cidade (municÃ­pio IBGE)</span>
+                    <span className={label}>Cidade (município IBGE)</span>
                     <SearchableMunicipioCombobox
                       valueIbge={selectedIbgeForMunicipio}
                       onSelect={(m: MunicipioIbge) => {
@@ -594,33 +590,33 @@ export function EmpreendimentosPage() {
                         setIbgeRegiaoImediata('');
                       }}
                       disabled={saving}
-                      placeholder="Digite pelo menos 2 letras (ex.: Atibaia, JacareÃ­)â€¦"
+                      placeholder="Digite pelo menos 2 letras (ex.: Atibaia, Jacareí)…"
                     />
                     <p className="mt-1.5 text-[12px] text-[#9CA3AF]">
-                      Lista oficial IBGE (arquivo local). A UF e a regiÃ£o geogrÃ¡fica sÃ£o preenchidas ao escolher o
-                      municÃ­pio.
+                      Lista oficial IBGE (arquivo local). A UF e a região geográfica são preenchidas ao escolher o
+                      município.
                       {stateUf ? (
                         <span className="ml-1 font-medium text-[#6B7280]"> UF: {stateUf}</span>
                       ) : null}
                     </p>
                   </div>
                   <div className="block sm:col-span-2">
-                    <span className={label}>RegiÃ£o geogrÃ¡fica intermediÃ¡ria (IBGE)</span>
+                    <span className={label}>Região geográfica intermediária (IBGE)</span>
                     <div
                       className={`${field} bg-[#F9FAFB] text-[#374151] cursor-default`}
-                      title="Derivada do municÃ­pio â€” usada para busca por proximidade (ex.: mesma RGINT)"
+                      title="Derivada do município — usada para busca por proximidade (ex.: mesma RGINT)"
                     >
-                      {commercialRegion || 'â€”'}
+                      {commercialRegion || '—'}
                     </div>
                     {ibgeRegiaoImediata ? (
                       <p className="mt-1.5 text-[12px] text-[#9CA3AF]">
-                        RegiÃ£o geogrÃ¡fica imediata (IBGE):{' '}
+                        Região geográfica imediata (IBGE):{' '}
                         <span className="font-medium text-[#6B7280]">{ibgeRegiaoImediata}</span>
                       </p>
                     ) : (
                       <p className="mt-1.5 text-[12px] text-[#9CA3AF]">
-                        Preenchida ao selecionar o municÃ­pio. A intermediÃ¡ria agrupa mais cidades e Ã© a mais indicada para
-                        a ANA sugerir alternativas na regiÃ£o quando nÃ£o houver na cidade exata.
+                        Preenchida ao selecionar o município. A intermediária agrupa mais cidades e é a mais indicada para
+                        a ANA sugerir alternativas na região quando não houver na cidade exata.
                       </p>
                     )}
                   </div>
@@ -635,16 +631,16 @@ export function EmpreendimentosPage() {
                 <details className="mt-5 group">
                   <summary className="text-[13px] font-medium text-[#6B7280] cursor-pointer list-none flex items-center gap-2 [&::-webkit-details-marker]:hidden">
                     <span className="inline-flex w-4 h-4 items-center justify-center rounded border border-[#E5E7EB] text-[10px] text-[#9CA3AF] group-open:rotate-90 transition-transform">
-                      â€º
+                      …
                     </span>
-                    Uso interno â€” cÃ³digo IBGE (opcional)
+                    Uso interno — código IBGE (opcional)
                   </summary>
                   <p className="text-[12px] text-[#9CA3AF] mt-2 mb-2 max-w-xl">
-                    O cÃ³digo IBGE Ã© preenchido automaticamente ao selecionar o municÃ­pio. VocÃª pode editar apenas em caso
-                    de correÃ§Ã£o pontual.
+                    O código IBGE é preenchido automaticamente ao selecionar o município. Você pode editar apenas em caso
+                    de correção pontual.
                   </p>
                   <label className="block max-w-[200px]">
-                    <span className={label}>CÃ³digo IBGE do municÃ­pio</span>
+                    <span className={label}>Código IBGE do município</span>
                     <input
                       className={field}
                       inputMode="numeric"
@@ -665,11 +661,11 @@ export function EmpreendimentosPage() {
                 </details>
               </section>
 
-              {/* â”€â”€ Card 2: Linguagem â”€â”€ */}
+              {/* Card 2: Linguagem */}
               <section className={card}>
                 <h2 className={heading}>Linguagem</h2>
                 <label className="block max-w-[280px]">
-                  <span className={label}>Estilo de comunicaÃ§Ã£o da Ana</span>
+                  <span className={label}>Estilo de comunicação da Ana</span>
                   <select
                     className={`${fieldSelect} w-full`}
                     value={languageStyle}
@@ -683,16 +679,16 @@ export function EmpreendimentosPage() {
                 </p>
               </section>
 
-              {/* â”€â”€ Card 3: VariÃ¡veis â”€â”€ */}
+              {/* Card 3: Variáveis */}
               <section className={card}>
-                <h2 className={heading}>VariÃ¡veis comerciais</h2>
-                <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-5">Dados que a Ana usa como fonte primÃ¡ria de resposta.</p>
+                <h2 className={heading}>Variáveis comerciais</h2>
+                <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-5">Dados que a Ana usa como fonte primária de resposta.</p>
                 <div className="grid gap-5">
                   {([
-                    ['priceLabel', 'Valor / preÃ§o', 'Ex.: A partir de R$ 289.000'],
-                    ['commercialConditions', 'CondiÃ§Ãµes comerciais', 'Ex.: Entrada facilitada em atÃ© 60x'],
-                    ['availability', 'Disponibilidade', 'Ex.: Unidades de 2 e 3 quartos disponÃ­veis'],
-                    ['observations', 'ObservaÃ§Ãµes', 'InformaÃ§Ãµes adicionais para o agente'],
+                    ['priceLabel', 'Valor / preço', 'Ex.: A partir de R$ 289.000'],
+                    ['commercialConditions', 'Condições comerciais', 'Ex.: Entrada facilitada em até 60x'],
+                    ['availability', 'Disponibilidade', 'Ex.: Unidades de 2 e 3 quartos disponíveis'],
+                    ['observations', 'Observações', 'Informações adicionais para o agente'],
                   ] as const).map(([k, lbl, ph]) => (
                     <label key={k} className="block">
                       <span className={label}>{lbl}</span>
@@ -707,12 +703,12 @@ export function EmpreendimentosPage() {
                 </div>
               </section>
 
-              {/* â”€â”€ Card 4: Arquivos â”€â”€ */}
+              {/* Card 4: Arquivos */}
               <section className={card}>
                 <h2 className={heading}>Arquivos</h2>
                 <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-5">
                   Cada arquivo pode ser usado como base de conhecimento da Ana e/ou liberado para envio ao cliente. O envio
-                  depende da permissÃ£o do prÃ³prio arquivo, nÃ£o do empreendimento inteiro.
+                  depende da permissão do próprio arquivo, não do empreendimento inteiro.
                 </p>
 
                 {/* Upload row */}
@@ -761,15 +757,15 @@ export function EmpreendimentosPage() {
                   <label className="relative cursor-pointer">
                     <span className="inline-flex items-center gap-2 text-[13px] font-semibold text-[#F97316] bg-[#FFF7ED] rounded-[10px] px-5 py-[10px] hover:bg-[#FFEDD5] active:bg-[#FED7AA] transition-colors">
                       <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                      {uploading ? 'Enviandoâ€¦' : 'Enviar arquivo'}
+                      {uploading ? 'Enviando…' : 'Enviar arquivo'}
                     </span>
                     <input type="file" accept=".pdf,.txt,.md" onChange={onUpload} disabled={uploading} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                   </label>
-                  <span className="text-[11px] text-[#9CA3AF]">PDF, TXT ou MD (atÃ© 100 MB)</span>
+                  <span className="text-[11px] text-[#9CA3AF]">PDF, TXT ou MD (até 100 MB)</span>
                   </div>
                 </div>
 
-                {/* Arquivos desativados ficam ocultos por padrÃ£o; API envia isActive alinhado a is_active */}
+                {/* Arquivos desativados ficam ocultos por padrão; API envia isActive alinhado a is_active */}
                 {knowledgeInactive.length > 0 && (
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                     <p className="text-[12px] text-[#6B7280]">
@@ -881,11 +877,11 @@ export function EmpreendimentosPage() {
                 )}
               </section>
 
-              {/* â”€â”€ Card 5: Regras adicionais â”€â”€ */}
+              {/* Card 5: Regras adicionais */}
               <section className={card}>
                 <h2 className={heading}>Regras adicionais</h2>
                 <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-4">
-                  InstruÃ§Ãµes extras injetadas no prompt da Ana. Uma por linha.
+                  Instruções extras injetadas no prompt da Ana. Uma por linha.
                 </p>
                 <div className="flex gap-2 border-b border-[#E5E7EB] mb-4">
                   <button
@@ -895,7 +891,7 @@ export function EmpreendimentosPage() {
                       regrasTab === 'regras' ? 'border-[#F97316] text-[#111827]' : 'border-transparent text-[#6B7280] hover:text-[#111827]'
                     }`}
                   >
-                    EdiÃ§Ã£o
+                    Edição
                   </button>
                   <button
                     type="button"
@@ -904,7 +900,7 @@ export function EmpreendimentosPage() {
                       regrasTab === 'historico' ? 'border-[#F97316] text-[#111827]' : 'border-transparent text-[#6B7280] hover:text-[#111827]'
                     }`}
                   >
-                    HistÃ³rico
+                    Histórico
                   </button>
                 </div>
                 {regrasTab === 'regras' ? (
@@ -912,14 +908,14 @@ export function EmpreendimentosPage() {
                     className={`${field} min-h-[130px] resize-y font-mono text-[13px]`}
                     value={addonsText}
                     onChange={(e) => setAddonsText(e.target.value)}
-                    placeholder={"Priorizar agendamento de visita\nNÃ£o mencionar concorrentes\nSempre perguntar se jÃ¡ visitou o decorado"}
+                    placeholder={"Priorizar agendamento de visita\nNão mencionar concorrentes\nSempre perguntar se já visitou o decorado"}
                   />
                 ) : (
                   <div className="min-h-[130px]">
                     {historyLoading ? (
-                      <p className="text-[13px] text-[#9CA3AF]">Carregandoâ€¦</p>
+                      <p className="text-[13px] text-[#9CA3AF]">Carregando…</p>
                     ) : historyItems.length === 0 ? (
-                      <p className="text-[13px] text-[#9CA3AF]">Nenhum histÃ³rico de alteraÃ§Ãµes ainda.</p>
+                      <p className="text-[13px] text-[#9CA3AF]">Nenhum histórico de alterações ainda.</p>
                     ) : (
                       <ul className="space-y-3 max-h-[280px] overflow-y-auto">
                         {historyItems.map((h) => (
@@ -929,7 +925,7 @@ export function EmpreendimentosPage() {
                           >
                             <p className="text-[11px] text-[#9CA3AF] mb-1">
                               {new Date(h.createdAt).toLocaleString('pt-BR')}
-                              {h.createdByName ? ` Â· ${h.createdByName}` : ''}
+                              {h.createdByName ? ` · ${h.createdByName}` : ''}
                             </p>
                             {h.ruleText}
                           </li>
@@ -940,15 +936,15 @@ export function EmpreendimentosPage() {
                 )}
               </section>
 
-              {/* â”€â”€ Action bar â”€â”€ */}
+              {/* Action bar */}
               <div className="flex items-center gap-4 pt-2 pb-10">
                 <button type="button" onClick={save} disabled={saving} className={btnPrimary}>
                   {saving ? (
                     <>
                       <div className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin mr-2" />
-                      Salvandoâ€¦
+                      Salvando…
                     </>
-                  ) : 'Salvar alteraÃ§Ãµes'}
+                  ) : 'Salvar alterações'}
                 </button>
               </div>
             </div>
@@ -958,4 +954,6 @@ export function EmpreendimentosPage() {
     </div>
   );
 }
+
+
 

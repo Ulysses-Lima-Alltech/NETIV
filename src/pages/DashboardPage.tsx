@@ -20,18 +20,18 @@ const selectField =
 
 const PERIOD_OPTIONS: { value: DashboardPeriod; label: string }[] = [
   { value: 'today', label: 'Hoje' },
-  { value: '7d', label: 'Ãšltimos 7 dias' },
-  { value: '30d', label: 'Ãšltimos 30 dias' },
+  { value: '7d', label: 'Últimos 7 dias' },
+  { value: '30d', label: 'Últimos 30 dias' },
 ];
 
 const ATTENTION_OPTIONS: { value: DashboardAttentionType; label: string }[] = [
   { value: 'all', label: 'Todos' },
   { value: 'no_first_response', label: 'Sem primeira resposta' },
   { value: 'novo_sem_projeto', label: 'Novo sem projeto' },
-  { value: 'inactive_12_24h', label: 'Sem atividade 12hâ€“24h' },
+  { value: 'inactive_12_24h', label: 'Sem atividade 12h–24h' },
 ];
 
-/** Parte 9: azul volume, verde qualificado, laranja (handoff/transiÃ§Ã£o), roxo carteira */
+/** Parte 9: azul volume, verde qualificado, laranja (handoff/transição), roxo carteira */
 const CLASS_COLORS: Record<string, string> = {
   Novo: 'bg-[#60A5FA]',
   Qualificado: 'bg-[#34D399]',
@@ -58,12 +58,12 @@ function KpiCard({
 }
 
 function formatUsd(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return 'â€”';
+  if (value == null || !Number.isFinite(value)) return '—';
   return `US$ ${value.toFixed(2)}`;
 }
 
 function formatAiCostTitle(row: DashboardOverview['enterprises'][number]): string {
-  return `Rastreado: ${formatUsd(row.llmTrackedCostUsd)} | Estimado histÃ³rico: ${formatUsd(row.llmEstimatedCostUsd)}`;
+  return `Rastreado: ${formatUsd(row.llmTrackedCostUsd)} | Estimado histórico: ${formatUsd(row.llmEstimatedCostUsd)}`;
 }
 
 function TimelineChart({ data }: { data: DashboardOverview['timeline'] }) {
@@ -97,7 +97,7 @@ function TimelineChart({ data }: { data: DashboardOverview['timeline'] }) {
       </svg>
       <div className="flex flex-wrap justify-center gap-4 mt-2 text-[11px] text-[#6B7280]">
         <span className="inline-flex items-center gap-1.5">
-          <span className="w-3 h-0.5 bg-[#3B82F6] rounded" /> Novas conversas por dia (created_at, America/SÃ£o Paulo)
+          <span className="w-3 h-0.5 bg-[#3B82F6] rounded" /> Novas conversas por dia (created_at, America/São Paulo)
         </span>
       </div>
       <div className="flex justify-between mt-3 text-[10px] text-[#9CA3AF] px-1">
@@ -156,7 +156,7 @@ export function DashboardPage() {
       })
       .then((r) => setAttentionItems(r.attentionItems))
       .catch((e) =>
-        setAttentionErr(e instanceof Error ? e.message : 'Erro ao carregar itens de atenÃ§Ã£o')
+        setAttentionErr(e instanceof Error ? e.message : 'Erro ao carregar itens de atenção')
       )
       .finally(() => setAttentionLoading(false));
   }, [enterpriseId, attentionType]);
@@ -190,7 +190,7 @@ export function DashboardPage() {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (e) {
-      setCsvErr(e instanceof Error ? e.message : 'NÃ£o foi possÃ­vel exportar o CSV. Tente de novo.');
+      setCsvErr(e instanceof Error ? e.message : 'Não foi possível exportar o CSV. Tente de novo.');
     } finally {
       setCsvLoading(false);
     }
@@ -213,7 +213,7 @@ export function DashboardPage() {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (e) {
-      setCsvErr(e instanceof Error ? e.message : 'NÃ£o foi possÃ­vel exportar o CSV para Qmape. Tente de novo.');
+      setCsvErr(e instanceof Error ? e.message : 'Não foi possível exportar o CSV para Qmape. Tente de novo.');
     } finally {
       setCsvLoading(false);
     }
@@ -237,7 +237,7 @@ export function DashboardPage() {
         <div className={`${card} py-4 px-5`}>
           <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-4">
             <label className="block sm:min-w-[200px]">
-              <span className="block text-[12px] font-medium text-[#6B7280] mb-1">PerÃ­odo</span>
+              <span className="block text-[12px] font-medium text-[#6B7280] mb-1">Período</span>
               <select
                 className={`${selectField} w-full sm:w-auto min-w-[180px]`}
                 value={period}
@@ -278,7 +278,7 @@ export function DashboardPage() {
                 {csvLoading ? (
                   <>
                     <span className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                    Exportandoâ€¦
+                    Exportando…
                   </>
                 ) : (
                   'Exportar CSV'
@@ -293,7 +293,7 @@ export function DashboardPage() {
                 {csvLoading ? (
                   <>
                     <span className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                    Exportandoâ€¦
+                    Exportando…
                   </>
                 ) : (
                   'Exportar Qmape'
@@ -304,12 +304,12 @@ export function DashboardPage() {
           </div>
           <p className="text-[12px] text-[#9CA3AF] mt-3 leading-relaxed">
             <strong className="text-[#6B7280] font-medium">Exportar CSV:</strong> conversas com{' '}
-            <code className="text-[11px]">created_at</code> no perÃ­odo e empreendimento acima (recorte global). As colunas incluem sinais
-            operacionais de atenÃ§Ã£o, mas o arquivo nÃ£o Ã© filtrado pelo campo &quot;AtuaÃ§Ã£o&quot; da seÃ§Ã£o abaixo.
+            <code className="text-[11px]">created_at</code> no período e empreendimento acima (recorte global). As colunas incluem sinais
+            operacionais de atenção, mas o arquivo não é filtrado pelo campo &quot;Atuação&quot; da seção abaixo.
           </p>
           <p className="text-[12px] text-[#9CA3AF] mt-2 leading-relaxed">
-            <strong className="text-[#6B7280] font-medium">Carteira:</strong> contato sem avanÃ§o no momento, mas com potencial de retomada
-            futura â€” nÃ£o indica descarte ou spam.
+            <strong className="text-[#6B7280] font-medium">Carteira:</strong> contato sem avanço no momento, mas com potencial de retomada
+            futura — não indica descarte ou spam.
           </p>
         </div>
 
@@ -320,56 +320,56 @@ export function DashboardPage() {
         {loading && !data ? (
           <div className={`${card} flex items-center justify-center gap-3 py-16`}>
             <div className="h-6 w-6 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin" />
-            <span className="text-[#6B7280] text-[14px]">Carregando indicadoresâ€¦</span>
+            <span className="text-[#6B7280] text-[14px]">Carregando indicadores…</span>
           </div>
         ) : data ? (
           <>
             <section>
               <h2 className={heading}>Indicadores</h2>
               <p className={sub}>
-                Handoff e demais funis usam apenas o campo <strong>classification</strong> (nÃ£o a flag <code className="text-[12px]">handoff</code>).
-                Estado <strong>atual</strong> no filtro, exceto &quot;Novas conversas hoje&quot; (dia em America/SÃ£o Paulo) e o grÃ¡fico (perÃ­odo
+                Handoff e demais funis usam apenas o campo <strong>classification</strong> (não a flag <code className="text-[12px]">handoff</code>).
+                Estado <strong>atual</strong> no filtro, exceto &quot;Novas conversas hoje&quot; (dia em America/São Paulo) e o gráfico (período
                 selecionado).
               </p>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <KpiCard title="Novas conversas hoje" value={data.kpis.newConversationsToday} hint="created_at no dia (America/SÃ£o Paulo)" />
+                <KpiCard title="Novas conversas hoje" value={data.kpis.newConversationsToday} hint="created_at no dia (America/São Paulo)" />
                 <KpiCard
                   title="Conversas ativas agora"
                   value={data.kpis.activeConversations}
-                  hint="ClassificaÃ§Ã£o Novo ou Qualificado (exclui Carteira e Handoff)"
+                  hint="Classificação Novo ou Qualificado (exclui Carteira e Handoff)"
                 />
                 <KpiCard title="Qualificados atuais" value={data.kpis.qualified} />
                 <KpiCard title="Handoffs atuais" value={data.kpis.handoffs} />
                 <KpiCard title="Carteira atual" value={data.kpis.carteira} />
                 <KpiCard
-                  title="Tempo mÃ©dio de primeira resposta"
+                  title="Tempo médio de primeira resposta"
                   value={formatDurationSeconds(data.kpis.avgFirstResponseSeconds)}
                   hint="Entre conversation.created_at e MIN(message.created_at) com role assistant"
                 />
                 <KpiCard
                   title="Sem primeira resposta"
                   value={data.kpis.noFirstResponse}
-                  hint="Existe mensagem user e nÃ£o existe mensagem assistant"
+                  hint="Existe mensagem user e não existe mensagem assistant"
                 />
               </div>
             </section>
 
             <div className="grid lg:grid-cols-2 gap-6">
               <section className={card}>
-                <h2 className={heading}>EvoluÃ§Ã£o por dia</h2>
-                <p className={sub}>Novas conversas por dia (conversations.created_at, fuso America/SÃ£o Paulo).</p>
+                <h2 className={heading}>Evolução por dia</h2>
+                <p className={sub}>Novas conversas por dia (conversations.created_at, fuso America/São Paulo).</p>
                 {data.timeline.length === 0 ? (
-                  <p className="text-[13px] text-[#9CA3AF]">Sem dados no perÃ­odo.</p>
+                  <p className="text-[13px] text-[#9CA3AF]">Sem dados no período.</p>
                 ) : (
                   <TimelineChart data={data.timeline} />
                 )}
               </section>
 
               <section className={card}>
-                <h2 className={heading}>DistribuiÃ§Ã£o atual dos leads</h2>
+                <h2 className={heading}>Distribuição atual dos leads</h2>
                 <p className={sub}>
-                  Snapshot do estado <strong>atual</strong> (sem filtro de perÃ­odo). Contagem sÃ³ pela <strong>classification</strong> atual â€” sem
-                  histÃ³rico.
+                  Snapshot do estado <strong>atual</strong> (sem filtro de período). Contagem só pela <strong>classification</strong> atual — sem
+                  histórico.
                 </p>
                 <ul className="space-y-4">
                   {data.classification.map((row) => (
@@ -393,8 +393,8 @@ export function DashboardPage() {
             <section className={card}>
               <h2 className={heading}>Desempenho por empreendimento</h2>
               <p className={sub}>
-                VisÃ£o <strong>atual</strong> por empreendimento (totais e classificaÃ§Ãµes no estado de hoje). Custo IA pode incluir rastreio real e
-                estimativa histÃ³rica.
+                Visão <strong>atual</strong> por empreendimento (totais e classificações no estado de hoje). Custo IA pode incluir rastreio real e
+                estimativa histórica.
               </p>
               <div className="overflow-x-auto">
                 <table className="w-full text-[13px] text-left">
@@ -441,15 +441,15 @@ export function DashboardPage() {
             <section className={card}>
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-5">
                 <div className="min-w-0 flex-1">
-                  <h2 className={heading}>Itens que exigem atenÃ§Ã£o</h2>
+                  <h2 className={heading}>Itens que exigem atenção</h2>
                   <p className={`${sub} !mb-0`}>
-                    Filtro <strong className="text-[#6B7280] font-medium">AtuaÃ§Ã£o</strong> vale sÃ³ para esta lista (nÃ£o altera os indicadores
-                    acima). Com empreendimento selecionado no topo, &quot;Novo sem projeto&quot; tende a sumir (sem vÃ­nculo de projeto). CritÃ©rios:
-                    sem primeira resposta; novo sem projeto; Novo/Qualificado sem atividade entre 12h e 24h (Ãºltima mensagem ou criaÃ§Ã£o).
+                    Filtro <strong className="text-[#6B7280] font-medium">Atuação</strong> vale só para esta lista (não altera os indicadores
+                    acima). Com empreendimento selecionado no topo, &quot;Novo sem projeto&quot; tende a sumir (sem vínculo de projeto). Critérios:
+                    sem primeira resposta; novo sem projeto; Novo/Qualificado sem atividade entre 12h e 24h (última mensagem ou criação).
                   </p>
                 </div>
                 <label className="block shrink-0 w-full sm:w-auto sm:min-w-[220px]">
-                  <span className="block text-[12px] font-medium text-[#6B7280] mb-1">AtuaÃ§Ã£o (esta seÃ§Ã£o)</span>
+                  <span className="block text-[12px] font-medium text-[#6B7280] mb-1">Atuação (esta seção)</span>
                   <select
                     className={`${selectField} w-full min-w-[200px]`}
                     value={attentionType}
@@ -469,12 +469,12 @@ export function DashboardPage() {
                 </div>
               )}
               {attentionLoading && attentionItems.length > 0 && (
-                <p className="text-[12px] text-[#9CA3AF] mb-3">Atualizando listaâ€¦</p>
+                <p className="text-[12px] text-[#9CA3AF] mb-3">Atualizando lista…</p>
               )}
               {attentionLoading && attentionItems.length === 0 ? (
                 <div className="flex items-center justify-center gap-3 py-10">
                   <div className="h-5 w-5 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin" />
-                  <span className="text-[#6B7280] text-[13px]">Carregando itensâ€¦</span>
+                  <span className="text-[#6B7280] text-[13px]">Carregando itens…</span>
                 </div>
               ) : attentionItems.length === 0 ? (
                 <p className="text-[13px] text-[#9CA3AF]">Nenhum item listado no momento.</p>
@@ -496,7 +496,7 @@ export function DashboardPage() {
                         to={`/inbox?conversationId=${item.id}`}
                         className="shrink-0 text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8]"
                       >
-                        Ir Ã  Inbox â†’
+                        Ir à Inbox →
                       </Link>
                     </li>
                   ))}
@@ -509,4 +509,6 @@ export function DashboardPage() {
     </div>
   );
 }
+
+
 

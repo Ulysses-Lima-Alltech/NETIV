@@ -18,7 +18,7 @@ const ROLE_OPTIONS_FULL: { value: UserRole; label: string }[] = [
   { value: 'ADMIN', label: 'Administrador' },
 ];
 
-/** Perfil gerencial sÃ³ cria/edita colaboradores (alinhado ao backend). */
+/** Perfil gerencial só cria/edita colaboradores (alinhado ao backend). */
 const ROLE_OPTIONS_MANAGERIAL: { value: UserRole; label: string }[] = [
   { value: 'COLLABORATOR', label: 'Colaborador' },
 ];
@@ -114,7 +114,7 @@ export function UsersPage() {
       setCreateOpen(false);
       loadList();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao criar usuÃ¡rio.');
+      setError(err instanceof Error ? err.message : 'Erro ao criar usuário.');
     } finally {
       setSaving(false);
     }
@@ -171,25 +171,25 @@ export function UsersPage() {
       <header className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
         <div className="w-full max-w-none flex items-center gap-4 px-6 lg:px-8 h-14">
           <AppNav />
-          <h1 className="text-[15px] font-semibold text-[#111827]">UsuÃ¡rios</h1>
+          <h1 className="text-[15px] font-semibold text-[#111827]">Usuários</h1>
         </div>
       </header>
 
       <div className="w-full max-w-none px-6 lg:px-8 py-8">
         <p className="text-[13px] text-[#6B7280] mb-6">
           {isManagerial
-            ? 'Como perfil gerencial, vocÃª pode criar e administrar apenas colaboradores. Administradores e perfis gerenciais nÃ£o podem ser alterados por aqui.'
-            : 'Gerencie usuÃ¡rios e perfis de acesso (Administrador, Gerencial e Colaborador).'}
+            ? 'Como perfil gerencial, você pode criar e administrar apenas colaboradores. Administradores e perfis gerenciais não podem ser alterados por aqui.'
+            : 'Gerencie usuários e perfis de acesso (Administrador, Gerencial e Colaborador).'}
         </p>
         <div className="flex justify-end mb-4">
           <button type="button" onClick={openCreate} className={btnPrimary}>
-            Novo usuÃ¡rio
+            Novo usuário
           </button>
         </div>
 
         <div className={card}>
           {loading ? (
-            <div className="py-8 text-center text-[13px] text-[#6B7280]">Carregandoâ€¦</div>
+            <div className="py-8 text-center text-[13px] text-[#6B7280]">Carregando…</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-[13px]">
@@ -199,7 +199,7 @@ export function UsersPage() {
                     <th className="py-3 pr-4 font-semibold text-[#111827]">E-mail</th>
                     <th className="py-3 pr-4 font-semibold text-[#111827]">Perfil</th>
                     <th className="py-3 pr-4 font-semibold text-[#111827]">Ativo</th>
-                    <th className="py-3 font-semibold text-[#111827]">AÃ§Ãµes</th>
+                    <th className="py-3 font-semibold text-[#111827]">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -210,7 +210,7 @@ export function UsersPage() {
                       <td className="py-3 pr-4">
                         <span className={profileAccentClass(u.role)}>{userRoleLabel(u.role)}</span>
                       </td>
-                      <td className="py-3 pr-4">{u.active ? 'Sim' : 'NÃ£o'}</td>
+                      <td className="py-3 pr-4">{u.active ? 'Sim' : 'Não'}</td>
                       <td className="py-3 flex items-center gap-2">
                         {canManageUserRow(u) ? (
                           <>
@@ -231,7 +231,7 @@ export function UsersPage() {
                             )}
                           </>
                         ) : (
-                          <span className="text-[#9CA3AF]">â€”</span>
+                          <span className="text-[#9CA3AF]">—</span>
                         )}
                       </td>
                     </tr>
@@ -239,7 +239,7 @@ export function UsersPage() {
                 </tbody>
               </table>
               {users.length === 0 && (
-                <p className="py-6 text-center text-[13px] text-[#9CA3AF]">Nenhum usuÃ¡rio cadastrado.</p>
+                <p className="py-6 text-center text-[13px] text-[#9CA3AF]">Nenhum usuário cadastrado.</p>
               )}
             </div>
           )}
@@ -249,7 +249,7 @@ export function UsersPage() {
       {createOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setCreateOpen(false)}>
           <div className="bg-white rounded-[12px] border border-[#E5E7EB] shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-[18px] font-semibold text-[#111827] mb-4">Novo usuÃ¡rio</h2>
+            <h2 className="text-[18px] font-semibold text-[#111827] mb-4">Novo usuário</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               {error && <p className="text-[13px] text-red-600">{error}</p>}
               <div>
@@ -262,7 +262,7 @@ export function UsersPage() {
               </div>
               <div>
                 <label className={label}>Senha</label>
-                <input type="password" value={formPassword} onChange={(e) => setFormPassword(e.target.value)} className={field} required minLength={8} placeholder="MÃ­n. 8 caracteres" />
+                <input type="password" value={formPassword} onChange={(e) => setFormPassword(e.target.value)} className={field} required minLength={8} placeholder="Mín. 8 caracteres" />
               </div>
               <div>
                 <label className={label}>Perfil</label>
@@ -279,7 +279,7 @@ export function UsersPage() {
                 <label htmlFor="create-active" className="text-[13px] text-[#6B7280]">Ativo</label>
               </div>
               <div className="flex gap-2 pt-2">
-                <button type="submit" disabled={saving} className={btnPrimary}>{saving ? 'Salvandoâ€¦' : 'Criar'}</button>
+                <button type="submit" disabled={saving} className={btnPrimary}>{saving ? 'Salvando…' : 'Criar'}</button>
                 <button type="button" onClick={() => setCreateOpen(false)} className={btnSecondary}>Cancelar</button>
               </div>
             </form>
@@ -290,7 +290,7 @@ export function UsersPage() {
       {editOpen && editingUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setEditOpen(false)}>
           <div className="bg-white rounded-[12px] border border-[#E5E7EB] shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-[18px] font-semibold text-[#111827] mb-4">Editar usuÃ¡rio</h2>
+            <h2 className="text-[18px] font-semibold text-[#111827] mb-4">Editar usuário</h2>
             <form onSubmit={handleUpdate} className="space-y-4">
               {error && <p className="text-[13px] text-red-600">{error}</p>}
               <div>
@@ -315,14 +315,14 @@ export function UsersPage() {
                     </option>
                   ))}
                 </select>
-                {currentUser?.id === editingUser.id && <p className="text-[12px] text-[#6B7280] mt-1">VocÃª nÃ£o pode alterar seu prÃ³prio perfil.</p>}
+                {currentUser?.id === editingUser.id && <p className="text-[12px] text-[#6B7280] mt-1">Você não pode alterar seu próprio perfil.</p>}
               </div>
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="edit-active" checked={formActive} onChange={(e) => setFormActive(e.target.checked)} disabled={currentUser?.id === editingUser.id} />
                 <label htmlFor="edit-active" className="text-[13px] text-[#6B7280]">Ativo</label>
               </div>
               <div className="flex gap-2 pt-2">
-                <button type="submit" disabled={saving} className={btnPrimary}>{saving ? 'Salvandoâ€¦' : 'Salvar'}</button>
+                <button type="submit" disabled={saving} className={btnPrimary}>{saving ? 'Salvando…' : 'Salvar'}</button>
                 <button type="button" onClick={() => setEditOpen(false)} className={btnSecondary}>Cancelar</button>
               </div>
             </form>
@@ -333,15 +333,15 @@ export function UsersPage() {
       {passwordOpen && editingUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setPasswordOpen(false)}>
           <div className="bg-white rounded-[12px] border border-[#E5E7EB] shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-[18px] font-semibold text-[#111827] mb-4">Alterar senha â€” {editingUser.email}</h2>
+            <h2 className="text-[18px] font-semibold text-[#111827] mb-4">Alterar senha — {editingUser.email}</h2>
             <form onSubmit={handlePassword} className="space-y-4">
               {error && <p className="text-[13px] text-red-600">{error}</p>}
               <div>
                 <label className={label}>Nova senha</label>
-                <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className={field} required minLength={8} placeholder="MÃ­n. 8 caracteres" />
+                <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className={field} required minLength={8} placeholder="Mín. 8 caracteres" />
               </div>
               <div className="flex gap-2 pt-2">
-                <button type="submit" disabled={saving} className={btnPrimary}>{saving ? 'Salvandoâ€¦' : 'Alterar senha'}</button>
+                <button type="submit" disabled={saving} className={btnPrimary}>{saving ? 'Salvando…' : 'Alterar senha'}</button>
                 <button type="button" onClick={() => setPasswordOpen(false)} className={btnSecondary}>Cancelar</button>
               </div>
             </form>
@@ -351,4 +351,6 @@ export function UsersPage() {
     </div>
   );
 }
+
+
 
