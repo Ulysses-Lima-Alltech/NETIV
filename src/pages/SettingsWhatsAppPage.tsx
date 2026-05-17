@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import {
@@ -75,14 +75,14 @@ export function SettingsWhatsAppPage() {
           const d = whatsappResult.value;
           setConfig(d);
           setForm((f) => ({ ...f, whatsappPhoneNumberId: d.whatsappPhoneNumberId, whatsappBusinessAccountId: d.whatsappBusinessAccountId, apiVersion: d.apiVersion, defaultSendPhoneNumber: d.defaultSendPhoneNumber, defaultCountryCode: d.defaultCountryCode, enabled: d.enabled, metaAccessTokenInput: '', webhookVerifyTokenInput: '' }));
-        } else { setLoadError(whatsappResult.reason?.message ?? 'Erro ao carregar configurações do WhatsApp.'); }
+        } else { setLoadError(whatsappResult.reason?.message ?? 'Erro ao carregar configuraÃ§Ãµes do WhatsApp.'); }
         if (aiResult.status === 'fulfilled') {
           const d = aiResult.value;
           setAiConfig(d);
           setAiForm((f) => ({ ...f, openaiBaseUrl: d.openaiBaseUrl, modelColdLead: d.modelColdLead, modelHotLead: d.modelHotLead, temperature: d.temperature, maxTokens: d.maxTokens, leadScoreThreshold: d.leadScoreThreshold, aiEnabled: d.aiEnabled, openaiApiKeyInput: '' }));
-        } else { setAiMessage({ type: 'error', text: aiResult.reason?.message ?? 'Erro ao carregar configurações de IA.' }); }
+        } else { setAiMessage({ type: 'error', text: aiResult.reason?.message ?? 'Erro ao carregar configuraÃ§Ãµes de IA.' }); }
         if (whatsappResult.status === 'rejected' && aiResult.status === 'rejected') {
-          setLoadError(whatsappResult.reason?.message ?? aiResult.reason?.message ?? 'Erro ao carregar configurações.');
+          setLoadError(whatsappResult.reason?.message ?? aiResult.reason?.message ?? 'Erro ao carregar configuraÃ§Ãµes.');
         }
       })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -100,7 +100,7 @@ export function SettingsWhatsAppPage() {
     if (form.metaAccessTokenInput) payload.metaAccessToken = form.metaAccessTokenInput;
     if (form.webhookVerifyTokenInput) payload.webhookVerifyToken = form.webhookVerifyTokenInput;
     settingsApi.putWhatsApp(payload)
-      .then((data) => { setConfig(data); setForm((f) => ({ ...f, metaAccessTokenInput: '', webhookVerifyTokenInput: '' })); setMessage({ type: 'success', text: 'Configurações salvas com sucesso.' }); })
+      .then((data) => { setConfig(data); setForm((f) => ({ ...f, metaAccessTokenInput: '', webhookVerifyTokenInput: '' })); setMessage({ type: 'success', text: 'ConfiguraÃ§Ãµes salvas com sucesso.' }); })
       .catch((err: Error) => { setMessage({ type: 'error', text: err.message ?? 'Erro ao salvar.' }); })
       .finally(() => setSaving(false));
   };
@@ -108,7 +108,7 @@ export function SettingsWhatsAppPage() {
   const handleTestConnection = () => {
     setTesting(true); setMessage(null);
     settingsApi.testWhatsApp()
-      .then((data) => { setMessage({ type: 'success', text: data.message ?? 'Conexão com a Meta validada com sucesso.' }); })
+      .then((data) => { setMessage({ type: 'success', text: data.message ?? 'ConexÃ£o com a Meta validada com sucesso.' }); })
       .catch((err: Error) => { setMessage({ type: 'error', text: err.message ?? 'Erro ao verificar.' }); })
       .finally(() => setTesting(false));
   };
@@ -118,7 +118,7 @@ export function SettingsWhatsAppPage() {
     const payload: AIConfigUpdate = { openaiBaseUrl: aiForm.openaiBaseUrl === '' ? null : aiForm.openaiBaseUrl, modelColdLead: aiForm.modelColdLead, modelHotLead: aiForm.modelHotLead, temperature: aiForm.temperature, maxTokens: aiForm.maxTokens, leadScoreThreshold: aiForm.leadScoreThreshold, aiEnabled: aiForm.aiEnabled };
     if (aiForm.openaiApiKeyInput) payload.openaiApiKey = aiForm.openaiApiKeyInput;
     settingsApi.putAI(payload)
-      .then((data) => { setAiConfig(data); setAiForm((f) => ({ ...f, openaiApiKeyInput: '' })); setAiMessage({ type: 'success', text: 'Configurações de IA salvas com sucesso.' }); })
+      .then((data) => { setAiConfig(data); setAiForm((f) => ({ ...f, openaiApiKeyInput: '' })); setAiMessage({ type: 'success', text: 'ConfiguraÃ§Ãµes de IA salvas com sucesso.' }); })
       .catch((err: Error) => { setAiMessage({ type: 'error', text: err.message ?? 'Erro ao salvar.' }); })
       .finally(() => setAiSaving(false));
   };
@@ -127,7 +127,7 @@ export function SettingsWhatsAppPage() {
     return (
       <div className="min-h-screen bg-[#F9FAFB] flex flex-col items-center justify-center">
         <div className="h-6 w-6 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin mb-3" />
-        <p className="text-[13px] text-[#6B7280]">Carregando configurações…</p>
+        <p className="text-[13px] text-[#6B7280]">Carregando configuraÃ§Ãµesâ€¦</p>
       </div>
     );
   }
@@ -138,9 +138,9 @@ export function SettingsWhatsAppPage() {
         <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mb-4">
           <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#EF4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         </div>
-        <p className="text-[15px] font-medium text-[#111827] mb-1">Erro ao carregar configurações</p>
+        <p className="text-[15px] font-medium text-[#111827] mb-1">Erro ao carregar configuraÃ§Ãµes</p>
         <p className="text-[13px] text-[#6B7280] mb-4 max-w-sm text-center">{loadError}</p>
-        <Link to="/inbox" className="text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8] transition-colors">← Voltar ao Inbox</Link>
+        <Link to="/inbox" className="text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8] transition-colors">â† Voltar ao Inbox</Link>
       </div>
     );
   }
@@ -148,13 +148,13 @@ export function SettingsWhatsAppPage() {
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
       <header className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
-        <div className="max-w-[800px] mx-auto flex items-center gap-4 px-6 h-14">
+        <div className="w-full max-w-none flex items-center gap-4 px-6 lg:px-8 h-14">
           <AppNav />
-          <h1 className="text-[15px] font-semibold text-[#111827]">Configurações</h1>
+          <h1 className="text-[15px] font-semibold text-[#111827]">ConfiguraÃ§Ãµes</h1>
         </div>
       </header>
 
-      <main className="max-w-[800px] mx-auto px-6 py-8 space-y-6">
+      <main className="w-full max-w-none px-6 lg:px-8 py-8 space-y-6">
         <form onSubmit={handleSubmit} className="space-y-5">
           {message && <Alert type={message.type} text={message.text} />}
 
@@ -164,13 +164,13 @@ export function SettingsWhatsAppPage() {
               <label className="block">
                 <span className={lbl}>Token de acesso (Meta)</span>
                 <div className="flex gap-2">
-                  <input type={showToken ? 'text' : 'password'} value={form.metaAccessTokenInput ?? ''} onChange={(e) => setForm((f) => ({ ...f, metaAccessTokenInput: e.target.value }))} placeholder={config?.metaAccessTokenMasked ? '•••••••• (deixe em branco para manter)' : 'Cole o token da Meta'} className={`flex-1 ${field}`} />
+                  <input type={showToken ? 'text' : 'password'} value={form.metaAccessTokenInput ?? ''} onChange={(e) => setForm((f) => ({ ...f, metaAccessTokenInput: e.target.value }))} placeholder={config?.metaAccessTokenMasked ? 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢ (deixe em branco para manter)' : 'Cole o token da Meta'} className={`flex-1 ${field}`} />
                   <button type="button" onClick={() => setShowToken((s) => !s)} className={btnSecondary} style={{ padding: '10px 14px' }}>{showToken ? 'Ocultar' : 'Mostrar'}</button>
                 </div>
               </label>
-              <label className="block"><span className={lbl}>Phone Number ID</span><input type="text" value={form.whatsappPhoneNumberId ?? ''} onChange={(e) => setForm((f) => ({ ...f, whatsappPhoneNumberId: e.target.value }))} placeholder="ID do número de telefone no Meta Business" className={field} /></label>
+              <label className="block"><span className={lbl}>Phone Number ID</span><input type="text" value={form.whatsappPhoneNumberId ?? ''} onChange={(e) => setForm((f) => ({ ...f, whatsappPhoneNumberId: e.target.value }))} placeholder="ID do nÃºmero de telefone no Meta Business" className={field} /></label>
               <label className="block"><span className={lbl}>Business Account ID (opcional)</span><input type="text" value={form.whatsappBusinessAccountId ?? ''} onChange={(e) => setForm((f) => ({ ...f, whatsappBusinessAccountId: e.target.value }))} placeholder="ID da conta Business" className={field} /></label>
-              <label className="block"><span className={lbl}>Versão da API Meta</span><input type="text" value={form.apiVersion ?? 'v21.0'} onChange={(e) => setForm((f) => ({ ...f, apiVersion: e.target.value }))} placeholder="v21.0" className={field} /></label>
+              <label className="block"><span className={lbl}>VersÃ£o da API Meta</span><input type="text" value={form.apiVersion ?? 'v21.0'} onChange={(e) => setForm((f) => ({ ...f, apiVersion: e.target.value }))} placeholder="v21.0" className={field} /></label>
             </div>
           </section>
 
@@ -179,7 +179,7 @@ export function SettingsWhatsAppPage() {
             <label className="block">
               <span className={lbl}>Verify Token</span>
               <div className="flex gap-2">
-                <input type={showWebhookToken ? 'text' : 'password'} value={form.webhookVerifyTokenInput ?? ''} onChange={(e) => setForm((f) => ({ ...f, webhookVerifyTokenInput: e.target.value }))} placeholder={config?.webhookVerifyTokenMasked ? '•••••••• (deixe em branco para manter)' : 'Token para verificação do webhook'} className={`flex-1 ${field}`} />
+                <input type={showWebhookToken ? 'text' : 'password'} value={form.webhookVerifyTokenInput ?? ''} onChange={(e) => setForm((f) => ({ ...f, webhookVerifyTokenInput: e.target.value }))} placeholder={config?.webhookVerifyTokenMasked ? 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢ (deixe em branco para manter)' : 'Token para verificaÃ§Ã£o do webhook'} className={`flex-1 ${field}`} />
                 <button type="button" onClick={() => setShowWebhookToken((s) => !s)} className={btnSecondary} style={{ padding: '10px 14px' }}>{showWebhookToken ? 'Ocultar' : 'Mostrar'}</button>
               </div>
             </label>
@@ -188,21 +188,21 @@ export function SettingsWhatsAppPage() {
           <section className={card}>
             <h2 className={sectionH}>Envio</h2>
             <div className="space-y-4">
-              <label className="block"><span className={lbl}>Número padrão de envio (opcional)</span><input type="text" value={form.defaultSendPhoneNumber ?? ''} onChange={(e) => setForm((f) => ({ ...f, defaultSendPhoneNumber: e.target.value.trim() || null }))} placeholder="Ex: 5511999999999" className={field} /></label>
-              <label className="block"><span className={lbl}>Código do país padrão (opcional)</span><input type="text" value={form.defaultCountryCode ?? ''} onChange={(e) => setForm((f) => ({ ...f, defaultCountryCode: e.target.value.trim() || null }))} placeholder="Ex: 55" className={field} /></label>
+              <label className="block"><span className={lbl}>NÃºmero padrÃ£o de envio (opcional)</span><input type="text" value={form.defaultSendPhoneNumber ?? ''} onChange={(e) => setForm((f) => ({ ...f, defaultSendPhoneNumber: e.target.value.trim() || null }))} placeholder="Ex: 5511999999999" className={field} /></label>
+              <label className="block"><span className={lbl}>CÃ³digo do paÃ­s padrÃ£o (opcional)</span><input type="text" value={form.defaultCountryCode ?? ''} onChange={(e) => setForm((f) => ({ ...f, defaultCountryCode: e.target.value.trim() || null }))} placeholder="Ex: 55" className={field} /></label>
               <label className="flex items-center gap-3 cursor-pointer">
                 <input type="checkbox" checked={form.enabled ?? false} onChange={(e) => setForm((f) => ({ ...f, enabled: e.target.checked }))} className="w-4 h-4 rounded border-[#D1D5DB] text-[#3B82F6] focus:ring-[#3B82F6] focus:ring-offset-0" />
-                <span className="text-[14px] font-medium text-[#111827]">Integração ativa</span>
+                <span className="text-[14px] font-medium text-[#111827]">IntegraÃ§Ã£o ativa</span>
               </label>
             </div>
           </section>
 
           <div className="flex flex-wrap gap-3">
             <button type="submit" disabled={saving} className={btnPrimary}>
-              {saving ? <><span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />Salvando…</> : 'Salvar WhatsApp'}
+              {saving ? <><span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />Salvandoâ€¦</> : 'Salvar WhatsApp'}
             </button>
             <button type="button" onClick={handleTestConnection} disabled={testing} className={btnSecondary}>
-              {testing ? <><span className="h-4 w-4 rounded-full border-2 border-[#9CA3AF] border-t-[#374151] animate-spin" />Verificando…</> : 'Testar conexão'}
+              {testing ? <><span className="h-4 w-4 rounded-full border-2 border-[#9CA3AF] border-t-[#374151] animate-spin" />Verificandoâ€¦</> : 'Testar conexÃ£o'}
             </button>
           </div>
         </form>
@@ -210,8 +210,8 @@ export function SettingsWhatsAppPage() {
         <section className={card}>
           <h2 className={sectionH}>Projetos</h2>
           <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-5">
-            Empreendimentos usados na classificação das conversas na Inbox. Classificações: Novo, Qualificado,{' '}
-            <strong className="text-[#6B7280] font-medium">Carteira</strong> (sem avanço no momento, com potencial de retomada — não é descarte/spam) e Handoff.
+            Empreendimentos usados na classificaÃ§Ã£o das conversas na Inbox. ClassificaÃ§Ãµes: Novo, Qualificado,{' '}
+            <strong className="text-[#6B7280] font-medium">Carteira</strong> (sem avanÃ§o no momento, com potencial de retomada â€” nÃ£o Ã© descarte/spam) e Handoff.
           </p>
           {projectMessage && <div className="mb-4"><Alert type={projectMessage.type} text={projectMessage.text} /></div>}
           <div className="flex gap-2 mb-5">
@@ -222,7 +222,7 @@ export function SettingsWhatsAppPage() {
             }} disabled={!newProjectName.trim()} className={btnPrimary}>Adicionar</button>
           </div>
           {projectsLoading ? (
-            <div className="flex items-center gap-2 py-4"><div className="h-4 w-4 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin" /><span className="text-[13px] text-[#6B7280]">Carregando…</span></div>
+            <div className="flex items-center gap-2 py-4"><div className="h-4 w-4 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin" /><span className="text-[13px] text-[#6B7280]">Carregandoâ€¦</span></div>
           ) : projects.length === 0 ? (
             <p className="text-[13px] text-[#9CA3AF] py-2">Nenhum projeto cadastrado.</p>
           ) : (
@@ -245,7 +245,7 @@ export function SettingsWhatsAppPage() {
                       </span>
                       {p.status === 'ativo' && <button type="button" onClick={() => { setEditingProjectId(p.id); setEditingProjectName(p.name); setProjectMessage(null); }} className="text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8] transition-colors">Editar</button>}
                       {p.status === 'ativo' && <button type="button" onClick={() => {
-                        if (!window.confirm(`Inativar "${p.name}"? Conversas já classificadas manterão a referência.`)) return; setProjectMessage(null);
+                        if (!window.confirm(`Inativar "${p.name}"? Conversas jÃ¡ classificadas manterÃ£o a referÃªncia.`)) return; setProjectMessage(null);
                         projectsApi.delete(p.id).then(() => { setProjectMessage({ type: 'success', text: 'Projeto inativado.' }); return projectsApi.list(false); }).then((data) => setProjects(data.projects)).catch((err: Error) => setProjectMessage({ type: 'error', text: err.message ?? 'Erro ao inativar.' }));
                       }} className="text-[13px] font-medium text-red-500 hover:text-red-700 transition-colors">Inativar</button>}
                     </>
@@ -264,7 +264,7 @@ export function SettingsWhatsAppPage() {
               <label className="block">
                 <span className={lbl}>API Key</span>
                 <div className="flex gap-2">
-                  <input type={showOpenAIKey ? 'text' : 'password'} value={aiForm.openaiApiKeyInput ?? ''} onChange={(e) => setAiForm((f) => ({ ...f, openaiApiKeyInput: e.target.value }))} placeholder={aiConfig?.openaiApiKeyMasked ? '•••••••• (deixe em branco para manter)' : 'Cole a chave da API OpenAI'} className={`flex-1 ${field}`} />
+                  <input type={showOpenAIKey ? 'text' : 'password'} value={aiForm.openaiApiKeyInput ?? ''} onChange={(e) => setAiForm((f) => ({ ...f, openaiApiKeyInput: e.target.value }))} placeholder={aiConfig?.openaiApiKeyMasked ? 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢ (deixe em branco para manter)' : 'Cole a chave da API OpenAI'} className={`flex-1 ${field}`} />
                   <button type="button" onClick={() => setShowOpenAIKey((s) => !s)} className={btnSecondary} style={{ padding: '10px 14px' }}>{showOpenAIKey ? 'Ocultar' : 'Mostrar'}</button>
                 </div>
               </label>
@@ -279,11 +279,11 @@ export function SettingsWhatsAppPage() {
             </div>
           </section>
           <section className={card}>
-            <h2 className={sectionH}>Parâmetros</h2>
+            <h2 className={sectionH}>ParÃ¢metros</h2>
             <div className="space-y-4">
-              <label className="block"><span className={lbl}>Temperature (0–2)</span><input type="number" min={0} max={2} step={0.1} value={aiForm.temperature ?? 0.4} onChange={(e) => setAiForm((f) => ({ ...f, temperature: parseFloat(e.target.value) || 0.4 }))} className={field} /></label>
+              <label className="block"><span className={lbl}>Temperature (0â€“2)</span><input type="number" min={0} max={2} step={0.1} value={aiForm.temperature ?? 0.4} onChange={(e) => setAiForm((f) => ({ ...f, temperature: parseFloat(e.target.value) || 0.4 }))} className={field} /></label>
               <label className="block"><span className={lbl}>Max tokens</span><input type="number" min={1} max={4096} value={aiForm.maxTokens ?? 500} onChange={(e) => setAiForm((f) => ({ ...f, maxTokens: parseInt(e.target.value, 10) || 500 }))} className={field} /></label>
-              <label className="block"><span className={lbl}>Lead score threshold (0–1)</span><input type="number" min={0} max={1} step={0.05} value={aiForm.leadScoreThreshold ?? 0.75} onChange={(e) => setAiForm((f) => ({ ...f, leadScoreThreshold: parseFloat(e.target.value) || 0.75 }))} className={field} /></label>
+              <label className="block"><span className={lbl}>Lead score threshold (0â€“1)</span><input type="number" min={0} max={1} step={0.05} value={aiForm.leadScoreThreshold ?? 0.75} onChange={(e) => setAiForm((f) => ({ ...f, leadScoreThreshold: parseFloat(e.target.value) || 0.75 }))} className={field} /></label>
               <label className="flex items-center gap-3 cursor-pointer">
                 <input type="checkbox" checked={aiForm.aiEnabled ?? false} onChange={(e) => setAiForm((f) => ({ ...f, aiEnabled: e.target.checked }))} className="w-4 h-4 rounded border-[#D1D5DB] text-[#3B82F6] focus:ring-[#3B82F6] focus:ring-offset-0" />
                 <span className="text-[14px] font-medium text-[#111827]">IA ativa</span>
@@ -291,7 +291,7 @@ export function SettingsWhatsAppPage() {
             </div>
           </section>
           <button type="submit" disabled={aiSaving} className={btnPrimary}>
-            {aiSaving ? <><span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />Salvando…</> : 'Salvar IA'}
+            {aiSaving ? <><span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />Salvandoâ€¦</> : 'Salvar IA'}
           </button>
         </form>
         <div className="h-10" />
@@ -299,3 +299,4 @@ export function SettingsWhatsAppPage() {
     </div>
   );
 }
+

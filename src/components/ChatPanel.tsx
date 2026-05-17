@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Conversation, Message } from '../types';
 import { MessageBubble } from './MessageBubble';
 import { ChatComposer } from './ChatComposer';
@@ -124,9 +124,6 @@ export function ChatPanel({
   onSendMessage,
   onClassificationChange,
   onResetConversation,
-  // Handlers repassados pela InboxPage (encerrar/reabrir); reservados para UI futura.
-  onCloseConversation: _onCloseConversation,
-  onReopenConversation: _onReopenConversation,
   onDeleteMessage,
   onUpdateCustomerName,
   projects = [],
@@ -139,7 +136,7 @@ export function ChatPanel({
   const [reserveSaving, setReserveSaving] = useState(false);
   const [reserveErr, setReserveErr] = useState<string | null>(null);
   const [brokersForProject, setBrokersForProject] = useState<{ id: number; fullName: string }[]>([]);
-  // Edição inline do nome do contato
+  // EdiÃ§Ã£o inline do nome do contato
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState('');
   const [nameSaving, setNameSaving] = useState(false);
@@ -177,12 +174,12 @@ export function ChatPanel({
 
   if (!conversation) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-[#F9FAFB] text-[#6B7280] p-8">
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#f7f9fc] text-[#64748b] p-8">
         <div className="w-14 h-14 rounded-full bg-[#EFF6FF] flex items-center justify-center mb-4">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         </div>
         <p className="text-[15px] font-medium text-[#111827] mb-1">Selecione uma conversa</p>
-        <p className="text-[13px] text-[#9CA3AF]">Escolha uma conversa na lista à esquerda para começar.</p>
+        <p className="text-[13px] text-[#9CA3AF]">Escolha uma conversa na lista a esquerda para comecar.</p>
       </div>
     );
   }
@@ -240,18 +237,18 @@ export function ChatPanel({
     try {
       await Promise.resolve(onClassificationChange({ reserve: draftToPatch(d) }));
     } catch (e) {
-      setReserveErr(e instanceof Error ? e.message : 'Erro ao salvar segmentação');
+      setReserveErr(e instanceof Error ? e.message : 'Erro ao salvar segmentaÃ§Ã£o');
     } finally {
       setReserveSaving(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-full min-h-0 overflow-hidden bg-white">
-      <header className="shrink-0 px-5 py-4 border-b border-[#E5E7EB] bg-white">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[rgba(255,255,255,0.92)]">
+      <header className="shrink-0 border-b border-[#e2e8f0] bg-[rgba(255,255,255,0.94)] px-5 py-4">
         <div className="flex flex-wrap items-start gap-3">
           <div className="flex-1 min-w-0">
-            {/* Nome do contato — visualização ou edição inline */}
+            {/* Nome do contato â€” visualizaÃ§Ã£o ou ediÃ§Ã£o inline */}
             {!isEditingName ? (
               <div className="flex items-center gap-1.5 min-w-0">
                 <h3 className="text-[15px] font-semibold text-[#111827] truncate leading-tight">{displayName}</h3>
@@ -300,7 +297,7 @@ export function ChatPanel({
                   disabled={nameSaving}
                   className="shrink-0 text-[#9CA3AF] hover:text-[#374151] disabled:opacity-50 transition-colors"
                   title="Cancelar"
-                  aria-label="Cancelar edição"
+                  aria-label="Cancelar ediÃ§Ã£o"
                 >
                   <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4" aria-hidden>
                     <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
@@ -319,7 +316,7 @@ export function ChatPanel({
                 <button
                   type="button"
                   onClick={() => onResetConversation(conversation.id)}
-                  title="Limpa dados comerciais e operacionais; as mensagens permanecem no histórico"
+                  title="Limpa dados comerciais e operacionais; as mensagens permanecem no histÃ³rico"
                   className="shrink-0 inline-flex items-center gap-1 text-[11px] font-medium text-[#6B7280] border border-[#E5E7EB] hover:text-amber-700 hover:border-amber-200 hover:bg-amber-50 rounded-[6px] px-2 py-0.5 transition-colors"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
@@ -338,7 +335,7 @@ export function ChatPanel({
               conversation.enterpriseOriginId !== (conversation.projectId ?? null) && (
                 <span
                   className="inline-flex items-center text-[10px] font-medium px-2 py-[3px] rounded-[6px] bg-[#F9FAFB] text-[#6B7280] border border-[#E8ECF1]"
-                  title="Empreendimento da campanha de origem (histórico; o ativo pode ter sido alterado)"
+                  title="Empreendimento da campanha de origem (histÃ³rico; o ativo pode ter sido alterado)"
                 >
                   Origem: {conversation.enterpriseOriginName ?? `empreendimento #${conversation.enterpriseOriginId}`}
                 </span>
@@ -354,7 +351,7 @@ export function ChatPanel({
                   title={
                     conversation.temperatura
                       ? `Temperatura: ${conversation.temperatura}`
-                      : 'Temperatura ainda não definida — escolha Frio, Morno ou Quente (definição é permanente)'
+                      : 'Temperatura ainda nÃ£o definida â€” escolha Frio, Morno ou Quente (definiÃ§Ã£o Ã© permanente)'
                   }
                   className="inline-flex items-center p-0.5"
                 >
@@ -380,7 +377,7 @@ export function ChatPanel({
               </label>
             ) : (
               <span
-                title={`Lead ${conversation.temperatura ?? 'não definida'}`}
+                title={`Lead ${conversation.temperatura ?? 'nÃ£o definida'}`}
                 className="inline-flex items-center p-1"
               >
                 <FlameIcon temperatura={conversation.temperatura} size="md" />
@@ -403,7 +400,7 @@ export function ChatPanel({
                 <button
                   type="button"
                   onClick={() => onClassificationChange({ handoff: false })}
-                  title="ANA: resposta automática da ANA"
+                  title="ANA: resposta automÃ¡tica da ANA"
                   className={`px-4 py-2 rounded-[8px] text-[13px] font-medium transition-all duration-200 ${
                     !conversation.handoff
                       ? 'bg-[#F97316] text-white shadow-sm'
@@ -436,7 +433,7 @@ export function ChatPanel({
                 }}
                 className={selectField}
               >
-                <option value="">— Empreendimento</option>
+                <option value="">â€” Empreendimento</option>
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </label>
@@ -454,14 +451,14 @@ export function ChatPanel({
                 className={selectField}
                 title={
                   conversation.projectId
-                    ? 'Prioridade: manual > já atribuído > automático. Vazio = distribuição automática.'
+                    ? 'Prioridade: manual > jÃ¡ atribuÃ­do > automÃ¡tico. Vazio = distribuiÃ§Ã£o automÃ¡tica.'
                     : 'Sem empreendimento definido: exibindo todos os corretores ativos.'
                 }
               >
-                <option value="">Automático</option>
+                <option value="">AutomÃ¡tico</option>
                 {brokersForProject.length === 0 && (
                   <option value="" disabled>
-                    Nenhum corretor disponível
+                    Nenhum corretor disponÃ­vel
                   </option>
                 )}
                 {brokersForProject.map((b) => (
@@ -484,23 +481,23 @@ export function ChatPanel({
             <p className="w-full text-[11px] text-[#9CA3AF] leading-snug">
               Com <strong className="text-[#6B7280] font-medium">empreendimento</strong> e{' '}
               <strong className="text-[#6B7280] font-medium">temperatura</strong> escolhida (Frio, Morno ou Quente), o funil deixa de ser
-              &quot;Novo&quot; e passa para &quot;Qualificado&quot;. A primeira temperatura definida não pode ser removida depois. Handoff e Carteira
-              não são alterados automaticamente.
+              &quot;Novo&quot; e passa para &quot;Qualificado&quot;. A primeira temperatura definida nÃ£o pode ser removida depois. Handoff e Carteira
+              nÃ£o sÃ£o alterados automaticamente.
             </p>
           </div>
         )}
 
         {showCarteiraBlock && d && (
           <div className="mt-4 rounded-[10px] border border-[#EDE9FE] bg-[#FAF5FF]/80 px-4 py-3 space-y-3">
-            <p className="text-[12px] font-semibold text-[#5B21B6] uppercase tracking-wide">Carteira — segmentação comercial</p>
+            <p className="text-[12px] font-semibold text-[#5B21B6] uppercase tracking-wide">Carteira â€” segmentaÃ§Ã£o comercial</p>
             <p className="text-[11px] text-[#6B7280] leading-relaxed">
-              Dados para retomada e campanhas futuras. Preenchimento parcial permitido. Salve com o botão abaixo.
+              Dados para retomada e campanhas futuras. Preenchimento parcial permitido. Salve com o botÃ£o abaixo.
             </p>
 
             {hasReserveData && (
               <dl className="grid gap-1.5 text-[12px] text-[#374151] border-t border-[#EDE9FE] pt-3">
                 <div className="flex gap-2">
-                  <dt className="text-[#9CA3AF] shrink-0">Classificação</dt>
+                  <dt className="text-[#9CA3AF] shrink-0">ClassificaÃ§Ã£o</dt>
                   <dd className="font-medium">Carteira</dd>
                 </div>
                 {conversation.reserveReason && (
@@ -547,7 +544,7 @@ export function ChatPanel({
                 )}
                 {conversation.reserveCommercialNotes && (
                   <div className="flex flex-col gap-0.5">
-                    <dt className="text-[#9CA3AF]">Observações</dt>
+                    <dt className="text-[#9CA3AF]">ObservaÃ§Ãµes</dt>
                     <dd className="text-[#111827] whitespace-pre-wrap">{conversation.reserveCommercialNotes}</dd>
                   </div>
                 )}
@@ -562,7 +559,7 @@ export function ChatPanel({
                   value={d.reason}
                   onChange={(e) => setReserveDraft({ ...d, reason: e.target.value })}
                 >
-                  <option value="">— Selecionar —</option>
+                  <option value="">â€” Selecionar â€”</option>
                   {RESERVE_REASONS.map((r) => (
                     <option key={r} value={r}>{RESERVE_REASON_LABELS[r]}</option>
                   ))}
@@ -574,7 +571,7 @@ export function ChatPanel({
                   className={inputField}
                   value={d.desiredCity}
                   onChange={(e) => setReserveDraft({ ...d, desiredCity: e.target.value })}
-                  placeholder="Ex.: Jacareí"
+                  placeholder="Ex.: JacareÃ­"
                 />
               </label>
               <label>
@@ -584,14 +581,14 @@ export function ChatPanel({
                   value={d.interestType}
                   onChange={(e) => setReserveDraft({ ...d, interestType: e.target.value })}
                 >
-                  <option value="">—</option>
+                  <option value="">â€”</option>
                   {RESERVE_INTEREST_TYPES.map((t) => (
                     <option key={t} value={t}>{RESERVE_INTEREST_LABELS[t]}</option>
                   ))}
                 </select>
               </label>
               <label>
-                <span className={labelSm}>Valor mínimo (R$)</span>
+                <span className={labelSm}>Valor mÃ­nimo (R$)</span>
                 <input
                   className={inputField}
                   inputMode="decimal"
@@ -601,7 +598,7 @@ export function ChatPanel({
                 />
               </label>
               <label>
-                <span className={labelSm}>Valor máximo (R$)</span>
+                <span className={labelSm}>Valor mÃ¡ximo (R$)</span>
                 <input
                   className={inputField}
                   inputMode="decimal"
@@ -611,12 +608,12 @@ export function ChatPanel({
                 />
               </label>
               <label>
-                <span className={labelSm}>Tipo de imóvel</span>
+                <span className={labelSm}>Tipo de imÃ³vel</span>
                 <input
                   className={inputField}
                   value={d.propertyType}
                   onChange={(e) => setReserveDraft({ ...d, propertyType: e.target.value })}
-                  placeholder="Apartamento, casa…"
+                  placeholder="Apartamento, casaâ€¦"
                 />
               </label>
               <label>
@@ -635,16 +632,16 @@ export function ChatPanel({
                   className={inputField}
                   value={d.followUpMoment}
                   onChange={(e) => setReserveDraft({ ...d, followUpMoment: e.target.value })}
-                  placeholder="Ex.: em 3 meses, após 13º…"
+                  placeholder="Ex.: em 3 meses, apÃ³s 13Âºâ€¦"
                 />
               </label>
               <label className="sm:col-span-2">
-                <span className={labelSm}>Observações comerciais</span>
+                <span className={labelSm}>ObservaÃ§Ãµes comerciais</span>
                 <textarea
                   className={`${inputField} min-h-[72px] resize-y`}
                   value={d.commercialNotes}
                   onChange={(e) => setReserveDraft({ ...d, commercialNotes: e.target.value })}
-                  placeholder="Notas para reativação ou campanhas futuras"
+                  placeholder="Notas para reativaÃ§Ã£o ou campanhas futuras"
                 />
               </label>
             </div>
@@ -658,10 +655,10 @@ export function ChatPanel({
               {reserveSaving ? (
                 <>
                   <span className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />
-                  Salvando…
+                  Salvandoâ€¦
                 </>
               ) : (
-                'Salvar segmentação'
+                'Salvar segmentaÃ§Ã£o'
               )}
             </button>
           </div>
@@ -677,14 +674,14 @@ export function ChatPanel({
             </span>
             {!windowStatus.isOpen && (
               <p className="mt-2 text-[12px] text-[#B91C1C]">
-                Este contato não interagiu nas últimas 24 horas. Para iniciar contato, use uma mensagem padrão/template.
+                Este contato nÃ£o interagiu nas Ãºltimas 24 horas. Para iniciar contato, use uma mensagem padrÃ£o/template.
               </p>
             )}
           </div>
         )}
       </header>
 
-      <div ref={setRef} className="flex-1 overflow-y-auto min-h-0 px-4 pt-4 pb-0 bg-[#F9FAFB]">
+      <div ref={setRef} className="flex-1 min-h-0 overflow-y-auto bg-[#f7f9fc] px-5 pb-1 pt-5">
         <div className="min-h-full flex flex-col">
           {loadError ? (
             <div className="flex-1 flex flex-col items-center justify-center py-12 text-center">
@@ -696,7 +693,7 @@ export function ChatPanel({
           ) : isLoadingMessages ? (
             <div className="flex-1 flex flex-col items-center justify-center py-12 gap-3">
               <div className="h-5 w-5 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin" />
-              <span className="text-[13px] text-[#6B7280]">Carregando…</span>
+              <span className="text-[13px] text-[#6B7280]">Carregandoâ€¦</span>
             </div>
           ) : messages.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center py-12 text-center">
@@ -712,8 +709,8 @@ export function ChatPanel({
                 return (
                   <div key={msg.id}>
                     {showDate && (
-                      <div className="flex justify-center my-4">
-                        <span className="text-[11px] font-medium text-[#9CA3AF] bg-white border border-[#E5E7EB] px-3 py-1 rounded-full shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+                      <div className="my-4 flex justify-center">
+                        <span className="rounded-full border border-[#e2e8f0] bg-white/85 px-3 py-1 text-[11px] font-semibold text-[#64748b]">
                           {dateLabel}
                         </span>
                       </div>
@@ -735,14 +732,14 @@ export function ChatPanel({
       {!loadError && (
         <>
           {sendError && (
-            <div className="px-4 py-2 border-t border-[#FEE2E2] bg-[#FEF2F2] text-[12px] text-[#B91C1C]">{sendError}</div>
+            <div className="border-t border-[#fecaca] bg-[#fef2f2] px-4 py-2 text-[12px] text-[#b91c1c]">{sendError}</div>
           )}
           <ChatComposer
             onSend={onSendMessage}
             disabled={isLoadingMessages || isSending || (windowStatus ? !windowStatus.isOpen : false)}
             placeholder={
               isLoadingMessages
-                ? 'Carregando histórico...'
+                ? 'Carregando histÃ³rico...'
                 : windowStatus && !windowStatus.isOpen
                 ? 'Envio de texto livre bloqueado fora da janela de 24h.'
                 : 'Digite sua mensagem...'
@@ -753,4 +750,5 @@ export function ChatPanel({
     </div>
   );
 }
+
 

@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+﻿import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import type { ReactNode } from 'react';
 import { AuthProvider } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { ROLES_ORG_ADMIN, ROLES_SETTINGS_ADMIN } from './constants/roles';
@@ -13,6 +14,21 @@ import { UsersPage } from './pages/UsersPage';
 import { LoginPage } from './pages/LoginPage';
 import { ContatosPage } from './pages/ContatosPage';
 import { WhatsAppBatchTemplatePage } from './pages/WhatsAppBatchTemplatePage';
+import { AppShell } from './components/layout/AppShell';
+import type { UserRole } from './api/client';
+
+interface ProtectedShellRouteProps {
+  children: ReactNode;
+  roles?: UserRole[];
+}
+
+function ProtectedShellRoute({ children, roles }: ProtectedShellRouteProps) {
+  return (
+    <ProtectedRoute roles={roles}>
+      <AppShell>{children}</AppShell>
+    </ProtectedRoute>
+  );
+}
 
 function App() {
   return (
@@ -22,73 +38,73 @@ function App() {
           <Route
             path="/inbox"
             element={
-              <ProtectedRoute>
+              <ProtectedShellRoute>
                 <InboxPage />
-              </ProtectedRoute>
+              </ProtectedShellRoute>
             }
           />
           <Route
             path="/dashboard"
             element={
-              <ProtectedRoute>
+              <ProtectedShellRoute>
                 <DashboardPage />
-              </ProtectedRoute>
+              </ProtectedShellRoute>
             }
           />
           <Route
             path="/agenda"
             element={
-              <ProtectedRoute>
+              <ProtectedShellRoute>
                 <AgendaPage />
-              </ProtectedRoute>
+              </ProtectedShellRoute>
             }
           />
           <Route
             path="/settings/empreendimentos"
             element={
-              <ProtectedRoute roles={[...ROLES_ORG_ADMIN]}>
+              <ProtectedShellRoute roles={[...ROLES_ORG_ADMIN]}>
                 <EmpreendimentosPage />
-              </ProtectedRoute>
+              </ProtectedShellRoute>
             }
           />
           <Route
             path="/settings/corretores"
             element={
-              <ProtectedRoute roles={[...ROLES_ORG_ADMIN]}>
+              <ProtectedShellRoute roles={[...ROLES_ORG_ADMIN]}>
                 <CorretoresPage />
-              </ProtectedRoute>
+              </ProtectedShellRoute>
             }
           />
           <Route
             path="/settings/integrations/whatsapp"
             element={
-              <ProtectedRoute roles={[...ROLES_SETTINGS_ADMIN]}>
+              <ProtectedShellRoute roles={[...ROLES_SETTINGS_ADMIN]}>
                 <SettingsWhatsAppPage />
-              </ProtectedRoute>
+              </ProtectedShellRoute>
             }
           />
           <Route
             path="/users"
             element={
-              <ProtectedRoute roles={[...ROLES_ORG_ADMIN]}>
+              <ProtectedShellRoute roles={[...ROLES_ORG_ADMIN]}>
                 <UsersPage />
-              </ProtectedRoute>
+              </ProtectedShellRoute>
             }
           />
           <Route
             path="/contatos"
             element={
-              <ProtectedRoute roles={[...ROLES_SETTINGS_ADMIN]}>
+              <ProtectedShellRoute roles={[...ROLES_SETTINGS_ADMIN]}>
                 <ContatosPage />
-              </ProtectedRoute>
+              </ProtectedShellRoute>
             }
           />
           <Route
             path="/contatos/disparo-template-lote"
             element={
-              <ProtectedRoute roles={[...ROLES_SETTINGS_ADMIN]}>
+              <ProtectedShellRoute roles={[...ROLES_SETTINGS_ADMIN]}>
                 <WhatsAppBatchTemplatePage />
-              </ProtectedRoute>
+              </ProtectedShellRoute>
             }
           />
           <Route path="/settings/whatsapp-batch" element={<Navigate to="/contatos/disparo-template-lote" replace />} />
@@ -96,9 +112,9 @@ function App() {
           <Route
             path="/lead-simulator"
             element={
-              <ProtectedRoute>
+              <ProtectedShellRoute>
                 <LeadSimulatorPage />
-              </ProtectedRoute>
+              </ProtectedShellRoute>
             }
           />
           <Route path="/login" element={<LoginPage />} />

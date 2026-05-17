@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AppNav } from '../components/AppNav';
 import type { Conversation, LeadTemperatura, Message } from '../types';
 import {
   whatsappApi,
@@ -14,13 +13,13 @@ import type { ConversationListItem as ApiConversation, MessageListItem } from '.
 import { ConversationList } from '../components/ConversationList';
 import { ChatPanel } from '../components/ChatPanel';
 import { NewMessageModal } from '../components/NewMessageModal';
+import { InboxFilterBar } from '../components/InboxFilterBar';
 import {
-  InboxFilterBar,
   DEFAULT_INBOX_FILTERS,
   hasActiveInboxFilters,
   inboxFiltersToApiParams,
   type InboxFilters,
-} from '../components/InboxFilterBar';
+} from '../components/inboxFilters';
 
 const INBOX_READ_STATE_KEY = 'inbox_read_state_v1';
 type InboxReadStateMap = Record<string, string>;
@@ -809,18 +808,13 @@ export function InboxPage() {
   );
 
   return (
-    <div className="h-dvh overflow-hidden flex flex-col bg-[#F9FAFB] text-[#111827]">
-      <nav className="shrink-0 flex items-center justify-between px-5 h-14 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
-        <span className="text-[15px] font-semibold text-[#111827]">Inbox</span>
-        <AppNav />
-      </nav>
-
-      <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden">
+    <div className="h-[calc(100vh-4px)] overflow-hidden px-4 pb-4 pt-3 text-[#0f172a] md:p-5">
+      <div className="relative flex h-full min-h-0 gap-4">
         <button
           type="button"
           aria-label={sidebarOpen ? 'Fechar lista de conversas' : 'Abrir lista de conversas'}
           onClick={() => setSidebarOpen((o) => !o)}
-          className="md:hidden fixed top-[68px] left-4 z-20 w-9 h-9 flex items-center justify-center bg-white border border-[#E5E7EB] rounded-[10px] shadow-sm text-[#6B7280] hover:text-[#111827] transition-colors"
+          className="md:hidden fixed top-5 left-5 z-40 h-10 w-10 flex items-center justify-center rounded-[12px] border border-[#e2e8f0] bg-white text-[#475569] shadow-[0_8px_20px_rgba(15,23,42,0.12)] transition-colors hover:text-[#0f172a]"
         >
           {sidebarOpen ? (
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -829,32 +823,36 @@ export function InboxPage() {
           )}
         </button>
         {sidebarOpen && (
-          <div className="fixed inset-0 bg-black/30 z-10 md:hidden" aria-hidden onClick={() => setSidebarOpen(false)} />
+          <div className="fixed inset-0 bg-black/25 z-20 md:hidden" aria-hidden onClick={() => setSidebarOpen(false)} />
         )}
-        <aside className={`w-[340px] shrink-0 flex flex-col h-full md:relative md:translate-x-0 fixed inset-y-0 left-0 z-20 transform transition-transform duration-200 ease-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-          <div className="shrink-0 px-3 py-2 border-b border-[#E5E7EB] bg-white flex gap-2">
-            <button
-              type="button"
-              onClick={() => handleTabChange('CLIENT')}
-              className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
-                activeTab === 'CLIENT'
-                  ? 'bg-[#111827] text-white border-[#111827]'
-                  : 'bg-white text-[#374151] border-[#D1D5DB] hover:bg-[#F9FAFB]'
-              }`}
-            >
-              Clientes
-            </button>
-            <button
-              type="button"
-              onClick={() => handleTabChange('INTERNO')}
-              className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
-                activeTab === 'INTERNO'
-                  ? 'bg-[#111827] text-white border-[#111827]'
-                  : 'bg-white text-[#374151] border-[#D1D5DB] hover:bg-[#F9FAFB]'
-              }`}
-            >
-              Interno
-            </button>
+        <aside
+          className={`w-[360px] shrink-0 min-h-0 overflow-hidden rounded-[22px] border border-[#e2e8f0] bg-white/92 shadow-[0_8px_24px_rgba(15,23,42,0.08)] md:relative md:inset-auto md:z-10 md:translate-x-0 fixed inset-y-4 left-4 right-4 z-30 transform transition-transform duration-200 ease-out sm:right-auto ${sidebarOpen ? 'translate-x-0' : '-translate-x-[110%] md:translate-x-0'}`}
+        >
+          <div className="shrink-0 border-b border-[#e2e8f0] bg-white px-3 py-3">
+            <div className="grid grid-cols-2 rounded-[13px] border border-[#e2e8f0] bg-[#f1f5f9] p-[3px]">
+              <button
+                type="button"
+                onClick={() => handleTabChange('CLIENT')}
+                className={`min-h-[32px] rounded-[10px] px-3 text-[13px] font-semibold transition-all ${
+                  activeTab === 'CLIENT'
+                    ? 'bg-[#071833] text-white shadow-[0_8px_18px_rgba(7,24,51,0.18)]'
+                    : 'text-[#64748b] hover:text-[#0f172a]'
+                }`}
+              >
+                Clientes
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTabChange('INTERNO')}
+                className={`min-h-[32px] rounded-[10px] px-3 text-[13px] font-semibold transition-all ${
+                  activeTab === 'INTERNO'
+                    ? 'bg-[#071833] text-white shadow-[0_8px_18px_rgba(7,24,51,0.18)]'
+                    : 'text-[#64748b] hover:text-[#0f172a]'
+                }`}
+              >
+                Interno
+              </button>
+            </div>
           </div>
           <InboxFilterBar
             filters={filters}
@@ -870,14 +868,16 @@ export function InboxPage() {
               const conv = conversations.find((c) => c.id === id);
               markConversationAsRead(id, conv?.updatedAt ?? null);
               setSelectedId(id);
-              setSidebarOpen(false);
+              if (window.matchMedia('(max-width: 767px)').matches) {
+                setSidebarOpen(false);
+              }
             }}
             onDelete={handleDeleteConversation}
             isLoading={conversationsLoading}
             onNewMessage={() => setNewMessageOpen(true)}
           />
         </aside>
-        <main className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+        <main className="min-w-0 min-h-0 flex-1 overflow-hidden rounded-[22px] border border-[#e2e8f0] bg-white/92 shadow-[0_8px_24px_rgba(15,23,42,0.08)]">
           <ChatPanel
             conversation={selectedConversation}
             windowStatus={selectedWindow}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+﻿import { useCallback, useEffect, useState } from "react";
 import { AppNav } from "../components/AppNav";
 import {
   corretoresApi,
@@ -17,7 +17,7 @@ const btnPrimary =
 const btnGhost =
   "inline-flex items-center justify-center text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8] transition-colors";
 
-const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "SÃ¡b"];
 
 export function CorretoresPage() {
   const [list, setList] = useState<Corretor[]>([]);
@@ -142,7 +142,7 @@ export function CorretoresPage() {
   };
 
   const removeSlot = (availabilityId: number) => {
-    if (editingId == null || !confirm("Remover este horário?")) return;
+    if (editingId == null || !confirm("Remover este horÃ¡rio?")) return;
     corretoresApi
       .deleteAvailability(editingId, availabilityId)
       .then(() =>
@@ -229,7 +229,7 @@ export function CorretoresPage() {
   const save = () => {
     const n = fullName.trim();
     if (!n) {
-      setErr("Nome completo é obrigatório.");
+      setErr("Nome completo Ã© obrigatÃ³rio.");
       return;
     }
     setSaving(true);
@@ -274,7 +274,7 @@ export function CorretoresPage() {
             results.forEach((r, i) => {
               if (r.status === "rejected") {
                 console.warn(
-                  "[CorretoresPage] Falha ao criar horário",
+                  "[CorretoresPage] Falha ao criar horÃ¡rio",
                   draftSlots[i],
                   r.reason,
                 );
@@ -316,7 +316,7 @@ export function CorretoresPage() {
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
       <header className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
-        <div className="max-w-[1200px] mx-auto flex items-center gap-4 px-6 h-14">
+        <div className="w-full max-w-none flex items-center gap-4 px-6 lg:px-8 h-14">
           <AppNav />
           <h1 className="text-[15px] font-semibold text-[#111827]">
             Corretores
@@ -324,7 +324,7 @@ export function CorretoresPage() {
         </div>
       </header>
 
-      <div className="max-w-[1200px] mx-auto px-6 py-8">
+      <div className="w-full max-w-none px-6 lg:px-8 py-8">
         <div className="flex justify-between items-center mb-6">
           <p className="text-[13px] text-[#6B7280]">
             Cadastro de corretores para uso na fila de atendimentos.
@@ -338,7 +338,7 @@ export function CorretoresPage() {
           {loading ? (
             <div className="flex items-center gap-2 py-8 justify-center">
               <div className="h-5 w-5 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin" />
-              <span className="text-[13px] text-[#6B7280]">Carregando…</span>
+              <span className="text-[13px] text-[#6B7280]">Carregandoâ€¦</span>
             </div>
           ) : list.length === 0 ? (
             <div className="py-12 text-center">
@@ -346,7 +346,7 @@ export function CorretoresPage() {
                 Nenhum corretor cadastrado
               </p>
               <p className="text-[13px] text-[#6B7280] mb-4">
-                Clique em &quot;Novo corretor&quot; para começar.
+                Clique em &quot;Novo corretor&quot; para comeÃ§ar.
               </p>
               <button type="button" onClick={openNew} className={btnPrimary}>
                 Novo corretor
@@ -367,13 +367,13 @@ export function CorretoresPage() {
                       Telefone
                     </th>
                     <th className="py-3 px-4 text-[11px] font-bold text-[#9CA3AF] uppercase tracking-wider">
-                      Imobiliária
+                      ImobiliÃ¡ria
                     </th>
                     <th className="py-3 px-4 text-[11px] font-bold text-[#9CA3AF] uppercase tracking-wider">
                       Status
                     </th>
                     <th className="py-3 px-4 text-[11px] font-bold text-[#9CA3AF] uppercase tracking-wider">
-                      Ações
+                      AÃ§Ãµes
                     </th>
                   </tr>
                 </thead>
@@ -387,13 +387,13 @@ export function CorretoresPage() {
                         {c.fullName}
                       </td>
                       <td className="py-3.5 px-4 text-[13px] text-[#6B7280]">
-                        {c.city || "—"}
+                        {c.city || "â€”"}
                       </td>
                       <td className="py-3.5 px-4 text-[13px] text-[#6B7280]">
-                        {c.phone || "—"}
+                        {c.phone || "â€”"}
                       </td>
                       <td className="py-3.5 px-4 text-[13px] text-[#6B7280]">
-                        {c.realEstateAgency || "—"}
+                        {c.realEstateAgency || "â€”"}
                       </td>
                       <td className="py-3.5 px-4">
                         <span
@@ -461,7 +461,7 @@ export function CorretoresPage() {
                     className={field}
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Ex.: João Silva"
+                    placeholder="Ex.: JoÃ£o Silva"
                   />
                 </label>
                 <label>
@@ -470,7 +470,7 @@ export function CorretoresPage() {
                     className={field}
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
-                    placeholder="Ex.: São Paulo"
+                    placeholder="Ex.: SÃ£o Paulo"
                   />
                 </label>
                 <label>
@@ -483,12 +483,12 @@ export function CorretoresPage() {
                   />
                 </label>
                 <label>
-                  <span className={label}>Imobiliária</span>
+                  <span className={label}>ImobiliÃ¡ria</span>
                   <input
                     className={field}
                     value={realEstateAgency}
                     onChange={(e) => setRealEstateAgency(e.target.value)}
-                    placeholder="Ex.: Imobiliária XYZ"
+                    placeholder="Ex.: ImobiliÃ¡ria XYZ"
                   />
                 </label>
                 <div>
@@ -524,7 +524,7 @@ export function CorretoresPage() {
                 <div>
                   <span className={label}>Disponibilidade semanal</span>
                   <p className="text-[12px] text-[#9CA3AF] mb-2">
-                    Horários em que o corretor está disponível para
+                    HorÃ¡rios em que o corretor estÃ¡ disponÃ­vel para
                     agendamentos.
                   </p>
                   <button
@@ -532,7 +532,7 @@ export function CorretoresPage() {
                     onClick={applyHorarioComercial}
                     className="mb-3 text-[12px] font-medium text-[#3B82F6] hover:text-[#1D4ED8]"
                   >
-                    Horário comercial (Seg–Sex 09:00–18:00)
+                    HorÃ¡rio comercial (Segâ€“Sex 09:00â€“18:00)
                   </button>
                   {editingId != null ? (
                     <>
@@ -603,7 +603,7 @@ export function CorretoresPage() {
                               <>
                                 <span className="text-[13px] flex-1">
                                   {WEEKDAYS[s.weekday]}{" "}
-                                  {s.startTime.slice(0, 5)}–
+                                  {s.startTime.slice(0, 5)}â€“
                                   {s.endTime.slice(0, 5)}{" "}
                                   {!s.active && "(inativo)"}
                                 </span>
@@ -656,7 +656,7 @@ export function CorretoresPage() {
                             onClick={addSlot}
                             className={btnGhost + " text-[12px]"}
                           >
-                            Adicionar horário
+                            Adicionar horÃ¡rio
                           </button>
                         </div>
                       </div>
@@ -678,7 +678,7 @@ export function CorretoresPage() {
                           className="flex items-center gap-2 flex-wrap"
                         >
                           <span className="text-[13px] flex-1">
-                            {WEEKDAYS[s.weekday]} {s.startTime}–{s.endTime}
+                            {WEEKDAYS[s.weekday]} {s.startTime}â€“{s.endTime}
                           </span>
                           <button
                             type="button"
@@ -720,7 +720,7 @@ export function CorretoresPage() {
                           onClick={addDraftSlot}
                           className={btnGhost + " text-[12px]"}
                         >
-                          Adicionar horário
+                          Adicionar horÃ¡rio
                         </button>
                       </div>
                     </div>
@@ -736,7 +736,7 @@ export function CorretoresPage() {
                 className={btnPrimary}
               >
                 {saving
-                  ? "Salvando…"
+                  ? "Salvandoâ€¦"
                   : editingId != null
                     ? "Salvar"
                     : "Cadastrar"}
@@ -751,3 +751,4 @@ export function CorretoresPage() {
     </div>
   );
 }
+

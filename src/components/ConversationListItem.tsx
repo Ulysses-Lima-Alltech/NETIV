@@ -1,4 +1,4 @@
-import type { Conversation } from '../types';
+﻿import type { Conversation } from '../types';
 import { formatConversationTime, formatStatus } from '../utils/format';
 import { FlameIcon } from './FlameIcon';
 
@@ -13,42 +13,52 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
   const displayName = conversation.leadName.trim() || 'Lead sem nome';
   const projectDisplay = conversation.projectName || conversation.empreendimento;
   const isUnread = conversation.unreadCount > 0;
+  const isHandoff =
+    conversation.handoff === true ||
+    conversation.status === 'Handoff' ||
+    conversation.classificationStatus === 'Handoff';
+  const isCarteira =
+    conversation.classificationStatus === 'Carteira' ||
+    conversation.status === 'Carteira';
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
     onDelete?.(conversation.id);
   };
 
+  const activeStateClass = isHandoff
+    ? 'bg-[#fff7ed] border-[#fdba74] shadow-[inset_4px_0_0_#f97316]'
+    : isCarteira
+      ? 'bg-[#f5f3ff] border-[#c4b5fd] shadow-[inset_4px_0_0_#8b5cf6]'
+      : 'bg-[linear-gradient(135deg,#eaf2ff,white)] border-[rgba(59,130,246,0.45)] shadow-[inset_4px_0_0_#2563eb]';
+
+  const restingStateClass = isHandoff
+    ? 'border-transparent hover:border-[#fdba74] hover:bg-[#fff7ed]'
+    : isCarteira
+      ? 'border-transparent hover:border-[#ddd6fe] hover:bg-[#faf5ff]'
+      : isUnread
+        ? 'border-transparent hover:border-[#fed7aa] hover:bg-[#fff7ed]'
+        : 'border-transparent hover:border-[#e2e8f0] hover:bg-[#f8fafc]';
+
   return (
     <div
       role="button"
       tabIndex={0}
       onClick={onClick}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
-      aria-label={`Conversa com ${displayName}${conversation.unreadCount > 0 ? `, ${conversation.unreadCount} não lidas` : ''}`}
-      className={`
-        group w-full text-left px-4 py-3.5 border-b border-[#F3F4F6] transition-all cursor-pointer
-        focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6] focus-visible:ring-inset
-        ${(conversation.handoff === true || conversation.status === 'Handoff' || conversation.classificationStatus === 'Handoff')
-          ? isSelected
-            ? 'bg-[#FEF2F2] border-l-[3px] border-l-[#DC2626]'
-            : 'bg-[#FFFBEB] hover:bg-[#FEF3C7] border-l-[3px] border-l-[#F59E0B]'
-          : (conversation.classificationStatus === 'Carteira' || conversation.status === 'Carteira')
-            ? isSelected
-              ? 'bg-[#F5F3FF] border-l-[3px] border-l-[#7C3AED]'
-              : 'bg-[#FAF5FF] hover:bg-[#F3E8FF] border-l-[3px] border-l-[#A78BFA]'
-              : isSelected
-              ? 'bg-[#EFF6FF] border-l-[3px] border-l-[#3B82F6]'
-              : isUnread
-                ? 'bg-[#FFF7ED] hover:bg-[#FFEDD5] border-l-[3px] border-l-[#F97316]'
-                : 'bg-white hover:bg-[#F9FAFB]'}
-      `}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      aria-label={`Conversa com ${displayName}${conversation.unreadCount > 0 ? `, ${conversation.unreadCount} nao lidas` : ''}`}
+      className={`group w-full cursor-pointer rounded-[17px] border px-3 py-3 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2563eb] ${isSelected ? activeStateClass : restingStateClass}`}
     >
-      <div className="flex items-center gap-2 min-h-6">
-        <span className={`truncate flex-1 text-[14px] leading-tight ${isSelected ? 'text-[#1D4ED8] font-semibold' : isUnread ? 'text-[#111827] font-semibold' : 'text-[#111827] font-medium'}`}>
+      <div className="flex min-h-6 items-center gap-2">
+        <span className={`flex-1 truncate text-[13px] leading-tight ${isSelected || isUnread ? 'font-semibold text-[#0f172a]' : 'font-medium text-[#0f172a]'}`}>
           {displayName}
         </span>
-        <span className="text-[11px] text-[#9CA3AF] shrink-0 tabular-nums">
+        <span className="shrink-0 text-[11px] font-medium tabular-nums text-[#94a3b8]">
           {formatConversationTime(conversation.updatedAt)}
         </span>
         {onDelete && (
@@ -56,53 +66,57 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
             type="button"
             onClick={handleDelete}
             aria-label="Excluir conversa"
-            className="shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded-[6px] text-[#9CA3AF] hover:text-red-600 hover:bg-red-50 transition-all"
+            className="shrink-0 rounded-[8px] p-1 text-[#94a3b8] opacity-0 transition-all hover:bg-red-50 hover:text-red-600 group-hover:opacity-100"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
           </button>
         )}
       </div>
-      <p className={`text-[13px] truncate mt-1 leading-snug ${isUnread ? 'text-[#374151] font-medium' : 'text-[#6B7280]'}`}>
+
+      <p className={`mt-1 truncate text-[12px] leading-snug ${isUnread ? 'font-medium text-[#334155]' : 'text-[#64748b]'}`}>
         {conversation.lastMessage || 'Sem mensagens'}
       </p>
-      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-        {(conversation.handoff === true || conversation.status === 'Handoff' || conversation.classificationStatus === 'Handoff') && (
-          <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-[2px] rounded bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA]">
-            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {isHandoff && (
+          <span className="inline-flex items-center rounded-full bg-[#fff2e8] px-2 py-[3px] text-[10px] font-medium text-[#c2410c]">
             Handoff
           </span>
         )}
-        {!conversation.handoff && conversation.status !== 'Handoff' && conversation.classificationStatus !== 'Handoff' &&
-          (conversation.classificationStatus === 'Carteira' || conversation.status === 'Carteira') && (
-          <span className="inline-flex items-center text-[10px] font-bold uppercase tracking-wide px-2 py-[2px] rounded bg-[#EDE9FE] text-[#5B21B6] border border-[#DDD6FE]">
+
+        {!isHandoff && isCarteira && (
+          <span className="inline-flex items-center rounded-full bg-[#ede9fe] px-2 py-[3px] text-[10px] font-medium text-[#6d28d9]">
             Carteira
           </span>
         )}
-        {(conversation.handoff === true || conversation.status === 'Handoff' || conversation.classificationStatus === 'Handoff') &&
-          conversation.assignedBrokerName?.trim() && (
-          <span className="inline-flex items-center text-[10px] font-semibold px-2 py-[2px] rounded bg-[#ECFDF5] text-[#047857] border border-[#A7F3D0] max-w-[140px] truncate" title={conversation.assignedBrokerName}>
+
+        {isHandoff && conversation.assignedBrokerName?.trim() && (
+          <span
+            className="inline-flex max-w-[140px] items-center truncate rounded-full border border-[#a7f3d0] bg-[#ecfdf5] px-2 py-[3px] text-[10px] font-medium text-[#047857]"
+            title={conversation.assignedBrokerName}
+          >
             {conversation.assignedBrokerName}
           </span>
         )}
+
         {projectDisplay && (
-          <span className="inline-flex items-center text-[10px] font-semibold uppercase tracking-wide px-2 py-[2px] rounded bg-[#EFF6FF] text-[#3B82F6]">
+          <span className="inline-flex items-center rounded-full bg-[#eaf2ff] px-2 py-[3px] text-[10px] font-medium text-[#123a73]">
             {projectDisplay}
           </span>
         )}
-        <span
-          title={`Lead ${conversation.temperatura ?? 'não definida'}`}
-          className="inline-flex items-center p-0.5"
-        >
+
+        <span title={`Lead ${conversation.temperatura ?? 'nao definida'}`} className="inline-flex items-center p-0.5">
           <FlameIcon temperatura={conversation.temperatura} size="sm" />
         </span>
-        {!conversation.handoff && conversation.status !== 'Handoff' && conversation.classificationStatus !== 'Handoff' &&
-          conversation.classificationStatus !== 'Carteira' && conversation.status !== 'Carteira' && (
-          <span className="text-[10px] font-medium px-2 py-[2px] rounded bg-[#F3F4F6] text-[#6B7280]">
+
+        {!isHandoff && !isCarteira && (
+          <span className="rounded-full bg-[#f1f5f9] px-2 py-[3px] text-[10px] font-medium text-[#64748b]">
             {formatStatus(conversation.status)}
           </span>
         )}
+
         {conversation.unreadCount > 0 && (
-          <span className="text-[10px] font-bold bg-[#F97316] text-white rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">
+          <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[#f97316] px-1 text-[10px] font-semibold text-white">
             {conversation.unreadCount}
           </span>
         )}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import { useAuth } from '../contexts/AuthContext';
@@ -60,18 +60,18 @@ export function WhatsAppBatchTemplatePage() {
       })
       .catch((err: unknown) => {
         setTemplates([]);
-        const base = 'Não foi possível carregar a lista de templates.';
+        const base = 'NÃ£o foi possÃ­vel carregar a lista de templates.';
         if (err instanceof ApiError) {
           let msg = `${base} ${err.message}`;
           if (err.status != null) msg += ` (HTTP ${err.status})`;
-          if (err.status === 401) msg += ' Faça login novamente (sessão inválida ou expirada).';
-          if (err.status === 403) msg += ' A rota exige perfil ADMIN (integrações).';
+          if (err.status === 401) msg += ' FaÃ§a login novamente (sessÃ£o invÃ¡lida ou expirada).';
+          if (err.status === 403) msg += ' A rota exige perfil ADMIN (integraÃ§Ãµes).';
           setTemplatesLoadError(msg);
         } else if (err instanceof Error) {
           setTemplatesLoadError(`${base} ${err.message}`);
         } else {
           setTemplatesLoadError(
-            `${base} Verifique rede, VITE_API_URL e se o backend está no ar.`,
+            `${base} Verifique rede, VITE_API_URL e se o backend estÃ¡ no ar.`,
           );
         }
       })
@@ -258,10 +258,10 @@ export function WhatsAppBatchTemplatePage() {
         <span className="text-[15px] font-semibold">Disparo em Lote</span>
         <AppNav />
       </nav>
-      <div className="max-w-[1280px] mx-auto px-6 py-6 space-y-5">
+      <div className="w-full max-w-none px-6 lg:px-8 py-6 space-y-5">
       <div>
         <p className="text-[13px] text-[#6B7280]">
-          Envie templates do WhatsApp em lote a partir de uma planilha: faça o upload, escolha o template, mapeie colunas e envie.
+          Envie templates do WhatsApp em lote a partir de uma planilha: faÃ§a o upload, escolha o template, mapeie colunas e envie.
         </p>
       </div>
 
@@ -368,11 +368,11 @@ export function WhatsAppBatchTemplatePage() {
                     <span className="ml-2 font-medium">{preview.total}</span>
                   </div>
                   <div>
-                    <span className="text-gray-500">Válidos:</span>
+                    <span className="text-gray-500">VÃ¡lidos:</span>
                     <span className="ml-2 font-medium text-green-600">{preview.validCount}</span>
                   </div>
                   <div>
-                    <span className="text-gray-500">Inválidos:</span>
+                    <span className="text-gray-500">InvÃ¡lidos:</span>
                     <span className="ml-2 font-medium text-red-600">{preview.invalidCount + preview.blockedCount}</span>
                   </div>
                 </div>
@@ -397,3 +397,4 @@ export function WhatsAppBatchTemplatePage() {
     </div>
   );
 }
+

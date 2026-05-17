@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+﻿import { useState, useRef, useCallback } from 'react';
 import { validateManualUploadFile } from '../constants/whatsappManualUpload';
 
 const ACCEPT_MANUAL =
@@ -27,14 +27,13 @@ export function ChatComposer({ onSend, disabled = false, placeholder = 'Digite s
         return;
       }
     }
+
     setFileError(null);
     onSend(trimmed, file);
     setText('');
     setFile(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
   }, [text, file, disabled, onSend]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -48,7 +47,7 @@ export function ChatComposer({ onSend, disabled = false, placeholder = 'Digite s
     const target = e.target as HTMLTextAreaElement;
     setText(target.value);
     target.style.height = 'auto';
-    const lineHeight = 24;
+    const lineHeight = 22;
     const maxHeight = lineHeight * 4;
     target.style.height = `${Math.min(target.scrollHeight, maxHeight)}px`;
   };
@@ -56,14 +55,16 @@ export function ChatComposer({ onSend, disabled = false, placeholder = 'Digite s
   const canSend = !disabled && (text.trim().length > 0 || file != null);
 
   return (
-    <div className="flex flex-col gap-2 p-4 border-t border-[#E5E7EB] bg-white">
+    <div className="border-t border-[#e2e8f0] bg-[rgba(255,255,255,0.95)] p-3">
       {fileError && (
-        <div className="rounded-[10px] border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-800">{fileError}</div>
+        <div className="mb-2 rounded-[10px] border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-800">{fileError}</div>
       )}
+
       {file && (
-        <div className="flex items-center justify-between gap-2 rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2 text-[12px] text-[#374151]">
-          <span className="truncate">
-            📎 <span className="font-medium">{file.name}</span>
+        <div className="mb-2 flex items-center justify-between gap-2 rounded-[12px] border border-[#e2e8f0] bg-[#f8fafc] px-3 py-2 text-[12px] text-[#334155]">
+          <span className="inline-flex min-w-0 items-center gap-2 truncate">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span className="truncate font-medium">{file.name}</span>
           </span>
           <button
             type="button"
@@ -72,13 +73,14 @@ export function ChatComposer({ onSend, disabled = false, placeholder = 'Digite s
               setFileError(null);
               if (fileInputRef.current) fileInputRef.current.value = '';
             }}
-            className="shrink-0 text-[#6B7280] hover:text-[#111827] underline"
+            className="shrink-0 text-[11px] font-medium text-[#64748b] hover:text-[#0f172a]"
           >
             remover
           </button>
         </div>
       )}
-      <div className="flex gap-3 items-end">
+
+      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-2">
         <input
           ref={fileInputRef}
           type="file"
@@ -103,18 +105,18 @@ export function ChatComposer({ onSend, disabled = false, placeholder = 'Digite s
             setFile(f);
           }}
         />
+
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled}
-          title="Anexar arquivo (PDF, imagens, MP4/3GP)"
+          title="Anexar arquivo"
           aria-label="Anexar arquivo"
-          className="shrink-0 inline-flex h-[42px] w-[42px] items-center justify-center rounded-[10px] border border-[#E5E7EB] bg-white text-[#374151] hover:bg-[#F9FAFB] disabled:opacity-40 disabled:cursor-not-allowed"
+          className="inline-flex h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-[#e2e8f0] bg-white text-[#475569] transition-colors hover:bg-[#f8fafc] disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-          </svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
         </button>
+
         <textarea
           ref={textareaRef}
           value={text}
@@ -125,16 +127,17 @@ export function ChatComposer({ onSend, disabled = false, placeholder = 'Digite s
           disabled={disabled}
           rows={1}
           aria-label="Mensagem"
-          className="flex-1 min-h-[42px] max-h-[96px] resize-none px-3.5 py-[10px] text-[14px] border border-[#E5E7EB] rounded-[10px] bg-white transition focus:border-[#3B82F6] focus:ring-[3px] focus:ring-[rgba(59,130,246,0.15)] focus:outline-none disabled:bg-[#F9FAFB] disabled:text-[#9CA3AF] placeholder:text-[#9CA3AF]"
+          className="min-h-[44px] max-h-[96px] w-full resize-none rounded-[15px] border border-[#e2e8f0] bg-[#f8fafc] px-4 py-[11px] text-[14px] text-[#0f172a] placeholder:text-[#94a3b8] transition focus:border-[#3b82f6] focus:ring-[4px] focus:ring-[rgba(59,130,246,0.12)] focus:outline-none disabled:cursor-not-allowed disabled:text-[#94a3b8]"
         />
+
         <button
           type="button"
           onClick={send}
           disabled={!canSend}
           aria-label="Enviar mensagem"
-          className="shrink-0 inline-flex items-center gap-1.5 px-5 py-[10px] text-[14px] font-semibold text-white bg-[#F97316] rounded-[10px] hover:bg-[#EA580C] active:bg-[#C2410C] disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F97316] focus-visible:ring-offset-2"
+          className="inline-flex min-h-[42px] items-center gap-1.5 rounded-[13px] bg-[#f97316] px-4 text-[13px] font-semibold text-white shadow-[0_12px_26px_rgba(249,115,22,0.22)] transition-colors hover:bg-[#ea580c] disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4z"/></svg>
           Enviar
         </button>
       </div>

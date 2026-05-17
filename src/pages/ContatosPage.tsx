@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import {
@@ -194,13 +194,13 @@ export function ContatosPage() {
         <span className="text-[15px] font-semibold">Contatos</span>
         <AppNav />
       </nav>
-      <div className="max-w-[1280px] mx-auto px-6 py-6 space-y-5">
+      <div className="w-full max-w-none px-6 lg:px-8 py-6 space-y-5">
         <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
           <h2 className="text-[14px] font-semibold">Filtros</h2>
           <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
             <input
               className={inputCls}
-              placeholder="Buscar por nome ou número"
+              placeholder="Buscar por nome ou nÃºmero"
               value={filters.search}
               onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
             />
@@ -234,7 +234,7 @@ export function ContatosPage() {
               onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value as ContactFilters['status'] }))}
             >
               <option value="">Todos os status</option>
-              <option value="assigned">Atribuído</option>
+              <option value="assigned">AtribuÃ­do</option>
               <option value="unassigned">Sem corretor</option>
             </select>
             <select className={inputCls} value={filters.origin} onChange={(e) => setFilters((prev) => ({ ...prev, origin: e.target.value }))}>
@@ -257,7 +257,7 @@ export function ContatosPage() {
               />
             </label>
             <label className="text-[12px] text-[#374151]">
-              Criado até
+              Criado atÃ©
               <input
                 className={inputCls}
                 type="date"
@@ -266,7 +266,7 @@ export function ContatosPage() {
               />
             </label>
             <label className="text-[12px] text-[#374151]">
-              Último contato de
+              Ãšltimo contato de
               <input
                 className={inputCls}
                 type="date"
@@ -275,7 +275,7 @@ export function ContatosPage() {
               />
             </label>
             <label className="text-[12px] text-[#374151]">
-              Último contato até
+              Ãšltimo contato atÃ©
               <input
                 className={inputCls}
                 type="date"
@@ -321,7 +321,7 @@ export function ContatosPage() {
               disabled={exportLoading}
               className="px-4 py-2 rounded-[10px] bg-[#0F766E] text-white text-[13px] font-semibold hover:bg-[#0E6962] disabled:opacity-60"
             >
-              {exportLoading ? 'Exportando…' : 'Exportar CSV'}
+              {exportLoading ? 'Exportandoâ€¦' : 'Exportar CSV'}
             </button>
           </div>
           {exportError && <p className="text-[12px] text-red-700">{exportError}</p>}
@@ -369,14 +369,14 @@ export function ContatosPage() {
               }}
               className="px-4 py-2 rounded-[10px] bg-[#16A34A] text-white text-[13px] font-semibold hover:bg-[#15803D]"
             >
-              Confirmar importação
+              Confirmar importaÃ§Ã£o
             </button>
           </div>
           {preview && (
             <div className="text-[12px] text-[#374151] bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px] p-3">
-              Total: {preview.totalRows} | Válidas: {preview.validRows} | Inválidas: {preview.invalidRows} | Novos:{' '}
+              Total: {preview.totalRows} | VÃ¡lidas: {preview.validRows} | InvÃ¡lidas: {preview.invalidRows} | Novos:{' '}
               {preview.createdContacts} | Atualizados: {preview.updatedContacts} | Claims: {preview.claimedUnassignedContacts} |
-              Não assumidos: {preview.skippedOwnedContacts} | Duplicadas no arquivo: {preview.duplicateRows}
+              NÃ£o assumidos: {preview.skippedOwnedContacts} | Duplicadas no arquivo: {preview.duplicateRows}
             </div>
           )}
           {importResult && <p className="text-[12px] text-[#047857]">{importResult}</p>}
@@ -389,14 +389,14 @@ export function ContatosPage() {
               <thead className="bg-[#F9FAFB] border-b border-[#E5E7EB]">
                 <tr className="text-[11px] uppercase tracking-wide text-[#6B7280]">
                   <th className="px-3 py-2">Nome</th>
-                  <th className="px-3 py-2">Número</th>
+                  <th className="px-3 py-2">NÃºmero</th>
                   <th className="px-3 py-2">Empreendimento</th>
                   <th className="px-3 py-2">Corretor</th>
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2">Origem</th>
-                  <th className="px-3 py-2">Último contato</th>
+                  <th className="px-3 py-2">Ãšltimo contato</th>
                   <th className="px-3 py-2">Criado em</th>
-                  <th className="px-3 py-2">Ações</th>
+                  <th className="px-3 py-2">AÃ§Ãµes</th>
                 </tr>
               </thead>
               <tbody>
@@ -419,7 +419,7 @@ export function ContatosPage() {
                       <td className="px-3 py-2">{c.phoneE164}</td>
                       <td className="px-3 py-2">{c.enterpriseInterest || '-'}</td>
                       <td className="px-3 py-2">{c.ownerName || '-'}</td>
-                      <td className="px-3 py-2">{c.status === 'assigned' ? 'Atribuído' : 'Sem corretor'}</td>
+                      <td className="px-3 py-2">{c.status === 'assigned' ? 'AtribuÃ­do' : 'Sem corretor'}</td>
                       <td className="px-3 py-2">{c.source || '-'}</td>
                       <td className="px-3 py-2">{c.lastContactAt ? new Date(c.lastContactAt).toLocaleString('pt-BR') : '-'}</td>
                       <td className="px-3 py-2">{new Date(c.createdAt).toLocaleDateString('pt-BR')}</td>
@@ -455,14 +455,14 @@ export function ContatosPage() {
               >
                 Anterior
               </button>
-              <span>Página {page}</span>
+              <span>PÃ¡gina {page}</span>
               <button
                 type="button"
                 disabled={page * pageSize >= total}
                 onClick={() => setPage((prev) => prev + 1)}
                 className="px-3 py-1 rounded-[8px] border border-[#D1D5DB] text-[12px] disabled:opacity-60"
               >
-                Próxima
+                PrÃ³xima
               </button>
             </div>
           </div>
@@ -540,7 +540,7 @@ export function ContatosPage() {
               className={`${inputCls} min-h-[92px]`}
               value={editContact.notes ?? ''}
               onChange={(e) => setEditContact({ ...editContact, notes: e.target.value })}
-              placeholder="Observações"
+              placeholder="ObservaÃ§Ãµes"
             />
             <div className="flex justify-between items-center gap-3">
               <div className="flex gap-2 ml-auto">
@@ -574,14 +574,14 @@ export function ContatosPage() {
                       setEditContact(null);
                       await load();
                     } catch (e) {
-                      setModalError(e instanceof Error ? e.message : 'Não foi possível salvar.');
+                      setModalError(e instanceof Error ? e.message : 'NÃ£o foi possÃ­vel salvar.');
                     } finally {
                       setSaveLoading(false);
                     }
                   }}
                   className="px-3 py-2 rounded-[10px] bg-[#2563EB] text-white text-[13px] font-semibold disabled:opacity-60"
                 >
-                  {saveLoading ? 'Salvando…' : 'Salvar'}
+                  {saveLoading ? 'Salvandoâ€¦' : 'Salvar'}
                 </button>
               </div>
             </div>
@@ -591,4 +591,5 @@ export function ContatosPage() {
     </div>
   );
 }
+
 

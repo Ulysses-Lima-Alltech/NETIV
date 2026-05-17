@@ -1,4 +1,4 @@
-import type { Conversation } from '../types';
+﻿import type { Conversation } from '../types';
 import { ConversationListItem } from './ConversationListItem';
 
 interface ConversationListProps {
@@ -19,38 +19,43 @@ export function ConversationList({
   isLoading = false,
 }: ConversationListProps) {
   return (
-    <div className="flex flex-col h-full bg-white border-r border-[#E5E7EB]">
-      <div className="p-4 border-b border-[#E5E7EB] shrink-0">
+    <div className="flex h-full min-h-0 flex-col bg-transparent">
+      <div className="shrink-0 border-b border-[#e2e8f0] px-4 py-3">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-[15px] font-semibold text-[#111827]">Conversas</h2>
+          <h2 className="text-[15px] font-semibold text-[#0f172a]">Conversas</h2>
           {onNewMessage && (
             <button
               type="button"
               onClick={onNewMessage}
-              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-[7px] text-[13px] font-semibold text-white bg-[#F97316] rounded-[8px] hover:bg-[#EA580C] active:bg-[#C2410C] transition-colors shadow-sm"
+              className="inline-flex min-h-[30px] items-center rounded-full border border-[#cbd5e1] bg-white px-3 text-[11px] font-medium text-[#334155] shadow-[0_4px_12px_rgba(15,23,42,0.04)] transition-colors hover:border-[#93c5fd] hover:bg-[#eaf2ff] hover:text-[#123a73]"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              Nova
+              + Nova
             </button>
           )}
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto min-h-0">
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-3">
-            <div className="h-5 w-5 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin" />
-            <span className="text-[13px] text-[#6B7280]">Carregando…</span>
+          <div className="flex flex-col items-center justify-center gap-3 py-16">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-[#2563eb] border-t-transparent" />
+            <span className="text-[13px] text-[#64748b]">Carregando...</span>
           </div>
         ) : conversations.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#D1D5DB" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mb-2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            <p className="text-[13px] text-[#9CA3AF]">Nenhuma conversa encontrada</p>
+          <div className="flex flex-col items-center justify-center px-4 py-16 text-center">
+            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mb-2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <p className="text-[13px] text-[#94a3b8]">Nenhuma conversa encontrada</p>
           </div>
         ) : (
-          <ul className="list-none p-0 m-0" role="list">
+          <ul className="m-0 list-none space-y-1 p-0" role="list">
             {conversations.map((conv) => (
               <li key={conv.id}>
-                <ConversationListItem conversation={conv} isSelected={selectedId === conv.id} onClick={() => onSelect(conv.id)} onDelete={onDelete} />
+                <ConversationListItem
+                  conversation={conv}
+                  isSelected={selectedId === conv.id}
+                  onClick={() => onSelect(conv.id)}
+                  onDelete={onDelete}
+                />
               </li>
             ))}
           </ul>

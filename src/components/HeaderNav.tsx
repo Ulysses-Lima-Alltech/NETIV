@@ -1,27 +1,17 @@
-import { Link, useLocation } from 'react-router-dom';
+﻿import { Link, useLocation } from 'react-router-dom';
+import { isNavItemActive } from '../hooks/useAppNav';
 
-const navBtnBase = 'px-4 py-2 rounded-[10px] text-[13px] font-medium text-white transition-all duration-200';
-const navBtnDefault = 'bg-[#60A5FA] hover:bg-[#F97316]';
-const navBtnActive = 'bg-[#F97316]';
-
-function isActive(pathname: string, to: string): boolean {
-  if (to === '/inbox') return pathname === '/inbox' || pathname === '/';
-  if (to === '/dashboard') return pathname === '/dashboard';
-  if (to === '/settings/empreendimentos') return pathname.startsWith('/settings/empreendimentos');
-  if (to === '/settings/corretores') return pathname.startsWith('/settings/corretores');
-  if (to === '/settings/integrations/whatsapp') return pathname.startsWith('/settings/integrations');
-  if (to === '/agenda') return pathname.startsWith('/agenda');
-  return pathname === to;
-}
+const navBtnBase =
+  'inline-flex items-center rounded-[12px] px-3 py-2 text-[13px] font-medium transition-colors duration-150';
+const navBtnDefault = 'border border-[#e2e8f0] bg-white text-[#334155] hover:border-[#cbd5e1] hover:bg-[#f8fafc]';
+const navBtnActive = 'bg-[#f97316] text-white shadow-[0_10px_24px_rgba(249,115,22,0.24)]';
 
 export function NavLinkButton({ to, children }: { to: string; children: React.ReactNode }) {
   const { pathname } = useLocation();
-  const active = isActive(pathname, to);
+  const active = isNavItemActive(pathname, to);
+
   return (
-    <Link
-      to={to}
-      className={`${navBtnBase} ${active ? navBtnActive : navBtnDefault}`}
-    >
+    <Link to={to} className={`${navBtnBase} ${active ? navBtnActive : navBtnDefault}`}>
       {children}
     </Link>
   );
@@ -29,7 +19,7 @@ export function NavLinkButton({ to, children }: { to: string; children: React.Re
 
 export function NavGroup({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-2 p-1.5 rounded-[12px] bg-[#F3F4F6]/60 border border-[#E5E7EB]">
+    <div className="inline-flex items-center gap-2 rounded-[14px] border border-[#e2e8f0] bg-white/85 p-1.5 shadow-[0_8px_20px_rgba(15,23,42,0.05)]">
       {children}
     </div>
   );
