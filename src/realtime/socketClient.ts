@@ -32,8 +32,12 @@ export function getInboxSocket(): Socket {
   });
   socket = io(API_URL, {
     path: '/socket.io',
-    transports: ['websocket', 'polling'],
     autoConnect: true,
+    // Deixa o Engine.IO negociar transporte de forma automática (polling -> websocket upgrade quando possível).
+    transports: ['polling', 'websocket'],
+    reconnection: true,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 8000,
     ...(authOptions.auth ? { auth: authOptions.auth } : {}),
     ...(authOptions.query ? { query: authOptions.query } : {}),
     withCredentials: true,
