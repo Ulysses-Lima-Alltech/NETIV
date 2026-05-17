@@ -33,6 +33,10 @@ export interface GenerateCompletionParams {
   costTracking?: {
     purpose: string;
     modelReason?: string | null;
+    apiKeySource?: 'enterprise' | 'global_fallback' | null;
+    openaiApiKeyId?: string | null;
+    openaiProjectId?: string | null;
+    requestType?: string | null;
     conversationId?: number | null;
     contactId?: number | null;
     enterpriseId?: number | null;
@@ -127,6 +131,10 @@ async function recordLlmUsage(params: {
     await recorder({
       provider: params.provider,
       model: params.model,
+      apiKeySource: params.tracking.apiKeySource ?? null,
+      openaiApiKeyId: params.tracking.openaiApiKeyId ?? null,
+      openaiProjectId: params.tracking.openaiProjectId ?? null,
+      requestType: params.tracking.requestType ?? null,
       purpose: params.tracking.purpose,
       modelReason: params.tracking.modelReason ?? null,
       conversationId: params.tracking.conversationId ?? null,

@@ -16,7 +16,6 @@ import {
   getRecentConversationMessages,
 } from '../repositories/messageRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
-import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { scheduleWhatsAppAiAfterUserMessage } from './whatsappAiDebounce.js';
 import { handleIncomingMessage } from './conversationEngine.js';
 import { leadOriginFromMetaWhatsAppMessage } from './leadOriginResolver.js';
@@ -29,9 +28,6 @@ import {
   isAnaEmergencyHandoffEnabled,
   sendAnaEmergencyHandoff,
 } from '../utils/anaEmergencyHandoff.js';
-
-/** TEMP diagnóstico: ignorar `integration_settings.ai_enabled` no agendamento da Ana. Remover após investigação. */
-const ANA_FORCE_AI_DIAGNOSTIC = true;
 
 /** Desligado enquanto se testa o bypass no conversationEngine (`ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY`). Se true, dá `continue` e o motor não corre. */
 const ANA_DIAGNOSTIC_FIXED_REPLY = false;
@@ -221,34 +217,15 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
   }
 
   const anaEmergencyHandoffActive = isAnaEmergencyHandoffEnabled();
-  const aiConfig = anaEmergencyHandoffActive ? null : await getOpenAIConfig();
-  const hasOpenaiKey = !anaEmergencyHandoffActive && !!aiConfig?.openaiApiKey?.trim();
-  const aiEnabledInDb = !anaEmergencyHandoffActive && aiConfig?.aiEnabled === true;
-  const aiReady = anaEmergencyHandoffActive || (hasOpenaiKey && (ANA_FORCE_AI_DIAGNOSTIC || aiEnabledInDb));
   if (anaEmergencyHandoffActive) {
     console.log('[ANA_EMERGENCY_HANDOFF] webhook_ai_gate_bypassed', {
       reason: 'emergency_handoff_active',
     });
-  } else if (ANA_FORCE_AI_DIAGNOSTIC) {
-    console.log('[ANA_FORCE_AI]', {
-      enabled: true,
-      bypassWhere: 'webhookProcessor.integration_ai_gate',
-      ai_enabled_in_db: aiConfig?.aiEnabled ?? null,
-      hasOpenaiKey,
-      aiReady,
-    });
   }
   console.log('[ANA_PIPELINE] integration_ai_gate', {
-    aiReady,
-    hasOpenaiKey,
-    aiEnabled: aiEnabledInDb,
-    ana_force_ai: ANA_FORCE_AI_DIAGNOSTIC,
     ana_emergency_handoff: anaEmergencyHandoffActive,
-    note: anaEmergencyHandoffActive
-      ? 'ANA_EMERGENCY_HANDOFF ativo; engine sera chamado sem consultar configuracao OpenAI.'
-      : ANA_FORCE_AI_DIAGNOSTIC
-        ? 'TEMP: ai_enabled ignorado; aiReady = hasOpenaiKey'
-        : 'Modo ANA no inbox (handoff=false) e diferente de integration_settings.ai_enabled; se aiReady=false, nao ha scheduleWhatsAppAiAfterUserMessage',
+    note:
+      'Decisao de chave/API bloqueada por empreendimento foi movida para conversationEngine + enterpriseAiSettingsService.',
   });
   const waReady = await canSendWhatsAppText();
 
@@ -621,19 +598,6 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
               toPhoneNumber: String(msg.from),
               trailingUserBubbles: 1,
               inboundMetaMessageId: mid,
-            });
-            continue;
-          }
-
-          if (!aiReady) {
-            console.log('[ANA_PIPELINE] ai_schedule_skipped', {
-              conversationId: conv.id,
-              metaMessageId: mid,
-              fromTail: phoneDigitsTail(msg.from, 4),
-              reason: !aiConfig ? 'sem_config_integracao' : !hasOpenaiKey ? 'sem_api_key' : 'unexpected',
-              hasOpenaiKey,
-              aiEnabled: aiEnabledInDb,
-              ana_force_ai: ANA_FORCE_AI_DIAGNOSTIC,
             });
             continue;
           }

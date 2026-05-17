@@ -246,6 +246,8 @@ export interface WhatsAppWindowStatus {
 
 export interface AIConfigPublic {
   openaiApiKeyMasked: boolean;
+  openaiApiKeyId?: string | null;
+  openaiProjectId?: string | null;
   openaiBaseUrl: string | null;
   modelColdLead: string;
   modelHotLead: string;
@@ -258,6 +260,9 @@ export interface AIConfigPublic {
 
 export interface AIConfigUpdate {
   openaiApiKey?: string;
+  removeApiKey?: boolean;
+  openaiApiKeyId?: string | null;
+  openaiProjectId?: string | null;
   openaiBaseUrl?: string | null;
   modelColdLead?: string;
   modelHotLead?: string;
@@ -265,6 +270,92 @@ export interface AIConfigUpdate {
   maxTokens?: number;
   leadScoreThreshold?: number;
   aiEnabled?: boolean;
+}
+
+export type ApiKeySource = 'enterprise' | 'global_fallback';
+
+export interface ApiGlobalSettingsPublic {
+  provider: 'openai';
+  has_api_key: boolean;
+  masked_api_key: string | null;
+  openai_api_key_id: string | null;
+  openai_project_id: string | null;
+  openai_base_url: string | null;
+  model_hot_lead: string | null;
+  model_cold_lead: string | null;
+  ai_enabled: boolean;
+  temperature: number;
+  max_tokens: number;
+  lead_score_threshold: number;
+}
+
+export interface ApiGlobalSettingsUpdate {
+  provider?: 'openai';
+  use_global_defaults?: boolean;
+  openai_api_key?: string;
+  remove_api_key?: boolean;
+  openai_api_key_id?: string | null;
+  openai_project_id?: string | null;
+  openai_base_url?: string | null;
+  model_hot_lead?: string | null;
+  model_cold_lead?: string | null;
+  ai_enabled?: boolean;
+  temperature?: number;
+  max_tokens?: number;
+  lead_score_threshold?: number;
+}
+
+export interface EnterpriseApiSettingsItem {
+  enterprise_id: number;
+  enterprise_name: string;
+  provider: 'openai';
+  use_global_defaults: boolean;
+  has_own_api_key: boolean;
+  masked_api_key: string | null;
+  openai_api_key_id: string | null;
+  openai_project_id: string | null;
+  openai_base_url: string | null;
+  model_hot_lead: string | null;
+  model_cold_lead: string | null;
+  effective_model_hot_lead: string;
+  effective_model_cold_lead: string;
+  ai_enabled: boolean;
+  emergency_block_enabled: boolean;
+  emergency_block_message: string | null;
+  cost_tracking_enabled: boolean;
+  last_connection_test_at: string | null;
+  last_connection_test_status: string | null;
+  last_connection_test_error: string | null;
+  api_key_source_preview: ApiKeySource | null;
+}
+
+export interface EnterpriseApiSettingsUpdate {
+  provider?: 'openai';
+  use_global_defaults?: boolean;
+  openai_api_key?: string;
+  remove_api_key?: boolean;
+  openai_api_key_id?: string | null;
+  openai_project_id?: string | null;
+  openai_base_url?: string | null;
+  model_hot_lead?: string | null;
+  model_cold_lead?: string | null;
+  ai_enabled?: boolean;
+  emergency_block_enabled?: boolean;
+  emergency_block_message?: string | null;
+  cost_tracking_enabled?: boolean;
+}
+
+export interface EnterpriseApiConnectionTestResult {
+  success: boolean;
+  blocked: boolean;
+  reason: string | null;
+  model: string | null;
+  baseUrl: string | null;
+  apiKeySource: ApiKeySource | null;
+  openaiApiKeyId: string | null;
+  openaiProjectId: string | null;
+  reply?: string;
+  error?: string | null;
 }
 
 export const settingsApi = {
@@ -276,6 +367,20 @@ export const settingsApi = {
   getAI: () => request<AIConfigPublic>('/settings/ai'),
   putAI: (body: AIConfigUpdate) =>
     request<AIConfigPublic>('/settings/ai', { method: 'PUT', body }),
+  getApiGlobal: () => request<ApiGlobalSettingsPublic>('/settings/api/global'),
+  putApiGlobal: (body: ApiGlobalSettingsUpdate) =>
+    request<ApiGlobalSettingsPublic>('/settings/api/global', { method: 'PUT', body }),
+  getApiEnterprises: () =>
+    request<{ enterprises: EnterpriseApiSettingsItem[] }>('/settings/api/enterprises'),
+  putApiEnterprise: (enterpriseId: number, body: EnterpriseApiSettingsUpdate) =>
+    request<EnterpriseApiSettingsItem>(`/settings/api/enterprises/${enterpriseId}`, {
+      method: 'PUT',
+      body,
+    }),
+  testApiEnterprise: (enterpriseId: number) =>
+    request<EnterpriseApiConnectionTestResult>(`/settings/api/enterprises/${enterpriseId}/test`, {
+      method: 'POST',
+    }),
 };
 
 export const whatsappApi = {

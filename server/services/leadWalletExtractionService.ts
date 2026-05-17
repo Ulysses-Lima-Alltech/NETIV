@@ -1,9 +1,9 @@
 import { getMessagesByConversationId } from '../repositories/messageRepository.js';
-import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { generateChatCompletion, type ChatMessage } from './openaiService.js';
 import { query } from '../db/pg.js';
 import type { ReserveSegmentationPatch } from '../repositories/conversationRepository.js';
 import { RESERVE_INTEREST_TYPES, RESERVE_REASONS } from '../constants/reserveSegmentation.js';
+import { resolveAiSettingsForEnterprise } from './enterpriseAiSettingsService.js';
 
 const EXTRACT_JSON = `Retorne APENAS JSON válido (sem markdown), chaves em inglês:
 {
@@ -53,8 +53,18 @@ export async function extractLeadDataFromConversation(
   customerName: string | null,
   enterpriseName: string | null
 ): Promise<void> {
-  const aiConfig = await getOpenAIConfig();
-  if (!aiConfig?.openaiApiKey?.trim() || !aiConfig.aiEnabled) return;
+  const { rows: conversationMetaRows } = await query<{
+    contact_id: number | null;
+    enterprise_id: number | null;
+  }>(
+    `SELECT contact_id, enterprise_id FROM conversations WHERE id = $1`,
+    [conversationId]
+  );
+  const conversationMeta = conversationMetaRows[0] ?? null;
+  if (!conversationMeta) return;
+
+  const resolvedAiSettings = await resolveAiSettingsForEnterprise(conversationMeta.enterprise_id ?? null);
+  if (resolvedAiSettings.blocked || !resolvedAiSettings.openaiApiKey) return;
 
   const rows = await getMessagesByConversationId(conversationId);
   const transcript = rows
@@ -64,15 +74,7 @@ export async function extractLeadDataFromConversation(
     .join('\n');
   if (transcript.length < 20) return;
 
-  const model = aiConfig.modelColdLead || 'gpt-4.1-mini';
-  const { rows: conversationMetaRows } = await query<{
-    contact_id: number | null;
-    enterprise_id: number | null;
-  }>(
-    `SELECT contact_id, enterprise_id FROM conversations WHERE id = $1`,
-    [conversationId]
-  );
-  const conversationMeta = conversationMetaRows[0] ?? null;
+  const model = resolvedAiSettings.modelColdLead || resolvedAiSettings.modelHotLead || 'gpt-4.1-mini';
   const messages: ChatMessage[] = [
     {
       role: 'system',
@@ -85,27 +87,33 @@ export async function extractLeadDataFromConversation(
   ];
 
   const result = await generateChatCompletion({
-    apiKey: aiConfig.openaiApiKey,
-    baseUrl: aiConfig.openaiBaseUrl,
+    apiKey: resolvedAiSettings.openaiApiKey,
+    baseUrl: resolvedAiSettings.openaiBaseUrl,
     model,
     messages,
     temperature: 0.2,
     maxTokens: 600,
     responseFormatJson: true,
-    costTracking: {
-      purpose: 'ana_lead_wallet_extraction',
-      modelReason:
-        conversationMeta?.enterprise_id != null
-          ? 'enterprise_resolved_standard_model'
-          : 'unclassified_enterprise_low_cost_model',
-      conversationId,
-      contactId: conversationMeta?.contact_id ?? null,
-      enterpriseId: conversationMeta?.enterprise_id ?? null,
-      metadata: {
-        responseFormatJson: true,
-        source: 'lead_wallet_extraction',
-      },
-    },
+    costTracking: resolvedAiSettings.costTrackingEnabled
+      ? {
+          purpose: 'ana_lead_wallet_extraction',
+          modelReason:
+            conversationMeta.enterprise_id != null
+              ? 'enterprise_resolved_standard_model'
+              : 'unclassified_enterprise_low_cost_model',
+          conversationId,
+          contactId: conversationMeta.contact_id ?? null,
+          enterpriseId: conversationMeta.enterprise_id ?? null,
+          apiKeySource: resolvedAiSettings.apiKeySource ?? undefined,
+          openaiApiKeyId: resolvedAiSettings.openaiApiKeyId ?? undefined,
+          openaiProjectId: resolvedAiSettings.openaiProjectId ?? undefined,
+          requestType: 'lead_wallet_extraction',
+          metadata: {
+            responseFormatJson: true,
+            source: 'lead_wallet_extraction',
+          },
+        }
+      : undefined,
   });
   if (!result.success || !result.content) return;
   const patch = parseExtractJson(result.content);

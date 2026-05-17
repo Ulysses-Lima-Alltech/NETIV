@@ -1,4 +1,3 @@
-import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { normalizeEnterpriseAliasText } from '../repositories/enterpriseMatch.js';
 import type { EnterpriseRow } from '../repositories/enterpriseRepository.js';
 import type { ConversationMessageSnippet } from '../repositories/messageRepository.js';
@@ -6,6 +5,7 @@ import {
   generateChatCompletion,
   type GenerateCompletionResult,
 } from './openaiService.js';
+import { resolveAiSettingsForEnterprise } from './enterpriseAiSettingsService.js';
 
 export type LeadTemperatureLabel = 'Frio' | 'Morno' | 'Quente';
 export type LeadMainIntent =
@@ -69,12 +69,17 @@ export interface LeadClassifierDecision extends LeadClassifierOutputSchema {
 }
 
 interface LeadClassifierDependencies {
-  loadOpenAIConfig: () => Promise<{
+  loadOpenAIConfig: (enterpriseId?: number | null) => Promise<{
     openaiApiKey: string;
     openaiBaseUrl: string | null;
     modelColdLead: string;
     modelHotLead: string;
     maxTokens: number;
+    blockedReason?: string | null;
+    apiKeySource?: 'enterprise' | 'global_fallback';
+    openaiApiKeyId?: string | null;
+    openaiProjectId?: string | null;
+    costTrackingEnabled?: boolean;
   } | null>;
   generateCompletion: (params: {
     apiKey: string;
@@ -90,13 +95,45 @@ interface LeadClassifierDependencies {
       contactId?: number | null;
       enterpriseId?: number | null;
       modelReason?: string | null;
+      apiKeySource?: 'enterprise' | 'global_fallback';
+      openaiApiKeyId?: string | null;
+      openaiProjectId?: string | null;
+      requestType?: string | null;
       metadata?: Record<string, unknown>;
     };
   }) => Promise<GenerateCompletionResult>;
 }
 
 const DEFAULT_DEPS: LeadClassifierDependencies = {
-  loadOpenAIConfig: getOpenAIConfig,
+  loadOpenAIConfig: async (enterpriseId?: number | null) => {
+    const resolved = await resolveAiSettingsForEnterprise(enterpriseId ?? null);
+    if (resolved.blocked || !resolved.openaiApiKey) {
+      return {
+        openaiApiKey: '',
+        openaiBaseUrl: resolved.openaiBaseUrl,
+        modelColdLead: resolved.modelColdLead,
+        modelHotLead: resolved.modelHotLead,
+        maxTokens: resolved.maxTokens,
+        blockedReason: resolved.reason,
+        apiKeySource: resolved.apiKeySource ?? undefined,
+        openaiApiKeyId: resolved.openaiApiKeyId ?? null,
+        openaiProjectId: resolved.openaiProjectId ?? null,
+        costTrackingEnabled: resolved.costTrackingEnabled,
+      };
+    }
+    return {
+      openaiApiKey: resolved.openaiApiKey,
+      openaiBaseUrl: resolved.openaiBaseUrl,
+      modelColdLead: resolved.modelColdLead,
+      modelHotLead: resolved.modelHotLead,
+      maxTokens: resolved.maxTokens,
+      blockedReason: null,
+      apiKeySource: resolved.apiKeySource ?? undefined,
+      openaiApiKeyId: resolved.openaiApiKeyId,
+      openaiProjectId: resolved.openaiProjectId,
+      costTrackingEnabled: resolved.costTrackingEnabled,
+    };
+  },
   generateCompletion: generateChatCompletion,
 };
 
@@ -594,9 +631,9 @@ export async function classifyLeadConversation(
     ...DEFAULT_DEPS,
     ...(deps || {}),
   };
-  const aiConfig = await mergedDeps.loadOpenAIConfig();
+  const aiConfig = await mergedDeps.loadOpenAIConfig(input.currentEnterpriseId ?? null);
   if (!aiConfig?.openaiApiKey?.trim()) {
-    return safeFallbackDecision(input, 'openai_api_key_not_configured');
+    return safeFallbackDecision(input, aiConfig?.blockedReason ?? 'openai_api_key_not_configured');
   }
 
   const baseUrl = aiConfig.openaiBaseUrl ?? null;
@@ -616,16 +653,22 @@ export async function classifyLeadConversation(
         { role: 'system', content: classifierSystemPrompt() },
         { role: 'user', content: `Entrada para classificar:\n${promptInput}` },
       ],
-      costTracking: {
-        purpose: 'lead_classifier',
-        modelReason: 'lead_classification_pipeline',
-        conversationId: input.conversationId,
-        contactId: input.contactId ?? null,
-        enterpriseId: input.currentEnterpriseId ?? null,
-        metadata: {
-          classificationLayer: 'whatsapp_inbound',
-        },
-      },
+      costTracking: aiConfig.costTrackingEnabled === false
+        ? undefined
+        : {
+            purpose: 'lead_classifier',
+            modelReason: 'lead_classification_pipeline',
+            conversationId: input.conversationId,
+            contactId: input.contactId ?? null,
+            enterpriseId: input.currentEnterpriseId ?? null,
+            apiKeySource: aiConfig.apiKeySource,
+            openaiApiKeyId: aiConfig.openaiApiKeyId ?? null,
+            openaiProjectId: aiConfig.openaiProjectId ?? null,
+            requestType: 'lead_classifier',
+            metadata: {
+              classificationLayer: 'whatsapp_inbound',
+            },
+          },
     });
   } catch (error) {
     return safeFallbackDecision(

@@ -216,7 +216,9 @@ test('dashboard agrega custo por empreendimento apenas no periodo e inclui grupo
   assert.match(source, /ue\.created_at AT TIME ZONE/);
   assert.doesNotMatch(source, /FULL\s+(?:OUTER\s+)?JOIN/i);
   assert.match(source, /COALESCE\(c\.enterprise_id::text, '__NO_ENTERPRISE__'\) AS group_key/);
-  assert.match(source, /COALESCE\(ue\.enterprise_id::text, '__NO_ENTERPRISE__'\) AS group_key/);
+  assert.match(source, /COALESCE\(COALESCE\(ue\.enterprise_id::int, eas\.enterprise_id\)::text, '__NO_ENTERPRISE__'\) AS group_key/);
+  assert.match(source, /LEFT JOIN enterprise_ai_settings eas/);
+  assert.match(source, /eas\.openai_api_key_id = ue\.openai_api_key_id/);
   assert.match(source, /COALESCE\(COALESCE\(a\.resolved_enterprise_id, a\.enterprise_id, c\.enterprise_id\)::text, '__NO_ENTERPRISE__'\) AS group_key/);
   assert.match(source, /combined AS \(/);
   assert.match(source, /SELECT \* FROM conv_groups\s+UNION ALL\s+SELECT \* FROM usage_groups\s+UNION ALL\s+SELECT \* FROM backfill_groups/);
@@ -237,6 +239,14 @@ test('dashboard query combina linhas apenas comerciais, apenas llm, apenas backf
   assert.match(source, /\(SUM\(llm_tracked_cost_usd\) \+ SUM\(llm_estimated_cost_usd\)\)::numeric\(12,6\)::text AS llm_cost_usd/);
   assert.match(source, /CASE WHEN group_key = '__NO_ENTERPRISE__' THEN NULL ELSE MAX\(enterprise_id\) END AS enterprise_id/);
   assert.match(source, /WHEN group_key = '__NO_ENTERPRISE__' THEN '\(sem empreendimento\)'/);
+});
+
+test('dashboard nao aplica teto artificial e prepara mapeamento por openai_api_key_id', () => {
+  const source = readFileSync(new URL('../repositories/dashboardRepository.js', import.meta.url), 'utf8');
+  assert.match(source, /openai_api_key_id/);
+  assert.match(source, /enterprise_ai_settings/);
+  assert.doesNotMatch(source, /LEAST\([^)]*20/i);
+  assert.doesNotMatch(source, /cap.*20/i);
 });
 
 test('dashboard soma custo rastreado e estimado historico com rateio por esforco', () => {

@@ -304,18 +304,6 @@ export async function resolveEnterpriseForAnaTurn(params: {
     };
   }
 
-  const fromCampaign =
-    params.campaignEnterpriseId != null ? activeById.get(params.campaignEnterpriseId) ?? null : null;
-  if (fromCampaign) {
-    return {
-      source: 'campaign',
-      enterpriseId: fromCampaign.id,
-      enterpriseName: fromCampaign.name,
-      candidates: [],
-      reasonWhenNoEnterprise: null,
-    };
-  }
-
   const fromContact =
     params.contactEnterpriseId != null ? activeById.get(params.contactEnterpriseId) ?? null : null;
   if (fromContact) {
@@ -323,6 +311,18 @@ export async function resolveEnterpriseForAnaTurn(params: {
       source: 'contact',
       enterpriseId: fromContact.id,
       enterpriseName: fromContact.name,
+      candidates: [],
+      reasonWhenNoEnterprise: null,
+    };
+  }
+
+  const fromCampaign =
+    params.campaignEnterpriseId != null ? activeById.get(params.campaignEnterpriseId) ?? null : null;
+  if (fromCampaign) {
+    return {
+      source: 'campaign',
+      enterpriseId: fromCampaign.id,
+      enterpriseName: fromCampaign.name,
       candidates: [],
       reasonWhenNoEnterprise: null,
     };

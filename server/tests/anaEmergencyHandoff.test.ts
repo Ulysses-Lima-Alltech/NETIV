@@ -74,15 +74,15 @@ test('ANA_EMERGENCY_HANDOFF=true responde handoff padrao sem OpenAI/RAG', async 
 
   const engineSource = readFileSync(new URL('../services/conversationEngine.js', import.meta.url), 'utf8');
   const emergencyCheck = engineSource.indexOf('isAnaEmergencyHandoffEnabled()');
-  const openAiConfigLoad = engineSource.indexOf('const aiConfig = await getOpenAIConfig();');
+  const aiSettingsResolve = engineSource.indexOf('resolveAiSettingsForEnterprise(');
   const ragLoad = engineSource.indexOf('await loadRankedKnowledgeChunksForPromptWithMeta');
   const openAiCompletion = engineSource.indexOf('await generateChatCompletion');
 
   assert.ok(emergencyCheck >= 0, 'emergency check should exist in conversationEngine');
-  assert.ok(openAiConfigLoad >= 0, 'OpenAI config load should exist in conversationEngine');
+  assert.ok(aiSettingsResolve >= 0, 'enterprise AI settings resolution should exist in conversationEngine');
   assert.ok(ragLoad >= 0, 'RAG load should exist in conversationEngine');
   assert.ok(openAiCompletion >= 0, 'OpenAI completion call should exist in conversationEngine');
-  assert.ok(emergencyCheck < openAiConfigLoad, 'emergency check must happen before OpenAI config');
+  assert.ok(emergencyCheck < aiSettingsResolve, 'emergency check must happen before enterprise AI settings resolution');
   assert.ok(emergencyCheck < ragLoad, 'emergency check must happen before RAG retrieval');
   assert.ok(emergencyCheck < openAiCompletion, 'emergency check must happen before OpenAI generation');
 });

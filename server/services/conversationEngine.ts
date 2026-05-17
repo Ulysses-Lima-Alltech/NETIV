@@ -5,7 +5,6 @@ import {
   insertMessage,
   type MessageAttachmentPayload,
 } from '../repositories/messageRepository.js';
-import { getOpenAIConfig, getIntegrationModelStringsRaw } from '../repositories/openaiConfigRepository.js';
 import {
   getConversationById,
   setConversationEnterpriseId,
@@ -59,6 +58,10 @@ import {
   type ChatMessage,
   type GenerateCompletionResult,
 } from './openaiService.js';
+import {
+  resolveAiSettingsForEnterprise,
+  type ResolvedEnterpriseAiSettings,
+} from './enterpriseAiSettingsService.js';
 import {
   resolveEnterpriseLocationContext,
   findMunicipioInMessage,
@@ -184,9 +187,6 @@ import {
   sendAnaEmergencyHandoff,
   type AnaEmergencyHandoffSendResult,
 } from '../utils/anaEmergencyHandoff.js';
-
-/** TEMP diagnóstico: ignorar `integration_settings.ai_enabled` no motor da Ana. Remover após investigação. */
-const ANA_FORCE_AI_DIAGNOSTIC = true;
 
 /** Desligado para rastrear o fluxo real com [ANA_ENGINE_TRACE]. */
 const ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY = false;
@@ -616,27 +616,30 @@ function latestAnaGenerationFailureResult(
   return [...attempts].reverse().find((candidate) => candidate.success === false) ?? null;
 }
 
-function getConfiguredAnaSecondaryProvider(primaryModel: string): {
+function getConfiguredAnaSecondaryProvider(
+  primaryModel: string,
+  primaryApiKey: string,
+  primaryBaseUrl: string | null
+): {
   apiKey: string;
   baseUrl: string | null;
   model: string;
   provider: LlmProvider;
 } | null {
-  const apiKey =
-    process.env.ANA_SECONDARY_OPENAI_API_KEY?.trim() ||
-    process.env.OPENAI_SECONDARY_API_KEY?.trim() ||
-    '';
-  if (!apiKey) return null;
+  if (!primaryApiKey.trim()) return null;
   const baseUrl =
     process.env.ANA_SECONDARY_OPENAI_BASE_URL?.trim() ||
     process.env.OPENAI_SECONDARY_BASE_URL?.trim() ||
-    null;
+    primaryBaseUrl;
   const model =
     process.env.ANA_SECONDARY_OPENAI_MODEL?.trim() ||
     process.env.OPENAI_SECONDARY_MODEL?.trim() ||
     primaryModel;
+  if (model === primaryModel && (baseUrl ?? null) === (primaryBaseUrl ?? null)) {
+    return null;
+  }
   return {
-    apiKey,
+    apiKey: primaryApiKey,
     baseUrl,
     model,
     provider: detectLlmProvider(baseUrl),
@@ -1532,6 +1535,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   let anaRepetitionAudit: AnaAxisRepetitionAuditSnapshot | null = null;
   let anaTurnAuditMissingInformationFlagCreated = false;
   let anaTurnAuditMissingInformationSubject: string | null = null;
+  let anaTurnAuditProvider: string | null = null;
+  let anaTurnAuditModel: string | null = null;
+  let anaTurnAuditApiKeySource: 'enterprise' | 'global_fallback' | null = null;
+  let anaTurnAuditOpenaiApiKeyId: string | null = null;
+  let anaTurnAuditOpenaiProjectId: string | null = null;
+  let anaTurnAuditInputTokens: number | null = null;
+  let anaTurnAuditOutputTokens: number | null = null;
+  let anaTurnAuditCachedInputTokens: number | null = null;
+  let anaTurnAuditRequestType: string | null = 'ana_main_reply';
+  let anaTurnAuditLlmStatus: 'success' | 'blocked' | 'skipped' | 'error' | null = null;
+  let anaTurnAuditLlmHttpStatus: number | null = null;
+  let anaTurnAuditErrorCode: string | null = null;
+  let anaTurnAuditErrorMessage: string | null = null;
   let anaEnterpriseResolutionForAudit: AnaEnterpriseResolution = {
     source: 'unresolved',
     enterpriseId: null,
@@ -1557,52 +1573,28 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       inboundMetaMessageId: inboundMetaFromCtx ?? null,
     });
 
-    const aiConfig = await getOpenAIConfig();
-    anaTurnDiagnostics.provider = detectLlmProvider(aiConfig?.openaiBaseUrl ?? null);
-    anaTurnDiagnostics.llm.provider = anaTurnDiagnostics.provider;
-    console.log('[ANA DEBUG] aiConfig loaded (handleIncomingMessage)', {
-      hasConfig: !!aiConfig,
-      hasApiKey: !!aiConfig?.openaiApiKey?.trim(),
-      aiEnabled: aiConfig?.aiEnabled,
-      conversationId,
-    });
-    if (!aiConfig) {
-      console.log('[ANA_PIPELINE] engine_skip', {
-        reason: 'openai_config_null',
-        conversationId,
-        replyPipelineToken: replyPipelineToken ?? null,
-      });
-      console.error('[ANA DEBUG] getOpenAIConfig retornou null - ignorando mensagem.');
-      return;
-    }
-    if (!aiConfig.openaiApiKey?.trim()) {
-      console.log('[ANA_PIPELINE] engine_skip', {
-        reason: 'openai_api_key_missing',
-        conversationId,
-        replyPipelineToken: replyPipelineToken ?? null,
-      });
-      console.warn('[ANA DEBUG] OpenAI API Key nao configurada - ignorando mensagem.');
-      return;
-    }
-    if (!aiConfig.aiEnabled && !ANA_FORCE_AI_DIAGNOSTIC) {
-      console.log('[ANA_PIPELINE] engine_skip', {
-        reason: 'ai_disabled_in_db',
-        conversationId,
-        replyPipelineToken: replyPipelineToken ?? null,
-      });
-      console.log('[ANA DEBUG] aiEnabled check blocked - ai_enabled=false no banco.');
-      return;
-    }
-    if (ANA_FORCE_AI_DIAGNOSTIC && !aiConfig.aiEnabled) {
-      console.log('[ANA_FORCE_AI]', {
-        enabled: true,
-        bypassWhere: 'conversationEngine.handleIncomingMessage',
-        ai_enabled_in_db: aiConfig.aiEnabled,
-        hasOpenaiKey: true,
-        conversationId,
-      });
-    }
-    console.log('[ANA DEBUG] aiEnabled check passed');
+    let resolvedAiSettings: ResolvedEnterpriseAiSettings | null = null;
+    const captureLlmAudit = (result: GenerateCompletionResult, requestType: string): void => {
+      anaTurnAuditProvider = result.provider ?? anaTurnAuditProvider ?? null;
+      anaTurnAuditModel = result.model ?? anaTurnAuditModel ?? null;
+      anaTurnAuditRequestType = requestType;
+      anaTurnAuditLlmHttpStatus = result.httpStatus ?? anaTurnAuditLlmHttpStatus;
+      if (result.usage) {
+        anaTurnAuditInputTokens = result.usage.inputTokens;
+        anaTurnAuditOutputTokens = result.usage.outputTokens;
+        anaTurnAuditCachedInputTokens = result.usage.cachedInputTokens;
+      }
+      if (result.success) {
+        anaTurnAuditLlmStatus = 'success';
+        anaTurnAuditErrorCode = null;
+        anaTurnAuditErrorMessage = null;
+      } else {
+        anaTurnAuditLlmStatus = 'error';
+        anaTurnAuditErrorCode =
+          result.errorCode ?? result.classifiedError ?? 'UNKNOWN_LLM_ERROR';
+        anaTurnAuditErrorMessage = result.error ?? null;
+      }
+    };
 
     let conv = await getConversationById(conversationId);
     if (!conv) {
@@ -1807,6 +1799,29 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const fullUserUtterances = buildUserUtterancesContext(rows);
     const lastUserRowForLog = [...rows].reverse().find((r) => r.role === 'user');
     const inboundMetaMessageId = lastUserRowForLog?.meta_message_id ?? inboundMetaFromCtx ?? null;
+    const enterpriseIdForAi =
+      effectiveConv.enterprise_id ??
+      enterpriseResolution.enterpriseId ??
+      linkedContact?.enterprise_id ??
+      null;
+    resolvedAiSettings = await resolveAiSettingsForEnterprise(enterpriseIdForAi);
+    anaTurnDiagnostics.provider = detectLlmProvider(resolvedAiSettings.openaiBaseUrl);
+    anaTurnDiagnostics.llm.provider = anaTurnDiagnostics.provider;
+    console.log('[ANA AI SETTINGS RESOLUTION]', {
+      conversationId,
+      enterpriseIdForAi,
+      blocked: resolvedAiSettings.blocked,
+      reason: resolvedAiSettings.reason,
+      apiKeySource: resolvedAiSettings.apiKeySource,
+      hasApiKey: Boolean(resolvedAiSettings.openaiApiKey),
+      emergencyBlockEnabled: resolvedAiSettings.emergencyBlockEnabled,
+      aiEnabled: resolvedAiSettings.aiEnabled,
+      useGlobalDefaults: resolvedAiSettings.useGlobalDefaults,
+    });
+    anaTurnAuditProvider = resolvedAiSettings.provider;
+    anaTurnAuditApiKeySource = resolvedAiSettings.apiKeySource;
+    anaTurnAuditOpenaiApiKeyId = resolvedAiSettings.openaiApiKeyId;
+    anaTurnAuditOpenaiProjectId = resolvedAiSettings.openaiProjectId;
 
     // Legado desativado: esclarecimento sem empreendimento também deve passar pelo LLM/policy.
     if (false && (enterpriseResolution.source === 'ambiguous' || enterpriseResolution.source === 'unresolved')) {
@@ -2489,8 +2504,110 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       enterpriseCandidates: enterpriseResolution.candidates,
       ragWasLoaded: knowledgeText.trim().length > 0,
       reasonWhenNoEnterprise: enterpriseResolution.reasonWhenNoEnterprise,
+      provider: anaTurnAuditProvider,
+      model: anaTurnAuditModel,
+      apiKeySource: anaTurnAuditApiKeySource,
+      openaiApiKeyId: anaTurnAuditOpenaiApiKeyId,
+      openaiProjectId: anaTurnAuditOpenaiProjectId,
+      requestType: anaTurnAuditRequestType,
+      llmStatus: anaTurnAuditLlmStatus,
+      llmHttpStatus: anaTurnAuditLlmHttpStatus,
+      errorCode: anaTurnAuditErrorCode,
+      errorMessage: anaTurnAuditErrorMessage,
     });
     anaTurnAuditId = turnAudit.id;
+
+    if (!resolvedAiSettings || resolvedAiSettings.blocked || !resolvedAiSettings.openaiApiKey) {
+      const blockedReason = resolvedAiSettings?.reason ?? 'missing_global_api_key';
+      const blockedReply =
+        blockedReason === 'emergency_block'
+          ? resolvedAiSettings?.blockedMessage ??
+            'No momento este empreendimento esta com atendimento automatico temporariamente bloqueado.'
+          : blockedReason === 'ai_disabled'
+            ? 'No momento o atendimento automatico deste empreendimento esta desativado. Vou direcionar voce para um corretor.'
+            : blockedReason === 'missing_enterprise_api_key'
+              ? 'No momento a configuracao de IA deste empreendimento esta incompleta. Vou direcionar voce para um corretor.'
+              : 'No momento a configuracao global de IA esta indisponivel. Vou direcionar voce para um corretor.';
+
+      anaTurnAuditLlmStatus = 'blocked';
+      anaTurnAuditErrorCode = blockedReason;
+      anaTurnAuditErrorMessage = blockedReply;
+      anaTurnAuditRequestType = 'enterprise_ai_block';
+      markAnaTurnStage(anaTurnDiagnostics, 'llm_generation', 'skipped', {
+        blockedReason,
+        apiKeySource: resolvedAiSettings?.apiKeySource ?? null,
+      });
+
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = `pipeline_stale_before_${blockedReason}`;
+        anaTurnDiagnostics.finalResponse.replySource = 'enterprise_ai_blocked';
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        return;
+      }
+
+      const blockedSendResult = await sendTextMessage({
+        conversationId,
+        to: toPhoneNumber,
+        text: blockedReply,
+        phase: 'enterprise_ai_blocked',
+      });
+      if (isAnaOutboundQuotaBlocked(blockedSendResult)) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
+        anaTurnAuditGuardsApplied.outboundReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
+        anaTurnDiagnostics.finalResponse.replySource = 'enterprise_ai_blocked';
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+          replySource: 'enterprise_ai_blocked',
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: anaTurnAuditBlockedReason,
+          quota: blockedSendResult.quota ?? null,
+        });
+        return;
+      }
+      if (blockedSendResult.success && blockedSendResult.metaMessageId) {
+        await insertMessage(conversationId, 'assistant', blockedReply, blockedSendResult.metaMessageId);
+        anaTurnAuditOutcome = 'sent';
+        anaTurnAuditBlockedReason = blockedReason;
+        anaTurnDiagnostics.finalResponse.replySource = 'enterprise_ai_blocked';
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
+          replySource: 'enterprise_ai_blocked',
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason,
+        });
+      } else {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = `enterprise_ai_blocked_send_failed:${blockedReason}`;
+        anaTurnDiagnostics.finalResponse.replySource = 'enterprise_ai_blocked';
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+          replySource: 'enterprise_ai_blocked',
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: anaTurnAuditBlockedReason,
+        });
+      }
+      return;
+    }
+    const aiSettings = resolvedAiSettings;
+    const aiApiKey = aiSettings.openaiApiKey;
+    if (!aiApiKey) {
+      anaTurnAuditOutcome = 'blocked';
+      anaTurnAuditBlockedReason = 'missing_resolved_api_key_after_gate';
+      anaTurnAuditLlmStatus = 'blocked';
+      anaTurnAuditErrorCode = 'missing_global_api_key';
+      anaTurnAuditErrorMessage =
+        'No momento a configuracao de IA deste empreendimento esta indisponivel.';
+      anaTurnDiagnostics.finalResponse.replySource = null;
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+        replySource: null,
+        outboundStatus: anaTurnAuditOutcome,
+        blockedReason: anaTurnAuditBlockedReason,
+      });
+      return;
+    }
 
     const directVisitSchedulingIntent = isVisitSchedulingIntent({
       userMessage: trimmed,
@@ -2745,18 +2862,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       validatedEvidenceBlock,
     };
 
-    const rawModels = await getIntegrationModelStringsRaw();
     const enterpriseResolvedForModel =
       effectiveConv.enterprise_id != null ||
       enterpriseResolution.enterpriseId != null ||
       linkedContact?.enterprise_id != null ||
       effectiveConv.enterprise_origin_id != null;
     const anaModelResolution = resolveAnaOpenAIModel({
-      modelHotLeadFromDb: rawModels.modelHotLead,
-      modelColdLeadFromDb: rawModels.modelColdLead,
+      modelHotLeadFromDb: resolvedAiSettings?.modelHotLead ?? null,
+      modelColdLeadFromDb: resolvedAiSettings?.modelColdLead ?? null,
       enterpriseResolved: enterpriseResolvedForModel,
     });
     const model = anaModelResolution.finalModel;
+    anaTurnAuditModel = model;
 
     console.log('[ANA_MODEL_RESOLVE]', {
       conversationId,
@@ -2880,16 +2997,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? enterpriseResolution.enterpriseId ?? null,
       inboundMessageId: lastUserRowForLog?.id ?? null,
       modelReason: anaModelResolution.selectionReason,
+      apiKeySource: aiSettings.apiKeySource,
+      openaiApiKeyId: aiSettings.openaiApiKeyId,
+      openaiProjectId: aiSettings.openaiProjectId,
+      requestType: 'ana_main_reply',
     };
     const result = await generateChatCompletion({
-      apiKey: aiConfig.openaiApiKey,
-      baseUrl: aiConfig.openaiBaseUrl,
+      apiKey: aiApiKey,
+      baseUrl: aiSettings.openaiBaseUrl,
       model,
       messages,
-      temperature: Math.min(aiConfig.temperature ?? 0.5, 0.75),
-      maxTokens: Math.max(aiConfig.maxTokens ?? 600, 800),
+      temperature: Math.min(aiSettings.temperature, 0.75),
+      maxTokens: Math.max(aiSettings.maxTokens, 800),
       responseFormatJson: true,
-      costTracking: {
+      costTracking: aiSettings.costTrackingEnabled ? {
         ...baseAnaCostTracking,
         purpose: 'ana_main_reply',
         metadata: {
@@ -2897,8 +3018,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           attempt: 1,
           strategy: 'primary_json',
         },
-      },
+      } : undefined,
     });
+    captureLlmAudit(result, 'ana_main_reply');
     anaEngineTrace('generateChatCompletion_after', {
       conversationId,
       success: result.success,
@@ -3050,23 +3172,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         },
       });
       retryResult = await generateChatCompletion({
-        apiKey: aiConfig.openaiApiKey,
-        baseUrl: aiConfig.openaiBaseUrl,
+        apiKey: aiApiKey,
+        baseUrl: aiSettings.openaiBaseUrl,
         model,
         messages: retryMessages,
-        temperature: Math.min(aiConfig.temperature ?? 0.5, 0.65),
-        maxTokens: Math.max(aiConfig.maxTokens ?? 600, 800),
+        temperature: Math.min(aiSettings.temperature, 0.65),
+        maxTokens: Math.max(aiSettings.maxTokens, 800),
         responseFormatJson: true,
-        costTracking: {
+        costTracking: aiSettings.costTrackingEnabled ? {
           ...baseAnaCostTracking,
           purpose: 'ana_structured_retry',
+          requestType: 'ana_structured_retry',
           metadata: {
             responseFormatJson: true,
             attempt: 2,
             strategy: 'same_context_retry',
           },
-        },
+        } : undefined,
       });
+      captureLlmAudit(retryResult, 'ana_structured_retry');
       generationResults.push(retryResult);
       const retryRaw = (retryResult.content || '').trim();
       if (retryResult.success && retryRaw) {
@@ -3143,23 +3267,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         },
       ];
       regenResult = await generateChatCompletion({
-        apiKey: aiConfig.openaiApiKey,
-        baseUrl: aiConfig.openaiBaseUrl,
+        apiKey: aiApiKey,
+        baseUrl: aiSettings.openaiBaseUrl,
         model,
         messages: regenMessages,
-        temperature: Math.min(aiConfig.temperature ?? 0.45, 0.55),
+        temperature: Math.min(aiSettings.temperature, 0.55),
         maxTokens: 140,
         responseFormatJson: false,
-        costTracking: {
+        costTracking: aiSettings.costTrackingEnabled ? {
           ...baseAnaCostTracking,
           purpose: 'ana_regen',
+          requestType: 'ana_regen',
           metadata: {
             responseFormatJson: false,
             attempt: 3,
             strategy: 'json_repair',
           },
-        },
+        } : undefined,
       });
+      captureLlmAudit(regenResult, 'ana_regen');
       generationResults.push(regenResult);
       const regenRaw = (regenResult.content || '').trim();
       const regenQuality = validateRecoveredReplyQuality(regenRaw);
@@ -3187,7 +3313,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
     }
     if (!structured) {
-      const secondaryProvider = getConfiguredAnaSecondaryProvider(model);
+        const secondaryProvider = getConfiguredAnaSecondaryProvider(
+          model,
+          aiApiKey,
+          aiSettings.openaiBaseUrl
+        );
       if (secondaryProvider) {
         anaTurnDiagnostics.llm.providerFallbackAttempted = true;
         markAnaTurnStage(
@@ -3215,12 +3345,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           baseUrl: secondaryProvider.baseUrl,
           model: secondaryProvider.model,
           messages: secondaryMessages,
-          temperature: Math.min(aiConfig.temperature ?? 0.5, 0.55),
-          maxTokens: Math.max(aiConfig.maxTokens ?? 600, 800),
+          temperature: Math.min(aiSettings.temperature, 0.55),
+          maxTokens: Math.max(aiSettings.maxTokens, 800),
           responseFormatJson: true,
-          costTracking: {
+          costTracking: aiSettings.costTrackingEnabled ? {
             ...baseAnaCostTracking,
             purpose: 'ana_provider_fallback',
+            requestType: 'ana_provider_fallback',
             metadata: {
               responseFormatJson: true,
               attempt: 4,
@@ -3228,8 +3359,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               primaryModel: model,
               secondaryProvider: secondaryProvider.provider,
             },
-          },
+          } : undefined,
         });
+        captureLlmAudit(secondaryResult, 'ana_provider_fallback');
         generationResults.push(secondaryResult);
         const secondaryRaw = (secondaryResult.content || '').trim();
         if (secondaryResult.success && secondaryRaw) {
@@ -4523,16 +4655,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         retryMessages.push({ role: 'user', content: userMessageForReasoning });
 
         const ragRetryResult = await generateChatCompletion({
-          apiKey: aiConfig.openaiApiKey,
-          baseUrl: aiConfig.openaiBaseUrl,
+          apiKey: aiApiKey,
+          baseUrl: aiSettings.openaiBaseUrl,
           model,
           messages: retryMessages,
-          temperature: Math.min(aiConfig.temperature ?? 0.45, 0.55),
-          maxTokens: Math.max(aiConfig.maxTokens ?? 600, 800),
+          temperature: Math.min(aiSettings.temperature, 0.55),
+          maxTokens: Math.max(aiSettings.maxTokens, 800),
           responseFormatJson: true,
-          costTracking: {
+          costTracking: aiSettings.costTrackingEnabled ? {
             ...baseAnaCostTracking,
             purpose: 'ana_rag_empty_fallback_retry',
+            requestType: 'ana_rag_empty_fallback_retry',
             metadata: {
               responseFormatJson: true,
               attempt: 5,
@@ -4541,8 +4674,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               expandedChunkCount: expandedMeta.selectedChunkCount,
               expandedChunkIds: expandedMeta.selectedChunkIds,
             },
-          },
+          } : undefined,
         });
+        captureLlmAudit(ragRetryResult, 'ana_rag_empty_fallback_retry');
         generationResults.push(ragRetryResult);
         let retryStructured: AnaStructuredReply | null = null;
         const retryRaw = (ragRetryResult.content || '').trim();
@@ -5366,6 +5500,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           enterpriseCandidates: anaEnterpriseResolutionForAudit.candidates,
           ragWasLoaded: anaRagWasLoadedForAudit,
           reasonWhenNoEnterprise: anaEnterpriseResolutionForAudit.reasonWhenNoEnterprise,
+          provider: anaTurnAuditProvider,
+          model: anaTurnAuditModel,
+          apiKeySource: anaTurnAuditApiKeySource,
+          openaiApiKeyId: anaTurnAuditOpenaiApiKeyId,
+          openaiProjectId: anaTurnAuditOpenaiProjectId,
+          inputTokens: anaTurnAuditInputTokens,
+          outputTokens: anaTurnAuditOutputTokens,
+          cachedInputTokens: anaTurnAuditCachedInputTokens,
+          requestType: anaTurnAuditRequestType,
+          llmStatus: anaTurnAuditLlmStatus,
+          llmHttpStatus: anaTurnAuditLlmHttpStatus,
+          errorCode: anaTurnAuditErrorCode,
+          errorMessage: anaTurnAuditErrorMessage,
         });
       } catch (auditError) {
         console.error('[ANA_TURN_AUDIT_UPDATE_FAILED]', {

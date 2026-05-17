@@ -1,5 +1,7 @@
 export interface OpenAIConfig {
   openaiApiKey: string;
+  openaiApiKeyId?: string | null;
+  openaiProjectId?: string | null;
   openaiBaseUrl: string | null;
   modelColdLead: string;
   modelHotLead: string;
@@ -12,6 +14,8 @@ export interface OpenAIConfig {
 
 export interface OpenAIConfigPublic {
   openaiApiKeyMasked: boolean;
+  openaiApiKeyId?: string | null;
+  openaiProjectId?: string | null;
   openaiBaseUrl: string | null;
   modelColdLead: string;
   modelHotLead: string;
@@ -24,6 +28,9 @@ export interface OpenAIConfigPublic {
 
 export interface OpenAIConfigUpdate {
   openaiApiKey?: string;
+  removeApiKey?: boolean;
+  openaiApiKeyId?: string | null;
+  openaiProjectId?: string | null;
   openaiBaseUrl?: string | null;
   modelColdLead?: string;
   modelHotLead?: string;

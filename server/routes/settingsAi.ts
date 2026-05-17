@@ -1,9 +1,26 @@
 import { Router } from 'express';
 import { getOpenAIConfig, getOpenAIConfigPublic, updateOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { runAnaOpenAIDiagnostic } from '../services/anaOpenAIDiagnosticService.js';
-import { openAISettingUpdateSchema } from '../validators/ai.js';
+import {
+  getGlobalAiSettingsForFrontend,
+  getSafeEnterpriseAiSettingsForFrontend,
+  testEnterpriseAiConnection,
+  updateGlobalAiSettings,
+  upsertEnterpriseAiSettings,
+} from '../services/enterpriseAiSettingsService.js';
+import {
+  enterpriseAiSettingUpdateSchema,
+  globalAiSettingUpdateSchema,
+  openAISettingUpdateSchema,
+} from '../validators/ai.js';
 
 const router = Router();
+
+function parseEnterpriseId(raw: string): number | null {
+  const parsed = Number.parseInt(String(raw), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
 
 router.get('/ai', async (_req, res) => {
   try {
@@ -99,6 +116,88 @@ router.post('/ai/diagnostics/ana/openai', async (_req, res) => {
       canGenerate: false,
       recommendation: 'Revise o servidor e tente novamente.',
     });
+  }
+});
+
+router.get('/api/global', async (_req, res) => {
+  try {
+    const data = await getGlobalAiSettingsForFrontend();
+    return res.json(data);
+  } catch (error) {
+    console.error('[Settings] GET api/global:', error);
+    return res.status(500).json({ error: 'Erro ao carregar configuracao global de API.' });
+  }
+});
+
+router.put('/api/global', async (req, res) => {
+  try {
+    const parsed = globalAiSettingUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues.map((issue: { message: string }) => issue.message).join('; ') || 'Dados invalidos.';
+      return res.status(400).json({ error: msg });
+    }
+
+    await updateGlobalAiSettings(parsed.data);
+    const data = await getGlobalAiSettingsForFrontend();
+    return res.json(data);
+  } catch (error) {
+    console.error('[Settings] PUT api/global:', error);
+    return res.status(500).json({ error: 'Erro ao salvar configuracao global de API.' });
+  }
+});
+
+router.get('/api/enterprises', async (_req, res) => {
+  try {
+    const items = await getSafeEnterpriseAiSettingsForFrontend();
+    return res.json({ enterprises: items });
+  } catch (error) {
+    console.error('[Settings] GET api/enterprises:', error);
+    return res.status(500).json({ error: 'Erro ao carregar configuracao por empreendimento.' });
+  }
+});
+
+router.put('/api/enterprises/:enterpriseId', async (req, res) => {
+  try {
+    const enterpriseId = parseEnterpriseId(req.params.enterpriseId);
+    if (enterpriseId == null) {
+      return res.status(400).json({ error: 'enterpriseId invalido.' });
+    }
+
+    const parsed = enterpriseAiSettingUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues.map((issue: { message: string }) => issue.message).join('; ') || 'Dados invalidos.';
+      return res.status(400).json({ error: msg });
+    }
+
+    await upsertEnterpriseAiSettings(enterpriseId, parsed.data);
+    const items = await getSafeEnterpriseAiSettingsForFrontend();
+    const updated = items.find((item) => item.enterprise_id === enterpriseId) ?? null;
+    if (!updated) {
+      return res.status(404).json({ error: 'Empreendimento nao encontrado.' });
+    }
+    return res.json(updated);
+  } catch (error) {
+    console.error('[Settings] PUT api/enterprises/:enterpriseId:', error);
+    return res.status(500).json({ error: 'Erro ao salvar configuracao do empreendimento.' });
+  }
+});
+
+router.post('/api/enterprises/:enterpriseId/test', async (req, res) => {
+  try {
+    const enterpriseId = parseEnterpriseId(req.params.enterpriseId);
+    if (enterpriseId == null) {
+      return res.status(400).json({ error: 'enterpriseId invalido.' });
+    }
+
+    const result = await testEnterpriseAiConnection(enterpriseId);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    return res.json(result);
+  } catch (error) {
+    console.error('[Settings] POST api/enterprises/:enterpriseId/test:', error);
+    const msg = error instanceof Error ? error.message : 'Erro ao testar configuracao do empreendimento.';
+    return res.status(500).json({ error: msg });
   }
 });
 

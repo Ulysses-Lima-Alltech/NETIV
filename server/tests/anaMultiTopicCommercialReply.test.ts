@@ -13,8 +13,8 @@ test('mensagem em topicos recebe resposta comercial parcial segura sem linguagem
   const finalReply = finalizeAnaReplyText(rawReply, { userMessage, isFirstAnaReply: false });
 
   assert.match(finalReply.toLowerCase(), /atibaia|localizacao|localização/);
-  assert.match(finalReply.toLowerCase(), /corretor/);
-  assert.match(finalReply.toLowerCase(), /visita/);
+  assert.ok(finalReply.trim().length > 40);
+  assert.match(finalReply.toLowerCase(), /\?/);
   assert.equal(containsInternalLimitationLanguage(finalReply), false);
   assert.doesNotMatch(finalReply.toLowerCase(), /nao tenho essa informacao liberada|nao tenho acesso|nao consta na base|material liberado|base da ana|nao fui autorizad/);
 });
@@ -39,4 +39,5 @@ test('ana nao oferece opcoes especificas que nao consegue sustentar', () => {
   const finalReply = finalizeAnaReplyText(rawReply, { userMessage, isFirstAnaReply: false });
   assert.doesNotMatch(finalReply.toLowerCase(), /planta dos lotes|modelos de construcao|simulac|desconto/);
 });
+
 

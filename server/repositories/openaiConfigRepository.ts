@@ -3,6 +3,8 @@ import { query } from '../db/pg.js';
 
 type Row = {
   openai_api_key: string;
+  openai_api_key_id: string | null;
+  openai_project_id: string | null;
   openai_base_url: string | null;
   model_cold_lead: string;
   model_hot_lead: string;
@@ -17,6 +19,8 @@ type Row = {
 function rowToConfig(row: Row): OpenAIConfig {
   return {
     openaiApiKey: row.openai_api_key ?? '',
+    openaiApiKeyId: row.openai_api_key_id ?? null,
+    openaiProjectId: row.openai_project_id ?? null,
     openaiBaseUrl: row.openai_base_url,
     modelColdLead: row.model_cold_lead ?? 'gpt-4.1-mini',
     modelHotLead: row.model_hot_lead ?? 'gpt-4.1',
@@ -30,7 +34,7 @@ function rowToConfig(row: Row): OpenAIConfig {
 
 export async function getOpenAIConfig(): Promise<OpenAIConfig | null> {
   const { rows } = await query<Row>(
-    `SELECT openai_api_key, openai_base_url, model_cold_lead, model_hot_lead, temperature, max_tokens, lead_score_threshold, ai_enabled, updated_at
+    `SELECT openai_api_key, openai_api_key_id, openai_project_id, openai_base_url, model_cold_lead, model_hot_lead, temperature, max_tokens, lead_score_threshold, ai_enabled, updated_at
      FROM integration_settings WHERE id = 1`
   );
   if (!rows[0]) return null;
@@ -39,7 +43,16 @@ export async function getOpenAIConfig(): Promise<OpenAIConfig | null> {
 
 export async function updateOpenAIConfig(update: OpenAIConfigUpdate): Promise<OpenAIConfig> {
   const current = await getOpenAIConfig();
-  const openaiApiKey = update.openaiApiKey ?? current?.openaiApiKey ?? '';
+  const removeApiKey = update.removeApiKey === true;
+  const openaiApiKey = removeApiKey
+    ? ''
+    : update.openaiApiKey != null && update.openaiApiKey.trim() !== ''
+      ? update.openaiApiKey
+      : current?.openaiApiKey ?? '';
+  const openaiApiKeyId =
+    update.openaiApiKeyId !== undefined ? update.openaiApiKeyId : current?.openaiApiKeyId ?? null;
+  const openaiProjectId =
+    update.openaiProjectId !== undefined ? update.openaiProjectId : current?.openaiProjectId ?? null;
   const openaiBaseUrl = update.openaiBaseUrl !== undefined ? update.openaiBaseUrl : current?.openaiBaseUrl ?? null;
   const modelColdLead = update.modelColdLead ?? current?.modelColdLead ?? 'gpt-4o-mini';
   const modelHotLead = update.modelHotLead ?? current?.modelHotLead ?? 'gpt-4o';
@@ -50,10 +63,21 @@ export async function updateOpenAIConfig(update: OpenAIConfigUpdate): Promise<Op
 
   await query(
     `UPDATE integration_settings SET
-      openai_api_key = $1, openai_base_url = $2, model_cold_lead = $3, model_hot_lead = $4,
-      temperature = $5, max_tokens = $6, lead_score_threshold = $7, ai_enabled = $8, updated_at = NOW()
+      openai_api_key = $1, openai_api_key_id = $2, openai_project_id = $3, openai_base_url = $4, model_cold_lead = $5, model_hot_lead = $6,
+      temperature = $7, max_tokens = $8, lead_score_threshold = $9, ai_enabled = $10, updated_at = NOW()
      WHERE id = 1`,
-    [openaiApiKey, openaiBaseUrl, modelColdLead, modelHotLead, temperature, maxTokens, leadScoreThreshold, aiEnabled]
+    [
+      openaiApiKey,
+      openaiApiKeyId,
+      openaiProjectId,
+      openaiBaseUrl,
+      modelColdLead,
+      modelHotLead,
+      temperature,
+      maxTokens,
+      leadScoreThreshold,
+      aiEnabled,
+    ]
   );
   return (await getOpenAIConfig())!;
 }
@@ -78,6 +102,8 @@ export async function getOpenAIConfigPublic(): Promise<OpenAIConfigPublic | null
   if (!c) return null;
   return {
     openaiApiKeyMasked: c.openaiApiKey.length > 0,
+    openaiApiKeyId: c.openaiApiKeyId ?? null,
+    openaiProjectId: c.openaiProjectId ?? null,
     openaiBaseUrl: c.openaiBaseUrl,
     modelColdLead: c.modelColdLead,
     modelHotLead: c.modelHotLead,

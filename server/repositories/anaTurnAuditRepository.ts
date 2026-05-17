@@ -38,6 +38,19 @@ export interface AnaTurnAuditRow {
   enterprise_candidates: unknown;
   rag_was_loaded: boolean;
   reason_when_no_enterprise: string | null;
+  provider: string | null;
+  model: string | null;
+  api_key_source: 'enterprise' | 'global_fallback' | null;
+  openai_api_key_id: string | null;
+  openai_project_id: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cached_input_tokens: number | null;
+  request_type: string | null;
+  llm_status: 'success' | 'blocked' | 'skipped' | 'error' | null;
+  llm_http_status: number | null;
+  error_code: string | null;
+  error_message: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -66,6 +79,19 @@ export interface CreateAnaTurnAuditInput {
   enterpriseCandidates?: EnterpriseResolutionCandidate[];
   ragWasLoaded?: boolean;
   reasonWhenNoEnterprise?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  apiKeySource?: 'enterprise' | 'global_fallback' | null;
+  openaiApiKeyId?: string | null;
+  openaiProjectId?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  cachedInputTokens?: number | null;
+  requestType?: string | null;
+  llmStatus?: 'success' | 'blocked' | 'skipped' | 'error' | null;
+  llmHttpStatus?: number | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
 }
 
 export interface UpdateAnaTurnAuditOutcomeInput {
@@ -82,6 +108,19 @@ export interface UpdateAnaTurnAuditOutcomeInput {
   enterpriseCandidates?: EnterpriseResolutionCandidate[];
   ragWasLoaded?: boolean;
   reasonWhenNoEnterprise?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  apiKeySource?: 'enterprise' | 'global_fallback' | null;
+  openaiApiKeyId?: string | null;
+  openaiProjectId?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  cachedInputTokens?: number | null;
+  requestType?: string | null;
+  llmStatus?: 'success' | 'blocked' | 'skipped' | 'error' | null;
+  llmHttpStatus?: number | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
 }
 
 function toJsonString(payload: unknown): string {
@@ -115,11 +154,25 @@ export async function createAnaTurnAudit(
        resolved_enterprise_name,
        enterprise_candidates,
        rag_was_loaded,
-       reason_when_no_enterprise
+       reason_when_no_enterprise,
+       provider,
+       model,
+       api_key_source,
+       openai_api_key_id,
+       openai_project_id,
+       input_tokens,
+       output_tokens,
+       cached_input_tokens,
+       request_type,
+       llm_status,
+       llm_http_status,
+       error_code,
+       error_message
      ) VALUES (
        $1, $2, $3, $4, $5, $6, $7, $8, $9,
        $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15, $16, $17,
-       $18, $19, $20, $21::jsonb, $22, $23
+       $18, $19, $20, $21::jsonb, $22, $23,
+       $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36
      )
      RETURNING *`,
     [
@@ -146,6 +199,19 @@ export async function createAnaTurnAudit(
       toJsonString(input.enterpriseCandidates ?? []),
       input.ragWasLoaded === true,
       input.reasonWhenNoEnterprise ?? null,
+      input.provider ?? null,
+      input.model ?? null,
+      input.apiKeySource ?? null,
+      input.openaiApiKeyId ?? null,
+      input.openaiProjectId ?? null,
+      input.inputTokens ?? null,
+      input.outputTokens ?? null,
+      input.cachedInputTokens ?? null,
+      input.requestType ?? null,
+      input.llmStatus ?? null,
+      input.llmHttpStatus ?? null,
+      input.errorCode ?? null,
+      input.errorMessage ?? null,
     ]
   );
   return rows[0];
@@ -224,6 +290,58 @@ export async function updateAnaTurnAuditOutcome(
   if (input.reasonWhenNoEnterprise !== undefined) {
     sets.push(`reason_when_no_enterprise = $${i++}`);
     values.push(input.reasonWhenNoEnterprise);
+  }
+  if (input.provider !== undefined) {
+    sets.push(`provider = $${i++}`);
+    values.push(input.provider);
+  }
+  if (input.model !== undefined) {
+    sets.push(`model = $${i++}`);
+    values.push(input.model);
+  }
+  if (input.apiKeySource !== undefined) {
+    sets.push(`api_key_source = $${i++}`);
+    values.push(input.apiKeySource);
+  }
+  if (input.openaiApiKeyId !== undefined) {
+    sets.push(`openai_api_key_id = $${i++}`);
+    values.push(input.openaiApiKeyId);
+  }
+  if (input.openaiProjectId !== undefined) {
+    sets.push(`openai_project_id = $${i++}`);
+    values.push(input.openaiProjectId);
+  }
+  if (input.inputTokens !== undefined) {
+    sets.push(`input_tokens = $${i++}`);
+    values.push(input.inputTokens);
+  }
+  if (input.outputTokens !== undefined) {
+    sets.push(`output_tokens = $${i++}`);
+    values.push(input.outputTokens);
+  }
+  if (input.cachedInputTokens !== undefined) {
+    sets.push(`cached_input_tokens = $${i++}`);
+    values.push(input.cachedInputTokens);
+  }
+  if (input.requestType !== undefined) {
+    sets.push(`request_type = $${i++}`);
+    values.push(input.requestType);
+  }
+  if (input.llmStatus !== undefined) {
+    sets.push(`llm_status = $${i++}`);
+    values.push(input.llmStatus);
+  }
+  if (input.llmHttpStatus !== undefined) {
+    sets.push(`llm_http_status = $${i++}`);
+    values.push(input.llmHttpStatus);
+  }
+  if (input.errorCode !== undefined) {
+    sets.push(`error_code = $${i++}`);
+    values.push(input.errorCode);
+  }
+  if (input.errorMessage !== undefined) {
+    sets.push(`error_message = $${i++}`);
+    values.push(input.errorMessage);
   }
 
   const { rows } = await query<AnaTurnAuditRow>(

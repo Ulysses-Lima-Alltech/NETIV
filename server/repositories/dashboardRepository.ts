@@ -414,8 +414,10 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
       GROUP BY c.enterprise_id, e.name
     ),
     usage_groups AS (
-      SELECT COALESCE(ue.enterprise_id::text, '__NO_ENTERPRISE__') AS group_key,
-        ue.enterprise_id::int AS enterprise_id,
+      /* Preparado para custo real por API key:
+         quando enterprise_id nao vier no evento, tenta mapear por openai_api_key_id -> enterprise_ai_settings.enterprise_id. */
+      SELECT COALESCE(COALESCE(ue.enterprise_id::int, eas.enterprise_id)::text, '__NO_ENTERPRISE__') AS group_key,
+        COALESCE(ue.enterprise_id::int, eas.enterprise_id) AS enterprise_id,
         e.name,
         0::bigint AS total,
         0::bigint AS qualified,
@@ -430,11 +432,15 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
         COUNT(DISTINCT ue.contact_id) FILTER (WHERE ue.contact_id IS NOT NULL)::bigint AS llm_contacts,
         COUNT(DISTINCT ue.conversation_id) FILTER (WHERE ue.conversation_id IS NOT NULL)::bigint AS llm_conversations
       FROM llm_usage_events ue
-      LEFT JOIN enterprises e ON e.id = ue.enterprise_id::int
+      LEFT JOIN enterprise_ai_settings eas
+        ON ue.openai_api_key_id IS NOT NULL
+        AND ue.openai_api_key_id <> ''
+        AND eas.openai_api_key_id = ue.openai_api_key_id
+      LEFT JOIN enterprises e ON e.id = COALESCE(ue.enterprise_id::int, eas.enterprise_id)
       WHERE (ue.created_at AT TIME ZONE '${TZ}')::date >= (CURRENT_TIMESTAMP AT TIME ZONE '${TZ}')::date - $2::int
         AND (ue.created_at AT TIME ZONE '${TZ}')::date <= (CURRENT_TIMESTAMP AT TIME ZONE '${TZ}')::date
-        AND ($1::int IS NULL OR ue.enterprise_id = $1::int)
-      GROUP BY ue.enterprise_id, e.name
+        AND ($1::int IS NULL OR COALESCE(ue.enterprise_id::int, eas.enterprise_id) = $1::int)
+      GROUP BY COALESCE(ue.enterprise_id::int, eas.enterprise_id), e.name
     ),
     eligible_backfills AS (
       SELECT b.id,
