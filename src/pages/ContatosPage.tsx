@@ -101,7 +101,7 @@ export function ContatosPage() {
       setTotal(data.total);
     } catch (e) {
       if (requestSeq !== listRequestSeqRef.current) return;
-      setError(e instanceof Error ? e.message : 'Erro ao carregar contatos.');
+      setError(e instanceof Error ? e.message : 'Erro ao carregar leads.');
     } finally {
       if (requestSeq !== listRequestSeqRef.current) return;
       setLoading(false);
@@ -191,7 +191,7 @@ export function ContatosPage() {
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-[#111827]">
       <nav className="h-14 border-b border-[#E5E7EB] bg-white/90 backdrop-blur-sm sticky top-0 z-20 px-6 flex items-center justify-between">
-        <span className="text-[15px] font-semibold">Contatos</span>
+        <span className="text-[15px] font-semibold">Leads</span>
         <AppNav />
       </nav>
       <div className="w-full max-w-none px-6 lg:px-8 py-6 space-y-5">
@@ -409,7 +409,7 @@ export function ContatosPage() {
                 ) : contacts.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="px-3 py-4 text-[13px] text-[#6B7280]">
-                      Nenhum contato encontrado.
+                      Nenhum lead encontrado.
                     </td>
                   </tr>
                 ) : (
@@ -472,7 +472,7 @@ export function ContatosPage() {
       {editContact && (
         <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4">
           <div className="w-full max-w-xl bg-white rounded-[14px] border border-[#E5E7EB] p-4 space-y-3">
-            <h3 className="text-[15px] font-semibold">Contato #{editContact.id}</h3>
+            <h3 className="text-[15px] font-semibold">Lead #{editContact.id}</h3>
             {modalError && <div className="text-[12px] text-red-700 bg-red-50 border border-red-100 rounded-[8px] px-3 py-2">{modalError}</div>}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <input

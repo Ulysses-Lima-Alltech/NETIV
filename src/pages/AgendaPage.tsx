@@ -27,6 +27,12 @@ function formatDateForInput(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+function isAppointmentPast(startAtIso: string): boolean {
+  const start = new Date(startAtIso).getTime();
+  if (!Number.isFinite(start)) return false;
+  return start < Date.now();
+}
+
 export function AgendaPage() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [projects, setProjects] = useState<{ id: number; name: string }[]>([]);
@@ -310,7 +316,10 @@ export function AgendaPage() {
                 </thead>
                 <tbody>
                   {appointments.map((a) => (
-                    <tr key={a.id} className="border-b border-[#F3F4F6] hover:bg-[#F9FAFB]">
+                    <tr
+                      key={a.id}
+                      className={`border-b border-[#F3F4F6] ${isAppointmentPast(a.startAt) ? 'bg-[#F8FAFC] text-[#6B7280] opacity-80' : 'hover:bg-[#F9FAFB]'}`}
+                    >
                       <td className="py-3.5 px-4 text-[14px] font-medium text-[#111827]">{a.customerName}</td>
                       <td className="py-3.5 px-4 text-[13px] text-[#6B7280]">{a.customerPhone || '—'}</td>
                       <td className="py-3.5 px-4 text-[13px] text-[#6B7280]">{getProjectName(a.enterpriseId)}</td>
@@ -318,12 +327,19 @@ export function AgendaPage() {
                       <td className="py-3.5 px-4 text-[13px] text-[#6B7280]">{a.city || '—'}</td>
                       <td className="py-3.5 px-4 text-[13px] text-[#6B7280]">{formatDateTime(a.startAt)}</td>
                       <td className="py-3.5 px-4">
-                        <span className={`inline-flex text-[11px] font-semibold px-2.5 py-1 rounded-md ${statusClass[a.status] ?? 'bg-[#F3F4F6] text-[#6B7280]'}`}>
-                          {statusLabel[a.status] ?? a.status}
+                        <span className="inline-flex flex-wrap items-center gap-1.5">
+                          <span className={`inline-flex text-[11px] font-semibold px-2.5 py-1 rounded-md ${statusClass[a.status] ?? 'bg-[#F3F4F6] text-[#6B7280]'}`}>
+                            {statusLabel[a.status] ?? a.status}
+                          </span>
+                          {isAppointmentPast(a.startAt) && (
+                            <span className="inline-flex text-[10px] font-semibold px-2 py-1 rounded-md bg-[#E2E8F0] text-[#475569] border border-[#CBD5E1]">
+                              Passado
+                            </span>
+                          )}
                         </span>
                       </td>
                       <td className="py-3.5 px-4">
-                        <span className="flex flex-wrap gap-2">
+                        <span className={`flex flex-wrap gap-2 ${isAppointmentPast(a.startAt) ? 'opacity-80' : ''}`}>
                           {a.status !== 'CANCELADO' && a.status !== 'REALIZADO' && a.status !== 'NO_SHOW' && (
                             <button
                               type="button"

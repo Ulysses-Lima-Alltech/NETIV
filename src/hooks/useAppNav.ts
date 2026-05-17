@@ -54,7 +54,7 @@ export function useAppNav(): NavItem[] {
     }
 
     if (isAdmin) {
-      items.push({ to: '/contatos', label: 'Contatos', icon: 'contatos', section: 'main' });
+      items.push({ to: '/contatos', label: 'Leads', icon: 'contatos', section: 'main' });
       items.push({ to: '/contatos/disparo-template-lote', label: 'Disparo em lote', icon: 'batch', section: 'main' });
       items.push({ to: '/settings/integrations/whatsapp', label: 'Configuracoes', icon: 'settings', section: 'footer' });
     }

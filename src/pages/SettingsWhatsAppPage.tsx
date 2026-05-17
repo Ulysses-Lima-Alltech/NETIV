@@ -3,12 +3,10 @@ import { Link } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import {
   settingsApi,
-  projectsApi,
   type WhatsAppConfigPublic,
   type WhatsAppConfigUpdate,
   type AIConfigPublic,
   type AIConfigUpdate,
-  type ProjectListItem,
 } from '../api/client';
 
 const field =
@@ -59,12 +57,6 @@ export function SettingsWhatsAppPage() {
     openaiApiKeyInput: '', openaiBaseUrl: null, modelColdLead: 'gpt-4', modelHotLead: 'gpt-4o', temperature: 0.4, maxTokens: 500, leadScoreThreshold: 0.75, aiEnabled: false,
   });
   const [showOpenAIKey, setShowOpenAIKey] = useState(false);
-  const [projects, setProjects] = useState<ProjectListItem[]>([]);
-  const [projectsLoading, setProjectsLoading] = useState(false);
-  const [projectMessage, setProjectMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [newProjectName, setNewProjectName] = useState('');
-  const [editingProjectId, setEditingProjectId] = useState<number | null>(null);
-  const [editingProjectName, setEditingProjectName] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -87,11 +79,6 @@ export function SettingsWhatsAppPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    setProjectsLoading(true);
-    projectsApi.list(false).then((data) => setProjects(data.projects)).catch(() => setProjects([])).finally(() => setProjectsLoading(false));
   }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -206,55 +193,6 @@ export function SettingsWhatsAppPage() {
             </button>
           </div>
         </form>
-
-        <section className={card}>
-          <h2 className={sectionH}>Projetos</h2>
-          <p className="text-[13px] text-[#9CA3AF] -mt-3 mb-5">
-            Empreendimentos usados na classificação das conversas na Inbox. Classificações: Novo, Qualificado,{' '}
-            <strong className="text-[#6B7280] font-medium">Carteira</strong> (sem avanço no momento, com potencial de retomada — não é descarte/spam) e Handoff.
-          </p>
-          {projectMessage && <div className="mb-4"><Alert type={projectMessage.type} text={projectMessage.text} /></div>}
-          <div className="flex gap-2 mb-5">
-            <input type="text" value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)} placeholder="Nome do novo projeto" className={`flex-1 ${field}`} />
-            <button type="button" onClick={() => {
-              const name = newProjectName.trim(); if (!name) return; setProjectMessage(null);
-              projectsApi.create({ name }).then(() => { setNewProjectName(''); setProjectMessage({ type: 'success', text: 'Projeto criado.' }); return projectsApi.list(false); }).then((data) => setProjects(data.projects)).catch((err: Error) => setProjectMessage({ type: 'error', text: err.message ?? 'Erro ao criar.' }));
-            }} disabled={!newProjectName.trim()} className={btnPrimary}>Adicionar</button>
-          </div>
-          {projectsLoading ? (
-            <div className="flex items-center gap-2 py-4"><div className="h-4 w-4 rounded-full border-2 border-[#3B82F6] border-t-transparent animate-spin" /><span className="text-[13px] text-[#6B7280]">Carregando…</span></div>
-          ) : projects.length === 0 ? (
-            <p className="text-[13px] text-[#9CA3AF] py-2">Nenhum projeto cadastrado.</p>
-          ) : (
-            <ul className="divide-y divide-[#F3F4F6]">
-              {projects.map((p) => (
-                <li key={p.id} className="py-3 flex items-center gap-3">
-                  {editingProjectId === p.id ? (
-                    <>
-                      <input type="text" value={editingProjectName} onChange={(e) => setEditingProjectName(e.target.value)} className={`flex-1 ${field}`} autoFocus />
-                      <button type="button" onClick={() => {
-                        const name = editingProjectName.trim(); if (!name) return;
-                        projectsApi.update(p.id, { name }).then(() => { setEditingProjectId(null); setEditingProjectName(''); setProjectMessage({ type: 'success', text: 'Projeto atualizado.' }); return projectsApi.list(false); }).then((data) => setProjects(data.projects)).catch((err: Error) => setProjectMessage({ type: 'error', text: err.message ?? 'Erro ao atualizar.' }));
-                      }} className="text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8] transition-colors">Salvar</button>
-                      <button type="button" onClick={() => { setEditingProjectId(null); setEditingProjectName(''); }} className="text-[13px] font-medium text-[#6B7280] hover:text-[#374151] transition-colors">Cancelar</button>
-                    </>
-                  ) : (
-                    <>
-                      <span className={`flex-1 text-[14px] font-medium ${p.status !== 'ativo' ? 'text-[#9CA3AF]' : 'text-[#111827]'}`}>
-                        {p.name}{p.status !== 'ativo' && <span className="ml-2 text-[10px] font-medium text-[#9CA3AF] bg-[#F3F4F6] rounded px-1.5 py-px">inativo</span>}
-                      </span>
-                      {p.status === 'ativo' && <button type="button" onClick={() => { setEditingProjectId(p.id); setEditingProjectName(p.name); setProjectMessage(null); }} className="text-[13px] font-medium text-[#3B82F6] hover:text-[#1D4ED8] transition-colors">Editar</button>}
-                      {p.status === 'ativo' && <button type="button" onClick={() => {
-                        if (!window.confirm(`Inativar "${p.name}"? Conversas já classificadas manterão a referência.`)) return; setProjectMessage(null);
-                        projectsApi.delete(p.id).then(() => { setProjectMessage({ type: 'success', text: 'Projeto inativado.' }); return projectsApi.list(false); }).then((data) => setProjects(data.projects)).catch((err: Error) => setProjectMessage({ type: 'error', text: err.message ?? 'Erro ao inativar.' }));
-                      }} className="text-[13px] font-medium text-red-500 hover:text-red-700 transition-colors">Inativar</button>}
-                    </>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
 
         <form onSubmit={handleSubmitAI} className="space-y-5">
           {aiMessage && <Alert type={aiMessage.type} text={aiMessage.text} />}
