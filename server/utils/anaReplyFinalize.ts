@@ -713,6 +713,38 @@ function countQuestions(text: string): number {
   return ((text || '').match(/\?/g) || []).length;
 }
 
+export function sanitizeTooManyQuestionsReply(reply: string): string {
+  const raw = (reply || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+
+  const questionCount = countQuestions(raw);
+  if (questionCount <= 1) return raw;
+
+  let base = raw;
+  while (/\?\s*$/.test(base)) {
+    const next = base.replace(/(?:^|[\s.!])[^.!?]*\?\s*$/u, '').trim();
+    if (!next || next === base) break;
+    base = next;
+  }
+
+  base = base.replace(/\?+/g, '.').replace(/\s+/g, ' ').trim();
+  base = base.replace(/[,:;\-]\s*$/g, '').trim();
+  if (base && !/[.!]$/.test(base)) base = `${base}.`;
+
+  const safeQuestion =
+    /\b(localizacao|localização|bairro|onde fica|endereco|endereço|atibaia)\b/i.test(base)
+      ? 'Quer que eu te fale mais sobre a localização?'
+      : 'Quer saber mais sobre a localização ou prefere falar com um corretor?';
+
+  if (!base) {
+    const head = raw.split('?')[0]?.trim() ?? '';
+    if (!head) return '';
+    const normalizedHead = /[.!]$/.test(head) ? head : `${head}.`;
+    return `${normalizedHead} ${safeQuestion}`.trim();
+  }
+  return `${base} ${safeQuestion}`.trim();
+}
+
 function hasAxisAnswerSignal(replyNorm: string, userNorm: string): boolean {
   if (!replyNorm || !userNorm) return false;
   if (/\b(valor|preco|quanto|custa|r\$)\b/.test(userNorm)) {
