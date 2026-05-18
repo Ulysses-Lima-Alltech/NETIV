@@ -5,11 +5,12 @@ interface Props {
   preview: BatchPreviewResponse | null;
   onSelectTestRow?: (rowNumber: number | null) => void;
   selectedTestRow?: number | null;
+  embedded?: boolean;
 }
 
 type PreviewFilter = 'all' | 'valid' | 'invalid' | 'blocked';
 
-export function BatchPreviewTable({ preview, onSelectTestRow, selectedTestRow }: Props) {
+export function BatchPreviewTable({ preview, onSelectTestRow, selectedTestRow, embedded }: Props) {
   const [filter, setFilter] = useState<PreviewFilter>('all');
   const [page, setPage] = useState(1);
   const pageSize = 100;
@@ -32,8 +33,8 @@ export function BatchPreviewTable({ preview, onSelectTestRow, selectedTestRow }:
   if (!preview) return null;
 
   return (
-    <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
-      <h2 className="text-[14px] font-semibold">Preview antes do envio</h2>
+    <section className={embedded ? 'space-y-3' : 'bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3'}>
+      {!embedded && <h2 className="text-[14px] font-semibold">Preview antes do envio</h2>}
 <div className="text-[12px] text-[#374151] bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px] p-3 flex flex-wrap gap-2">
         <button 
           type="button" 

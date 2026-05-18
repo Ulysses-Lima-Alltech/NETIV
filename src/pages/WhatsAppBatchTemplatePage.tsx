@@ -365,68 +365,99 @@ export function WhatsAppBatchTemplatePage() {
         </div>
 
         <div className="space-y-6">
-          {preview && (
-            <BatchPreviewTable
-              preview={preview}
-              onSelectTestRow={setTestRowNumber}
-              selectedTestRow={testRowNumber}
-            />
-          )}
-
-          {selectedTemplate && (
-            <TestSendPanel
-              template={selectedTemplate}
-              testPhone={testPhone}
-              onTestPhoneChange={setTestPhone}
-              testMode={testMode}
-              onTestModeChange={setTestMode}
-              testRowNumber={testRowNumber}
-              onTestRowNumberChange={setTestRowNumber}
-              availableTestRows={validPreviewRows.map((r) => r.rowNumber)}
-              manualTestVariables={manualTestVariables}
-              onManualTestVariablesChange={setManualTestVariables}
-              onTest={handleTest}
-              loadingTest={loadingTest}
-              testResult={testResult}
-              canUseRowMode={canUseRowMode}
-              selectedPreviewRow={selectedPreviewRow}
-              disableReason={headerMediaMissingMessage}
-            />
-          )}
-
-          {preview && preview.validCount > 0 && (
-            <div className="bg-white border border-gray-200 rounded-md p-6">
-              <h3 className="text-lg font-medium text-gray-900 mb-4">Enviar Mensagens</h3>
-              <div className="space-y-4">
-                <div className="grid grid-cols-3 gap-4 text-sm">
-                  <div>
-                    <span className="text-gray-500">Total:</span>
-                    <span className="ml-2 font-medium">{preview.total}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Válidos:</span>
-                    <span className="ml-2 font-medium text-green-600">{preview.validCount}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Inválidos:</span>
-                    <span className="ml-2 font-medium text-red-600">{preview.invalidCount + preview.blockedCount}</span>
-                  </div>
-                </div>
-                <button
-                  onClick={handleSend}
-                  disabled={loadingSend || preview.validCount === 0 || !selectedTemplateKey || !!headerMediaMissingMessage}
-                  className="w-full bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                >
-                  {loadingSend ? 'Enviando...' : `Enviar ${preview.validCount} mensagens`}
-                </button>
-                {sendResult && (
-                  <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
-                    <pre className="text-xs text-gray-700 whitespace-pre-wrap">{sendResult}</pre>
-                  </div>
-                )}
-              </div>
+          <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 space-y-5">
+            <div>
+              <h2 className="text-[16px] font-semibold text-[#111827]">Validação e envio</h2>
+              <p className="text-[13px] text-[#4B5563] mt-1">
+                Revise os contatos, envie um teste e confirme o disparo final.
+              </p>
             </div>
-          )}
+
+            <div className="border border-[#E5E7EB] rounded-[12px] p-4 space-y-3 bg-white">
+              <h3 className="text-[14px] font-semibold text-[#111827]">1. Preview dos contatos</h3>
+              {preview ? (
+                <BatchPreviewTable
+                  preview={preview}
+                  onSelectTestRow={setTestRowNumber}
+                  selectedTestRow={testRowNumber}
+                  embedded
+                />
+              ) : (
+                <div className="rounded-[10px] border border-[#DBEAFE] bg-[#EFF6FF] px-3 py-3">
+                  <p className="text-[13px] text-[#1E3A8A] font-medium">
+                    Gere o preview para validar os contatos antes do envio.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="border border-[#E5E7EB] rounded-[12px] p-4 space-y-3 bg-white">
+              <h3 className="text-[14px] font-semibold text-[#111827]">2. Envio de teste</h3>
+              {selectedTemplate && preview ? (
+                <TestSendPanel
+                  template={selectedTemplate}
+                  testPhone={testPhone}
+                  onTestPhoneChange={setTestPhone}
+                  testMode={testMode}
+                  onTestModeChange={setTestMode}
+                  testRowNumber={testRowNumber}
+                  onTestRowNumberChange={setTestRowNumber}
+                  availableTestRows={validPreviewRows.map((r) => r.rowNumber)}
+                  manualTestVariables={manualTestVariables}
+                  onManualTestVariablesChange={setManualTestVariables}
+                  onTest={handleTest}
+                  loadingTest={loadingTest}
+                  testResult={testResult}
+                  canUseRowMode={canUseRowMode}
+                  selectedPreviewRow={selectedPreviewRow}
+                  disableReason={headerMediaMissingMessage}
+                  embedded
+                />
+              ) : (
+                <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-3">
+                  <p className="text-[13px] text-[#374151]">
+                    Selecione um template e gere o preview para testar o envio.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="border border-[#E5E7EB] rounded-[12px] p-4 space-y-4 bg-white">
+              <h3 className="text-[14px] font-semibold text-[#111827]">3. Envio final</h3>
+              <p className="text-[13px] text-[#4B5563]">
+                Revise os dados antes de confirmar. Apenas contatos válidos serão enviados.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-[#6B7280]">Total</p>
+                  <p className="text-[16px] font-semibold text-[#111827]">{preview?.total ?? 0}</p>
+                </div>
+                <div className="rounded-[10px] border border-[#BBF7D0] bg-[#F0FDF4] px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-[#166534]">Válidos</p>
+                  <p className="text-[16px] font-semibold text-[#166534]">{preview?.validCount ?? 0}</p>
+                </div>
+                <div className="rounded-[10px] border border-[#FECACA] bg-[#FEF2F2] px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-[#991B1B]">Inválidos/Bloqueados</p>
+                  <p className="text-[16px] font-semibold text-[#991B1B]">
+                    {(preview?.invalidCount ?? 0) + (preview?.blockedCount ?? 0)}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleSend}
+                disabled={loadingSend || (preview?.validCount ?? 0) === 0 || !selectedTemplateKey || !!headerMediaMissingMessage}
+                className="w-full bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+              >
+                {loadingSend ? 'Enviando...' : `Enviar ${preview?.validCount ?? 0} mensagens`}
+              </button>
+              {sendResult && (
+                <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px] p-4">
+                  <p className="text-[12px] font-semibold text-[#334155] mb-2">Resultado do envio</p>
+                  <pre className="text-xs text-gray-700 whitespace-pre-wrap">{sendResult}</pre>
+                </div>
+              )}
+            </div>
+          </section>
         </div>
       </div>
       </div>

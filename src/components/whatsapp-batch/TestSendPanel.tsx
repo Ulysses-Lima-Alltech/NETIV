@@ -17,6 +17,7 @@ interface Props {
   canUseRowMode: boolean;
   selectedPreviewRow: BatchPreviewRow | null;
   disableReason?: string | null;
+  embedded?: boolean;
 }
 
 const inputCls =
@@ -39,14 +40,15 @@ export function TestSendPanel({
   canUseRowMode,
   selectedPreviewRow,
   disableReason,
+  embedded,
 }: Props) {
   const updateManualVariable = (variableId: string, value: string) => {
     onManualTestVariablesChange({ ...manualTestVariables, [variableId]: value });
   };
 
   return (
-    <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
-      <h2 className="text-[14px] font-semibold">Envio de teste</h2>
+    <section className={embedded ? 'space-y-3' : 'bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3'}>
+      {!embedded && <h2 className="text-[14px] font-semibold">Envio de teste</h2>}
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>

@@ -31,9 +31,18 @@ export function SpreadsheetUploadPanel({ file, onFileChange, onParse, loading, d
             <span aria-hidden="true">+</span>
             <span>Selecionar planilha</span>
           </label>
-          <p className="text-[12px] text-[#6B7280]">
-            {file ? `Arquivo selecionado: ${file.name}` : 'Nenhum arquivo selecionado.'}
-          </p>
+          {!file ? (
+            <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2">
+              <p className="text-[13px] font-medium text-[#374151]">Nenhuma planilha selecionada</p>
+              <p className="text-[12px] text-[#4B5563]">Selecione um arquivo CSV ou XLSX para começar.</p>
+            </div>
+          ) : (
+            <div className="rounded-[10px] border border-[#86EFAC] bg-[#F0FDF4] px-3 py-2">
+              <p className="text-[13px] font-semibold text-[#166534]">Planilha carregada com sucesso</p>
+              <p className="text-[12px] text-[#166534]/90 mt-1">Nome do arquivo:</p>
+              <p className="text-[13px] font-semibold text-[#14532D]">{file.name}</p>
+            </div>
+          )}
         </div>
         <button
           type="button"
