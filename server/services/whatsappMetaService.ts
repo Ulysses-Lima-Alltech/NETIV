@@ -36,6 +36,7 @@ interface ManualTemplateDef {
   name: string;
   languageCode: string;
   bodyParamKeys?: TemplateParamKey[];
+  headerImageUrl?: string;
 }
 
 export function isMetaWindowClosedError(params: { code?: number; message?: string }): boolean {
@@ -56,6 +57,7 @@ export function resolveManualTemplate(templateKey: string): ManualTemplateDef | 
     name: catalogTemplate.name,
     languageCode: catalogTemplate.languageCode,
     bodyParamKeys: [],
+    headerImageUrl: catalogTemplate.headerImageUrl,
   };
 }
 
@@ -197,6 +199,28 @@ export async function sendTemplateMessage(
   const url = `${META_GRAPH_BASE}/${config.apiVersion}/${config.whatsappPhoneNumberId}/messages`;
   const bodyParams = buildTemplateParams(template, ctx);
   // Nome na Meta = `key` do catálogo (snake_case); o campo `name` legível do catálogo não é o ID do template.
+  const components: Array<Record<string, unknown>> = [];
+  const headerImageUrl = template.headerImageUrl?.trim();
+
+  if (headerImageUrl) {
+    components.push({
+      type: 'header',
+      parameters: [
+        {
+          type: 'image',
+          image: { link: headerImageUrl },
+        },
+      ],
+    });
+  }
+
+  if (bodyParams.length > 0) {
+    components.push({
+      type: 'body',
+      parameters: bodyParams,
+    });
+  }
+
   const requestBody = {
     messaging_product: 'whatsapp',
     to: normalizedTo,
@@ -204,16 +228,7 @@ export async function sendTemplateMessage(
     template: {
       name: template.key,
       language: { code: template.languageCode },
-      ...(bodyParams.length > 0
-        ? {
-            components: [
-              {
-                type: 'body',
-                parameters: bodyParams,
-              },
-            ],
-          }
-        : {}),
+      ...(components.length > 0 ? { components } : {}),
     },
   };
   const controller = new AbortController();
