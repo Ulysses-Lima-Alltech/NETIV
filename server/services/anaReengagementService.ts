@@ -3,6 +3,7 @@ import { getConversationById, type ConversationRow } from '../repositories/conve
 import { touchContactInteractionByConversation } from '../repositories/contactsRepository.js';
 import { getLastUserMessageRow, getLastVisibleMessageRoleAndId } from '../repositories/messageRepository.js';
 import { conversationHasActiveAppointmentForReengageBlock } from '../repositories/appointmentRepository.js';
+import { publishConversationUpdated, publishMessageCreated } from '../realtime/realtimePublisher.js';
 import {
   ANA_OUTBOUND_QUOTA_EXCEEDED_REASON,
   isAnaOutboundQuotaBlocked,
@@ -235,9 +236,20 @@ async function trySendReengagementForConversation(conversationId: number): Promi
       return;
     }
 
-    await client.query(
+    const insertResult = await client.query<{
+      id: number;
+      conversation_id: number;
+      role: string;
+      content: string | null;
+      meta_message_id: string | null;
+      message_kind: 'text' | 'document' | 'image' | 'video' | null;
+      attachment_json: unknown | null;
+      created_at: Date;
+      deleted_at: Date | null;
+    }>(
       `INSERT INTO messages (conversation_id, role, content, meta_message_id, message_kind, attachment_json)
-       VALUES ($1, 'assistant', $2, $3, 'text', NULL::jsonb)`,
+       VALUES ($1, 'assistant', $2, $3, 'text', NULL::jsonb)
+       RETURNING id, conversation_id, role, content, meta_message_id, message_kind, attachment_json, created_at, deleted_at`,
       [conversationId, body, sendRes.metaMessageId]
     );
 
@@ -254,6 +266,22 @@ async function trySendReengagementForConversation(conversationId: number): Promi
 
     await client.query('COMMIT');
     await touchContactInteractionByConversation({ conversationId, role: 'assistant' });
+    const inserted = insertResult.rows[0];
+    if (inserted) {
+      publishMessageCreated({
+        id: String(inserted.id),
+        conversationId: inserted.conversation_id,
+        role: inserted.role as 'user' | 'assistant',
+        content: inserted.content,
+        metaMessageId: inserted.meta_message_id,
+        messageKind: inserted.message_kind ?? 'text',
+        attachment: inserted.attachment_json,
+        createdAt: inserted.created_at.toISOString(),
+        deleted: inserted.deleted_at != null,
+        deletedAt: inserted.deleted_at ? inserted.deleted_at.toISOString() : null,
+      });
+      void publishConversationUpdated(inserted.conversation_id);
+    }
     console.log('[ANA_REENGAGE_SENT]', {
       conversationId,
       userMessageId: u.id,

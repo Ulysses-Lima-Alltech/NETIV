@@ -247,63 +247,23 @@ export function InboxPage() {
     });
   }, [scrollToBottom]);
 
-  const shouldAutoSortConversations = useCallback(() => {
-    if (!isConversationListNearTopRef.current) return false;
-    if (String(searchDebounced || '').trim() !== '') return false;
-    if (hasActiveInboxFilters(filters)) return false;
-    return true;
-  }, [filters, searchDebounced]);
-
   const mergeConversation = useCallback((incoming: Conversation) => {
-    const autoSort = shouldAutoSortConversations();
     setConversations((prev) => {
       const idx = prev.findIndex((c) => c.id === incoming.id);
       const nextRow = idx >= 0 ? { ...prev[idx]!, ...incoming } : incoming;
-      if (!autoSort) {
-        if (idx >= 0) {
-          const next = [...prev];
-          next[idx] = nextRow;
-          return next;
-        }
-        pendingRealtimeConversationsRef.current.set(incoming.id, incoming);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = nextRow;
         setHasPendingRealtimeUpdates(true);
-        return prev;
+        return next;
       }
-      const without = idx >= 0 ? prev.filter((_, i) => i !== idx) : prev;
-      const pending = Array.from(pendingRealtimeConversationsRef.current.values());
-      pendingRealtimeConversationsRef.current.clear();
-      setHasPendingRealtimeUpdates(false);
-      return [nextRow, ...without, ...pending]
-        .reduce<Conversation[]>((acc, row) => {
-          if (acc.some((c) => c.id === row.id)) return acc;
-          acc.push(row);
-          return acc;
-        }, [])
-        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      pendingRealtimeConversationsRef.current.set(incoming.id, incoming);
+      setHasPendingRealtimeUpdates(true);
+      return prev;
     });
-  }, [shouldAutoSortConversations]);
+  }, []);
 
-  const fetchAndMergeConversationById = useCallback((conversationId: string) => {
-    if (inflightRealtimeConversationFetchRef.current.has(conversationId)) return;
-    const numId = parseInt(conversationId, 10);
-    if (!Number.isFinite(numId) || numId <= 0) return;
-    inflightRealtimeConversationFetchRef.current.add(conversationId);
-    void whatsappApi
-      .getConversation(numId)
-      .then((item) => {
-        mergeConversation(mapApiConversationToConversation(item));
-      })
-      .catch(() => {
-        // noop: conversa pode estar fora de escopo/filtro no momento.
-      })
-      .finally(() => {
-        inflightRealtimeConversationFetchRef.current.delete(conversationId);
-      });
-  }, [mergeConversation]);
-
-  const flushPendingRealtimeConversations = useCallback(() => {
-    if (!shouldAutoSortConversations()) return;
-    if (pendingRealtimeConversationsRef.current.size === 0) return;
+  const applyPendingRealtimeUpdates = useCallback(() => {
     setConversations((prev) => {
       const pending = Array.from(pendingRealtimeConversationsRef.current.values());
       pendingRealtimeConversationsRef.current.clear();
@@ -316,7 +276,37 @@ export function InboxPage() {
         }, [])
         .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     });
-  }, [shouldAutoSortConversations]);
+  }, []);
+
+  const fetchAndMergeConversationById = useCallback((conversationId: string) => {
+    if (inflightRealtimeConversationFetchRef.current.has(conversationId)) return;
+    const numId = parseInt(conversationId, 10);
+    if (!Number.isFinite(numId) || numId <= 0) return;
+    inflightRealtimeConversationFetchRef.current.add(conversationId);
+    void whatsappApi
+      .getConversation(numId)
+      .then((item) => {
+        const mapped = mapApiConversationToConversation(item);
+        setConversations((prev) => {
+          const idx = prev.findIndex((c) => c.id === mapped.id);
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = { ...next[idx]!, ...mapped };
+            setHasPendingRealtimeUpdates(true);
+            return next;
+          }
+          pendingRealtimeConversationsRef.current.set(mapped.id, mapped);
+          setHasPendingRealtimeUpdates(true);
+          return prev;
+        });
+      })
+      .catch(() => {
+        // noop: conversa pode estar fora de escopo/filtro no momento.
+      })
+      .finally(() => {
+        inflightRealtimeConversationFetchRef.current.delete(conversationId);
+      });
+  }, []);
 
   const selectedConversation = selectedId
     ? conversations.find((c) => c.id === selectedId) ?? null
@@ -462,10 +452,6 @@ export function InboxPage() {
     return () => el.removeEventListener('scroll', onScroll);
   }, [selectedId]);
 
-  useEffect(() => {
-    flushPendingRealtimeConversations();
-  }, [flushPendingRealtimeConversations, filters, searchDebounced]);
-
   useEffect(() => { loadConversations(); }, [loadConversations]);
 
   useRealtimeInbox({
@@ -492,6 +478,22 @@ export function InboxPage() {
       };
       const sid = selectedIdRef.current;
       const convId = String(p.conversationId);
+      const selectedConversationId = sid == null ? null : String(sid);
+      const equalAfterStringCast =
+        selectedConversationId != null &&
+        String(convId) === String(selectedConversationId);
+      const direction = p.role === 'user' ? 'inbound' : 'outbound';
+      console.info('[RealtimeInbox] message.created received', {
+        conversationId: convId,
+        messageId: String(p.id),
+        direction,
+        selectedConversationId,
+      });
+      console.info('[RealtimeInbox] selected conversation compare', {
+        eventConversationId: convId,
+        selectedConversationId,
+        equalAfterStringCast,
+      });
       const incoming: Message = {
         id: String(p.id),
         conversationId: convId,
@@ -515,6 +517,27 @@ export function InboxPage() {
       };
 
       const atBottom = isUserAtBottom();
+      if (equalAfterStringCast) {
+        setMessages((prev) => upsertMessageList(prev, incoming));
+        console.info('[RealtimeInbox] message.created applied_to_open_chat', {
+          conversationId: convId,
+          messageId: incoming.id,
+        });
+        markConversationAsRead(convId, incoming.createdAt);
+        if (atBottom) {
+          pendingScrollModeRef.current = 'if-near';
+          setShowNewMessageIndicator(false);
+        } else {
+          setShowNewMessageIndicator(true);
+        }
+      } else {
+        console.info('[RealtimeInbox] message.created ignored_reason', {
+          reason: selectedConversationId == null ? 'no_selected_conversation' : 'not_selected_conversation',
+          conversationId: convId,
+          selectedConversationId,
+        });
+      }
+
       let conversationKnown = true;
       setConversations((prev) => {
         const idx = prev.findIndex((c) => c.id === convId);
@@ -523,45 +546,27 @@ export function InboxPage() {
           return prev;
         }
         const row = prev[idx]!;
-        const nextUnread = sid === convId ? 0 : Math.max(1, row.unreadCount || 0);
+        const nextUnread = equalAfterStringCast ? 0 : Math.max(1, row.unreadCount || 0);
         const updatedRow: Conversation = {
           ...row,
           lastMessage: incoming.text || row.lastMessage,
           updatedAt: incoming.createdAt,
           unreadCount: nextUnread,
         };
-        const autoSort = shouldAutoSortConversations();
-        if (!autoSort) {
-          const next = [...prev];
-          next[idx] = updatedRow;
-          setHasPendingRealtimeUpdates(true);
-          return next;
-        }
         const next = [...prev];
-        next.splice(idx, 1);
-        next.unshift(updatedRow);
+        next[idx] = updatedRow;
+        setHasPendingRealtimeUpdates(true);
         return next;
       });
       if (!conversationKnown) {
         fetchAndMergeConversationById(convId);
-      }
-
-      if (sid === convId) {
-        setMessages((prev) => upsertMessageList(prev, incoming));
-        markConversationAsRead(convId, incoming.createdAt);
-        if (atBottom) {
-          pendingScrollModeRef.current = 'if-near';
-          setShowNewMessageIndicator(false);
-        } else {
-          setShowNewMessageIndicator(true);
-        }
       }
     },
     onMessageUpdated: (payload) => {
       if (!payload || typeof payload !== 'object') return;
       const parsed = payload as { id: string; conversationId: number; deleted?: boolean; deletedAt?: string | null };
       const convId = String(parsed.conversationId);
-      if (selectedIdRef.current !== convId) return;
+      if (String(selectedIdRef.current) !== String(convId)) return;
       setMessages((prev) =>
         prev.map((m) =>
           m.id === String(parsed.id)
@@ -969,12 +974,9 @@ export function InboxPage() {
             hasPendingRealtimeUpdates={hasPendingRealtimeUpdates}
             onScrollMetaChange={({ scrollTop, nearTop }) => {
               conversationListScrollTopRef.current = scrollTop;
-              const wasNearTop = isConversationListNearTopRef.current;
               isConversationListNearTopRef.current = nearTop;
-              if (!wasNearTop && nearTop) {
-                flushPendingRealtimeConversations();
-              }
             }}
+            onApplyRealtimeUpdates={applyPendingRealtimeUpdates}
             onSelect={(id) => {
               const conv = conversations.find((c) => c.id === id);
               markConversationAsRead(id, conv?.updatedAt ?? null);

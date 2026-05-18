@@ -230,9 +230,11 @@ export async function publishConversationUpdated(conversationId: number): Promis
 
 export function publishMessageCreated(message: RealtimeMessagePayload): void {
   try {
+    const direction = message.role === 'user' ? 'inbound' : 'outbound';
     console.info('[Realtime] publish message.created', {
       conversationId: message.conversationId,
       messageId: message.id,
+      direction,
     });
     emitSocketEvent('message.created', message);
   } catch (error) {
