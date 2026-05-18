@@ -7,7 +7,19 @@ export interface WhatsAppTemplateVariableDef {
 export interface BatchTemplateCatalogItem {
   key: string;
   name: string;
-  languageCode: 'pt_BR';
+  languageCode: string;
+  category?: string;
+  status?: string;
+  metaTemplateId?: string;
+  components?: Array<Record<string, unknown>>;
+  hasHeaderImage?: boolean;
+  hasHeaderVideo?: boolean;
+  hasHeaderDocument?: boolean;
+  hasBodyVariables?: boolean;
+  bodyVariableCount?: number;
+  hasButtons?: boolean;
+  requiresHeaderMedia?: boolean;
+  headerImageUrl?: string;
   variables: WhatsAppTemplateVariableDef[];
   /** Corpo com {{1}}, {{2}}… (opcional; inbox usa fallback por label se ausente). */
   messageBodyTemplate?: string;

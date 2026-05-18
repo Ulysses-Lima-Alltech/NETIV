@@ -25,6 +25,7 @@ interface Props {
   onVariableMappingsChange: (mappings: Record<string, TemplateVariableSource>) => void;
   onPreview: () => Promise<void>;
   loadingPreview: boolean;
+  previewDisabledReason?: string | null;
 }
 
 const inputCls =
@@ -46,6 +47,7 @@ export function ColumnMappingPanel({
   onVariableMappingsChange,
   onPreview,
   loadingPreview,
+  previewDisabledReason,
 }: Props) {
   if (!template) {
     return (
@@ -193,12 +195,15 @@ export function ColumnMappingPanel({
       <div className="flex justify-end">
         <button
           onClick={() => void onPreview()}
-          disabled={!phoneColumn || loadingPreview}
+          disabled={!phoneColumn || loadingPreview || Boolean(previewDisabledReason)}
           className="px-4 py-2 rounded-[10px] bg-[#0EA5E9] text-white text-[13px] font-semibold hover:bg-[#0284C7] disabled:opacity-60"
         >
           {loadingPreview ? 'Gerando preview...' : 'Gerar preview'}
         </button>
       </div>
+      {previewDisabledReason && (
+        <p className="text-[12px] text-[#B45309]">{previewDisabledReason}</p>
+      )}
     </section>
   );
 }

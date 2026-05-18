@@ -16,6 +16,7 @@ interface Props {
   testResult: string | null;
   canUseRowMode: boolean;
   selectedPreviewRow: BatchPreviewRow | null;
+  disableReason?: string | null;
 }
 
 const inputCls =
@@ -37,6 +38,7 @@ export function TestSendPanel({
   testResult,
   canUseRowMode,
   selectedPreviewRow,
+  disableReason,
 }: Props) {
   const updateManualVariable = (variableId: string, value: string) => {
     onManualTestVariablesChange({ ...manualTestVariables, [variableId]: value });
@@ -134,12 +136,13 @@ export function TestSendPanel({
       <div className="flex justify-end">
         <button
           onClick={() => void onTest()}
-          disabled={!testPhone || loadingTest || (testMode === 'row' && !testRowNumber) || (testMode === 'manual' && template.variables.some(v => v.required && !manualTestVariables[String(v.id)]))}
+          disabled={Boolean(disableReason) || !testPhone || loadingTest || (testMode === 'row' && !testRowNumber) || (testMode === 'manual' && template.variables.some(v => v.required && !manualTestVariables[String(v.id)]))}
           className="px-4 py-2 rounded-[10px] bg-[#0EA5E9] text-white text-[13px] font-semibold hover:bg-[#0284C7] disabled:opacity-60"
         >
           {loadingTest ? 'Enviando teste...' : 'Enviar teste'}
         </button>
       </div>
+      {disableReason && <p className="text-[12px] text-[#B45309]">{disableReason}</p>}
 
       {testResult && (
         <div className="bg-gray-50 border border-gray-200 rounded-md p-4">

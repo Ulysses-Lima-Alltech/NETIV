@@ -1217,9 +1217,9 @@ export const usersApi = {
 
 // API de disparo em lote (templates WhatsApp; rotas /whatsapp-batch no servidor)
 export const whatsappBatchApi = {
-  listTemplates: () =>
-    request<{ templates: BatchTemplateCatalogItem[] }>(
-      `/whatsapp-batch/templates?ts=${Date.now()}`
+  listTemplates: (opts?: { refresh?: boolean }) =>
+    request<{ templates: BatchTemplateCatalogItem[]; warning?: string | null; source?: string }>(
+      `/whatsapp-batch/templates?ts=${Date.now()}${opts?.refresh ? '&refresh=1' : ''}`
     ),
   parseSpreadsheet: (file: File, opts?: { templateKey?: string }) => {
     const formData = new FormData();

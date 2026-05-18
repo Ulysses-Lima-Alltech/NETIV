@@ -48,15 +48,18 @@ export function WhatsAppBatchTemplatePage() {
   const [error, setError] = useState<string | null>(null);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [templatesLoadError, setTemplatesLoadError] = useState<string | null>(null);
+  const [templatesSyncWarning, setTemplatesSyncWarning] = useState<string | null>(null);
 
   useEffect(() => {
     setTemplatesLoading(true);
     setTemplatesLoadError(null);
+    setTemplatesSyncWarning(null);
     void whatsappBatchApi
       .listTemplates()
       .then((r) => {
         console.log('[WHATSAPP_BATCH_FRONT_API_KEYS]', (r.templates ?? []).map((t) => t.key));
         setTemplates(r.templates ?? []);
+        setTemplatesSyncWarning(r.warning ?? null);
       })
       .catch((err: unknown) => {
         setTemplates([]);
@@ -85,6 +88,11 @@ export function WhatsAppBatchTemplatePage() {
   }, []);
 
   const selectedTemplate = templates.find((tpl) => tpl.key === selectedTemplateKey) ?? null;
+  const headerMediaMissing =
+    !!selectedTemplate?.requiresHeaderMedia && !selectedTemplate?.headerImageUrl;
+  const headerMediaMissingMessage = headerMediaMissing
+    ? 'Este template exige imagem de cabeçalho. Cadastre uma URL pública antes de enviar.'
+    : null;
   console.log('[WHATSAPP_BATCH_FRONT_STATE_KEYS]', templates.map((t) => t.key));
   const validPreviewRows = (preview?.rows ?? []).filter((row) => row.status === 'valid');
   const canUseRowMode = validPreviewRows.length > 0;
@@ -185,6 +193,10 @@ export function WhatsAppBatchTemplatePage() {
   };
 
   const handlePreview = async () => {
+    if (headerMediaMissingMessage) {
+      setError(headerMediaMissingMessage);
+      return;
+    }
     if (!parseData) return;
     const rows = parseData.spreadsheet.rows;
     if (!Array.isArray(rows) || rows.length === 0) {
@@ -212,6 +224,10 @@ export function WhatsAppBatchTemplatePage() {
   };
 
   const handleTest = async () => {
+    if (headerMediaMissingMessage) {
+      setError(headerMediaMissingMessage);
+      return;
+    }
     if (!selectedTemplate || !parseData) return;
     setLoadingTest(true);
     setError(null);
@@ -239,6 +255,10 @@ export function WhatsAppBatchTemplatePage() {
   };
 
   const handleSend = async () => {
+    if (headerMediaMissingMessage) {
+      setError(headerMediaMissingMessage);
+      return;
+    }
     if (!preview || preview.validCount === 0) return;
     if (!selectedTemplateKey) {
       setError('Selecione um template antes de enviar em lote.');
@@ -282,6 +302,12 @@ export function WhatsAppBatchTemplatePage() {
       {!templatesLoading && !templatesLoadError && templates.length === 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-md p-4">
           <p className="text-amber-900 text-sm">Nenhum template foi encontrado para esta conta.</p>
+        </div>
+      )}
+
+      {templatesSyncWarning && (
+        <div className="bg-amber-50 border border-amber-200 rounded-md p-4">
+          <p className="text-amber-900 text-sm">{templatesSyncWarning}</p>
         </div>
       )}
 
@@ -333,6 +359,7 @@ export function WhatsAppBatchTemplatePage() {
               onVariableMappingsChange={setVariableMappings}
               onPreview={handlePreview}
               loadingPreview={loadingPreview}
+              previewDisabledReason={headerMediaMissingMessage}
             />
           )}
         </div>
@@ -363,6 +390,7 @@ export function WhatsAppBatchTemplatePage() {
               testResult={testResult}
               canUseRowMode={canUseRowMode}
               selectedPreviewRow={selectedPreviewRow}
+              disableReason={headerMediaMissingMessage}
             />
           )}
 
@@ -386,7 +414,7 @@ export function WhatsAppBatchTemplatePage() {
                 </div>
                 <button
                   onClick={handleSend}
-                  disabled={loadingSend || preview.validCount === 0 || !selectedTemplateKey}
+                  disabled={loadingSend || preview.validCount === 0 || !selectedTemplateKey || !!headerMediaMissingMessage}
                   className="w-full bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
                 >
                   {loadingSend ? 'Enviando...' : `Enviar ${preview.validCount} mensagens`}

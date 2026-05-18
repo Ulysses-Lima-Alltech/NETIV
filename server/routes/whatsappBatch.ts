@@ -7,19 +7,29 @@ import {
   buildBatchSuggestions,
 } from '../services/whatsappBatchTemplateService.js';
 import { parseSpreadsheet } from '../services/spreadsheetParseService.js';
-import { listWhatsAppTemplatesCatalog } from '../catalogs/whatsappTemplates.js';
+import { listBatchTemplatesFromMetaOrFallback } from '../services/whatsappTemplateCatalogSyncService.js';
 import { BatchMappingDtoSchema, BatchSpreadsheetOperationSchema } from '../validators/whatsappBatch.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-router.get('/templates', (_req, res) => {
-  const templates = listWhatsAppTemplatesCatalog();
-  console.log('[WHATSAPP_BATCH_TEMPLATES]', { count: templates.length, keys: templates.map((t) => t.key) });
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  res.json({ templates });
+router.get('/templates', async (req, res) => {
+  try {
+    const forceRefresh = String(req.query.refresh ?? '') === '1';
+    const { templates, fallbackUsed } = await listBatchTemplatesFromMetaOrFallback({ forceRefresh });
+    console.log('[WHATSAPP_BATCH_TEMPLATES]', { count: templates.length, keys: templates.map((t) => t.key) });
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.json({
+      templates,
+      warning: fallbackUsed ? 'Não foi possível sincronizar com a Meta. Exibindo catálogo local.' : null,
+      source: fallbackUsed ? 'local_fallback' : 'meta_sync',
+    });
+  } catch (e) {
+    console.error('[WHATSAPP_BATCH_TEMPLATES_ERROR]', e);
+    res.status(500).json({ error: 'Erro ao listar templates do WhatsApp.' });
+  }
 });
 
 router.post('/suggestions', (req, res) => {

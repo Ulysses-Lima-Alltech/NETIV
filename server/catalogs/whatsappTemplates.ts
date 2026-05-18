@@ -16,10 +16,19 @@ export interface WhatsAppTemplateVariableDef {
 export interface WhatsAppTemplateCatalogItem {
   key: string;
   name: string;
-  languageCode: 'pt_BR';
+  languageCode: string;
   metaTemplateName?: string;
   metaTemplateId?: string;
-  category?: 'CLIENT' | 'CORRETOR' | 'ADMIN';
+  category?: 'CLIENT' | 'CORRETOR' | 'ADMIN' | 'MARKETING' | 'UTILITY' | 'AUTHENTICATION' | string;
+  status?: string;
+  components?: Array<Record<string, unknown>>;
+  hasHeaderImage?: boolean;
+  hasHeaderVideo?: boolean;
+  hasHeaderDocument?: boolean;
+  hasBodyVariables?: boolean;
+  bodyVariableCount?: number;
+  hasButtons?: boolean;
+  requiresHeaderMedia?: boolean;
   variables: WhatsAppTemplateVariableDef[];
   headerImageUrl?: string;
 
@@ -98,8 +107,10 @@ export const WHATSAPP_TEMPLATES_CATALOG: WhatsAppTemplateCatalogItem[] = [
 ];
 
 function getEffectiveTemplatesCatalog(): WhatsAppTemplateCatalogItem[] {
-  return WHATSAPP_TEMPLATES_CATALOG;
+  return runtimeTemplatesCatalog ?? WHATSAPP_TEMPLATES_CATALOG;
 }
+
+let runtimeTemplatesCatalog: WhatsAppTemplateCatalogItem[] | null = null;
 
 export function listWhatsAppTemplatesCatalog(): WhatsAppTemplateCatalogItem[] {
   return getEffectiveTemplatesCatalog();
@@ -113,3 +124,6 @@ export function getWhatsAppTemplates(): WhatsAppTemplateCatalogItem[] {
   return getEffectiveTemplatesCatalog();
 }
 
+export function setRuntimeWhatsAppTemplatesCatalog(templates: WhatsAppTemplateCatalogItem[] | null): void {
+  runtimeTemplatesCatalog = Array.isArray(templates) ? templates : null;
+}

@@ -70,6 +70,12 @@ function getTemplateOrThrow(templateKey: string): WhatsAppTemplateCatalogItem {
   return template;
 }
 
+function assertTemplateHeaderMediaConfigured(template: WhatsAppTemplateCatalogItem): void {
+  if (!template.requiresHeaderMedia) return;
+  if (template.headerImageUrl?.trim()) return;
+  throw new Error('Este template exige imagem de cabeçalho. Cadastre uma URL pública antes de enviar.');
+}
+
 async function resolveEnterprise(selectedEnterpriseId: number | null | undefined): Promise<{ id: number; name: string } | null> {
   if (selectedEnterpriseId == null) return null;
   const ent = await getEnterpriseById(selectedEnterpriseId);
@@ -171,6 +177,7 @@ export async function buildBatchPreview(params: {
   rows: BatchPreviewRow[];
 }> {
   const template = getTemplateOrThrow(params.mapping.templateKey);
+  assertTemplateHeaderMediaConfigured(template);
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
   const previewRows: BatchPreviewRow[] = [];
   let validCount = 0;
@@ -293,6 +300,7 @@ export async function sendBatchTemplate(params: {
   mapping: BatchMappingDto;
 }): Promise<BatchExecutionResult> {
   const template = getTemplateOrThrow(params.mapping.templateKey);
+  assertTemplateHeaderMediaConfigured(template);
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
   const broker = await resolveBroker(params.mapping.selectedBrokerId);
   const config = await getWhatsAppConfig();
@@ -452,6 +460,7 @@ export async function sendBatchTemplateTest(params: {
   metaMessageId?: string;
 }> {
   const template = getTemplateOrThrow(params.mapping.templateKey);
+  assertTemplateHeaderMediaConfigured(template);
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
   let resolved: ReturnType<typeof resolveVariablesForRow>;
   let sampleRowNumber: number | undefined;
