@@ -163,6 +163,8 @@ export interface ConversationListItem {
   contactName: string | null;
   profilePicUrl?: string | null;
   profile_pic_url?: string | null;
+  profilePictureUrl?: string | null;
+  profile_picture_url?: string | null;
   avatarUrl?: string | null;
   avatar_url?: string | null;
   photoUrl?: string | null;
@@ -171,6 +173,7 @@ export interface ConversationListItem {
   whatsapp_profile_pic_url?: string | null;
   contact?: {
     profilePicUrl?: string | null;
+    profilePictureUrl?: string | null;
     avatarUrl?: string | null;
     photoUrl?: string | null;
   } | null;

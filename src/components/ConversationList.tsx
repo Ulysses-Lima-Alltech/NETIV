@@ -1,4 +1,5 @@
-﻿import type { Conversation } from '../types';
+import { useLayoutEffect, useMemo, useRef } from 'react';
+import type { Conversation } from '../types';
 import { ConversationListItem } from './ConversationListItem';
 
 interface ConversationListProps {
@@ -28,8 +29,41 @@ export function ConversationList({
   hasPendingRealtimeUpdates = false,
   onApplyRealtimeUpdates,
 }: ConversationListProps) {
+  const scrollElRef = useRef<HTMLDivElement | null>(null);
+  const scrollTopRef = useRef(0);
+  const hasHydratedScrollRef = useRef(false);
+  const hasUserScrolledRef = useRef(false);
+  const listSignature = useMemo(() => conversations.map((c) => c.id).join('|'), [conversations]);
+  const SCROLL_KEY = 'netiv:inbox:conversationListScrollTop';
+
+  useLayoutEffect(() => {
+    const el = scrollElRef.current;
+    if (!el || hasHydratedScrollRef.current) return;
+    hasHydratedScrollRef.current = true;
+    try {
+      const raw = localStorage.getItem(SCROLL_KEY);
+      const parsed = raw == null ? NaN : Number(raw);
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        el.scrollTop = parsed;
+        scrollTopRef.current = parsed;
+      }
+    } catch {
+      // noop
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = scrollElRef.current;
+    if (!el) return;
+    if (!hasUserScrolledRef.current) return;
+    const target = scrollTopRef.current;
+    if (Math.abs(el.scrollTop - target) > 1) {
+      el.scrollTop = target;
+    }
+  }, [listSignature, isLoading, compact]);
+
   return (
-    <div className="flex h-full min-h-0 flex-col bg-transparent">
+    <div className="flex min-h-0 flex-1 flex-col bg-transparent">
       <div className={`shrink-0 border-b border-[#e2e8f0] px-4 py-3 ${compact ? 'px-2.5' : ''}`}>
         <div className="flex items-center justify-between gap-2">
           <h2 className={`text-[15px] font-semibold text-[#0f172a] inline-flex items-center gap-2 ${compact ? 'sr-only' : ''}`}>
@@ -66,11 +100,7 @@ export function ConversationList({
               aria-label={compact ? 'Expandir conversas' : 'Recolher conversas'}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                {compact ? (
-                  <path d="M9 18l6-6-6-6" />
-                ) : (
-                  <path d="M15 18l-6-6 6-6" />
-                )}
+                {compact ? <path d="M9 18l6-6-6-6" /> : <path d="M15 18l-6-6 6-6" />}
               </svg>
             </button>
           )}
@@ -78,9 +108,17 @@ export function ConversationList({
       </div>
 
       <div
-        className={`min-h-0 flex-1 overflow-y-auto py-2 ${compact ? 'px-1.5' : 'px-2'}`}
+        ref={scrollElRef}
+        className={`min-h-0 flex-1 overflow-y-auto py-2 ${compact ? 'px-1.5 pb-3' : 'px-2 pb-4'}`}
         onScroll={(e) => {
           const el = e.currentTarget;
+          hasUserScrolledRef.current = true;
+          scrollTopRef.current = el.scrollTop;
+          try {
+            localStorage.setItem(SCROLL_KEY, String(el.scrollTop));
+          } catch {
+            // noop
+          }
           onScrollMetaChange?.({
             scrollTop: el.scrollTop,
             nearTop: el.scrollTop < 24,

@@ -89,6 +89,8 @@ function extractConversationAvatar(c: ApiConversation): string | null {
   const candidates: Array<unknown> = [
     c.profilePicUrl,
     c.profile_pic_url,
+    c.profilePictureUrl,
+    c.profile_picture_url,
     c.avatarUrl,
     c.avatar_url,
     c.photoUrl,
@@ -96,6 +98,7 @@ function extractConversationAvatar(c: ApiConversation): string | null {
     c.whatsappProfilePicUrl,
     c.whatsapp_profile_pic_url,
     contact?.profilePicUrl,
+    contact?.profilePictureUrl,
     contact?.avatarUrl,
     contact?.photoUrl,
   ];
@@ -984,7 +987,7 @@ export function InboxPage() {
           <div className="fixed inset-0 bg-black/25 z-20 md:hidden" aria-hidden onClick={() => setSidebarOpen(false)} />
         )}
         <aside
-          className={`w-[360px] shrink-0 min-h-0 overflow-hidden rounded-[22px] border border-[#e2e8f0] bg-white/92 shadow-[0_8px_24px_rgba(15,23,42,0.08)] md:relative md:inset-auto md:z-10 md:translate-x-0 md:transition-[width] md:duration-200 ${conversationPanelCollapsed ? 'md:w-[96px]' : 'md:w-[360px]'} fixed inset-y-4 left-4 right-4 z-30 transform transition-transform duration-200 ease-out sm:right-auto ${sidebarOpen ? 'translate-x-0' : '-translate-x-[110%] md:translate-x-0'}`}
+          className={`w-[360px] shrink-0 min-h-0 overflow-hidden rounded-[22px] border border-[#e2e8f0] bg-white/92 shadow-[0_8px_24px_rgba(15,23,42,0.08)] md:relative md:inset-auto md:z-10 md:translate-x-0 md:transition-[width] md:duration-200 flex flex-col ${conversationPanelCollapsed ? 'md:w-[96px]' : 'md:w-[360px]'} fixed inset-y-4 left-4 right-4 z-30 transform transition-transform duration-200 ease-out sm:right-auto ${sidebarOpen ? 'translate-x-0' : '-translate-x-[110%] md:translate-x-0'}`}
         >
           {!conversationPanelCollapsed && (
             <>
