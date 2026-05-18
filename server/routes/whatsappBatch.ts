@@ -131,6 +131,11 @@ router.post('/test', async (req, res) => {
       return res.status(400).json({ error: 'manualVariables é obrigatório para modo "manual"' });
     }
 
+    const spreadsheetRows = Array.isArray(spreadsheet?.rows) ? spreadsheet.rows : null;
+    if (!spreadsheetRows) {
+      return res.status(400).json({ error: 'Spreadsheet inv?lida para envio de teste.' });
+    }
+
     const result = await sendBatchTemplateTest({
       rows: spreadsheetRows,
       mapping: mappingResult.data,
