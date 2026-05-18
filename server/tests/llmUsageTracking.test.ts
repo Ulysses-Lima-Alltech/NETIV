@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { generateChatCompletion } from '../services/openaiService.js';
+import { generateChatCompletion, usesMaxCompletionTokens } from '../services/openaiService.js';
 import type { LlmUsageEventInput } from '../repositories/llmUsageRepository.js';
 
 const originalFetch = globalThis.fetch;
@@ -205,6 +205,82 @@ test('erro da API tambem registra evento de uso sem mudar resposta', async () =>
   assert.equal(events.length, 1);
   assert.equal(events[0]?.success, false);
   assert.equal(events[0]?.errorCode, 'rate_limit_exceeded');
+});
+
+test('helper usesMaxCompletionTokens mapeia modelos corretamente', () => {
+  assert.equal(usesMaxCompletionTokens('gpt-4.1'), false);
+  assert.equal(usesMaxCompletionTokens('gpt-4.1-mini'), false);
+  assert.equal(usesMaxCompletionTokens('o4-mini'), true);
+  assert.equal(usesMaxCompletionTokens('o3'), true);
+  assert.equal(usesMaxCompletionTokens('gpt-5.1'), true);
+});
+
+test('payload usa max_tokens para gpt-4.1 e gpt-4.1-mini', async () => {
+  const sentBodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = async (_input, init) => {
+    const parsed = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+    sentBodies.push(parsed);
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+
+  await generateChatCompletion({
+    apiKey: 'sk-test',
+    baseUrl: null,
+    model: 'gpt-4.1',
+    messages: [{ role: 'user', content: 'oi' }],
+    temperature: 0.2,
+    maxTokens: 123,
+  });
+  await generateChatCompletion({
+    apiKey: 'sk-test',
+    baseUrl: null,
+    model: 'gpt-4.1-mini',
+    messages: [{ role: 'user', content: 'oi' }],
+    temperature: 0.2,
+    maxTokens: 123,
+  });
+
+  assert.equal(typeof sentBodies[0]?.max_tokens, 'number');
+  assert.equal(sentBodies[0]?.max_completion_tokens, undefined);
+  assert.equal(typeof sentBodies[1]?.max_tokens, 'number');
+  assert.equal(sentBodies[1]?.max_completion_tokens, undefined);
+});
+
+test('payload usa max_completion_tokens para o4-mini e o3 sem enviar max_tokens', async () => {
+  const sentBodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = async (_input, init) => {
+    const parsed = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+    sentBodies.push(parsed);
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+
+  await generateChatCompletion({
+    apiKey: 'sk-test',
+    baseUrl: null,
+    model: 'o4-mini',
+    messages: [{ role: 'user', content: 'oi' }],
+    temperature: 0.2,
+    maxTokens: 321,
+  });
+  await generateChatCompletion({
+    apiKey: 'sk-test',
+    baseUrl: null,
+    model: 'o3',
+    messages: [{ role: 'user', content: 'oi' }],
+    temperature: 0.2,
+    maxTokens: 321,
+  });
+
+  assert.equal(typeof sentBodies[0]?.max_completion_tokens, 'number');
+  assert.equal(sentBodies[0]?.max_tokens, undefined);
+  assert.equal(typeof sentBodies[1]?.max_completion_tokens, 'number');
+  assert.equal(sentBodies[1]?.max_tokens, undefined);
 });
 
 test('dashboard agrega custo por empreendimento apenas no periodo e inclui grupo sem empreendimento', () => {

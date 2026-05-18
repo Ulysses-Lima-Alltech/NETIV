@@ -67,6 +67,15 @@ export interface GenerateCompletionResult {
   estimatedCostUsd?: number;
 }
 
+export function usesMaxCompletionTokens(model: string): boolean {
+  const normalized = String(model || '').trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized.startsWith('o3')) return true;
+  if (normalized.startsWith('o4')) return true;
+  if (normalized.startsWith('gpt-5')) return true;
+  return false;
+}
+
 type ChatCompletionUsage = {
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -172,7 +181,7 @@ export async function generateChatCompletion(params: GenerateCompletionParams): 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  const usesMaxCompletionTokensOnly = /^gpt-5/i.test(model) || /^o3/i.test(model);
+  const usesMaxCompletionTokensOnly = usesMaxCompletionTokens(model);
   const body: Record<string, unknown> = {
     model,
     messages,
@@ -186,6 +195,10 @@ export async function generateChatCompletion(params: GenerateCompletionParams): 
     body.temperature = temperature;
     body.max_tokens = maxTokens;
   }
+  console.log('[OPENAI_REQUEST_PARAMS]', {
+    model,
+    tokenParam: usesMaxCompletionTokensOnly ? 'max_completion_tokens' : 'max_tokens',
+  });
 
   try {
     const res = await fetch(url, {
