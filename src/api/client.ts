@@ -175,6 +175,7 @@ export interface ConversationListItem {
     profilePicUrl?: string | null;
     profilePictureUrl?: string | null;
     avatarUrl?: string | null;
+    avatar_url?: string | null;
     photoUrl?: string | null;
   } | null;
   /** Nome de perfil WhatsApp (listagem). */

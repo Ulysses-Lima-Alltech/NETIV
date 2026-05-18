@@ -100,6 +100,7 @@ function extractConversationAvatar(c: ApiConversation): string | null {
     contact?.profilePicUrl,
     contact?.profilePictureUrl,
     contact?.avatarUrl,
+    contact?.avatar_url,
     contact?.photoUrl,
   ];
 
