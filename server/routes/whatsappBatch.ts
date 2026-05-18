@@ -153,7 +153,3 @@ router.post('/test', async (req, res) => {
 });
 
 export default router;
-    const spreadsheetRows = Array.isArray(spreadsheet?.rows) ? spreadsheet.rows : null;
-    if (!spreadsheetRows) {
-      return res.status(400).json({ error: 'Spreadsheet inválida para envio de teste.' });
-    }
