@@ -684,6 +684,7 @@ export interface ConversationWithPreview extends ConversationRow {
   enterprise_name: string | null;
   assigned_broker_name?: string | null;
   contact_type?: 'CLIENT' | 'INTERNO' | string | null;
+  profile_pic_url?: string | null;
 }
 
 export interface ListConversationsFilters {
@@ -753,7 +754,8 @@ export async function listConversationsWithPreview(
       (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_preview,
       e.name AS enterprise_name,
       br.full_name AS assigned_broker_name,
-      ct.contact_type AS contact_type
+      ct.contact_type AS contact_type,
+      NULL::text AS profile_pic_url
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
      LEFT JOIN corretores br ON br.id = c.assigned_broker_id
@@ -774,7 +776,8 @@ export async function getConversationWithPreviewById(id: number): Promise<Conver
       (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_preview,
       e.name AS enterprise_name,
       br.full_name AS assigned_broker_name,
-      ct.contact_type AS contact_type
+      ct.contact_type AS contact_type,
+      NULL::text AS profile_pic_url
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
      LEFT JOIN corretores br ON br.id = c.assigned_broker_id

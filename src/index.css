@@ -112,6 +112,7 @@ a:focus-visible {
   border-radius: 999px;
   border: 2px solid rgba(255, 255, 255, 0.28);
   object-fit: cover;
+  object-position: center;
   background: #fff;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.35);
   flex: 0 0 auto;

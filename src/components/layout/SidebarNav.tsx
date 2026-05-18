@@ -2,7 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { isNavItemActive, useAppNav } from '../../hooks/useAppNav';
 import { SidebarIcon } from './SidebarIcons';
-import anaAvatar from '../../assets/ana-avatar.svg';
+import anaAvatar from '../../assets/ana-avatar.png';
 
 interface SidebarNavProps {
   collapsed: boolean;
