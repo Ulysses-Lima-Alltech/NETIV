@@ -1,5 +1,10 @@
 import { Router } from 'express';
 import { getOpenAIConfig, getOpenAIConfigPublic, updateOpenAIConfig } from '../repositories/openaiConfigRepository.js';
+import {
+  getSafeOpenAiCostSettingsForFrontend,
+  testOpenAiCostSettings,
+  upsertOpenAiCostSettings,
+} from '../repositories/openaiCostSettingsRepository.js';
 import { runAnaOpenAIDiagnostic } from '../services/anaOpenAIDiagnosticService.js';
 import {
   getGlobalAiSettingsForFrontend,
@@ -13,6 +18,7 @@ import { OPENAI_ALLOWED_MODELS } from '../catalogs/aiModels.js';
 import {
   enterpriseAiSettingUpdateSchema,
   globalAiSettingUpdateSchema,
+  openAiCostSettingUpdateSchema,
   openAISettingUpdateSchema,
 } from '../validators/ai.js';
 
@@ -212,6 +218,54 @@ router.post('/api/enterprises/:enterpriseId/test', async (req, res) => {
   }
 });
 
+router.get('/api/costs/config', async (_req, res) => {
+  try {
+    const data = await getSafeOpenAiCostSettingsForFrontend();
+    return res.json(data);
+  } catch (error) {
+    console.error('[Settings] GET api/costs/config:', error);
+    return res.status(500).json({ error: 'Erro ao carregar configuração de custos OpenAI.' });
+  }
+});
+
+router.put('/api/costs/config', async (req, res) => {
+  try {
+    const parsed = openAiCostSettingUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues.map((issue: { message: string }) => issue.message).join('; ') || 'Dados inválidos.';
+      return res.status(400).json({ error: msg });
+    }
+
+    await upsertOpenAiCostSettings(parsed.data);
+    const data = await getSafeOpenAiCostSettingsForFrontend();
+    return res.json(data);
+  } catch (error) {
+    console.error('[Settings] PUT api/costs/config:', error);
+    const msg = error instanceof Error ? error.message : 'Erro ao salvar configuração de custos OpenAI.';
+    return res.status(500).json({ error: msg });
+  }
+});
+
+router.post('/api/costs/config/test', async (_req, res) => {
+  try {
+    const result = await testOpenAiCostSettings();
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    return res.json(result);
+  } catch (error) {
+    console.error('[Settings] POST api/costs/config/test:', error);
+    const msg = error instanceof Error ? error.message : 'Erro ao testar configuração de custos OpenAI.';
+    if (
+      msg === 'Chave de custos OpenAI não configurada.' ||
+      msg === 'Sincronização de custos OpenAI está desativada.'
+    ) {
+      return res.status(400).json({ success: false, error: msg });
+    }
+    return res.status(500).json({ success: false, error: msg });
+  }
+});
+
 router.post('/api/costs/sync', async (req, res) => {
   try {
     const body = (req.body ?? {}) as Record<string, unknown>;
@@ -234,6 +288,13 @@ router.post('/api/costs/sync', async (req, res) => {
   } catch (error) {
     console.error('[Settings] POST api/costs/sync:', error);
     const msg = error instanceof Error ? error.message : 'Erro ao sincronizar custos OpenAI.';
+    if (
+      msg === 'Chave de custos OpenAI não configurada.' ||
+      msg === 'A chave de custos não possui permissão api.usage.read.' ||
+      msg === 'Sincronização de custos OpenAI está desativada.'
+    ) {
+      return res.status(400).json({ error: msg });
+    }
     return res.status(500).json({ error: msg });
   }
 });

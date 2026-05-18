@@ -1,5 +1,9 @@
 import { query } from '../db/pg.js';
-import { getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
+import {
+  getOpenAiCostSettings,
+  registerOpenAiCostSyncStatus,
+  resolveOpenAiCostsApiKey,
+} from '../repositories/openaiCostSettingsRepository.js';
 
 type GroupByField = 'api_key_id' | 'project_id' | 'line_item';
 
@@ -67,6 +71,24 @@ function resolveOpenAiApiRoot(baseUrl: string | null | undefined): string {
   const cleaned = raw.replace(/\/+$/, '');
   if (cleaned.endsWith('/v1')) return cleaned.slice(0, -3);
   return cleaned;
+}
+
+function extractProviderErrorMessage(rawText: string): string {
+  const text = rawText.trim();
+  if (!text) return 'Erro sem detalhes retornado pela OpenAI.';
+  try {
+    const parsed = JSON.parse(text) as { error?: { message?: string } };
+    const fromError = normalizeTrimmed(parsed?.error?.message);
+    if (fromError) return fromError;
+  } catch {
+    // no-op
+  }
+  return text.slice(0, 500);
+}
+
+function isMissingUsageReadScope(status: number, rawText: string): boolean {
+  if (status !== 403) return false;
+  return /api\.usage\.read|missing scopes?/i.test(rawText);
 }
 
 async function getEnterpriseByApiKeyIdMap(): Promise<Map<string, number>> {
@@ -179,72 +201,95 @@ async function upsertSnapshotRow(row: OpenAiCostSnapshotRow): Promise<void> {
 }
 
 export async function syncOpenAiCosts(options: OpenAiCostSyncOptions): Promise<OpenAiCostSyncResult> {
-  const cfg = await getOpenAIConfig();
-  const adminKey = normalizeTrimmed(process.env.OPENAI_ADMIN_API_KEY) ?? normalizeTrimmed(cfg?.openaiApiKey ?? null);
-  if (!adminKey) {
-    throw new Error('OpenAI admin/global API key não configurada para sincronizar custos.');
-  }
-
-  const groupBy = (options.groupBy && options.groupBy.length > 0 ? options.groupBy : ['api_key_id']) as GroupByField[];
-  const bucketWidth = options.bucketWidth ?? '1d';
-  const maxPages = options.maxPages ?? 20;
-  const startTimeSec = Math.floor(options.startTime.getTime() / 1000);
-  const endTimeSec = Math.floor(options.endTime.getTime() / 1000);
-  if (!Number.isFinite(startTimeSec) || !Number.isFinite(endTimeSec) || endTimeSec <= startTimeSec) {
-    throw new Error('Período inválido para sincronização de custos.');
-  }
-
-  const apiRoot = resolveOpenAiApiRoot(cfg?.openaiBaseUrl ?? null);
-  const apiKeyEnterpriseMap = await getEnterpriseByApiKeyIdMap();
-
-  let page: string | null = null;
-  let syncedRows = 0;
-  let savedRows = 0;
-  let unknownApiKeyRows = 0;
-  let pageCount = 0;
-
-  do {
-    const url = buildCostsUrl({
-      apiRoot,
-      startTimeSec,
-      endTimeSec,
-      bucketWidth,
-      groupBy,
-      page,
-    });
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${adminKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
-    if (!response.ok) {
-      const bodyText = await response.text();
-      throw new Error(`Falha ao consultar OpenAI Costs API (${response.status}): ${bodyText.slice(0, 500)}`);
-    }
-    const payload = (await response.json()) as CostsPageResponse;
-    const rows = flattenCostRows(payload);
-    syncedRows += rows.length;
-
-    for (const row of rows) {
-      const mappedEnterpriseId = row.openaiApiKeyId ? (apiKeyEnterpriseMap.get(row.openaiApiKeyId) ?? null) : null;
-      if (row.openaiApiKeyId && mappedEnterpriseId == null) unknownApiKeyRows += 1;
-      row.enterpriseId = mappedEnterpriseId;
-      await upsertSnapshotRow(row);
-      savedRows += 1;
+  try {
+    const settings = await getOpenAiCostSettings();
+    const costsApiKey = await resolveOpenAiCostsApiKey({ requireEnabled: true });
+    const groupBy = (options.groupBy && options.groupBy.length > 0 ? options.groupBy : ['api_key_id']) as GroupByField[];
+    const bucketWidth = options.bucketWidth ?? '1d';
+    const maxPages = options.maxPages ?? 20;
+    const startTimeSec = Math.floor(options.startTime.getTime() / 1000);
+    const endTimeSec = Math.floor(options.endTime.getTime() / 1000);
+    if (!Number.isFinite(startTimeSec) || !Number.isFinite(endTimeSec) || endTimeSec <= startTimeSec) {
+      throw new Error('Período inválido para sincronização de custos.');
     }
 
-    page = normalizeTrimmed(payload.next_page) ?? null;
-    pageCount += 1;
-  } while (page && pageCount < maxPages);
+    const apiRoot = resolveOpenAiApiRoot('https://api.openai.com');
+    const apiKeyEnterpriseMap = await getEnterpriseByApiKeyIdMap();
 
-  return {
-    syncedRows,
-    savedRows,
-    unknownApiKeyRows,
-    source: 'openai_costs_api',
-  };
+    let page: string | null = null;
+    let syncedRows = 0;
+    let savedRows = 0;
+    let unknownApiKeyRows = 0;
+    let pageCount = 0;
+
+    do {
+      const url = buildCostsUrl({
+        apiRoot,
+        startTimeSec,
+        endTimeSec,
+        bucketWidth,
+        groupBy,
+        page,
+      });
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${costsApiKey}`,
+          'Content-Type': 'application/json',
+          ...(settings.openaiProjectId ? { 'OpenAI-Project': settings.openaiProjectId } : {}),
+        },
+      });
+      if (!response.ok) {
+        const bodyText = await response.text();
+        if (isMissingUsageReadScope(response.status, bodyText)) {
+          throw new Error('A chave de custos não possui permissão api.usage.read.');
+        }
+        throw new Error(
+          `Falha ao consultar OpenAI Costs API (${response.status}): ${extractProviderErrorMessage(bodyText)}`
+        );
+      }
+      const payload = (await response.json()) as CostsPageResponse;
+      const rows = flattenCostRows(payload);
+      syncedRows += rows.length;
+
+      for (const row of rows) {
+        const mappedEnterpriseId = row.openaiApiKeyId ? (apiKeyEnterpriseMap.get(row.openaiApiKeyId) ?? null) : null;
+        if (row.openaiApiKeyId && mappedEnterpriseId == null) unknownApiKeyRows += 1;
+        row.enterpriseId = mappedEnterpriseId;
+        await upsertSnapshotRow(row);
+        savedRows += 1;
+      }
+
+      page = normalizeTrimmed(payload.next_page) ?? null;
+      pageCount += 1;
+    } while (page && pageCount < maxPages);
+
+    await registerOpenAiCostSyncStatus({
+      status: 'success',
+      error: null,
+    });
+
+    return {
+      syncedRows,
+      savedRows,
+      unknownApiKeyRows,
+      source: 'openai_costs_api',
+    };
+  } catch (error) {
+    const err = error as Error & { code?: string };
+    const message =
+      err.code === 'OPENAI_COSTS_API_KEY_NOT_CONFIGURED'
+        ? 'Chave de custos OpenAI não configurada.'
+        : err.code === 'OPENAI_COSTS_SYNC_DISABLED'
+          ? 'Sincronização de custos OpenAI está desativada.'
+          : err.message || 'Erro ao sincronizar custos OpenAI.';
+
+    await registerOpenAiCostSyncStatus({
+      status: 'failed',
+      error: message,
+    });
+    throw new Error(message);
+  }
 }
 
 export async function listOpenAiCostSnapshots(params: {

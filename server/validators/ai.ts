@@ -50,3 +50,14 @@ export const enterpriseAiSettingUpdateSchema = z.object({
 });
 
 export type EnterpriseAiSettingUpdateDto = z.infer<typeof enterpriseAiSettingUpdateSchema>;
+
+export const openAiCostSettingUpdateSchema = z.object({
+  provider: z.literal('openai').optional(),
+  openai_costs_api_key: z.string().optional(),
+  remove_api_key: z.boolean().optional(),
+  openai_costs_api_key_id: z.string().nullable().optional(),
+  openai_project_id: z.string().nullable().optional(),
+  enabled: z.boolean().optional(),
+});
+
+export type OpenAiCostSettingUpdateDto = z.infer<typeof openAiCostSettingUpdateSchema>;

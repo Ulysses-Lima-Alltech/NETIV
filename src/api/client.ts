@@ -374,6 +374,45 @@ export interface EnterpriseApiConnectionTestResult {
   error?: string | null;
 }
 
+export interface OpenAiCostSettingsPublic {
+  provider: 'openai';
+  has_api_key: boolean;
+  masked_api_key: string | null;
+  openai_costs_api_key_id: string | null;
+  openai_project_id: string | null;
+  enabled: boolean;
+  last_sync_at: string | null;
+  last_sync_status: string | null;
+  last_sync_error: string | null;
+  updated_at: string;
+}
+
+export interface OpenAiCostSettingsUpdate {
+  provider?: 'openai';
+  openai_costs_api_key?: string;
+  remove_api_key?: boolean;
+  openai_costs_api_key_id?: string | null;
+  openai_project_id?: string | null;
+  enabled?: boolean;
+}
+
+export interface OpenAiCostSettingsTestResult {
+  success: boolean;
+  status: number;
+  message: string;
+  baseUrl: string;
+  openaiProjectId: string | null;
+}
+
+export interface OpenAiCostSyncResult {
+  syncedRows: number;
+  savedRows: number;
+  unknownApiKeyRows: number;
+  source: 'openai_costs_api';
+  startTime: string;
+  endTime: string;
+}
+
 export const settingsApi = {
   getWhatsApp: () => request<WhatsAppConfigPublic>('/settings/integrations/whatsapp'),
   putWhatsApp: (body: WhatsAppConfigUpdate) =>
@@ -407,6 +446,14 @@ export const settingsApi = {
     request<EnterpriseApiConnectionTestResult>(`/settings/api/enterprises/${enterpriseId}/test`, {
       method: 'POST',
     }),
+  getOpenAiCostsConfig: () =>
+    request<OpenAiCostSettingsPublic>('/settings/api/costs/config'),
+  putOpenAiCostsConfig: (body: OpenAiCostSettingsUpdate) =>
+    request<OpenAiCostSettingsPublic>('/settings/api/costs/config', { method: 'PUT', body }),
+  testOpenAiCostsConfig: () =>
+    request<OpenAiCostSettingsTestResult>('/settings/api/costs/config/test', { method: 'POST' }),
+  syncOpenAiCosts: (body?: { startTime?: string; endTime?: string }) =>
+    request<OpenAiCostSyncResult>('/settings/api/costs/sync', { method: 'POST', body: body ?? {} }),
 };
 
 export const whatsappApi = {

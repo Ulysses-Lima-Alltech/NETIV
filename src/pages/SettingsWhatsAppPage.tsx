@@ -241,6 +241,13 @@ function formatDateTime(value: string | null): string {
   return date.toLocaleString('pt-BR');
 }
 
+function formatSyncDateTime(value: string | null): string {
+  if (!value) return 'Nunca sincronizado';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('pt-BR');
+}
+
 function buildEnterpriseForm(item: EnterpriseApiSettingsItem): EnterpriseApiFormState {
   return {
     use_global_defaults: item.use_global_defaults,
