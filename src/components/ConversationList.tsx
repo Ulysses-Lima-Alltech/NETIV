@@ -8,6 +8,8 @@ interface ConversationListProps {
   onDelete?: (id: string) => void;
   onNewMessage?: () => void;
   isLoading?: boolean;
+  onScrollMetaChange?: (meta: { scrollTop: number; nearTop: boolean }) => void;
+  hasPendingRealtimeUpdates?: boolean;
 }
 
 export function ConversationList({
@@ -17,12 +19,21 @@ export function ConversationList({
   onDelete,
   onNewMessage,
   isLoading = false,
+  onScrollMetaChange,
+  hasPendingRealtimeUpdates = false,
 }: ConversationListProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-transparent">
       <div className="shrink-0 border-b border-[#e2e8f0] px-4 py-3">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-[15px] font-semibold text-[#0f172a]">Conversas</h2>
+          <h2 className="text-[15px] font-semibold text-[#0f172a] inline-flex items-center gap-2">
+            Conversas
+            {hasPendingRealtimeUpdates && (
+              <span className="rounded-full bg-[#eaf2ff] px-2 py-[2px] text-[10px] font-semibold text-[#1d4ed8]">
+                Novas
+              </span>
+            )}
+          </h2>
           {onNewMessage && (
             <button
               type="button"
@@ -35,7 +46,16 @@ export function ConversationList({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+      <div
+        className="min-h-0 flex-1 overflow-y-auto px-2 py-2"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          onScrollMetaChange?.({
+            scrollTop: el.scrollTop,
+            nearTop: el.scrollTop < 24,
+          });
+        }}
+      >
         {isLoading ? (
           <div className="flex flex-col items-center justify-center gap-3 py-16">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-[#2563eb] border-t-transparent" />

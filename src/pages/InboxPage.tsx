@@ -211,6 +211,10 @@ export function InboxPage() {
   const pendingScrollModeRef = useRef<'none' | 'force' | 'if-near'>('none');
   const [showNewMessageIndicator, setShowNewMessageIndicator] = useState(false);
   const inflightRealtimeConversationFetchRef = useRef<Set<string>>(new Set());
+  const conversationListScrollTopRef = useRef(0);
+  const isConversationListNearTopRef = useRef(true);
+  const pendingRealtimeConversationsRef = useRef<Map<string, Conversation>>(new Map());
+  const [hasPendingRealtimeUpdates, setHasPendingRealtimeUpdates] = useState(false);
 
   const rawConversationParam = searchParams.get('conversationId')?.trim() ?? '';
   const parsedConversationId = useMemo(() => {
@@ -243,16 +247,41 @@ export function InboxPage() {
     });
   }, [scrollToBottom]);
 
+  const shouldAutoSortConversations = useCallback(() => {
+    if (!isConversationListNearTopRef.current) return false;
+    if (String(searchDebounced || '').trim() !== '') return false;
+    if (hasActiveInboxFilters(filters)) return false;
+    return true;
+  }, [filters, searchDebounced]);
+
   const mergeConversation = useCallback((incoming: Conversation) => {
+    const autoSort = shouldAutoSortConversations();
     setConversations((prev) => {
       const idx = prev.findIndex((c) => c.id === incoming.id);
       const nextRow = idx >= 0 ? { ...prev[idx]!, ...incoming } : incoming;
+      if (!autoSort) {
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = nextRow;
+          return next;
+        }
+        pendingRealtimeConversationsRef.current.set(incoming.id, incoming);
+        setHasPendingRealtimeUpdates(true);
+        return prev;
+      }
       const without = idx >= 0 ? prev.filter((_, i) => i !== idx) : prev;
-      return [nextRow, ...without].sort(
-        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-      );
+      const pending = Array.from(pendingRealtimeConversationsRef.current.values());
+      pendingRealtimeConversationsRef.current.clear();
+      setHasPendingRealtimeUpdates(false);
+      return [nextRow, ...without, ...pending]
+        .reduce<Conversation[]>((acc, row) => {
+          if (acc.some((c) => c.id === row.id)) return acc;
+          acc.push(row);
+          return acc;
+        }, [])
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     });
-  }, []);
+  }, [shouldAutoSortConversations]);
 
   const fetchAndMergeConversationById = useCallback((conversationId: string) => {
     if (inflightRealtimeConversationFetchRef.current.has(conversationId)) return;
@@ -271,6 +300,23 @@ export function InboxPage() {
         inflightRealtimeConversationFetchRef.current.delete(conversationId);
       });
   }, [mergeConversation]);
+
+  const flushPendingRealtimeConversations = useCallback(() => {
+    if (!shouldAutoSortConversations()) return;
+    if (pendingRealtimeConversationsRef.current.size === 0) return;
+    setConversations((prev) => {
+      const pending = Array.from(pendingRealtimeConversationsRef.current.values());
+      pendingRealtimeConversationsRef.current.clear();
+      setHasPendingRealtimeUpdates(false);
+      return [...prev, ...pending]
+        .reduce<Conversation[]>((acc, row) => {
+          if (acc.some((c) => c.id === row.id)) return acc;
+          acc.push(row);
+          return acc;
+        }, [])
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    });
+  }, [shouldAutoSortConversations]);
 
   const selectedConversation = selectedId
     ? conversations.find((c) => c.id === selectedId) ?? null
@@ -416,6 +462,10 @@ export function InboxPage() {
     return () => el.removeEventListener('scroll', onScroll);
   }, [selectedId]);
 
+  useEffect(() => {
+    flushPendingRealtimeConversations();
+  }, [flushPendingRealtimeConversations, filters, searchDebounced]);
+
   useEffect(() => { loadConversations(); }, [loadConversations]);
 
   useRealtimeInbox({
@@ -480,6 +530,13 @@ export function InboxPage() {
           updatedAt: incoming.createdAt,
           unreadCount: nextUnread,
         };
+        const autoSort = shouldAutoSortConversations();
+        if (!autoSort) {
+          const next = [...prev];
+          next[idx] = updatedRow;
+          setHasPendingRealtimeUpdates(true);
+          return next;
+        }
         const next = [...prev];
         next.splice(idx, 1);
         next.unshift(updatedRow);
@@ -909,6 +966,15 @@ export function InboxPage() {
           <ConversationList
             conversations={conversations}
             selectedId={selectedId}
+            hasPendingRealtimeUpdates={hasPendingRealtimeUpdates}
+            onScrollMetaChange={({ scrollTop, nearTop }) => {
+              conversationListScrollTopRef.current = scrollTop;
+              const wasNearTop = isConversationListNearTopRef.current;
+              isConversationListNearTopRef.current = nearTop;
+              if (!wasNearTop && nearTop) {
+                flushPendingRealtimeConversations();
+              }
+            }}
             onSelect={(id) => {
               const conv = conversations.find((c) => c.id === id);
               markConversationAsRead(id, conv?.updatedAt ?? null);
