@@ -10,6 +10,7 @@ interface ConversationListProps {
   isLoading?: boolean;
   onScrollMetaChange?: (meta: { scrollTop: number; nearTop: boolean }) => void;
   hasPendingRealtimeUpdates?: boolean;
+  onApplyRealtimeUpdates?: () => void;
 }
 
 export function ConversationList({
@@ -21,6 +22,7 @@ export function ConversationList({
   isLoading = false,
   onScrollMetaChange,
   hasPendingRealtimeUpdates = false,
+  onApplyRealtimeUpdates,
 }: ConversationListProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-transparent">
@@ -29,9 +31,13 @@ export function ConversationList({
           <h2 className="text-[15px] font-semibold text-[#0f172a] inline-flex items-center gap-2">
             Conversas
             {hasPendingRealtimeUpdates && (
-              <span className="rounded-full bg-[#eaf2ff] px-2 py-[2px] text-[10px] font-semibold text-[#1d4ed8]">
+              <button
+                type="button"
+                onClick={onApplyRealtimeUpdates}
+                className="rounded-full bg-[#eaf2ff] px-2 py-[2px] text-[10px] font-semibold text-[#1d4ed8] hover:bg-[#dbeafe]"
+              >
                 Novas
-              </span>
+              </button>
             )}
           </h2>
           {onNewMessage && (
