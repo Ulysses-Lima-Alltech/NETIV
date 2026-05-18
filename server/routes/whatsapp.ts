@@ -118,8 +118,6 @@ function mapConversationWithPreviewRow(r: ConversationWithPreview) {
       (r.whatsapp_display_name ?? '').trim() ||
       (r.customer_name ?? '').trim() ||
       null,
-    avatar_url: (r as { avatar_url?: string | null }).avatar_url ?? null,
-    profilePicUrl: (r as { profile_pic_url?: string | null }).profile_pic_url ?? null,
     whatsappDisplayName: r.whatsapp_display_name ?? null,
     customerName: r.customer_name ?? null,
     status: 'open',

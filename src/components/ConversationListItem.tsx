@@ -65,7 +65,6 @@ export function ConversationListItem({
       >
         <ContactAvatar
           name={displayName}
-          avatarUrl={conversation.avatarUrl}
           className="h-10 w-10 rounded-full border border-white/60 object-cover shadow-[0_2px_8px_rgba(15,23,42,0.08)]"
         />
         {conversation.unreadCount > 0 && (
@@ -94,7 +93,6 @@ export function ConversationListItem({
       <div className="flex min-h-6 items-center gap-2">
         <ContactAvatar
           name={displayName}
-          avatarUrl={conversation.avatarUrl}
           className="h-9 w-9 rounded-full border border-white/70 object-cover shadow-[0_2px_8px_rgba(15,23,42,0.07)]"
         />
         <span className={`flex-1 truncate text-[13px] leading-tight ${isSelected || isUnread ? 'font-semibold text-[#0f172a]' : 'font-medium text-[#0f172a]'}`}>

@@ -285,7 +285,6 @@ export function ChatPanel({
           <div className="min-w-0 flex items-start gap-3">
             <ContactAvatar
               name={displayName}
-              avatarUrl={conversation.avatarUrl}
               className="h-11 w-11 rounded-full border border-white/70 object-cover shadow-[0_4px_14px_rgba(15,23,42,0.12)]"
               textClassName="text-[13px] font-semibold"
             />

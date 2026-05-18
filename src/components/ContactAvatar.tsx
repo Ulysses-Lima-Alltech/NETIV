@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
 interface ContactAvatarProps {
   name: string;
-  avatarUrl?: string | null;
   className?: string;
   textClassName?: string;
 }
@@ -17,30 +16,10 @@ function getInitials(name: string): string {
 
 export function ContactAvatar({
   name,
-  avatarUrl = null,
   className = 'h-10 w-10 rounded-full',
   textClassName = 'text-[12px] font-semibold',
 }: ContactAvatarProps) {
-  const [imageError, setImageError] = useState(false);
-
-  useEffect(() => {
-    setImageError(false);
-  }, [avatarUrl]);
-
   const initials = useMemo(() => getInitials(name), [name]);
-  const canShowImage = !!avatarUrl && !imageError;
-
-  if (canShowImage) {
-    return (
-      <img
-        src={avatarUrl ?? undefined}
-        alt={name}
-        className={`${className} shrink-0 object-cover`}
-        onError={() => setImageError(true)}
-        loading="lazy"
-      />
-    );
-  }
 
   return (
     <div

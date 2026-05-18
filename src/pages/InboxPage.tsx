@@ -78,39 +78,6 @@ function readConversationPanelCollapsedPreference(): boolean {
   }
 }
 
-function normalizeAvatarValue(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function extractConversationAvatar(c: ApiConversation): string | null {
-  const contact = c.contact ?? undefined;
-  const candidates: Array<unknown> = [
-    c.profilePicUrl,
-    c.profile_pic_url,
-    c.profilePictureUrl,
-    c.profile_picture_url,
-    c.avatarUrl,
-    c.avatar_url,
-    c.photoUrl,
-    c.photo_url,
-    c.whatsappProfilePicUrl,
-    c.whatsapp_profile_pic_url,
-    contact?.profilePicUrl,
-    contact?.profilePictureUrl,
-    contact?.avatarUrl,
-    contact?.avatar_url,
-    contact?.photoUrl,
-  ];
-
-  for (const candidate of candidates) {
-    const normalized = normalizeAvatarValue(candidate);
-    if (normalized) return normalized;
-  }
-  return null;
-}
-
 function mapApiConversationToConversation(c: ApiConversation): Conversation {
   const leadName =
     (c.whatsappDisplayName ?? '').trim() ||
@@ -120,7 +87,6 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     c.externalContactId ||
     'Sem nome';
   const leadPhone = c.contactPhone || c.externalContactId || '';
-  const avatarUrl = extractConversationAvatar(c);
   const ls = c.leadStage;
   const temperatura: LeadTemperatura | null =
     ls == null || ls === ''
@@ -143,7 +109,6 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     id: c.id,
     leadName,
     confirmedCustomerName: c.customerName ?? null,
-    avatarUrl,
     leadPhone,
     lastMessage: c.lastMessagePreview || '',
     updatedAt: c.lastMessageAt || c.updatedAt || c.createdAt,
