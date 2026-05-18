@@ -454,7 +454,8 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   const withOpenQuestion = appendOpenQuestionForGeneralEnterpriseIntro(humanLazer, opts?.userMessage ?? null);
   const sanitized = removeInternalLimitationSentences(withOpenQuestion);
   const safeOffers = sanitizeUnsupportedSpecificOffers(sanitized.text);
-  return safeOffers.text.slice(0, 4000);
+  const dedupGreeting = sanitizeDuplicatedGreetingPrefix(safeOffers.text);
+  return dedupGreeting.slice(0, 4000);
 }
 
 function truncateAtWordBoundary(text: string, maxLen: number): string {
@@ -765,6 +766,16 @@ function hasAxisAnswerSignal(replyNorm: string, userNorm: string): boolean {
   return true;
 }
 
+function sanitizeDuplicatedGreetingPrefix(text: string): string {
+  const raw = (text || '').trim();
+  if (!raw) return raw;
+  return raw
+    .replace(/^(oi|ol[aá]|bom dia|boa tarde|boa noite)[!,. ]+\s*(oi|ol[aá]|bom dia|boa tarde|boa noite)\b[!,. ]*/i, '$1! ')
+    .replace(/^(oi|ol[aá])\s*,\s*(oi|ol[aá])\b[!,. ]*/i, '$1! ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 function saysInfoMissingDespiteEvidence(replyNorm: string, knowledgeNorm: string): boolean {
   if (!replyNorm || !knowledgeNorm) return false;
   const missingClaim =
@@ -826,6 +837,9 @@ export function evaluateAnaEmptyFallbackGuard(opts: {
   }
   if (userSentOnlyGreeting(opts.userMessage) && n.split(/\s+/).filter(Boolean).length < 7) {
     return { blocked: true, reason: 'too_dry_for_opening_greeting' };
+  }
+  if (userSentOnlyGreeting(opts.userMessage) && isGreetingLikeReply(opts.reply || '')) {
+    return { blocked: true, reason: 'isolated_greeting_without_contextual_followup' };
   }
   if (userAskedObjectiveQuestion(opts.userMessage) && countQuestions(opts.reply || '') > 0 && n.split(/\s+/).filter(Boolean).length <= 5) {
     return { blocked: true, reason: 'objective_question_turned_into_question' };

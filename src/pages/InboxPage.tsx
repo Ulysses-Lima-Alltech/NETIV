@@ -264,15 +264,12 @@ export function InboxPage() {
     setConversations((prev) => {
       const idx = prev.findIndex((c) => c.id === incoming.id);
       const nextRow = idx >= 0 ? { ...prev[idx]!, ...incoming } : incoming;
-      if (idx >= 0) {
-        const next = [...prev];
-        next[idx] = nextRow;
-        setHasPendingRealtimeUpdates(true);
-        return next;
-      }
-      pendingRealtimeConversationsRef.current.set(incoming.id, incoming);
-      setHasPendingRealtimeUpdates(true);
-      return prev;
+      const next = idx >= 0
+        ? prev.map((c) => (c.id === incoming.id ? nextRow : c))
+        : [...prev, nextRow];
+      setHasPendingRealtimeUpdates(false);
+      pendingRealtimeConversationsRef.current.delete(incoming.id);
+      return next.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     });
   }, []);
 
@@ -302,15 +299,12 @@ export function InboxPage() {
         const mapped = mapApiConversationToConversation(item);
         setConversations((prev) => {
           const idx = prev.findIndex((c) => c.id === mapped.id);
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = { ...next[idx]!, ...mapped };
-            setHasPendingRealtimeUpdates(true);
-            return next;
-          }
-          pendingRealtimeConversationsRef.current.set(mapped.id, mapped);
-          setHasPendingRealtimeUpdates(true);
-          return prev;
+          const next = idx >= 0
+            ? prev.map((c) => (c.id === mapped.id ? { ...c, ...mapped } : c))
+            : [...prev, mapped];
+          setHasPendingRealtimeUpdates(false);
+          pendingRealtimeConversationsRef.current.delete(mapped.id);
+          return next.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
         });
       })
       .catch(() => {
@@ -385,7 +379,7 @@ export function InboxPage() {
       })
       .catch(() => {
         if (requestId !== conversationsRequestIdRef.current) return;
-        setConversations([]);
+        // Mantém lista atual para não perder seleção/conversa ativa em falha transitória.
       })
       .finally(() => {
         if (requestId !== conversationsRequestIdRef.current) return;
@@ -580,8 +574,8 @@ export function InboxPage() {
         };
         const next = [...prev];
         next[idx] = updatedRow;
-        setHasPendingRealtimeUpdates(true);
-        return next;
+        setHasPendingRealtimeUpdates(false);
+        return next.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
       });
       if (!conversationKnown) {
         fetchAndMergeConversationById(convId);
