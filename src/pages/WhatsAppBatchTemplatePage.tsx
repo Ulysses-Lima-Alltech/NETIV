@@ -88,7 +88,10 @@ export function WhatsAppBatchTemplatePage() {
   console.log('[WHATSAPP_BATCH_FRONT_STATE_KEYS]', templates.map((t) => t.key));
   const validPreviewRows = (preview?.rows ?? []).filter((row) => row.status === 'valid');
   const canUseRowMode = validPreviewRows.length > 0;
-  const selectedPreviewRow = testRowNumber == null ? null : validPreviewRows.find((row) => row.rowNumber === testRowNumber) ?? null;
+  const selectedPreviewRow =
+    testRowNumber == null
+      ? null
+      : validPreviewRows.find((row) => row.rowNumber === testRowNumber) ?? null;
 
   const buildMappingPayload = () => ({
     templateKey: selectedTemplateKey,
@@ -209,17 +212,22 @@ export function WhatsAppBatchTemplatePage() {
   };
 
   const handleTest = async () => {
-    if (!selectedTemplate) return;
+    if (!selectedTemplate || !parseData) return;
     setLoadingTest(true);
     setError(null);
     setTestResult(null);
     try {
       const mapping = buildMappingPayload();
+      const selectedRowIndex =
+        testMode === 'row'
+          ? selectedPreviewRow?.rowIndex ?? (testRowNumber != null ? testRowNumber - 2 : undefined)
+          : undefined;
       const result = await whatsappBatchApi.sendTest({
+        spreadsheet: parseData.spreadsheet,
         mapping,
         testPhone,
         mode: testMode,
-        sampleRowIndex: testMode === 'row' ? (testRowNumber ?? 0) - 2 : undefined,
+        sampleRowIndex: selectedRowIndex,
         manualVariables: testMode === 'manual' ? manualTestVariables : undefined,
       });
       setTestResult(JSON.stringify(result, null, 2));

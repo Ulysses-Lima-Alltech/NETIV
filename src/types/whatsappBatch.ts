@@ -43,6 +43,7 @@ export interface BatchParseResponse {
 }
 
 export interface BatchPreviewRow {
+  rowIndex: number;
   rowNumber: number;
   phoneOriginal: string | null;
   phoneNormalized: string | null;

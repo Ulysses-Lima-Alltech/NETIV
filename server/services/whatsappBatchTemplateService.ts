@@ -16,6 +16,7 @@ import { getCorretorById } from '../repositories/corretorRepository.js';
 import { findOrCreateContactByPhone, updateContactType } from '../repositories/contactsRepository.js';
 
 export interface BatchPreviewRow {
+  rowIndex: number;
   rowNumber: number;
   phoneOriginal: string | null;
   phoneNormalized: string | null;
@@ -190,6 +191,7 @@ export async function buildBatchPreview(params: {
     if (phone.error) {
       invalidCount++;
       previewRows.push({
+        rowIndex: i,
         rowNumber: i + 2,
         phoneOriginal,
         phoneNormalized: null,
@@ -204,6 +206,7 @@ export async function buildBatchPreview(params: {
     if (resolved.missingRequired) {
       blockedCount++;
       previewRows.push({
+        rowIndex: i,
         rowNumber: i + 2,
         phoneOriginal,
         phoneNormalized: phone.phoneNormalized,
@@ -217,6 +220,7 @@ export async function buildBatchPreview(params: {
 
     validCount++;
     previewRows.push({
+      rowIndex: i,
       rowNumber: i + 2,
       phoneOriginal,
       phoneNormalized: phone.phoneNormalized,

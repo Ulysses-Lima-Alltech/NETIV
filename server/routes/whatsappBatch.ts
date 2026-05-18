@@ -108,7 +108,7 @@ router.post('/send', async (req, res) => {
 
 router.post('/test', async (req, res) => {
   try {
-    const { mapping, testPhone, mode, sampleRowIndex, manualVariables } = req.body;
+    const { spreadsheet, mapping, testPhone, mode, sampleRowIndex, manualVariables } = req.body;
 
     const mappingResult = BatchMappingDtoSchema.safeParse(mapping);
     if (!mappingResult.success) {
@@ -132,7 +132,7 @@ router.post('/test', async (req, res) => {
     }
 
     const result = await sendBatchTemplateTest({
-      rows: [], // Empty for test mode
+      rows: spreadsheetRows,
       mapping: mappingResult.data,
       testPhone,
       mode,
@@ -148,3 +148,7 @@ router.post('/test', async (req, res) => {
 });
 
 export default router;
+    const spreadsheetRows = Array.isArray(spreadsheet?.rows) ? spreadsheet.rows : null;
+    if (!spreadsheetRows) {
+      return res.status(400).json({ error: 'Spreadsheet inválida para envio de teste.' });
+    }

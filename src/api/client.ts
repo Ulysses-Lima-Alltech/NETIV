@@ -1233,6 +1233,7 @@ export const whatsappBatchApi = {
       body: { spreadsheet, mapping },
     }),
   sendTest: (params: {
+    spreadsheet: BatchParseResponse['spreadsheet'];
     mapping: any;
     testPhone: string;
     mode: 'row' | 'manual';
