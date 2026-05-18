@@ -1,16 +1,24 @@
 import { query } from '../db/pg.js';
 import { generateChatCompletion } from './openaiService.js';
 import { sanitizeProviderErrorMessage } from '../utils/llmProviderDiagnostics.js';
+import {
+  getDefaultOpenAiModelCold,
+  getDefaultOpenAiModelHot,
+  isAllowedOpenAiModel,
+  type OpenAiAllowedModelItem,
+  OPENAI_ALLOWED_MODELS,
+} from '../catalogs/aiModels.js';
 
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
-const DEFAULT_MODEL_HOT = 'gpt-4.1';
-const DEFAULT_MODEL_COLD = 'gpt-4.1-mini';
+const DEFAULT_MODEL_HOT = getDefaultOpenAiModelHot();
+const DEFAULT_MODEL_COLD = getDefaultOpenAiModelCold();
 
 export type AiProvider = 'openai';
 export type AiApiKeySource = 'enterprise' | 'global_fallback';
 export type AiBlockedReason =
   | 'emergency_block'
   | 'ai_disabled'
+  | 'ana_model_not_configured'
   | 'missing_enterprise_api_key'
   | 'missing_global_api_key';
 
@@ -181,6 +189,7 @@ export interface GlobalAiSettingsFrontend {
   temperature: number;
   max_tokens: number;
   lead_score_threshold: number;
+  available_models: readonly OpenAiAllowedModelItem[];
 }
 
 export interface EnterpriseAiConnectionTestResult {
@@ -206,6 +215,22 @@ function normalizeBaseUrl(value: string | null | undefined): string | null {
   const normalized = trimOrNull(value);
   if (!normalized) return null;
   return normalized.replace(/\/$/, '');
+}
+
+function validModelOrNull(value: string | null | undefined): string | null {
+  const normalized = trimOrNull(value);
+  if (!normalized) return null;
+  return isAllowedOpenAiModel(normalized) ? normalized : null;
+}
+
+function assertAllowedModelOrNull(model: string | null | undefined, field: string): void {
+  const normalized = trimOrNull(model);
+  if (!normalized) return;
+  if (!isAllowedOpenAiModel(normalized)) {
+    const error = new Error(`Modelo inválido para ${field}.`);
+    (error as Error & { code?: string }).code = 'INVALID_OPENAI_MODEL';
+    throw error;
+  }
 }
 
 function toGlobalSettings(row: GlobalAiSettingsRow | null): GlobalAiSettings {
@@ -279,9 +304,10 @@ function resolveFromRows(
   const ownApiKey = trimOrNull(enterprise?.openaiApiKey);
   const globalApiKey = trimOrNull(global.openaiApiKey);
   const hasOwnApiKey = ownApiKey != null;
-  const modelHotLead = trimOrNull(enterprise?.modelHotLead) ?? trimOrNull(global.modelHotLead) ?? DEFAULT_MODEL_HOT;
-  const modelColdLead =
-    trimOrNull(enterprise?.modelColdLead) ?? trimOrNull(global.modelColdLead) ?? DEFAULT_MODEL_COLD;
+  const modelHotLead = validModelOrNull(enterprise?.modelHotLead) ?? validModelOrNull(global.modelHotLead);
+  const modelColdLead = validModelOrNull(enterprise?.modelColdLead) ?? validModelOrNull(global.modelColdLead);
+  const resolvedModelHotLead = modelHotLead ?? DEFAULT_MODEL_HOT;
+  const resolvedModelColdLead = modelColdLead ?? DEFAULT_MODEL_COLD;
   const openaiBaseUrl =
     normalizeBaseUrl(enterprise?.openaiBaseUrl) ??
     normalizeBaseUrl(global.openaiBaseUrl) ??
@@ -304,8 +330,8 @@ function resolveFromRows(
       openaiApiKeyId: trimOrNull(enterprise?.openaiApiKeyId),
       openaiProjectId: trimOrNull(enterprise?.openaiProjectId),
       openaiBaseUrl,
-      modelHotLead,
-      modelColdLead,
+      modelHotLead: resolvedModelHotLead,
+      modelColdLead: resolvedModelColdLead,
       temperature,
       maxTokens,
       leadScoreThreshold,
@@ -329,8 +355,33 @@ function resolveFromRows(
       openaiApiKeyId: trimOrNull(enterprise?.openaiApiKeyId),
       openaiProjectId: trimOrNull(enterprise?.openaiProjectId),
       openaiBaseUrl,
-      modelHotLead,
-      modelColdLead,
+      modelHotLead: resolvedModelHotLead,
+      modelColdLead: resolvedModelColdLead,
+      temperature,
+      maxTokens,
+      leadScoreThreshold,
+      aiEnabled,
+      emergencyBlockEnabled,
+      costTrackingEnabled,
+      useGlobalDefaults,
+      hasOwnApiKey,
+    };
+  }
+
+  if (!modelHotLead || !modelColdLead) {
+    return {
+      enterpriseId,
+      provider,
+      blocked: true,
+      reason: 'ana_model_not_configured',
+      blockedMessage: null,
+      apiKeySource: null,
+      openaiApiKey: null,
+      openaiApiKeyId: trimOrNull(enterprise?.openaiApiKeyId) ?? trimOrNull(global.openaiApiKeyId),
+      openaiProjectId: trimOrNull(enterprise?.openaiProjectId) ?? trimOrNull(global.openaiProjectId),
+      openaiBaseUrl,
+      modelHotLead: resolvedModelHotLead,
+      modelColdLead: resolvedModelColdLead,
       temperature,
       maxTokens,
       leadScoreThreshold,
@@ -355,8 +406,8 @@ function resolveFromRows(
         openaiApiKeyId: trimOrNull(enterprise?.openaiApiKeyId),
         openaiProjectId: trimOrNull(enterprise?.openaiProjectId),
         openaiBaseUrl,
-        modelHotLead,
-        modelColdLead,
+        modelHotLead: resolvedModelHotLead,
+        modelColdLead: resolvedModelColdLead,
         temperature,
         maxTokens,
         leadScoreThreshold,
@@ -378,8 +429,8 @@ function resolveFromRows(
       openaiApiKeyId: trimOrNull(enterprise?.openaiApiKeyId),
       openaiProjectId: trimOrNull(enterprise?.openaiProjectId),
       openaiBaseUrl,
-      modelHotLead,
-      modelColdLead,
+      modelHotLead: resolvedModelHotLead,
+      modelColdLead: resolvedModelColdLead,
       temperature,
       maxTokens,
       leadScoreThreshold,
@@ -403,8 +454,8 @@ function resolveFromRows(
       openaiApiKeyId: trimOrNull(enterprise?.openaiApiKeyId),
       openaiProjectId: trimOrNull(enterprise?.openaiProjectId),
       openaiBaseUrl,
-      modelHotLead,
-      modelColdLead,
+      modelHotLead: resolvedModelHotLead,
+      modelColdLead: resolvedModelColdLead,
       temperature,
       maxTokens,
       leadScoreThreshold,
@@ -428,8 +479,8 @@ function resolveFromRows(
       openaiApiKeyId: trimOrNull(global.openaiApiKeyId),
       openaiProjectId: trimOrNull(global.openaiProjectId),
       openaiBaseUrl,
-      modelHotLead,
-      modelColdLead,
+      modelHotLead: resolvedModelHotLead,
+      modelColdLead: resolvedModelColdLead,
       temperature,
       maxTokens,
       leadScoreThreshold,
@@ -452,8 +503,8 @@ function resolveFromRows(
     openaiApiKeyId: trimOrNull(global.openaiApiKeyId),
     openaiProjectId: trimOrNull(global.openaiProjectId),
     openaiBaseUrl,
-    modelHotLead,
-    modelColdLead,
+    modelHotLead: resolvedModelHotLead,
+    modelColdLead: resolvedModelColdLead,
     temperature,
     maxTokens,
     leadScoreThreshold,
@@ -506,6 +557,7 @@ export async function getGlobalAiSettingsForFrontend(): Promise<GlobalAiSettings
     temperature: global.temperature,
     max_tokens: global.maxTokens,
     lead_score_threshold: global.leadScoreThreshold,
+    available_models: OPENAI_ALLOWED_MODELS,
   };
 }
 
@@ -532,6 +584,8 @@ export async function updateGlobalAiSettings(
   const incomingModelCold = payload.model_cold_lead !== undefined
     ? trimOrNull(payload.model_cold_lead)
     : trimOrNull(current.modelColdLead);
+  assertAllowedModelOrNull(incomingModelHot, 'model_hot_lead');
+  assertAllowedModelOrNull(incomingModelCold, 'model_cold_lead');
   const temperature = payload.temperature ?? current.temperature;
   const maxTokens = payload.max_tokens ?? current.maxTokens;
   const leadScoreThreshold = payload.lead_score_threshold ?? current.leadScoreThreshold;
@@ -655,6 +709,8 @@ export async function upsertEnterpriseAiSettings(
     payload.model_cold_lead !== undefined
       ? trimOrNull(payload.model_cold_lead)
       : trimOrNull(current.modelColdLead);
+  assertAllowedModelOrNull(modelHotLead, 'model_hot_lead');
+  assertAllowedModelOrNull(modelColdLead, 'model_cold_lead');
 
   await query(
     `UPDATE enterprise_ai_settings

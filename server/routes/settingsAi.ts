@@ -8,6 +8,7 @@ import {
   updateGlobalAiSettings,
   upsertEnterpriseAiSettings,
 } from '../services/enterpriseAiSettingsService.js';
+import { OPENAI_ALLOWED_MODELS } from '../catalogs/aiModels.js';
 import {
   enterpriseAiSettingUpdateSchema,
   globalAiSettingUpdateSchema,
@@ -47,6 +48,9 @@ router.put('/ai', async (req, res) => {
     if (!publicConfig) return res.status(500).json({ error: 'Erro após salvar.' });
     res.json(publicConfig);
   } catch (e) {
+    if ((e as { code?: string })?.code === 'INVALID_OPENAI_MODEL') {
+      return res.status(400).json({ error: e instanceof Error ? e.message : 'Modelo invalido.' });
+    }
     console.error('[Settings] PUT ai:', e);
     res.status(500).json({ error: 'Erro ao salvar configuração de IA.' });
   }
@@ -141,6 +145,9 @@ router.put('/api/global', async (req, res) => {
     const data = await getGlobalAiSettingsForFrontend();
     return res.json(data);
   } catch (error) {
+    if ((error as { code?: string })?.code === 'INVALID_OPENAI_MODEL') {
+      return res.status(400).json({ error: error instanceof Error ? error.message : 'Modelo invalido.' });
+    }
     console.error('[Settings] PUT api/global:', error);
     return res.status(500).json({ error: 'Erro ao salvar configuracao global de API.' });
   }
@@ -149,7 +156,7 @@ router.put('/api/global', async (req, res) => {
 router.get('/api/enterprises', async (_req, res) => {
   try {
     const items = await getSafeEnterpriseAiSettingsForFrontend();
-    return res.json({ enterprises: items });
+    return res.json({ enterprises: items, available_models: OPENAI_ALLOWED_MODELS });
   } catch (error) {
     console.error('[Settings] GET api/enterprises:', error);
     return res.status(500).json({ error: 'Erro ao carregar configuracao por empreendimento.' });
@@ -177,6 +184,9 @@ router.put('/api/enterprises/:enterpriseId', async (req, res) => {
     }
     return res.json(updated);
   } catch (error) {
+    if ((error as { code?: string })?.code === 'INVALID_OPENAI_MODEL') {
+      return res.status(400).json({ error: error instanceof Error ? error.message : 'Modelo invalido.' });
+    }
     console.error('[Settings] PUT api/enterprises/:enterpriseId:', error);
     return res.status(500).json({ error: 'Erro ao salvar configuracao do empreendimento.' });
   }
@@ -202,3 +212,4 @@ router.post('/api/enterprises/:enterpriseId/test', async (req, res) => {
 });
 
 export default router;
+

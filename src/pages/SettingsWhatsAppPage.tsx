@@ -188,6 +188,14 @@ export function SettingsWhatsAppPage() {
 
   const [apiEnterpriseItems, setApiEnterpriseItems] = useState<EnterpriseApiSettingsItem[]>([]);
   const [apiEnterpriseForms, setApiEnterpriseForms] = useState<Record<number, EnterpriseApiFormState>>({});
+  const [availableModels, setAvailableModels] = useState<
+    Array<{
+      value: string;
+      label: string;
+      description: string;
+      recommendedFor: 'hot' | 'cold' | 'advanced' | 'realtime';
+    }>
+  >([]);
 
   const hasApiData = useMemo(() => apiGlobal != null || apiEnterpriseItems.length > 0, [apiGlobal, apiEnterpriseItems]);
 
@@ -197,9 +205,15 @@ export function SettingsWhatsAppPage() {
       settingsApi.getApiEnterprises(),
     ]);
 
+    const hasModelsFromGlobal =
+      globalResult.status === 'fulfilled' && Array.isArray(globalResult.value.available_models);
+
     if (globalResult.status === 'fulfilled') {
       const global = globalResult.value;
       setApiGlobal(global);
+      if (Array.isArray(global.available_models)) {
+        setAvailableModels(global.available_models);
+      }
       setApiGlobalForm((prev) => ({
         ...prev,
         provider: 'openai',
@@ -218,6 +232,9 @@ export function SettingsWhatsAppPage() {
     }
 
     if (enterprisesResult.status === 'fulfilled') {
+      if (!hasModelsFromGlobal && Array.isArray(enterprisesResult.value.available_models)) {
+        setAvailableModels(enterprisesResult.value.available_models);
+      }
       const items = [...enterprisesResult.value.enterprises].sort((a, b) =>
         a.enterprise_name.localeCompare(b.enterprise_name, 'pt-BR')
       );
@@ -753,30 +770,40 @@ export function SettingsWhatsAppPage() {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <label className="block">
-                        <span className={lbl}>Modelo lead quente</span>
-                        <input
-                          type="text"
-                          value={apiGlobalForm.model_hot_lead_input}
-                          onChange={(e) =>
-                            setApiGlobalForm((prev) => ({ ...prev, model_hot_lead_input: e.target.value }))
-                          }
-                          className={field}
-                          placeholder="gpt-4.1"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className={lbl}>Modelo lead frio</span>
-                        <input
-                          type="text"
-                          value={apiGlobalForm.model_cold_lead_input}
-                          onChange={(e) =>
-                            setApiGlobalForm((prev) => ({ ...prev, model_cold_lead_input: e.target.value }))
-                          }
-                          className={field}
-                          placeholder="gpt-4.1-mini"
-                        />
-                      </label>
+                        <label className="block">
+                          <span className={lbl}>Modelo para leads quentes</span>
+                          <select
+                            value={apiGlobalForm.model_hot_lead_input}
+                            onChange={(e) =>
+                              setApiGlobalForm((prev) => ({ ...prev, model_hot_lead_input: e.target.value }))
+                            }
+                            className={field}
+                          >
+                            <option value="">Selecionar modelo</option>
+                            {availableModels.map((model) => (
+                              <option key={`global-hot-${model.value}`} value={model.value}>
+                                {model.label} - {model.description}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="block">
+                          <span className={lbl}>Modelo para leads frios/triagem</span>
+                          <select
+                            value={apiGlobalForm.model_cold_lead_input}
+                            onChange={(e) =>
+                              setApiGlobalForm((prev) => ({ ...prev, model_cold_lead_input: e.target.value }))
+                            }
+                            className={field}
+                          >
+                            <option value="">Selecionar modelo</option>
+                            {availableModels.map((model) => (
+                              <option key={`global-cold-${model.value}`} value={model.value}>
+                                {model.label} - {model.description}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                       <label className="block">
                         <span className={lbl}>Temperature</span>
                         <input
@@ -1060,9 +1087,8 @@ export function SettingsWhatsAppPage() {
                                   />
                                 </label>
                                 <label className="block">
-                                  <span className={lbl}>Modelo lead quente</span>
-                                  <input
-                                    type="text"
+                                  <span className={lbl}>Modelo para leads quentes</span>
+                                  <select
                                     value={enterpriseForm.model_hot_lead}
                                     onChange={(e) =>
                                       updateEnterpriseForm(item.enterprise_id, (prev) => ({
@@ -1071,13 +1097,18 @@ export function SettingsWhatsAppPage() {
                                       }))
                                     }
                                     className={field}
-                                    placeholder="gpt-4.1"
-                                  />
+                                  >
+                                    <option value="">Selecionar modelo</option>
+                                    {availableModels.map((model) => (
+                                      <option key={`enterprise-hot-${item.enterprise_id}-${model.value}`} value={model.value}>
+                                        {model.label} - {model.description}
+                                      </option>
+                                    ))}
+                                  </select>
                                 </label>
                                 <label className="block">
-                                  <span className={lbl}>Modelo lead frio</span>
-                                  <input
-                                    type="text"
+                                  <span className={lbl}>Modelo para leads frios/triagem</span>
+                                  <select
                                     value={enterpriseForm.model_cold_lead}
                                     onChange={(e) =>
                                       updateEnterpriseForm(item.enterprise_id, (prev) => ({
@@ -1086,8 +1117,14 @@ export function SettingsWhatsAppPage() {
                                       }))
                                     }
                                     className={field}
-                                    placeholder="gpt-4.1-mini"
-                                  />
+                                  >
+                                    <option value="">Selecionar modelo</option>
+                                    {availableModels.map((model) => (
+                                      <option key={`enterprise-cold-${item.enterprise_id}-${model.value}`} value={model.value}>
+                                        {model.label} - {model.description}
+                                      </option>
+                                    ))}
+                                  </select>
                                 </label>
                                 <label className="block md:col-span-2">
                                   <span className={lbl}>Mensagem de bloqueio emergencial</span>

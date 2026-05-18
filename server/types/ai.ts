@@ -24,6 +24,12 @@ export interface OpenAIConfigPublic {
   leadScoreThreshold: number;
   aiEnabled: boolean;
   updatedAt: string;
+  availableModels?: ReadonlyArray<{
+    value: string;
+    label: string;
+    description: string;
+    recommendedFor: 'hot' | 'cold' | 'advanced' | 'realtime';
+  }>;
 }
 
 export interface OpenAIConfigUpdate {

@@ -256,6 +256,12 @@ export interface AIConfigPublic {
   leadScoreThreshold: number;
   aiEnabled: boolean;
   updatedAt: string;
+  availableModels?: Array<{
+    value: string;
+    label: string;
+    description: string;
+    recommendedFor: 'hot' | 'cold' | 'advanced' | 'realtime';
+  }>;
 }
 
 export interface AIConfigUpdate {
@@ -287,6 +293,12 @@ export interface ApiGlobalSettingsPublic {
   temperature: number;
   max_tokens: number;
   lead_score_threshold: number;
+  available_models?: Array<{
+    value: string;
+    label: string;
+    description: string;
+    recommendedFor: 'hot' | 'cold' | 'advanced' | 'realtime';
+  }>;
 }
 
 export interface ApiGlobalSettingsUpdate {
@@ -371,7 +383,15 @@ export const settingsApi = {
   putApiGlobal: (body: ApiGlobalSettingsUpdate) =>
     request<ApiGlobalSettingsPublic>('/settings/api/global', { method: 'PUT', body }),
   getApiEnterprises: () =>
-    request<{ enterprises: EnterpriseApiSettingsItem[] }>('/settings/api/enterprises'),
+    request<{
+      enterprises: EnterpriseApiSettingsItem[];
+      available_models?: Array<{
+        value: string;
+        label: string;
+        description: string;
+        recommendedFor: 'hot' | 'cold' | 'advanced' | 'realtime';
+      }>;
+    }>('/settings/api/enterprises'),
   putApiEnterprise: (enterpriseId: number, body: EnterpriseApiSettingsUpdate) =>
     request<EnterpriseApiSettingsItem>(`/settings/api/enterprises/${enterpriseId}`, {
       method: 'PUT',

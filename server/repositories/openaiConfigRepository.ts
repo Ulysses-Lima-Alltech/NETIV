@@ -1,5 +1,11 @@
 import type { OpenAIConfig, OpenAIConfigPublic, OpenAIConfigUpdate } from '../types/ai.js';
 import { query } from '../db/pg.js';
+import {
+  getDefaultOpenAiModelCold,
+  getDefaultOpenAiModelHot,
+  isAllowedOpenAiModel,
+  OPENAI_ALLOWED_MODELS,
+} from '../catalogs/aiModels.js';
 
 type Row = {
   openai_api_key: string;
@@ -22,8 +28,8 @@ function rowToConfig(row: Row): OpenAIConfig {
     openaiApiKeyId: row.openai_api_key_id ?? null,
     openaiProjectId: row.openai_project_id ?? null,
     openaiBaseUrl: row.openai_base_url,
-    modelColdLead: row.model_cold_lead ?? 'gpt-4.1-mini',
-    modelHotLead: row.model_hot_lead ?? 'gpt-4.1',
+    modelColdLead: row.model_cold_lead ?? getDefaultOpenAiModelCold(),
+    modelHotLead: row.model_hot_lead ?? getDefaultOpenAiModelHot(),
     temperature: Number(row.temperature) ?? 0.5,
     maxTokens: row.max_tokens ?? 700,
     leadScoreThreshold: Number(row.lead_score_threshold) ?? 0.75,
@@ -54,8 +60,18 @@ export async function updateOpenAIConfig(update: OpenAIConfigUpdate): Promise<Op
   const openaiProjectId =
     update.openaiProjectId !== undefined ? update.openaiProjectId : current?.openaiProjectId ?? null;
   const openaiBaseUrl = update.openaiBaseUrl !== undefined ? update.openaiBaseUrl : current?.openaiBaseUrl ?? null;
-  const modelColdLead = update.modelColdLead ?? current?.modelColdLead ?? 'gpt-4o-mini';
-  const modelHotLead = update.modelHotLead ?? current?.modelHotLead ?? 'gpt-4o';
+  const modelColdLead = update.modelColdLead ?? current?.modelColdLead ?? getDefaultOpenAiModelCold();
+  const modelHotLead = update.modelHotLead ?? current?.modelHotLead ?? getDefaultOpenAiModelHot();
+  if (modelColdLead && !isAllowedOpenAiModel(modelColdLead)) {
+    const error = new Error('Modelo invalido para modelColdLead.');
+    (error as Error & { code?: string }).code = 'INVALID_OPENAI_MODEL';
+    throw error;
+  }
+  if (modelHotLead && !isAllowedOpenAiModel(modelHotLead)) {
+    const error = new Error('Modelo invalido para modelHotLead.');
+    (error as Error & { code?: string }).code = 'INVALID_OPENAI_MODEL';
+    throw error;
+  }
   const temperature = update.temperature ?? current?.temperature ?? 0.5;
   const maxTokens = update.maxTokens ?? current?.maxTokens ?? 700;
   const leadScoreThreshold = update.leadScoreThreshold ?? current?.leadScoreThreshold ?? 0.75;
@@ -112,5 +128,6 @@ export async function getOpenAIConfigPublic(): Promise<OpenAIConfigPublic | null
     leadScoreThreshold: c.leadScoreThreshold,
     aiEnabled: c.aiEnabled,
     updatedAt: c.updatedAt,
+    availableModels: OPENAI_ALLOWED_MODELS,
   };
 }
