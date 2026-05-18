@@ -8,6 +8,7 @@ import {
   updateGlobalAiSettings,
   upsertEnterpriseAiSettings,
 } from '../services/enterpriseAiSettingsService.js';
+import { listOpenAiCostSnapshots, syncOpenAiCosts } from '../services/openaiCostSyncService.js';
 import { OPENAI_ALLOWED_MODELS } from '../catalogs/aiModels.js';
 import {
   enterpriseAiSettingUpdateSchema,
@@ -207,6 +208,59 @@ router.post('/api/enterprises/:enterpriseId/test', async (req, res) => {
   } catch (error) {
     console.error('[Settings] POST api/enterprises/:enterpriseId/test:', error);
     const msg = error instanceof Error ? error.message : 'Erro ao testar configuracao do empreendimento.';
+    return res.status(500).json({ error: msg });
+  }
+});
+
+router.post('/api/costs/sync', async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const startTime = body.startTime ? new Date(String(body.startTime)) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const endTime = body.endTime ? new Date(String(body.endTime)) : new Date();
+    if (Number.isNaN(startTime.getTime()) || Number.isNaN(endTime.getTime()) || endTime <= startTime) {
+      return res.status(400).json({ error: 'Periodo invalido para sincronizacao de custos.' });
+    }
+    const result = await syncOpenAiCosts({
+      startTime,
+      endTime,
+      groupBy: ['api_key_id', 'project_id', 'line_item'],
+      bucketWidth: '1d',
+    });
+    return res.json({
+      ...result,
+      startTime: startTime.toISOString(),
+      endTime: endTime.toISOString(),
+    });
+  } catch (error) {
+    console.error('[Settings] POST api/costs/sync:', error);
+    const msg = error instanceof Error ? error.message : 'Erro ao sincronizar custos OpenAI.';
+    return res.status(500).json({ error: msg });
+  }
+});
+
+router.get('/api/costs/snapshots', async (req, res) => {
+  try {
+    const q = req.query as Record<string, string | undefined>;
+    const startTime = q.startTime ? new Date(String(q.startTime)) : null;
+    const endTime = q.endTime ? new Date(String(q.endTime)) : null;
+    const enterpriseId = q.enterpriseId ? Number.parseInt(String(q.enterpriseId), 10) : null;
+    const limit = q.limit ? Number.parseInt(String(q.limit), 10) : 200;
+    if ((startTime && Number.isNaN(startTime.getTime())) || (endTime && Number.isNaN(endTime.getTime()))) {
+      return res.status(400).json({ error: 'Parametros startTime/endTime invalidos.' });
+    }
+    if (enterpriseId != null && (!Number.isFinite(enterpriseId) || enterpriseId <= 0)) {
+      return res.status(400).json({ error: 'enterpriseId invalido.' });
+    }
+    const snapshots = await listOpenAiCostSnapshots({
+      startTime,
+      endTime,
+      enterpriseId,
+      limit,
+    });
+    return res.json({ snapshots });
+  } catch (error) {
+    console.error('[Settings] GET api/costs/snapshots:', error);
+    const msg = error instanceof Error ? error.message : 'Erro ao listar snapshots de custo OpenAI.';
     return res.status(500).json({ error: msg });
   }
 });

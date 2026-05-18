@@ -60,6 +60,9 @@ export interface DashboardOverview {
     handoffs: number;
     carteiras: number;
     llmCostUsd: number | null;
+    llmOfficialCostUsd?: number | null;
+    llmLocalEstimatedCostUsd?: number | null;
+    llmCostSource?: 'official_openai' | 'local_estimated';
     llmTrackedCostUsd: number | null;
     llmEstimatedCostUsd: number | null;
     llmCalls: number;
@@ -378,6 +381,9 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
     handoffs: string;
     carteiras: string;
     llm_cost_usd: string | null;
+    llm_official_cost_usd: string | null;
+    llm_local_estimated_cost_usd: string | null;
+    llm_cost_source: 'official_openai' | 'local_estimated';
     llm_tracked_cost_usd: string | null;
     llm_estimated_cost_usd: string | null;
     llm_calls: string | null;
@@ -406,6 +412,8 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
         0::bigint AS llm_total_tokens,
         0::numeric(12,6) AS llm_tracked_cost_usd,
         0::numeric(12,6) AS llm_estimated_cost_usd,
+        0::numeric(12,6) AS llm_official_cost_usd,
+        0::numeric(12,6) AS llm_official_rows,
         0::bigint AS llm_contacts,
         0::bigint AS llm_conversations
       FROM conversations c
@@ -429,6 +437,8 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
         SUM(ue.total_tokens)::bigint AS llm_total_tokens,
         SUM(ue.estimated_cost_usd)::numeric(12,6) AS llm_tracked_cost_usd,
         0::numeric(12,6) AS llm_estimated_cost_usd,
+        0::numeric(12,6) AS llm_official_cost_usd,
+        0::numeric(12,6) AS llm_official_rows,
         COUNT(DISTINCT ue.contact_id) FILTER (WHERE ue.contact_id IS NOT NULL)::bigint AS llm_contacts,
         COUNT(DISTINCT ue.conversation_id) FILTER (WHERE ue.conversation_id IS NOT NULL)::bigint AS llm_conversations
       FROM llm_usage_events ue
@@ -527,11 +537,51 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
         0::bigint AS llm_total_tokens,
         0::numeric(12,6) AS llm_tracked_cost_usd,
         SUM(ba.allocated_cost_usd)::numeric(12,6) AS llm_estimated_cost_usd,
+        0::numeric(12,6) AS llm_official_cost_usd,
+        0::numeric(12,6) AS llm_official_rows,
         SUM(ba.llm_contacts)::bigint AS llm_contacts,
         SUM(ba.llm_conversations)::bigint AS llm_conversations
       FROM backfill_allocations ba
       LEFT JOIN enterprises e ON e.id = ba.enterprise_id
       GROUP BY ba.group_key, ba.enterprise_id, e.name
+    ),
+    official_cost_allocations AS (
+      SELECT
+        COALESCE(ocs.enterprise_id::text, '__NO_ENTERPRISE__') AS group_key,
+        ocs.enterprise_id,
+        (
+          ocs.amount_usd
+          * EXTRACT(EPOCH FROM (LEAST(ocs.period_end, pb.period_end) - GREATEST(ocs.period_start, pb.period_start)))
+          / NULLIF(EXTRACT(EPOCH FROM (ocs.period_end - ocs.period_start)), 0)
+        )::numeric(12,6) AS allocated_cost_usd
+      FROM openai_cost_snapshots ocs
+      CROSS JOIN period_bounds pb
+      WHERE ocs.period_start < pb.period_end
+        AND ocs.period_end > pb.period_start
+        AND ($1::int IS NULL OR ocs.enterprise_id = $1::int)
+    ),
+    official_cost_groups AS (
+      SELECT
+        oca.group_key,
+        oca.enterprise_id,
+        e.name,
+        0::bigint AS total,
+        0::bigint AS qualified,
+        0::bigint AS handoffs,
+        0::bigint AS carteiras,
+        0::bigint AS llm_calls,
+        0::bigint AS llm_input_tokens,
+        0::bigint AS llm_output_tokens,
+        0::bigint AS llm_total_tokens,
+        0::numeric(12,6) AS llm_tracked_cost_usd,
+        0::numeric(12,6) AS llm_estimated_cost_usd,
+        SUM(oca.allocated_cost_usd)::numeric(12,6) AS llm_official_cost_usd,
+        COUNT(*)::numeric(12,6) AS llm_official_rows,
+        0::bigint AS llm_contacts,
+        0::bigint AS llm_conversations
+      FROM official_cost_allocations oca
+      LEFT JOIN enterprises e ON e.id = oca.enterprise_id
+      GROUP BY oca.group_key, oca.enterprise_id, e.name
     ),
     combined AS (
       SELECT * FROM conv_groups
@@ -539,6 +589,8 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
       SELECT * FROM usage_groups
       UNION ALL
       SELECT * FROM backfill_groups
+      UNION ALL
+      SELECT * FROM official_cost_groups
     )
     SELECT CASE WHEN group_key = '__NO_ENTERPRISE__' THEN NULL ELSE MAX(enterprise_id) END AS enterprise_id,
       CASE
@@ -549,25 +601,46 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
       SUM(qualified)::text AS qualified,
       SUM(handoffs)::text AS handoffs,
       SUM(carteiras)::text AS carteiras,
+      SUM(llm_official_cost_usd)::numeric(12,6)::text AS llm_official_cost_usd,
+      (SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd))::numeric(12,6)::text AS llm_local_estimated_cost_usd,
       SUM(llm_tracked_cost_usd)::numeric(12,6)::text AS llm_tracked_cost_usd,
       SUM(llm_estimated_cost_usd)::numeric(12,6)::text AS llm_estimated_cost_usd,
-      (SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd))::numeric(12,6)::text AS llm_cost_usd,
+      CASE
+        WHEN SUM(llm_official_rows) > 0 THEN SUM(llm_official_cost_usd)
+        ELSE (SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd))
+      END::numeric(12,6)::text AS llm_cost_usd,
+      CASE
+        WHEN SUM(llm_official_rows) > 0 THEN 'official_openai'
+        ELSE 'local_estimated'
+      END AS llm_cost_source,
       SUM(llm_calls)::text AS llm_calls,
       SUM(llm_input_tokens)::text AS llm_input_tokens,
       SUM(llm_output_tokens)::text AS llm_output_tokens,
       SUM(llm_total_tokens)::text AS llm_total_tokens,
       CASE
         WHEN SUM(llm_contacts) > 0
-          THEN ((SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd)) / SUM(llm_contacts))::numeric(12,6)::text
+          THEN (
+            (CASE WHEN SUM(llm_official_rows) > 0 THEN SUM(llm_official_cost_usd) ELSE (SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd)) END)
+            / SUM(llm_contacts)
+          )::numeric(12,6)::text
         WHEN SUM(total) > 0
-          THEN ((SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd)) / SUM(total))::numeric(12,6)::text
+          THEN (
+            (CASE WHEN SUM(llm_official_rows) > 0 THEN SUM(llm_official_cost_usd) ELSE (SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd)) END)
+            / SUM(total)
+          )::numeric(12,6)::text
         ELSE NULL
       END AS llm_cost_per_contact,
       CASE
         WHEN SUM(llm_conversations) > 0
-          THEN ((SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd)) / SUM(llm_conversations))::numeric(12,6)::text
+          THEN (
+            (CASE WHEN SUM(llm_official_rows) > 0 THEN SUM(llm_official_cost_usd) ELSE (SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd)) END)
+            / SUM(llm_conversations)
+          )::numeric(12,6)::text
         WHEN SUM(total) > 0
-          THEN ((SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd)) / SUM(total))::numeric(12,6)::text
+          THEN (
+            (CASE WHEN SUM(llm_official_rows) > 0 THEN SUM(llm_official_cost_usd) ELSE (SUM(llm_tracked_cost_usd) + SUM(llm_estimated_cost_usd)) END)
+            / SUM(total)
+          )::numeric(12,6)::text
         ELSE NULL
       END AS llm_cost_per_conversation
     FROM combined
@@ -610,6 +683,9 @@ export async function getDashboardOverview(period: DashboardPeriod, enterpriseId
       handoffs: parseInt(row.handoffs, 10) || 0,
       carteiras: parseInt(row.carteiras, 10) || 0,
       llmCostUsd: parseNullableNumber(row.llm_cost_usd),
+      llmOfficialCostUsd: parseNullableNumber(row.llm_official_cost_usd),
+      llmLocalEstimatedCostUsd: parseNullableNumber(row.llm_local_estimated_cost_usd),
+      llmCostSource: row.llm_cost_source,
       llmTrackedCostUsd: parseNullableNumber(row.llm_tracked_cost_usd),
       llmEstimatedCostUsd: parseNullableNumber(row.llm_estimated_cost_usd),
       llmCalls: parseInt(row.llm_calls ?? '0', 10) || 0,

@@ -288,6 +288,7 @@ test('dashboard agrega custo por empreendimento apenas no periodo e inclui grupo
 
   assert.match(source, /llm_usage_events/);
   assert.match(source, /llm_cost_backfills/);
+  assert.match(source, /openai_cost_snapshots/);
   assert.match(source, /SUM\(ue\.estimated_cost_usd\)/);
   assert.match(source, /ue\.created_at AT TIME ZONE/);
   assert.doesNotMatch(source, /FULL\s+(?:OUTER\s+)?JOIN/i);
@@ -308,11 +309,14 @@ test('dashboard query combina linhas apenas comerciais, apenas llm, apenas backf
   assert.match(source, /conv_groups AS \([\s\S]*0::bigint AS llm_calls/);
   assert.match(source, /usage_groups AS \([\s\S]*0::bigint AS total/);
   assert.match(source, /backfill_groups AS \([\s\S]*0::bigint AS total/);
+  assert.match(source, /official_cost_groups AS \([\s\S]*0::bigint AS total/);
   assert.match(source, /SUM\(total\)::text AS total/);
   assert.match(source, /SUM\(llm_calls\)::text AS llm_calls/);
   assert.match(source, /SUM\(llm_tracked_cost_usd\)::numeric\(12,6\)::text AS llm_tracked_cost_usd/);
   assert.match(source, /SUM\(llm_estimated_cost_usd\)::numeric\(12,6\)::text AS llm_estimated_cost_usd/);
-  assert.match(source, /\(SUM\(llm_tracked_cost_usd\) \+ SUM\(llm_estimated_cost_usd\)\)::numeric\(12,6\)::text AS llm_cost_usd/);
+  assert.match(source, /SUM\(llm_official_cost_usd\)::numeric\(12,6\)::text AS llm_official_cost_usd/);
+  assert.match(source, /SUM\(llm_tracked_cost_usd\) \+ SUM\(llm_estimated_cost_usd\)/);
+  assert.match(source, /CASE[\s\S]*SUM\(llm_official_rows\) > 0[\s\S]*llm_cost_usd/);
   assert.match(source, /CASE WHEN group_key = '__NO_ENTERPRISE__' THEN NULL ELSE MAX\(enterprise_id\) END AS enterprise_id/);
   assert.match(source, /WHEN group_key = '__NO_ENTERPRISE__' THEN '\(sem empreendimento\)'/);
 });
@@ -340,6 +344,32 @@ test('dashboard soma custo rastreado e estimado historico com rateio por esforco
   assert.match(source, /SUM\(ba\.allocated_cost_usd\)::numeric\(12,6\) AS llm_estimated_cost_usd/);
 });
 
+test('dashboard prioriza snapshot oficial e faz fallback para custo local quando necessario', () => {
+  const source = readFileSync(new URL('../repositories/dashboardRepository.js', import.meta.url), 'utf8');
+
+  assert.match(source, /official_cost_allocations AS \(/);
+  assert.match(source, /JOIN eligible_backfills|official_cost_groups/);
+  assert.match(source, /CASE[\s\S]*SUM\(llm_official_rows\) > 0[\s\S]*'official_openai'[\s\S]*'local_estimated'/);
+  assert.match(source, /llmOfficialCostUsd/);
+  assert.match(source, /llmLocalEstimatedCostUsd/);
+  assert.match(source, /llmCostSource/);
+});
+
+test('sync de custos usa upsert e mapeia api_key_id para enterprise_id sem vazar secret', () => {
+  const source = readFileSync(new URL('../services/openaiCostSyncService.js', import.meta.url), 'utf8');
+  const routeSource = readFileSync(new URL('../routes/settingsAi.js', import.meta.url), 'utf8');
+
+  assert.match(source, /\/v1\/organization\/costs/);
+  assert.match(source, /group_by/);
+  assert.match(source, /api_key_id/);
+  assert.match(source, /ON CONFLICT/);
+  assert.match(source, /enterprise_ai_settings/);
+  assert.match(source, /unknownApiKeyRows/);
+  assert.doesNotMatch(source, /console\.log\([^)]*adminKey/i);
+  assert.match(routeSource, /\/api\/costs\/sync/);
+  assert.match(routeSource, /\/api\/costs\/snapshots/);
+});
+
 test('migration e script de backfill existem sem seed automatico', () => {
   const migration = readFileSync('db/migrations/pg/052_llm_cost_backfills.sql', 'utf8');
   const script = readFileSync('scripts/addLlmCostBackfill.js', 'utf8');
@@ -360,6 +390,9 @@ test('contrato do dashboard retorna campos novos sem remover os antigos', () => 
   }
   for (const field of [
     'llmCostUsd',
+    'llmOfficialCostUsd',
+    'llmLocalEstimatedCostUsd',
+    'llmCostSource',
     'llmTrackedCostUsd',
     'llmEstimatedCostUsd',
     'llmCalls',
