@@ -301,19 +301,19 @@ export function WhatsAppBatchTemplatePage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="space-y-6">
-          <SpreadsheetUploadPanel
-            file={file}
-            onFileChange={handleFileChange}
-            onParse={handleParse}
-            loading={loadingParse}
-          />
-
           <TemplateSelector
             templates={templates}
             selectedKey={selectedTemplateKey}
             onSelect={handleSelectedTemplateKeyChange}
             loading={templatesLoading}
             selectDisabled={!!templatesLoadError}
+          />
+
+          <SpreadsheetUploadPanel
+            file={file}
+            onFileChange={handleFileChange}
+            onParse={handleParse}
+            loading={loadingParse}
           />
 
           {parseData && (

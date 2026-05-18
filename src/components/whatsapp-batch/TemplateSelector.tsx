@@ -18,7 +18,7 @@ export function TemplateSelector({ templates, selectedKey, onSelect, loading, se
   console.log('[WHATSAPP_BATCH_TEMPLATE_SELECTOR_KEYS]', templates.map((item) => item.key));
   return (
     <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
-      <h2 className="text-[14px] font-semibold">Template WhatsApp</h2>
+      <h2 className="text-[14px] font-semibold">Template Aprovado</h2>
       {loading ? (
         <p className="text-[13px] text-[#6B7280]">Carregando templates…</p>
       ) : null}
