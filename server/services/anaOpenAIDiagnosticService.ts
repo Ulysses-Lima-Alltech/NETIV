@@ -22,11 +22,48 @@ export interface AnaOpenAIDiagnosticResult {
 export async function runAnaOpenAIDiagnostic(): Promise<AnaOpenAIDiagnosticResult> {
   const cfg = await getOpenAIConfig();
   const rawModels = await getIntegrationModelStringsRaw();
-  const model = resolveAnaOpenAIModel({
-    modelHotLeadFromDb: rawModels.modelHotLead,
-    modelColdLeadFromDb: rawModels.modelColdLead,
-  }).finalModel;
+  const configuredModelFromDb = rawModels.modelHotLead ?? rawModels.modelColdLead ?? null;
+  const modelResolution = resolveAnaOpenAIModel({
+    configuredModelFromDb,
+    slot: rawModels.modelHotLead ? 'hot_lead' : 'cold_lead',
+  });
+  const model = modelResolution.finalModel;
   const provider = detectLlmProvider(cfg?.openaiBaseUrl ?? null);
+
+  if (modelResolution.blocked) {
+    const sanitizedMessage =
+      modelResolution.reason === 'ana_model_not_configured'
+        ? 'Modelo operacional da Ana não configurado no banco.'
+        : 'Modelo operacional da Ana inválido para o slot configurado.';
+    await createAnaDiagnostic({
+      diagnosticType: 'openai_healthcheck',
+      provider,
+      model: null,
+      ok: false,
+      status: null,
+      classifiedError: modelResolution.reason,
+      sanitizedMessage,
+      payloadJson: {
+        provider,
+        model: null,
+        canGenerate: false,
+        reason: modelResolution.reason,
+        slot: modelResolution.slot,
+        configuredValue: modelResolution.configuredModelFromDb,
+        recommendation: 'Defina um modelo válido no catálogo da configuração de API.',
+      },
+    });
+    return {
+      ok: false,
+      provider,
+      model: null,
+      status: null,
+      classifiedError: modelResolution.reason,
+      sanitizedMessage,
+      canGenerate: false,
+      recommendation: 'Defina um modelo válido no catálogo da configuração de API.',
+    };
+  }
 
   if (!cfg) {
     const sanitizedMessage = 'Configuração de IA da Ana não foi encontrada.';
@@ -79,7 +116,7 @@ export async function runAnaOpenAIDiagnostic(): Promise<AnaOpenAIDiagnosticResul
   const result = await generateChatCompletion({
     apiKey: cfg.openaiApiKey,
     baseUrl: cfg.openaiBaseUrl,
-    model,
+    model: model!,
     messages: [{ role: 'user', content: 'Responda apenas com OK.' }],
     temperature: 0,
     maxTokens: 8,

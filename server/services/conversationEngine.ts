@@ -100,6 +100,7 @@ import {
   sanitizeFinancialNegotiationOverreach,
   evaluateAnaEmptyFallbackGuard,
   applyFirstUsefulGreetingStyle,
+  sanitizeTooManyQuestionsReply,
 } from '../utils/anaReplyFinalize.js';
 import {
   applyAnaCommercialSingleAxisGuard,
@@ -123,6 +124,7 @@ import {
   detectExplicitPaymentSimulationRequest,
   detectStructuredListIntent,
 } from '../utils/anaDecisionPolicy.js';
+import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
 import {
   buildUserUtterancesContext,
   computeAppointmentPreflight,
@@ -2865,19 +2867,42 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       enterpriseResolution.enterpriseId != null ||
       linkedContact?.enterprise_id != null ||
       effectiveConv.enterprise_origin_id != null;
-    const model = (resolvedAiSettings?.modelHotLead || '').trim();
+    const configuredModelFromDb = (resolvedAiSettings?.modelHotLead || '').trim() || null;
+    const modelResolution = resolveAnaOpenAIModel({
+      configuredModelFromDb,
+      slot: 'hot_lead',
+    });
+    if (modelResolution.blocked) {
+      anaTurnAuditOutcome = 'blocked';
+      anaTurnAuditBlockedReason = modelResolution.reason;
+      anaTurnAuditLlmStatus = 'blocked';
+      anaTurnAuditErrorCode = modelResolution.reason;
+      anaTurnAuditErrorMessage = 'Modelo operacional da Ana não está configurado corretamente.';
+      anaTurnDiagnostics.llm.finalFailureReason = modelResolution.reason;
+      anaTurnDiagnostics.finalResponse.replySource = null;
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      markAnaTurnStage(anaTurnDiagnostics, 'llm_generation', 'failed', {
+        blockedReason: modelResolution.reason,
+        configuredValue: modelResolution.configuredModelFromDb,
+        slot: modelResolution.slot,
+      });
+      console.log('[ANA_MODEL_RESOLUTION_BLOCKED]', {
+        conversationId,
+        reason: modelResolution.reason,
+        configuredValue: modelResolution.configuredModelFromDb,
+        slot: modelResolution.slot,
+      });
+      return;
+    }
+    const model = modelResolution.finalModel;
     anaTurnAuditModel = model;
 
-    console.log('[ANA_MODEL_RESOLVE]', {
+    console.log('[ANA_MODEL_RESOLUTION]', {
       conversationId,
-      messageId: inboundMetaMessageId,
-      configuredModelFromDb: model || null,
-      configuredModelFromEnv: null,
-      configuredUnclassifiedEnterpriseModelFromEnv: null,
-      finalModel: model,
-      sourceOfFinalModel: 'db',
-      selectionReason: 'enterprise_resolved_standard_model',
-      enterpriseResolvedForModel,
+      selectedModel: model,
+      source: 'db',
+      slot: modelResolution.slot,
+      reason: modelResolution.selectionReason,
     });
 
     console.log('[ANA_CHAT_AUDIT]', {
@@ -4590,8 +4615,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const emptyFallbackReason = finalEmptyFallbackGuard.reason ?? finalOutboundEval.reason ?? 'blocked';
       const isGenericHeuristicBlock =
         /^empty_phrase_/.test(emptyFallbackReason) || emptyFallbackReason === 'empty_closure_vague_disposition';
+      const isTooManyQuestionsBlock = emptyFallbackReason === 'too_many_questions';
       const hasPrimaryValidReply =
         replySource === 'openai' &&
+        fallbackReason == null &&
         finalOutboundEval.valid &&
         Boolean(structured?.reply?.trim()) &&
         finalOutboundEval.text.trim().length > 0;
@@ -4611,7 +4638,41 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         replyPreview: finalOutboundEval.text.slice(0, 220),
       });
 
-      if (hasPrimaryValidReply && isGenericHeuristicBlock) {
+      if (hasPrimaryValidReply && isTooManyQuestionsBlock) {
+        const beforeLen = finalOutboundEval.text.trim().length;
+        const sanitizedReply = sanitizeTooManyQuestionsReply(finalOutboundEval.text);
+        if (sanitizedReply.trim().length > 0) {
+          const sanitizedEval = evaluateAnaOutboundText({
+            reply: sanitizedReply,
+            technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+            conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+            enterpriseName: ent?.name ?? null,
+          });
+          if (sanitizedEval.valid) {
+            finalTextGuard = sanitizedEval.text;
+            finalOutboundEval = sanitizedEval;
+            finalEmptyFallbackGuard = { blocked: false, reason: null };
+            skipPostPolicyEmptyFallbackBlock = true;
+            retryAudit.retried = false;
+            retryAudit.retryAccepted = true;
+            retryAudit.skipRetryValidReply = true;
+            retryAudit.retrySkippedReason = emptyFallbackReason;
+            retryAudit.validReplyLen = sanitizedEval.text.trim().length;
+            retryAudit.sanitizedTooManyQuestions = true;
+            anaTurnAuditGuardsApplied.outboundReason = sanitizedEval.reason;
+            console.log('[ANA_TOO_MANY_QUESTIONS_SANITIZED_VALID_REPLY]', {
+              conversationId,
+              enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+              phase: 'empty_fallback_pre_retry',
+              reason: emptyFallbackReason,
+              beforeLen,
+              afterLen: sanitizedEval.text.trim().length,
+            });
+          }
+        }
+      }
+
+      if (hasPrimaryValidReply && finalEmptyFallbackGuard.blocked && isGenericHeuristicBlock) {
         retryAudit.retried = false;
         retryAudit.retryAccepted = true;
         retryAudit.skipRetryValidReply = true;
@@ -4912,6 +4973,48 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       : { blocked: false, reason: null as string | null };
     if (postPolicyEmptyGuard.blocked) {
       const postPolicyReplyBodyLen = replyText.trim().length;
+      const canSanitizeTooManyQuestionsValidReply =
+        postPolicyEmptyGuard.reason === 'too_many_questions' &&
+        replySource === 'openai' &&
+        fallbackReason == null &&
+        Boolean(structured?.reply?.trim()) &&
+        postPolicyReplyBodyLen > 0;
+      if (canSanitizeTooManyQuestionsValidReply) {
+        const beforeLen = replyText.trim().length;
+        const sanitizedReply = sanitizeTooManyQuestionsReply(replyText);
+        if (sanitizedReply.trim().length > 0) {
+          const sanitizedEval = evaluateAnaOutboundText({
+            reply: sanitizedReply,
+            technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+            conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+            enterpriseName: ent?.name ?? null,
+          });
+          if (sanitizedEval.valid) {
+            replyText = sanitizedEval.text;
+            console.log('[ANA_TOO_MANY_QUESTIONS_SANITIZED_VALID_REPLY]', {
+              conversationId,
+              phase: 'post_policy_before_send',
+              reason: postPolicyEmptyGuard.reason,
+              beforeLen,
+              afterLen: replyText.trim().length,
+            });
+            finalTextGuard = replyText;
+            finalOutboundEval = sanitizedEval;
+          }
+        }
+      }
+      const postPolicyGuardAfterSanitize = canSanitizeTooManyQuestionsValidReply
+        ? evaluateAnaEmptyFallbackGuard({
+            reply: replyText,
+            userMessage: trimmed,
+            lastAssistantMessage: lastAssistantPlain,
+            isFirstAnaReply,
+            knowledgeText,
+          })
+        : postPolicyEmptyGuard;
+      if (!postPolicyGuardAfterSanitize.blocked) {
+        // sanitized valid reply keeps normal flow
+      } else {
       const canSkipPostPolicyEmptyBlockForValidReply =
         skipPostPolicyEmptyFallbackBlock &&
         replySource === 'openai' &&
@@ -4921,7 +5024,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (canSkipPostPolicyEmptyBlockForValidReply) {
         console.log('[ANA_EMPTY_FALLBACK_POST_POLICY_SKIP_VALID_REPLY]', {
           conversationId,
-          reason: postPolicyEmptyGuard.reason,
+          reason: postPolicyGuardAfterSanitize.reason,
           replyBodyLen: postPolicyReplyBodyLen,
           parseSuccess: Boolean(structured),
           replySource,
@@ -4938,14 +5041,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         console.log('ANA_PARTIAL_COMMERCIAL_REPLY_ALLOWED', { conversationId, reason: 'post_policy_empty_guard_blocked' });
       } else {
         anaTurnAuditOutcome = 'blocked';
-        anaTurnAuditBlockedReason = `empty_fallback_guard_${postPolicyEmptyGuard.reason ?? 'blocked'}`;
+        anaTurnAuditBlockedReason = `empty_fallback_guard_${postPolicyGuardAfterSanitize.reason ?? 'blocked'}`;
         anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
         anaTurnAuditGuardsApplied.emptyFallbackGuard = {
           ...(typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' && anaTurnAuditGuardsApplied.emptyFallbackGuard !== null
             ? anaTurnAuditGuardsApplied.emptyFallbackGuard as Record<string, unknown>
             : {}),
           blockedAfterPostPolicy: true,
-          postPolicyReason: postPolicyEmptyGuard.reason,
+          postPolicyReason: postPolicyGuardAfterSanitize.reason,
         };
         anaTurnDiagnostics.finalResponse.replySource = null;
         anaTurnDiagnostics.finalResponse.handoffUsed = true;
@@ -4961,10 +5064,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         });
         console.log('[ANA_EMPTY_FALLBACK_BLOCKED_AFTER_POST_POLICY]', {
           conversationId,
-          reason: postPolicyEmptyGuard.reason,
+          reason: postPolicyGuardAfterSanitize.reason,
           replyPreview: replyText.slice(0, 220),
         });
         return;
+      }
       }
     }
 

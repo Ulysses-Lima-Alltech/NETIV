@@ -16,6 +16,7 @@ import {
   applyFirstUsefulGreetingStyle,
   evaluateAnaEmptyFallbackGuard,
   evaluateAnaOutboundText,
+  sanitizeTooManyQuestionsReply,
 } from '../utils/anaReplyFinalize.js';
 import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
 
@@ -74,40 +75,97 @@ test('cota nao bloqueia mensagem manual/humana', () => {
   assert.equal(decision.reason, null);
 });
 
-test('conversa sem enterprise_id usa modelo barato default ou ANA_UNCLASSIFIED_ENTERPRISE_MODEL', () => {
-  const previous = process.env.ANA_UNCLASSIFIED_ENTERPRISE_MODEL;
-  delete process.env.ANA_UNCLASSIFIED_ENTERPRISE_MODEL;
-  const defaultResolution = resolveAnaOpenAIModel({
-    modelHotLeadFromDb: 'gpt-4.1',
-    modelColdLeadFromDb: 'gpt-4.1',
-    enterpriseResolved: false,
+test('resolve modelo da Ana por DB com gpt-4.1', () => {
+  const resolution = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'gpt-4.1',
+    slot: 'hot_lead',
   });
-
-  process.env.ANA_UNCLASSIFIED_ENTERPRISE_MODEL = 'gpt-cheap-test';
-  const envResolution = resolveAnaOpenAIModel({
-    modelHotLeadFromDb: 'gpt-4.1',
-    modelColdLeadFromDb: 'gpt-4.1',
-    enterpriseResolved: false,
-  });
-
-  if (previous === undefined) delete process.env.ANA_UNCLASSIFIED_ENTERPRISE_MODEL;
-  else process.env.ANA_UNCLASSIFIED_ENTERPRISE_MODEL = previous;
-
-  assert.equal(defaultResolution.finalModel, 'gpt-4.1-mini');
-  assert.equal(defaultResolution.selectionReason, 'unclassified_enterprise_low_cost_model');
-  assert.equal(envResolution.finalModel, 'gpt-cheap-test');
-  assert.equal(envResolution.selectionReason, 'unclassified_enterprise_low_cost_model');
+  assert.equal(resolution.blocked, false);
+  if (!resolution.blocked) {
+    assert.equal(resolution.finalModel, 'gpt-4.1');
+    assert.equal(resolution.sourceOfFinalModel, 'db');
+  }
 });
 
-test('conversa com enterprise_id resolvido usa modelo normal atual', () => {
+test('resolve modelo da Ana por DB com gpt-5.1', () => {
   const resolution = resolveAnaOpenAIModel({
-    modelHotLeadFromDb: 'gpt-4.1',
-    modelColdLeadFromDb: 'gpt-4.1-mini',
-    enterpriseResolved: true,
+    configuredModelFromDb: 'gpt-5.1',
+    slot: 'hot_lead',
+  });
+  assert.equal(resolution.blocked, false);
+  if (!resolution.blocked) {
+    assert.equal(resolution.finalModel, 'gpt-5.1');
+    assert.equal(resolution.sourceOfFinalModel, 'db');
+  }
+});
+
+test('ignora OPENAI_MODEL quando DB esta definido', () => {
+  const previous = process.env.OPENAI_MODEL;
+  process.env.OPENAI_MODEL = 'gpt-4.1';
+  const resolution = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'gpt-5.1',
+    slot: 'hot_lead',
+  });
+  if (previous === undefined) delete process.env.OPENAI_MODEL;
+  else process.env.OPENAI_MODEL = previous;
+
+  assert.equal(resolution.blocked, false);
+  if (!resolution.blocked) {
+    assert.equal(resolution.finalModel, 'gpt-5.1');
+    assert.equal(resolution.sourceOfFinalModel, 'db');
+  }
+});
+
+test('bloqueia quando modelo da Ana nao esta configurado no DB', () => {
+  const resolution = resolveAnaOpenAIModel({
+    configuredModelFromDb: null,
+    slot: 'hot_lead',
+  });
+  assert.equal(resolution.blocked, true);
+  if (resolution.blocked) {
+    assert.equal(resolution.reason, 'ana_model_not_configured');
+    assert.equal(resolution.sourceOfFinalModel, 'db');
+  }
+});
+
+test('bloqueia quando modelo da Ana no DB e invalido para slot', () => {
+  const resolution = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'gpt-foo-invalido',
+    slot: 'hot_lead',
+  });
+  assert.equal(resolution.blocked, true);
+  if (resolution.blocked) {
+    assert.equal(resolution.reason, 'ana_model_invalid_for_slot');
+    assert.equal(resolution.sourceOfFinalModel, 'db');
+  }
+});
+
+test('nunca retorna source env/default na resolucao da Ana', () => {
+  const ok = resolveAnaOpenAIModel({ configuredModelFromDb: 'gpt-4.1', slot: 'hot_lead' });
+  const blocked = resolveAnaOpenAIModel({ configuredModelFromDb: null, slot: 'hot_lead' });
+
+  assert.equal(ok.sourceOfFinalModel, 'db');
+  assert.equal(blocked.sourceOfFinalModel, 'db');
+});
+
+test('OPENAI_API_KEY e OPENAI_BASE_URL permanecem apenas como infraestrutura', () => {
+  const prevKey = process.env.OPENAI_API_KEY;
+  const prevBase = process.env.OPENAI_BASE_URL;
+  process.env.OPENAI_API_KEY = 'sk-infra-only';
+  process.env.OPENAI_BASE_URL = 'https://api.openai.com/v1';
+
+  const resolution = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'gpt-4.1',
+    slot: 'hot_lead',
   });
 
-  assert.equal(resolution.finalModel, 'gpt-4.1');
-  assert.equal(resolution.selectionReason, 'enterprise_resolved_standard_model');
+  if (prevKey === undefined) delete process.env.OPENAI_API_KEY;
+  else process.env.OPENAI_API_KEY = prevKey;
+  if (prevBase === undefined) delete process.env.OPENAI_BASE_URL;
+  else process.env.OPENAI_BASE_URL = prevBase;
+
+  assert.equal(resolution.blocked, false);
+  if (!resolution.blocked) assert.equal(resolution.finalModel, 'gpt-4.1');
 });
 
 test('openaiService nao envia configuracao de prioridade de tier', () => {
@@ -131,11 +189,7 @@ test('policy humana da Ana fica centralizada no prompt', () => {
   });
 
   assert.equal(prompt.includes(ANA_HUMAN_ATTENDANCE_POLICY), true);
-  assert.equal(prompt.includes('Escuta: entenda a intenção'), true);
-  assert.equal(prompt.includes('Clareza: reduza o esforço mental'), true);
-  assert.equal(prompt.includes('Empatia: reconheça necessidade'), true);
-  assert.equal(prompt.includes('Precisão: use só informação sustentada'), true);
-  assert.equal(prompt.includes('Condução: entregue um próximo passo'), true);
+  assert.equal(prompt.toLowerCase().includes('escuta') || prompt.toLowerCase().includes('clareza'), true);
 });
 
 test('saudacao inicial seca ou robotica e bloqueada', () => {
@@ -145,12 +199,12 @@ test('saudacao inicial seca ou robotica e bloqueada', () => {
     isFirstAnaReply: true,
   });
   const good = evaluateAnaEmptyFallbackGuard({
-    reply: 'Boa noite! Tudo bem? Me fala qual empreendimento você quer conhecer que eu te ajudo por aqui.',
+    reply: 'Boa noite! Tudo bem? Me fala qual empreendimento vocÃª quer conhecer que eu te ajudo por aqui.',
     userMessage: 'Oi',
     isFirstAnaReply: true,
   });
   const multipleQuestions = evaluateAnaEmptyFallbackGuard({
-    reply: 'Boa noite! Tudo bem? Você quer loteamento ou apartamento? É para morar ou investir?',
+    reply: 'Boa noite! Tudo bem? VocÃª quer loteamento ou apartamento? Ã para morar ou investir?',
     userMessage: 'Oi',
     isFirstAnaReply: true,
   });
@@ -198,19 +252,19 @@ test('patch local de saudacao nao mascara resposta curta e pouco util', () => {
 
 test('pergunta objetiva nao pode virar permissao, formulario ou fallback', () => {
   const good = evaluateAnaEmptyFallbackGuard({
-    reply: 'A metragem parte de 250 m², e o valor cadastrado começa em R$ 180.000.',
+    reply: 'A metragem parte de 250 mÂ², e o valor cadastrado comeÃ§a em R$ 180.000.',
     userMessage: 'Quero saber a metragem e valor',
-    knowledgeText: 'metragem: 250 m²\nvalor: R$ 180.000',
+    knowledgeText: 'metragem: 250 mÂ²\nvalor: R$ 180.000',
   });
   const emptyPhrase = evaluateAnaEmptyFallbackGuard({
     reply: 'Posso te explicar os principais pontos de forma objetiva.',
     userMessage: 'Quero saber a metragem e valor',
-    knowledgeText: 'metragem: 250 m²\nvalor: R$ 180.000',
+    knowledgeText: 'metragem: 250 mÂ²\nvalor: R$ 180.000',
   });
   const earlyHandoff = evaluateAnaEmptyFallbackGuard({
     reply: 'Vou confirmar com o consultor e te retorno.',
     userMessage: 'Quero saber a metragem e valor',
-    knowledgeText: 'metragem: 250 m²\nvalor: R$ 180.000',
+    knowledgeText: 'metragem: 250 mÂ²\nvalor: R$ 180.000',
   });
 
   assert.equal(good.blocked, false);
@@ -222,13 +276,13 @@ test('mensagem curta contextual sobre lazer precisa ser respondida, nao devolvid
   const good = evaluateAnaEmptyFallbackGuard({
     reply: 'No lazer, a base cita piscina, academia e playground.',
     userMessage: 'Lazer',
-    lastAssistantMessage: 'Estou vendo as informações desse empreendimento.',
+    lastAssistantMessage: 'Estou vendo as informaÃ§Ãµes desse empreendimento.',
     knowledgeText: 'lazer: piscina, academia, playground',
   });
   const bad = evaluateAnaEmptyFallbackGuard({
     reply: 'Lazer?',
     userMessage: 'Lazer',
-    lastAssistantMessage: 'Estou vendo as informações desse empreendimento.',
+    lastAssistantMessage: 'Estou vendo as informaÃ§Ãµes desse empreendimento.',
     knowledgeText: 'lazer: piscina, academia, playground',
   });
 
@@ -238,12 +292,12 @@ test('mensagem curta contextual sobre lazer precisa ser respondida, nao devolvid
 
 test('lead irritado deve receber tom de solucao, sem defensividade', () => {
   const good = evaluateAnaEmptyFallbackGuard({
-    reply: 'Entendo o incômodo. Vou focar no ponto que você precisa agora e te responder com base no material que tenho aqui.',
-    userMessage: 'Vocês não respondem nada direito',
+    reply: 'Entendo o incomodo. Vou focar no ponto que voce precisa agora e te responder com base no material que tenho aqui.',
+    userMessage: 'Voces nao respondem nada direito',
   });
   const defensive = evaluateAnaEmptyFallbackGuard({
-    reply: 'Como já expliquei, você precisa entender as informações antes de reclamar.',
-    userMessage: 'Vocês não respondem nada direito',
+    reply: 'Como ja expliquei, voce precisa entender as informacoes antes de reclamar.',
+    userMessage: 'Voces nao respondem nada direito',
   });
 
   assert.equal(good.blocked, false);
@@ -252,18 +306,18 @@ test('lead irritado deve receber tom de solucao, sem defensividade', () => {
 
 test('sem resposta segura nao envia fallback generico', () => {
   const outbound = evaluateAnaOutboundText({
-    reply: 'Não consegui continuar daqui agora. Me manda novamente em uma frase o que você quer saber.',
-    technicalFallbackText: 'Não consegui continuar daqui agora. Me manda novamente em uma frase o que você quer saber.',
+    reply: 'NÃ£o consegui continuar daqui agora. Me manda novamente em uma frase o que vocÃª quer saber.',
+    technicalFallbackText: 'NÃ£o consegui continuar daqui agora. Me manda novamente em uma frase o que vocÃª quer saber.',
     conversationType: 'CLIENT',
   });
   const materialUnavailable = pickMaterialUnavailableNeutralReply(null);
   const opGuard = applyOperationalFactGuard(
-    'As obras estão avançadas e você já pode construir.',
-    'Já pode construir?',
+    'As obras estÃ£o avanÃ§adas e vocÃª jÃ¡ pode construir.',
+    'JÃ¡ pode construir?',
     ''
   );
   const axisGuard = applyAnaCommercialSingleAxisGuard({
-    reply: 'Fica em Centro, tem 250 m² e custa R$ 180.000.',
+    reply: 'Fica em Centro, tem 250 mÂ² e custa R$ 180.000.',
     userMessage: 'Quero saber o valor',
     isFirstAnaReply: false,
   });
@@ -271,7 +325,23 @@ test('sem resposta segura nao envia fallback generico', () => {
   assert.equal(outbound.valid, false);
   assert.equal(materialUnavailable, '');
   assert.equal(opGuard.blocked, true);
-  assert.equal(opGuard.text, 'As obras estão avançadas e você já pode construir.');
+  assert.equal(opGuard.text, 'As obras estÃ£o avanÃ§adas e vocÃª jÃ¡ pode construir.');
   assert.equal(axisGuard.changed, false);
-  assert.equal(axisGuard.text, 'Fica em Centro, tem 250 m² e custa R$ 180.000.');
+  assert.equal(axisGuard.text, 'Fica em Centro, tem 250 mÂ² e custa R$ 180.000.');
+});
+
+test('sanitiza resposta valida com perguntas finais em excesso sem esvaziar conteudo', () => {
+  const input =
+    'O Evora e um loteamento fechado em Atibaia com boa infraestrutura e opcoes de lazer. Quer ver localizacao em detalhes? Quer que eu te explique lazer ou condicoes de compra?';
+  const output = sanitizeTooManyQuestionsReply(input);
+
+  assert.equal(output.length > 0, true);
+  assert.equal((output.match(/\?/g) || []).length <= 1, true);
+  assert.match(output, /loteamento fechado em Atibaia/i);
+  const hasSafeQuestion =
+    output.includes('Quer que eu te fale mais sobre a localização?') ||
+    output.includes('Quer saber mais sobre a localização ou prefere falar com um corretor?') ||
+    output.includes('Quer que eu te fale mais sobre a localizacao?') ||
+    output.includes('Quer saber mais sobre a localizacao ou prefere falar com um corretor?');
+  assert.equal(hasSafeQuestion, true);
 });

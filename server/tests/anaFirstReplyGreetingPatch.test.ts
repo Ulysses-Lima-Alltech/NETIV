@@ -51,3 +51,10 @@ test('post policy nao bloqueia resposta valida quando skip do empty guard foi at
   assert.match(engineSource, /\[ANA_EMPTY_FALLBACK_POST_POLICY_SKIP_VALID_REPLY\]/);
   assert.match(engineSource, /canSkipPostPolicyEmptyBlockForValidReply/);
 });
+
+test('too_many_questions em resposta valida da OpenAI passa por sanitizacao local', () => {
+  const engineSource = readFileSync(new URL('../services/conversationEngine.js', import.meta.url), 'utf8');
+  assert.match(engineSource, /sanitizeTooManyQuestionsReply/);
+  assert.match(engineSource, /\[ANA_TOO_MANY_QUESTIONS_SANITIZED_VALID_REPLY\]/);
+  assert.match(engineSource, /postPolicyEmptyGuard\.reason === 'too_many_questions'/);
+});

@@ -1,76 +1,62 @@
-/** Default seguro da Ana (WhatsApp) quando DB e OPENAI_MODEL estao vazios. */
-export const DEFAULT_ANA_OPENAI_MODEL = 'gpt-4.1';
+import { isAllowedOpenAiModel } from '../catalogs/aiModels.js';
 
-/** Opcional para retries/fallbacks tecnicos, nao usado como default principal. */
-export const ANA_OPENAI_MODEL_FALLBACK_MINI = 'gpt-4.1-mini';
-export const DEFAULT_ANA_UNCLASSIFIED_ENTERPRISE_MODEL = 'gpt-4.1-mini';
+export type AnaModelSlot = 'hot_lead' | 'cold_lead';
 
-export interface AnaModelResolution {
+export interface AnaModelResolutionSuccess {
+  blocked: false;
   finalModel: string;
-  sourceOfFinalModel: 'db' | 'env' | 'default';
-  configuredModelFromDb: string | null;
-  configuredModelFromEnv: string | null;
-  configuredUnclassifiedEnterpriseModelFromEnv: string | null;
-  selectionReason: 'unclassified_enterprise_low_cost_model' | 'enterprise_resolved_standard_model';
+  sourceOfFinalModel: 'db';
+  configuredModelFromDb: string;
+  slot: AnaModelSlot;
+  selectionReason: 'db_config';
 }
 
-/**
- * Precedencia padrao: (1) model_hot_lead ou model_cold_lead no integration_settings;
- * (2) OPENAI_MODEL; (3) DEFAULT_ANA_OPENAI_MODEL.
- *
- * Para conversas ainda sem empreendimento resolvido, usa o modelo barato dedicado:
- * ANA_UNCLASSIFIED_ENTERPRISE_MODEL ou DEFAULT_ANA_UNCLASSIFIED_ENTERPRISE_MODEL.
- */
-export function resolveAnaOpenAIModel(args: {
-  modelHotLeadFromDb: string | null;
-  modelColdLeadFromDb: string | null;
-  enterpriseResolved?: boolean;
-}): AnaModelResolution {
-  const configuredModelFromEnv = (process.env.OPENAI_MODEL ?? '').trim() || null;
-  const configuredUnclassifiedEnterpriseModelFromEnv =
-    (process.env.ANA_UNCLASSIFIED_ENTERPRISE_MODEL ?? '').trim() || null;
-  const hot = args.modelHotLeadFromDb?.trim() || null;
-  const cold = args.modelColdLeadFromDb?.trim() || null;
-  const configuredModelFromDb = hot ?? cold ?? null;
-  const enterpriseResolved = args.enterpriseResolved !== false;
+export interface AnaModelResolutionBlocked {
+  blocked: true;
+  finalModel: null;
+  sourceOfFinalModel: 'db';
+  configuredModelFromDb: string | null;
+  slot: AnaModelSlot;
+  reason: 'ana_model_not_configured' | 'ana_model_invalid_for_slot';
+}
 
-  if (!enterpriseResolved) {
+export type AnaModelResolution = AnaModelResolutionSuccess | AnaModelResolutionBlocked;
+
+export function resolveAnaOpenAIModel(args: {
+  configuredModelFromDb: string | null;
+  slot?: AnaModelSlot;
+}): AnaModelResolution {
+  const slot = args.slot ?? 'hot_lead';
+  const configuredModelFromDb = (args.configuredModelFromDb ?? '').trim() || null;
+
+  if (!configuredModelFromDb) {
     return {
-      finalModel: configuredUnclassifiedEnterpriseModelFromEnv ?? DEFAULT_ANA_UNCLASSIFIED_ENTERPRISE_MODEL,
-      sourceOfFinalModel: configuredUnclassifiedEnterpriseModelFromEnv ? 'env' : 'default',
-      configuredModelFromDb,
-      configuredModelFromEnv,
-      configuredUnclassifiedEnterpriseModelFromEnv,
-      selectionReason: 'unclassified_enterprise_low_cost_model',
+      blocked: true,
+      finalModel: null,
+      sourceOfFinalModel: 'db',
+      configuredModelFromDb: null,
+      slot,
+      reason: 'ana_model_not_configured',
     };
   }
 
-  if (configuredModelFromDb) {
+  if (!isAllowedOpenAiModel(configuredModelFromDb)) {
     return {
-      finalModel: configuredModelFromDb,
+      blocked: true,
+      finalModel: null,
       sourceOfFinalModel: 'db',
       configuredModelFromDb,
-      configuredModelFromEnv,
-      configuredUnclassifiedEnterpriseModelFromEnv,
-      selectionReason: 'enterprise_resolved_standard_model',
+      slot,
+      reason: 'ana_model_invalid_for_slot',
     };
   }
-  if (configuredModelFromEnv) {
-    return {
-      finalModel: configuredModelFromEnv,
-      sourceOfFinalModel: 'env',
-      configuredModelFromDb: null,
-      configuredModelFromEnv,
-      configuredUnclassifiedEnterpriseModelFromEnv,
-      selectionReason: 'enterprise_resolved_standard_model',
-    };
-  }
+
   return {
-    finalModel: DEFAULT_ANA_OPENAI_MODEL,
-    sourceOfFinalModel: 'default',
-    configuredModelFromDb: null,
-    configuredModelFromEnv: null,
-    configuredUnclassifiedEnterpriseModelFromEnv,
-    selectionReason: 'enterprise_resolved_standard_model',
+    blocked: false,
+    finalModel: configuredModelFromDb,
+    sourceOfFinalModel: 'db',
+    configuredModelFromDb,
+    slot,
+    selectionReason: 'db_config',
   };
 }
