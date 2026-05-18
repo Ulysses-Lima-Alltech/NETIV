@@ -35,6 +35,14 @@ export function ConversationList({
   const hasUserScrolledRef = useRef(false);
   const listSignature = useMemo(() => conversations.map((c) => c.id).join('|'), [conversations]);
   const SCROLL_KEY = 'netiv:inbox:conversationListScrollTop';
+  const persistScrollTop = (value: number) => {
+    scrollTopRef.current = value;
+    try {
+      localStorage.setItem(SCROLL_KEY, String(value));
+    } catch {
+      // noop
+    }
+  };
 
   useLayoutEffect(() => {
     const el = scrollElRef.current;
@@ -45,7 +53,7 @@ export function ConversationList({
       const parsed = raw == null ? NaN : Number(raw);
       if (Number.isFinite(parsed) && parsed >= 0) {
         el.scrollTop = parsed;
-        scrollTopRef.current = parsed;
+        persistScrollTop(parsed);
       }
     } catch {
       // noop
@@ -55,12 +63,12 @@ export function ConversationList({
   useLayoutEffect(() => {
     const el = scrollElRef.current;
     if (!el) return;
-    if (!hasUserScrolledRef.current) return;
+    if (!hasUserScrolledRef.current && hasHydratedScrollRef.current) return;
     const target = scrollTopRef.current;
     if (Math.abs(el.scrollTop - target) > 1) {
       el.scrollTop = target;
     }
-  }, [listSignature, isLoading, compact]);
+  }, [listSignature, isLoading, compact, selectedId]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-transparent">
@@ -109,16 +117,11 @@ export function ConversationList({
 
       <div
         ref={scrollElRef}
-        className={`min-h-0 flex-1 overflow-y-auto py-2 ${compact ? 'px-1.5 pb-3' : 'px-2 pb-4'}`}
+        className={`min-h-0 flex-1 overflow-y-auto py-2 ${compact ? 'px-1.5 pb-5' : 'px-2 pb-8'}`}
         onScroll={(e) => {
           const el = e.currentTarget;
           hasUserScrolledRef.current = true;
-          scrollTopRef.current = el.scrollTop;
-          try {
-            localStorage.setItem(SCROLL_KEY, String(el.scrollTop));
-          } catch {
-            // noop
-          }
+          persistScrollTop(el.scrollTop);
           onScrollMetaChange?.({
             scrollTop: el.scrollTop,
             nearTop: el.scrollTop < 24,
@@ -143,7 +146,12 @@ export function ConversationList({
                   conversation={conv}
                   compact={compact}
                   isSelected={selectedId === conv.id}
-                  onClick={() => onSelect(conv.id)}
+                  onClick={() => {
+                    const el = scrollElRef.current;
+                    if (el) persistScrollTop(el.scrollTop);
+                    hasUserScrolledRef.current = true;
+                    onSelect(conv.id);
+                  }}
                   onDelete={onDelete}
                 />
               </li>

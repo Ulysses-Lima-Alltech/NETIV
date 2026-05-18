@@ -935,7 +935,7 @@ export function InboxPage() {
   );
 
   return (
-    <div className="h-[calc(100vh-4px)] overflow-hidden px-4 pb-4 pt-3 text-[#0f172a] md:p-5">
+    <div className="h-screen overflow-hidden px-4 pb-4 pt-3 text-[#0f172a] md:p-5">
       <div className="relative flex h-full min-h-0 gap-4">
         <button
           type="button"

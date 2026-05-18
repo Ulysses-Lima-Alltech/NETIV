@@ -3,7 +3,6 @@ import type { Conversation, Message } from '../types';
 import { MessageBubble } from './MessageBubble';
 import { ChatComposer } from './ChatComposer';
 import { FlameIcon } from './FlameIcon';
-import { ContactAvatar } from './ContactAvatar';
 import { formatBrlRange, formatDateSeparator, formatStatus } from '../utils/format';
 import {
   RESERVE_INTEREST_LABELS,
@@ -283,11 +282,6 @@ export function ChatPanel({
       <header className="shrink-0 border-b border-[#e2e8f0] bg-[rgba(255,255,255,0.94)] px-5 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex items-start gap-3">
-            <ContactAvatar
-              name={displayName}
-              className="h-11 w-11 rounded-full border border-white/70 object-cover shadow-[0_4px_14px_rgba(15,23,42,0.12)]"
-              textClassName="text-[13px] font-semibold"
-            />
             <div className="min-w-0">
               {!isEditingName ? (
                 <div className="flex items-center gap-1.5 min-w-0">
