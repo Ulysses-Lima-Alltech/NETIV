@@ -213,6 +213,7 @@ export function InboxPage() {
   const [filters, setFilters] = useState<InboxFilters>(DEFAULT_INBOX_FILTERS);
   const [searchDebounced, setSearchDebounced] = useState(filters.search);
   const [readStateMap, setReadStateMap] = useState<InboxReadStateMap>(() => loadInboxReadState());
+  const readStateMapRef = useRef<InboxReadStateMap>(readStateMap);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   /** Evita reprocessar o mesmo `conversationId` da URL (sucesso ou falha) em loop. */
   const deepLinkConsumedParamRef = useRef<string | null>(null);
@@ -337,6 +338,10 @@ export function InboxPage() {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
 
+  useEffect(() => {
+    readStateMapRef.current = readStateMap;
+  }, [readStateMap]);
+
   const markConversationAsRead = useCallback((convId: string, readAtHint?: string | null) => {
     setConversations((prev) => prev.map((c) => (c.id === convId ? { ...c, unreadCount: 0 } : c)));
     setReadStateMap((prev) => {
@@ -364,7 +369,7 @@ export function InboxPage() {
         const mappedRaw = data.conversations.map(mapApiConversationToConversation);
         const mappedWithUnread = mappedRaw.map((c) => ({
           ...c,
-          unreadCount: c.id === selectedIdRef.current ? 0 : computeUnreadCountFromReadState(c, readStateMap),
+          unreadCount: c.id === selectedIdRef.current ? 0 : computeUnreadCountFromReadState(c, readStateMapRef.current),
         }));
         const mapped = applyReadFilter(mappedWithUnread);
         setConversations((prev) => {
@@ -386,7 +391,7 @@ export function InboxPage() {
         if (requestId !== conversationsRequestIdRef.current) return;
         if (!silent) setConversationsLoading(false);
       });
-  }, [activeTab, filters, searchDebounced, readStateMap, applyReadFilter]);
+  }, [activeTab, filters, searchDebounced, applyReadFilter]);
 
   const loadMessages = useCallback((convId: string, silent?: boolean) => {
     const id = parseInt(convId, 10);

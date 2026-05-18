@@ -8,6 +8,8 @@ import {
   type EnterpriseApiConnectionTestResult,
   type EnterpriseApiSettingsItem,
   type EnterpriseApiSettingsUpdate,
+  type OpenAiCostSettingsPublic,
+  type OpenAiCostSettingsUpdate,
   type WhatsAppConfigPublic,
   type WhatsAppConfigUpdate,
 } from '../api/client';
@@ -86,6 +88,14 @@ interface EnterpriseApiFormState {
   emergency_block_enabled: boolean;
   emergency_block_message: string;
   cost_tracking_enabled: boolean;
+}
+
+interface OpenAiCostFormState {
+  openai_costs_api_key_input: string;
+  remove_api_key: boolean;
+  openai_costs_api_key_id_input: string;
+  openai_project_id_input: string;
+  enabled: boolean;
 }
 
 type AvailableModelItem = {
@@ -284,10 +294,15 @@ export function SettingsWhatsAppPage() {
   const [savingGlobalApi, setSavingGlobalApi] = useState(false);
   const [savingEnterpriseId, setSavingEnterpriseId] = useState<number | null>(null);
   const [testingEnterpriseId, setTestingEnterpriseId] = useState<number | null>(null);
+  const [savingCostSettings, setSavingCostSettings] = useState(false);
+  const [testingCostSettings, setTestingCostSettings] = useState(false);
+  const [syncingCostsNow, setSyncingCostsNow] = useState(false);
   const [expandedEnterpriseId, setExpandedEnterpriseId] = useState<number | null>(null);
   const [showGlobalApiKeyInput, setShowGlobalApiKeyInput] = useState(false);
+  const [showCostApiKeyInput, setShowCostApiKeyInput] = useState(false);
 
   const [apiGlobal, setApiGlobal] = useState<ApiGlobalSettingsPublic | null>(null);
+  const [costSettings, setCostSettings] = useState<OpenAiCostSettingsPublic | null>(null);
   const [apiGlobalForm, setApiGlobalForm] = useState<
     ApiGlobalSettingsUpdate & {
       openai_api_key_input: string;
@@ -316,17 +331,37 @@ export function SettingsWhatsAppPage() {
     lead_score_threshold_input: 0.75,
     ai_enabled_input: true,
   });
+  const [costForm, setCostForm] = useState<OpenAiCostFormState>({
+    openai_costs_api_key_input: '',
+    remove_api_key: false,
+    openai_costs_api_key_id_input: '',
+    openai_project_id_input: '',
+    enabled: true,
+  });
 
   const [apiEnterpriseItems, setApiEnterpriseItems] = useState<EnterpriseApiSettingsItem[]>([]);
   const [apiEnterpriseForms, setApiEnterpriseForms] = useState<Record<number, EnterpriseApiFormState>>({});
   const [availableModels, setAvailableModels] = useState<AvailableModelItem[]>([]);
+  void savingCostSettings;
+  void setSavingCostSettings;
+  void testingCostSettings;
+  void setTestingCostSettings;
+  void syncingCostsNow;
+  void setSyncingCostsNow;
+  void showCostApiKeyInput;
+  void setShowCostApiKeyInput;
+  void costForm;
 
-  const hasApiData = useMemo(() => apiGlobal != null || apiEnterpriseItems.length > 0, [apiGlobal, apiEnterpriseItems]);
+  const hasApiData = useMemo(
+    () => apiGlobal != null || costSettings != null || apiEnterpriseItems.length > 0,
+    [apiGlobal, costSettings, apiEnterpriseItems]
+  );
 
   const loadApiSettings = async (): Promise<void> => {
-    const [globalResult, enterprisesResult] = await Promise.allSettled([
+    const [globalResult, enterprisesResult, costsResult] = await Promise.allSettled([
       settingsApi.getApiGlobal(),
       settingsApi.getApiEnterprises(),
+      settingsApi.getOpenAiCostsConfig(),
     ]);
 
     const hasModelsFromGlobal =
@@ -369,10 +404,25 @@ export function SettingsWhatsAppPage() {
       }
     }
 
+    if (costsResult.status === 'fulfilled') {
+      const costs = costsResult.value;
+      setCostSettings(costs);
+      setCostForm((prev) => ({
+        ...prev,
+        openai_costs_api_key_input: '',
+        remove_api_key: false,
+        openai_costs_api_key_id_input: costs.openai_costs_api_key_id ?? '',
+        openai_project_id_input: costs.openai_project_id ?? '',
+        enabled: costs.enabled,
+      }));
+    }
+
     if (globalResult.status === 'rejected') {
       setApiLoadError(globalResult.reason?.message ?? 'Erro ao carregar configuração global de API.');
     } else if (enterprisesResult.status === 'rejected') {
       setApiLoadError(enterprisesResult.reason?.message ?? 'Erro ao carregar configuração por empreendimento.');
+    } else if (costsResult.status === 'rejected') {
+      setApiLoadError(costsResult.reason?.message ?? 'Erro ao carregar configuração de custos OpenAI.');
     } else {
       setApiLoadError(null);
     }
@@ -493,6 +543,75 @@ export function SettingsWhatsAppPage() {
       setSavingGlobalApi(false);
     }
   };
+
+  const handleSaveCostsConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingCostSettings(true);
+    setApiMessage(null);
+
+    const payload: OpenAiCostSettingsUpdate = {
+      provider: 'openai',
+      remove_api_key: costForm.remove_api_key,
+      openai_costs_api_key_id: asNullableString(costForm.openai_costs_api_key_id_input),
+      openai_project_id: asNullableString(costForm.openai_project_id_input),
+      enabled: costForm.enabled,
+    };
+    const newApiKey = costForm.openai_costs_api_key_input.trim();
+    if (newApiKey.length > 0) payload.openai_costs_api_key = newApiKey;
+
+    try {
+      const saved = await settingsApi.putOpenAiCostsConfig(payload);
+      setCostSettings(saved);
+      await loadApiSettings();
+      setCostForm((prev) => ({
+        ...prev,
+        openai_costs_api_key_input: '',
+        remove_api_key: false,
+      }));
+      setApiMessage({ type: 'success', text: 'Configuração de custos OpenAI salva com sucesso.' });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Erro ao salvar configuração de custos OpenAI.';
+      setApiMessage({ type: 'error', text: msg });
+    } finally {
+      setSavingCostSettings(false);
+    }
+  };
+
+  const handleTestCostsConfig = async () => {
+    setTestingCostSettings(true);
+    setApiMessage(null);
+    try {
+      const result = await settingsApi.testOpenAiCostsConfig();
+      setApiMessage({ type: 'success', text: result.message });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Erro ao testar permissão da chave de custos.';
+      setApiMessage({ type: 'error', text: msg });
+    } finally {
+      setTestingCostSettings(false);
+    }
+  };
+
+  const handleSyncCostsNow = async () => {
+    setSyncingCostsNow(true);
+    setApiMessage(null);
+    try {
+      const result = await settingsApi.syncOpenAiCosts();
+      await loadApiSettings();
+      setApiMessage({
+        type: 'success',
+        text: `Sync de custos concluído. Linhas sincronizadas: ${result.syncedRows}, salvas: ${result.savedRows}, sem mapeamento: ${result.unknownApiKeyRows}.`,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Erro ao sincronizar custos OpenAI.';
+      await loadApiSettings();
+      setApiMessage({ type: 'error', text: msg });
+    } finally {
+      setSyncingCostsNow(false);
+    }
+  };
+  void handleSaveCostsConfig;
+  void handleTestCostsConfig;
+  void handleSyncCostsNow;
 
   const updateEnterpriseForm = (enterpriseId: number, updater: (state: EnterpriseApiFormState) => EnterpriseApiFormState) => {
     setApiEnterpriseForms((prev) => {
@@ -807,7 +926,7 @@ export function SettingsWhatsAppPage() {
                 <section className={card}>
                   <h2 className={sectionH}>Configuração global padrão</h2>
                   <p className="text-[13px] text-[#6B7280] mb-4">
-                    Quando um empreendimento usa fallback global, a Ana utiliza estes valores como padrão.
+                    Usada pela Ana como fallback de atendimento quando o empreendimento não tiver chave própria ativa.
                   </p>
                   <form onSubmit={handleSaveGlobalApi} className="space-y-4">
                     <div className="rounded-[10px] border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3 text-[13px] text-[#4B5563]">
@@ -992,6 +1111,135 @@ export function SettingsWhatsAppPage() {
                         'Salvar configuração global'
                       )}
                     </button>
+                  </form>
+                </section>
+
+                <section className={card}>
+                  <h2 className={sectionH}>Configuração de custos OpenAI</h2>
+                  <p className="text-[13px] text-[#6B7280] mb-4">
+                    Usada somente para consultar custos oficiais da OpenAI. Não é usada para responder mensagens.
+                  </p>
+                  <form onSubmit={handleSaveCostsConfig} className="space-y-4">
+                    <div className="rounded-[10px] border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3 text-[13px] text-[#4B5563] grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <p>Chave atual: <strong>{costSettings?.masked_api_key ?? 'não configurada'}</strong></p>
+                      <p>Sync ativo: <strong>{costSettings?.enabled ? 'sim' : 'não'}</strong></p>
+                      <p>Último sync: <strong>{formatSyncDateTime(costSettings?.last_sync_at ?? null)}</strong></p>
+                      <p>Status do último sync: <strong>{costSettings?.last_sync_status ?? 'indefinido'}</strong></p>
+                      <p className="md:col-span-2">
+                        Erro do último sync: <strong>{costSettings?.last_sync_error ?? 'nenhum'}</strong>
+                      </p>
+                    </div>
+
+                    <label className="block">
+                      <span className={lbl}>Nova API Key de custos OpenAI</span>
+                      <div className="flex gap-2">
+                        <input
+                          type={showCostApiKeyInput ? 'text' : 'password'}
+                          value={costForm.openai_costs_api_key_input}
+                          onChange={(e) => setCostForm((prev) => ({ ...prev, openai_costs_api_key_input: e.target.value }))}
+                          placeholder="Deixe em branco para manter a chave atual"
+                          className={`flex-1 ${field}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowCostApiKeyInput((prev) => !prev)}
+                          className={btnSecondary}
+                          style={{ padding: '10px 14px' }}
+                        >
+                          {showCostApiKeyInput ? 'Ocultar' : 'Mostrar'}
+                        </button>
+                      </div>
+                    </label>
+
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={costForm.remove_api_key}
+                        onChange={(e) => setCostForm((prev) => ({ ...prev, remove_api_key: e.target.checked }))}
+                        className="w-4 h-4 rounded border-[#D1D5DB] text-[#EF4444] focus:ring-[#EF4444] focus:ring-offset-0"
+                      />
+                      <span className="text-[14px] text-[#111827]">Remover chave de custos (somente ao salvar)</span>
+                    </label>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <label className="block">
+                        <span className={lbl}>API Key ID de custos</span>
+                        <input
+                          type="text"
+                          value={costForm.openai_costs_api_key_id_input}
+                          onChange={(e) =>
+                            setCostForm((prev) => ({ ...prev, openai_costs_api_key_id_input: e.target.value }))
+                          }
+                          className={field}
+                          placeholder="key_..."
+                        />
+                      </label>
+                      <label className="block">
+                        <span className={lbl}>Project ID</span>
+                        <input
+                          type="text"
+                          value={costForm.openai_project_id_input}
+                          onChange={(e) =>
+                            setCostForm((prev) => ({ ...prev, openai_project_id_input: e.target.value }))
+                          }
+                          className={field}
+                          placeholder="proj_..."
+                        />
+                      </label>
+                    </div>
+
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={costForm.enabled}
+                        onChange={(e) => setCostForm((prev) => ({ ...prev, enabled: e.target.checked }))}
+                        className="w-4 h-4 rounded border-[#D1D5DB] text-[#3B82F6] focus:ring-[#3B82F6] focus:ring-offset-0"
+                      />
+                      <span className="text-[14px] text-[#111827]">Ativar sincronização de custos</span>
+                    </label>
+
+                    <div className="flex flex-wrap gap-3 pt-1">
+                      <button type="submit" disabled={savingCostSettings} className={btnPrimary}>
+                        {savingCostSettings ? (
+                          <>
+                            <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                            Salvando…
+                          </>
+                        ) : (
+                          'Salvar chave de custos'
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleTestCostsConfig}
+                        disabled={testingCostSettings}
+                        className={btnSecondary}
+                      >
+                        {testingCostSettings ? (
+                          <>
+                            <span className="h-4 w-4 rounded-full border-2 border-[#9CA3AF] border-t-[#374151] animate-spin" />
+                            Testando…
+                          </>
+                        ) : (
+                          'Testar permissão'
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSyncCostsNow}
+                        disabled={syncingCostsNow}
+                        className={btnSecondary}
+                      >
+                        {syncingCostsNow ? (
+                          <>
+                            <span className="h-4 w-4 rounded-full border-2 border-[#9CA3AF] border-t-[#374151] animate-spin" />
+                            Sincronizando…
+                          </>
+                        ) : (
+                          'Sincronizar custos agora'
+                        )}
+                      </button>
+                    </div>
                   </form>
                 </section>
 
