@@ -31,3 +31,15 @@ test('guard de fallback vazio continua existindo para casos realmente invalidos'
   assert.match(engineSource, /\[ANA_EMPTY_FALLBACK_GUARD\]/);
   assert.match(engineSource, /\[ANA_EMPTY_FALLBACK_BLOCKED\]/);
 });
+
+test('guard vazio nao faz segunda chamada OpenAI quando resposta valida ja existe', () => {
+  const engineSource = readFileSync(new URL('../services/conversationEngine.js', import.meta.url), 'utf8');
+  assert.match(engineSource, /\[ANA_EMPTY_FALLBACK_GUARD_SKIP_RETRY_VALID_REPLY\]/);
+  assert.doesNotMatch(engineSource, /ana_rag_empty_fallback_retry/);
+});
+
+test('rate limit bloqueia sem forcar handoff automatico', () => {
+  const engineSource = readFileSync(new URL('../services/conversationEngine.js', import.meta.url), 'utf8');
+  assert.match(engineSource, /classifiedError === 'OPENAI_RATE_LIMIT'/);
+  assert.match(engineSource, /\[ANA_RATE_LIMIT_ABORT_NO_FALLBACK\]/);
+});

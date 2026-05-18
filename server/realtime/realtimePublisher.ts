@@ -129,7 +129,7 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
        c.reserve_commercial_notes,
        c.assigned_broker_id,
        b.full_name AS assigned_broker_name,
-       c.contact_type,
+       COALESCE(ct.contact_type, 'CLIENT') AS contact_type,
        c.manual_closed_at,
        c.manual_closed_by_user_id,
        c.manual_closed_reason,
@@ -137,6 +137,7 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
      LEFT JOIN corretores b ON b.id = c.assigned_broker_id
+     LEFT JOIN contacts ct ON ct.id = c.contact_id
      WHERE c.id = $1
      LIMIT 1`,
     [conversationId]
