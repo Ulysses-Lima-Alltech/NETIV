@@ -109,14 +109,11 @@ a:focus-visible {
 .netiv-brand-mark {
   width: 38px;
   height: 38px;
-  border-radius: 14px;
-  display: grid;
-  place-items: center;
-  font-size: 15px;
-  font-weight: 600;
-  color: #fff;
-  background: linear-gradient(135deg, var(--orange-600), var(--orange-500));
-  box-shadow: 0 10px 24px rgba(249, 115, 22, 0.35);
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  object-fit: cover;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.35);
   flex: 0 0 auto;
 }
 

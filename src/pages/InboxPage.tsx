@@ -22,6 +22,7 @@ import {
 import { useRealtimeInbox } from '../hooks/useRealtimeInbox';
 
 const INBOX_READ_STATE_KEY = 'inbox_read_state_v1';
+const INBOX_CONVERSATION_PANEL_COLLAPSED_KEY = 'inbox_conversation_panel_collapsed_v1';
 type InboxReadStateMap = Record<string, string>;
 function toMillis(value: string | null | undefined): number | null {
   if (!value) return null;
@@ -69,6 +70,43 @@ function computeUnreadCountFromReadState(conversation: Conversation, readState: 
   return updatedMs > readMs ? 1 : 0;
 }
 
+function readConversationPanelCollapsedPreference(): boolean {
+  try {
+    return localStorage.getItem(INBOX_CONVERSATION_PANEL_COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function normalizeAvatarValue(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function extractConversationAvatar(c: ApiConversation): string | null {
+  const contact = c.contact ?? undefined;
+  const candidates: Array<unknown> = [
+    c.profilePicUrl,
+    c.profile_pic_url,
+    c.avatarUrl,
+    c.avatar_url,
+    c.photoUrl,
+    c.photo_url,
+    c.whatsappProfilePicUrl,
+    c.whatsapp_profile_pic_url,
+    contact?.profilePicUrl,
+    contact?.avatarUrl,
+    contact?.photoUrl,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeAvatarValue(candidate);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
 function mapApiConversationToConversation(c: ApiConversation): Conversation {
   const leadName =
     (c.whatsappDisplayName ?? '').trim() ||
@@ -78,6 +116,7 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     c.externalContactId ||
     'Sem nome';
   const leadPhone = c.contactPhone || c.externalContactId || '';
+  const avatarUrl = extractConversationAvatar(c);
   const ls = c.leadStage;
   const temperatura: LeadTemperatura | null =
     ls == null || ls === ''
@@ -100,6 +139,7 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     id: c.id,
     leadName,
     confirmedCustomerName: c.customerName ?? null,
+    avatarUrl,
     leadPhone,
     lastMessage: c.lastMessagePreview || '',
     updatedAt: c.lastMessageAt || c.updatedAt || c.createdAt,
@@ -196,6 +236,9 @@ export function InboxPage() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [conversationPanelCollapsed, setConversationPanelCollapsed] = useState<boolean>(() =>
+    readConversationPanelCollapsedPreference()
+  );
   const [newMessageOpen, setNewMessageOpen] = useState(false);
   const [projects, setProjects] = useState<{ id: number; name: string; active: boolean }[]>([]);
   const [filters, setFilters] = useState<InboxFilters>(DEFAULT_INBOX_FILTERS);
@@ -312,6 +355,14 @@ export function InboxPage() {
     ? conversations.find((c) => c.id === selectedId) ?? null
     : null;
   const selectedWindow = selectedConversation?.whatsappWindow ?? null;
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(INBOX_CONVERSATION_PANEL_COLLAPSED_KEY, conversationPanelCollapsed ? '1' : '0');
+    } catch {
+      // noop
+    }
+  }, [conversationPanelCollapsed]);
 
   useEffect(() => {
     selectedIdRef.current = selectedId;
@@ -933,50 +984,56 @@ export function InboxPage() {
           <div className="fixed inset-0 bg-black/25 z-20 md:hidden" aria-hidden onClick={() => setSidebarOpen(false)} />
         )}
         <aside
-          className={`w-[360px] shrink-0 min-h-0 overflow-hidden rounded-[22px] border border-[#e2e8f0] bg-white/92 shadow-[0_8px_24px_rgba(15,23,42,0.08)] md:relative md:inset-auto md:z-10 md:translate-x-0 fixed inset-y-4 left-4 right-4 z-30 transform transition-transform duration-200 ease-out sm:right-auto ${sidebarOpen ? 'translate-x-0' : '-translate-x-[110%] md:translate-x-0'}`}
+          className={`w-[360px] shrink-0 min-h-0 overflow-hidden rounded-[22px] border border-[#e2e8f0] bg-white/92 shadow-[0_8px_24px_rgba(15,23,42,0.08)] md:relative md:inset-auto md:z-10 md:translate-x-0 md:transition-[width] md:duration-200 ${conversationPanelCollapsed ? 'md:w-[96px]' : 'md:w-[360px]'} fixed inset-y-4 left-4 right-4 z-30 transform transition-transform duration-200 ease-out sm:right-auto ${sidebarOpen ? 'translate-x-0' : '-translate-x-[110%] md:translate-x-0'}`}
         >
-          <div className="shrink-0 border-b border-[#e2e8f0] bg-white px-3 py-3">
-            <div className="grid grid-cols-2 rounded-[13px] border border-[#e2e8f0] bg-[#f1f5f9] p-[3px]">
-              <button
-                type="button"
-                onClick={() => handleTabChange('CLIENT')}
-                className={`min-h-[32px] rounded-[10px] px-3 text-[13px] font-semibold transition-all ${
-                  activeTab === 'CLIENT'
-                    ? 'bg-[#071833] text-white shadow-[0_8px_18px_rgba(7,24,51,0.18)]'
-                    : 'text-[#64748b] hover:text-[#0f172a]'
-                }`}
-              >
-                Clientes
-              </button>
-              <button
-                type="button"
-                onClick={() => handleTabChange('INTERNO')}
-                className={`min-h-[32px] rounded-[10px] px-3 text-[13px] font-semibold transition-all ${
-                  activeTab === 'INTERNO'
-                    ? 'bg-[#071833] text-white shadow-[0_8px_18px_rgba(7,24,51,0.18)]'
-                    : 'text-[#64748b] hover:text-[#0f172a]'
-                }`}
-              >
-                Interno
-              </button>
-            </div>
-          </div>
-          <InboxFilterBar
-            filters={filters}
-            onChange={setFilters}
-            projects={projects}
-            onClear={clearFilters}
-            hasActiveFilters={hasActiveInboxFilters(filters)}
-          />
+          {!conversationPanelCollapsed && (
+            <>
+              <div className="shrink-0 border-b border-[#e2e8f0] bg-white px-3 py-3">
+                <div className="grid grid-cols-2 rounded-[13px] border border-[#e2e8f0] bg-[#f1f5f9] p-[3px]">
+                  <button
+                    type="button"
+                    onClick={() => handleTabChange('CLIENT')}
+                    className={`min-h-[32px] rounded-[10px] px-3 text-[13px] font-semibold transition-all ${
+                      activeTab === 'CLIENT'
+                        ? 'bg-[#071833] text-white shadow-[0_8px_18px_rgba(7,24,51,0.18)]'
+                        : 'text-[#64748b] hover:text-[#0f172a]'
+                    }`}
+                  >
+                    Clientes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleTabChange('INTERNO')}
+                    className={`min-h-[32px] rounded-[10px] px-3 text-[13px] font-semibold transition-all ${
+                      activeTab === 'INTERNO'
+                        ? 'bg-[#071833] text-white shadow-[0_8px_18px_rgba(7,24,51,0.18)]'
+                        : 'text-[#64748b] hover:text-[#0f172a]'
+                    }`}
+                  >
+                    Interno
+                  </button>
+                </div>
+              </div>
+              <InboxFilterBar
+                filters={filters}
+                onChange={setFilters}
+                projects={projects}
+                onClear={clearFilters}
+                hasActiveFilters={hasActiveInboxFilters(filters)}
+              />
+            </>
+          )}
           <ConversationList
             conversations={conversations}
             selectedId={selectedId}
+            compact={conversationPanelCollapsed}
             hasPendingRealtimeUpdates={hasPendingRealtimeUpdates}
             onScrollMetaChange={({ scrollTop, nearTop }) => {
               conversationListScrollTopRef.current = scrollTop;
               isConversationListNearTopRef.current = nearTop;
             }}
             onApplyRealtimeUpdates={applyPendingRealtimeUpdates}
+            onToggleCollapsed={() => setConversationPanelCollapsed((prev) => !prev)}
             onSelect={(id) => {
               const conv = conversations.find((c) => c.id === id);
               markConversationAsRead(id, conv?.updatedAt ?? null);

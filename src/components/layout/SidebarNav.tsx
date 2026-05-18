@@ -1,7 +1,8 @@
-﻿import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { isNavItemActive, useAppNav } from '../../hooks/useAppNav';
 import { SidebarIcon } from './SidebarIcons';
+import anaAvatar from '../../assets/ana-avatar.svg';
 
 interface SidebarNavProps {
   collapsed: boolean;
@@ -31,9 +32,7 @@ export function SidebarNav({ collapsed, onToggleCollapsed, mobileOpen, onRequest
       aria-label="Menu principal"
     >
       <div className="netiv-sidebar__brand">
-        <div className="netiv-brand-mark" aria-hidden>
-          N
-        </div>
+        <img src={anaAvatar} alt="Ana" className="netiv-brand-mark" />
         <div className="netiv-collapsible-text min-w-0">
           <strong className="block text-[15px] font-semibold tracking-[0.01em]">NETIV</strong>
           <span className="block mt-0.5 text-[12px] text-white/65">Central comercial</span>
@@ -115,4 +114,3 @@ export function SidebarNav({ collapsed, onToggleCollapsed, mobileOpen, onRequest
     </aside>
   );
 }
-

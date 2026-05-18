@@ -1,15 +1,23 @@
-﻿import type { Conversation } from '../types';
+import type { Conversation } from '../types';
 import { formatConversationTime, formatStatus } from '../utils/format';
 import { FlameIcon } from './FlameIcon';
+import { ContactAvatar } from './ContactAvatar';
 
 interface ConversationListItemProps {
   conversation: Conversation;
   isSelected: boolean;
+  compact?: boolean;
   onClick: () => void;
   onDelete?: (id: string) => void;
 }
 
-export function ConversationListItem({ conversation, isSelected, onClick, onDelete }: ConversationListItemProps) {
+export function ConversationListItem({
+  conversation,
+  isSelected,
+  compact = false,
+  onClick,
+  onDelete,
+}: ConversationListItemProps) {
   const displayName = conversation.leadName.trim() || 'Lead sem nome';
   const projectDisplay = conversation.projectName || conversation.empreendimento;
   const isUnread = conversation.unreadCount > 0;
@@ -40,6 +48,35 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
         ? 'border-transparent hover:border-[#fed7aa] hover:bg-[#fff7ed]'
         : 'border-transparent hover:border-[#e2e8f0] hover:bg-[#f8fafc]';
 
+  if (compact) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onClick}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onClick();
+          }
+        }}
+        aria-label={`Conversa com ${displayName}${conversation.unreadCount > 0 ? `, ${conversation.unreadCount} nao lidas` : ''}`}
+        className={`relative flex w-full cursor-pointer items-center justify-center rounded-[14px] border py-2 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2563eb] ${isSelected ? activeStateClass : restingStateClass}`}
+      >
+        <ContactAvatar
+          name={displayName}
+          avatarUrl={conversation.avatarUrl}
+          className="h-10 w-10 rounded-full border border-white/60 object-cover shadow-[0_2px_8px_rgba(15,23,42,0.08)]"
+        />
+        {conversation.unreadCount > 0 && (
+          <span className="absolute right-1 top-1 flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-[#f97316] px-1 text-[9px] font-semibold text-white">
+            {conversation.unreadCount}
+          </span>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div
       role="button"
@@ -55,6 +92,11 @@ export function ConversationListItem({ conversation, isSelected, onClick, onDele
       className={`group w-full cursor-pointer rounded-[17px] border px-3 py-3 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2563eb] ${isSelected ? activeStateClass : restingStateClass}`}
     >
       <div className="flex min-h-6 items-center gap-2">
+        <ContactAvatar
+          name={displayName}
+          avatarUrl={conversation.avatarUrl}
+          className="h-9 w-9 rounded-full border border-white/70 object-cover shadow-[0_2px_8px_rgba(15,23,42,0.07)]"
+        />
         <span className={`flex-1 truncate text-[13px] leading-tight ${isSelected || isUnread ? 'font-semibold text-[#0f172a]' : 'font-medium text-[#0f172a]'}`}>
           {displayName}
         </span>

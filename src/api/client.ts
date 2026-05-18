@@ -161,6 +161,19 @@ export interface ConversationListItem {
   externalContactId: string;
   contactPhone: string | null;
   contactName: string | null;
+  profilePicUrl?: string | null;
+  profile_pic_url?: string | null;
+  avatarUrl?: string | null;
+  avatar_url?: string | null;
+  photoUrl?: string | null;
+  photo_url?: string | null;
+  whatsappProfilePicUrl?: string | null;
+  whatsapp_profile_pic_url?: string | null;
+  contact?: {
+    profilePicUrl?: string | null;
+    avatarUrl?: string | null;
+    photoUrl?: string | null;
+  } | null;
   /** Nome de perfil WhatsApp (listagem). */
   whatsappDisplayName?: string | null;
   /** Nome confirmado pelo cliente na conversa. */
