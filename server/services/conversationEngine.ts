@@ -4519,6 +4519,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
     const shouldRunEmptyFallbackGuard = !shouldAttemptDocSend && !operationalResolverFired;
+    let skipPostPolicyEmptyFallbackBlock = false;
     let finalEmptyFallbackGuard = shouldRunEmptyFallbackGuard
       ? evaluateAnaEmptyFallbackGuard({
           reply: finalOutboundEval.text,
@@ -4616,6 +4617,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         retryAudit.skipRetryValidReply = true;
         retryAudit.retrySkippedReason = emptyFallbackReason;
         retryAudit.validReplyLen = finalOutboundEval.text.trim().length;
+        skipPostPolicyEmptyFallbackBlock = true;
         finalEmptyFallbackGuard = { blocked: false, reason: null };
         anaTurnAuditGuardsApplied.outboundReason = finalOutboundEval.reason;
         console.log('[ANA_EMPTY_FALLBACK_GUARD_SKIP_RETRY_VALID_REPLY]', {
@@ -4909,6 +4911,23 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         })
       : { blocked: false, reason: null as string | null };
     if (postPolicyEmptyGuard.blocked) {
+      const postPolicyReplyBodyLen = replyText.trim().length;
+      const canSkipPostPolicyEmptyBlockForValidReply =
+        skipPostPolicyEmptyFallbackBlock &&
+        replySource === 'openai' &&
+        fallbackReason == null &&
+        Boolean(structured?.reply?.trim()) &&
+        postPolicyReplyBodyLen > 0;
+      if (canSkipPostPolicyEmptyBlockForValidReply) {
+        console.log('[ANA_EMPTY_FALLBACK_POST_POLICY_SKIP_VALID_REPLY]', {
+          conversationId,
+          reason: postPolicyEmptyGuard.reason,
+          replyBodyLen: postPolicyReplyBodyLen,
+          parseSuccess: Boolean(structured),
+          replySource,
+          fallbackReason: fallbackReason ?? null,
+        });
+      } else
       if (isMultiTopicCommercialMessage(trimmed)) {
         replyText = buildSafeCommercialPartialReply({
           userMessage: trimmed,

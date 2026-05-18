@@ -43,3 +43,11 @@ test('rate limit bloqueia sem forcar handoff automatico', () => {
   assert.match(engineSource, /classifiedError === 'OPENAI_RATE_LIMIT'/);
   assert.match(engineSource, /\[ANA_RATE_LIMIT_ABORT_NO_FALLBACK\]/);
 });
+
+test('post policy nao bloqueia resposta valida quando skip do empty guard foi ativado', () => {
+  const engineSource = readFileSync(new URL('../services/conversationEngine.js', import.meta.url), 'utf8');
+  assert.match(engineSource, /let skipPostPolicyEmptyFallbackBlock = false/);
+  assert.match(engineSource, /skipPostPolicyEmptyFallbackBlock = true/);
+  assert.match(engineSource, /\[ANA_EMPTY_FALLBACK_POST_POLICY_SKIP_VALID_REPLY\]/);
+  assert.match(engineSource, /canSkipPostPolicyEmptyBlockForValidReply/);
+});
