@@ -88,6 +88,137 @@ interface EnterpriseApiFormState {
   cost_tracking_enabled: boolean;
 }
 
+type AvailableModelItem = {
+  value: string;
+  label: string;
+  description: string;
+  recommendedFor: 'hot' | 'cold' | 'advanced' | 'realtime';
+  costTier?: 'muito baixo' | 'baixo' | 'médio' | 'médio/alto' | 'alto' | 'variável';
+  costHint?: string;
+};
+
+function costTierBadge(costTier?: 'muito baixo' | 'baixo' | 'médio' | 'médio/alto' | 'alto' | 'variável'): { text: string; classes: string } | null {
+  if (costTier === 'muito baixo') return { text: 'muito baixo', classes: 'bg-emerald-50 border-emerald-200 text-emerald-700' };
+  if (costTier === 'baixo') return { text: 'baixo', classes: 'bg-lime-50 border-lime-200 text-lime-700' };
+  if (costTier === 'médio') return { text: 'médio', classes: 'bg-amber-50 border-amber-200 text-amber-700' };
+  if (costTier === 'médio/alto') return { text: 'médio/alto', classes: 'bg-orange-50 border-orange-200 text-orange-700' };
+  if (costTier === 'alto') return { text: 'alto', classes: 'bg-rose-50 border-rose-200 text-rose-700' };
+  if (costTier === 'variável') return { text: 'variável', classes: 'bg-slate-100 border-slate-200 text-slate-700' };
+  return null;
+}
+
+function ModelDropdown({
+  id,
+  value,
+  options,
+  placeholder,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  options: AvailableModelItem[];
+  placeholder: string;
+  onChange: (next: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((item) => item.value === value) ?? null;
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocMouseDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest(`[data-model-dropdown="${id}"]`)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [id, open]);
+
+  return (
+    <div className="relative" data-model-dropdown={id}>
+      <button
+        id={id}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+        className={`${field} min-h-[72px] text-left flex items-start justify-between gap-3`}
+      >
+        <span className="min-w-0">
+          {selected ? (
+            <span className="block">
+              <span className="block text-[14px] font-semibold text-[#111827] truncate">{selected.label}</span>
+              <span className="block text-[12px] text-[#6B7280] mt-0.5 line-clamp-2">{selected.description}</span>
+              {selected.costHint ? <span className="block text-[11px] text-[#6B7280] mt-1">{selected.costHint}</span> : null}
+            </span>
+          ) : (
+            <span className="text-[14px] text-[#9CA3AF]">{placeholder}</span>
+          )}
+        </span>
+        <span className="text-[#6B7280] mt-1" aria-hidden="true">▾</span>
+      </button>
+
+      {open ? (
+        <div
+          role="listbox"
+          aria-labelledby={id}
+          className="absolute z-20 mt-2 w-full max-h-72 overflow-auto rounded-[12px] border border-[#E5E7EB] bg-white shadow-[0_8px_28px_rgba(17,24,39,0.12)] p-1.5"
+        >
+          <button
+            type="button"
+            role="option"
+            aria-selected={value === ''}
+            onClick={() => {
+              onChange('');
+              setOpen(false);
+            }}
+            className={`w-full text-left rounded-[10px] px-3 py-2 mb-1 border transition-colors ${
+              value === ''
+                ? 'border-[#BFDBFE] bg-[#EFF6FF] text-[#1E3A8A]'
+                : 'border-transparent text-[#4B5563] hover:border-[#E5E7EB] hover:bg-[#F9FAFB]'
+            }`}
+          >
+            Selecionar modelo
+          </button>
+          {options.map((model) => {
+            const badge = costTierBadge(model.costTier);
+            const active = model.value === value;
+            return (
+              <button
+                key={`${id}-${model.value}`}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onClick={() => {
+                  onChange(model.value);
+                  setOpen(false);
+                }}
+                className={`w-full text-left rounded-[10px] px-3 py-2.5 mb-1 last:mb-0 border transition-colors ${
+                  active
+                    ? 'border-[#BFDBFE] bg-[#EFF6FF]'
+                    : 'border-transparent hover:border-[#E5E7EB] hover:bg-[#F9FAFB]'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[14px] font-semibold text-[#111827] truncate">{model.label}</div>
+                    <div className="text-[12px] text-[#6B7280] mt-0.5">{model.description}</div>
+                    {model.costHint ? <div className="text-[11px] text-[#6B7280] mt-1">{model.costHint}</div> : null}
+                  </div>
+                  {badge ? (
+                    <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full border ${badge.classes}`}>{badge.text}</span>
+                  ) : null}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function asNullableString(value: string): string | null {
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
@@ -188,14 +319,7 @@ export function SettingsWhatsAppPage() {
 
   const [apiEnterpriseItems, setApiEnterpriseItems] = useState<EnterpriseApiSettingsItem[]>([]);
   const [apiEnterpriseForms, setApiEnterpriseForms] = useState<Record<number, EnterpriseApiFormState>>({});
-  const [availableModels, setAvailableModels] = useState<
-    Array<{
-      value: string;
-      label: string;
-      description: string;
-      recommendedFor: 'hot' | 'cold' | 'advanced' | 'realtime';
-    }>
-  >([]);
+  const [availableModels, setAvailableModels] = useState<AvailableModelItem[]>([]);
 
   const hasApiData = useMemo(() => apiGlobal != null || apiEnterpriseItems.length > 0, [apiGlobal, apiEnterpriseItems]);
 
@@ -772,37 +896,27 @@ export function SettingsWhatsAppPage() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <label className="block">
                           <span className={lbl}>Modelo para leads quentes</span>
-                          <select
+                          <ModelDropdown
+                            id="global-model-hot"
                             value={apiGlobalForm.model_hot_lead_input}
-                            onChange={(e) =>
-                              setApiGlobalForm((prev) => ({ ...prev, model_hot_lead_input: e.target.value }))
+                            options={availableModels}
+                            placeholder="Selecionar modelo"
+                            onChange={(next) =>
+                              setApiGlobalForm((prev) => ({ ...prev, model_hot_lead_input: next }))
                             }
-                            className={field}
-                          >
-                            <option value="">Selecionar modelo</option>
-                            {availableModels.map((model) => (
-                              <option key={`global-hot-${model.value}`} value={model.value}>
-                                {model.label} - {model.description}
-                              </option>
-                            ))}
-                          </select>
+                          />
                         </label>
                         <label className="block">
                           <span className={lbl}>Modelo para leads frios/triagem</span>
-                          <select
+                          <ModelDropdown
+                            id="global-model-cold"
                             value={apiGlobalForm.model_cold_lead_input}
-                            onChange={(e) =>
-                              setApiGlobalForm((prev) => ({ ...prev, model_cold_lead_input: e.target.value }))
+                            options={availableModels}
+                            placeholder="Selecionar modelo"
+                            onChange={(next) =>
+                              setApiGlobalForm((prev) => ({ ...prev, model_cold_lead_input: next }))
                             }
-                            className={field}
-                          >
-                            <option value="">Selecionar modelo</option>
-                            {availableModels.map((model) => (
-                              <option key={`global-cold-${model.value}`} value={model.value}>
-                                {model.label} - {model.description}
-                              </option>
-                            ))}
-                          </select>
+                          />
                         </label>
                       <label className="block">
                         <span className={lbl}>Temperature</span>
@@ -1088,43 +1202,33 @@ export function SettingsWhatsAppPage() {
                                 </label>
                                 <label className="block">
                                   <span className={lbl}>Modelo para leads quentes</span>
-                                  <select
+                                  <ModelDropdown
+                                    id={`enterprise-${item.enterprise_id}-model-hot`}
                                     value={enterpriseForm.model_hot_lead}
-                                    onChange={(e) =>
+                                    options={availableModels}
+                                    placeholder="Selecionar modelo"
+                                    onChange={(next) =>
                                       updateEnterpriseForm(item.enterprise_id, (prev) => ({
                                         ...prev,
-                                        model_hot_lead: e.target.value,
+                                        model_hot_lead: next,
                                       }))
                                     }
-                                    className={field}
-                                  >
-                                    <option value="">Selecionar modelo</option>
-                                    {availableModels.map((model) => (
-                                      <option key={`enterprise-hot-${item.enterprise_id}-${model.value}`} value={model.value}>
-                                        {model.label} - {model.description}
-                                      </option>
-                                    ))}
-                                  </select>
+                                  />
                                 </label>
                                 <label className="block">
                                   <span className={lbl}>Modelo para leads frios/triagem</span>
-                                  <select
+                                  <ModelDropdown
+                                    id={`enterprise-${item.enterprise_id}-model-cold`}
                                     value={enterpriseForm.model_cold_lead}
-                                    onChange={(e) =>
+                                    options={availableModels}
+                                    placeholder="Selecionar modelo"
+                                    onChange={(next) =>
                                       updateEnterpriseForm(item.enterprise_id, (prev) => ({
                                         ...prev,
-                                        model_cold_lead: e.target.value,
+                                        model_cold_lead: next,
                                       }))
                                     }
-                                    className={field}
-                                  >
-                                    <option value="">Selecionar modelo</option>
-                                    {availableModels.map((model) => (
-                                      <option key={`enterprise-cold-${item.enterprise_id}-${model.value}`} value={model.value}>
-                                        {model.label} - {model.description}
-                                      </option>
-                                    ))}
-                                  </select>
+                                  />
                                 </label>
                                 <label className="block md:col-span-2">
                                   <span className={lbl}>Mensagem de bloqueio emergencial</span>

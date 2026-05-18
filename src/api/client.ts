@@ -261,6 +261,8 @@ export interface AIConfigPublic {
     label: string;
     description: string;
     recommendedFor: 'hot' | 'cold' | 'advanced' | 'realtime';
+    costTier?: 'muito baixo' | 'baixo' | 'médio' | 'médio/alto' | 'alto' | 'variável';
+    costHint?: string;
   }>;
 }
 
@@ -298,6 +300,8 @@ export interface ApiGlobalSettingsPublic {
     label: string;
     description: string;
     recommendedFor: 'hot' | 'cold' | 'advanced' | 'realtime';
+    costTier?: 'muito baixo' | 'baixo' | 'médio' | 'médio/alto' | 'alto' | 'variável';
+    costHint?: string;
   }>;
 }
 
@@ -390,6 +394,8 @@ export const settingsApi = {
         label: string;
         description: string;
         recommendedFor: 'hot' | 'cold' | 'advanced' | 'realtime';
+        costTier?: 'muito baixo' | 'baixo' | 'médio' | 'médio/alto' | 'alto' | 'variável';
+        costHint?: string;
       }>;
     }>('/settings/api/enterprises'),
   putApiEnterprise: (enterpriseId: number, body: EnterpriseApiSettingsUpdate) =>

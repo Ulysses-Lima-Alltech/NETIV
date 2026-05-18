@@ -29,6 +29,8 @@ export interface OpenAIConfigPublic {
     label: string;
     description: string;
     recommendedFor: 'hot' | 'cold' | 'advanced' | 'realtime';
+    costTier?: 'muito baixo' | 'baixo' | 'médio' | 'médio/alto' | 'alto' | 'variável';
+    costHint?: string;
   }>;
 }
 
