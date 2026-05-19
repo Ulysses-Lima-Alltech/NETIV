@@ -4,6 +4,7 @@ import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { readFile } from 'fs/promises';
 import { classifyManualMediaKind } from '../utils/manualWhatsappAttachment.js';
 import { getWhatsAppTemplateByKey } from '../catalogs/whatsappTemplates.js';
+import { getMediaSetting } from '../repositories/whatsappTemplateMediaSettingsRepository.js';
 
 const META_GRAPH_BASE = 'https://graph.facebook.com';
 const REQUEST_TIMEOUT_MS = 120000;
@@ -36,7 +37,9 @@ interface ManualTemplateDef {
   name: string;
   languageCode: string;
   bodyParamKeys?: TemplateParamKey[];
-  headerImageUrl?: string;
+  headerImageUrl?: string | null;
+  headerMediaId?: string | null;
+  requiresHeaderMedia?: boolean;
 }
 
 export function isMetaWindowClosedError(params: { code?: number; message?: string }): boolean {
@@ -57,8 +60,55 @@ export function resolveManualTemplate(templateKey: string): ManualTemplateDef | 
     name: catalogTemplate.name,
     languageCode: catalogTemplate.languageCode,
     bodyParamKeys: [],
-    headerImageUrl: catalogTemplate.headerImageUrl,
+    headerImageUrl: catalogTemplate.headerImageUrl ?? null,
+    headerMediaId: catalogTemplate.headerMediaId ?? null,
+    requiresHeaderMedia: catalogTemplate.requiresHeaderMedia ?? false,
   };
+}
+
+export async function uploadWhatsAppMedia(params: {
+  buffer: Buffer;
+  filename: string;
+  mimeType: string;
+}): Promise<{
+  success: boolean;
+  mediaId?: string;
+  error?: string;
+  httpStatus?: number;
+  metaErrorCode?: number;
+  metaErrorType?: string;
+}> {
+  const config = await getCfg();
+  if (!config) return { success: false, error: 'Integração WhatsApp não configurada no banco.' };
+  const url = `${META_GRAPH_BASE}/${config.apiVersion}/${config.whatsappPhoneNumberId}/media`;
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', params.mimeType);
+  form.append('file', new Blob([Uint8Array.from(params.buffer)], { type: params.mimeType }), params.filename);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.metaAccessToken}` },
+      body: form,
+    });
+    const payload = (await res.json().catch(() => ({}))) as {
+      id?: string;
+      error?: { message?: string; code?: number; type?: string };
+    };
+    if (!res.ok) {
+      return {
+        success: false,
+        error: payload.error?.message ?? `HTTP ${res.status}`,
+        httpStatus: res.status,
+        metaErrorCode: payload.error?.code,
+        metaErrorType: payload.error?.type,
+      };
+    }
+    if (!payload.id) return { success: false, error: 'Meta não retornou media_id.', httpStatus: res.status };
+    return { success: true, mediaId: payload.id };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Erro no upload para Meta.' };
+  }
 }
 
 export interface TemplateParamsContext {
@@ -200,9 +250,48 @@ export async function sendTemplateMessage(
   const bodyParams = buildTemplateParams(template, ctx);
   // Nome na Meta = `key` do catálogo (snake_case); o campo `name` legível do catálogo não é o ID do template.
   const components: Array<Record<string, unknown>> = [];
-  const headerImageUrl = template.headerImageUrl?.trim();
+  const persisted = await getMediaSetting(template.key, template.languageCode);
+  const headerMediaId = (persisted?.headerMediaId ?? template.headerMediaId ?? '').trim();
+  const headerImageUrl = (persisted?.headerImageUrl ?? template.headerImageUrl ?? '').trim();
 
-  if (headerImageUrl) {
+  if (template.requiresHeaderMedia) {
+    if (headerMediaId) {
+      components.push({
+        type: 'header',
+        parameters: [
+          {
+            type: 'image',
+            image: { id: headerMediaId },
+          },
+        ],
+      });
+    } else if (headerImageUrl) {
+      components.push({
+        type: 'header',
+        parameters: [
+          {
+            type: 'image',
+            image: { link: headerImageUrl },
+          },
+        ],
+      });
+    } else {
+      return {
+        success: false,
+        error: 'Este template exige imagem de cabeçalho. Anexe uma imagem antes de enviar.',
+      };
+    }
+  } else if (headerMediaId) {
+    components.push({
+      type: 'header',
+      parameters: [
+        {
+          type: 'image',
+          image: { id: headerMediaId },
+        },
+      ],
+    });
+  } else if (headerImageUrl) {
     components.push({
       type: 'header',
       parameters: [

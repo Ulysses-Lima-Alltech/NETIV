@@ -1283,6 +1283,25 @@ export const whatsappBatchApi = {
       method: 'POST',
       body: { spreadsheet, mapping },
     }),
+  uploadTemplateHeaderImage: (templateName: string, formData: FormData) =>
+    requestFormData<{
+      success: boolean;
+      templateName: string;
+      language: string;
+      headerMediaId: string;
+      filename: string;
+      mimeType: string;
+      sizeBytes: number;
+    }>(`/whatsapp-batch/templates/${encodeURIComponent(templateName)}/header-image`, formData),
+  deleteTemplateHeaderImage: (templateName: string, language: string) =>
+    request<{
+      success: boolean;
+      templateName: string;
+      language: string;
+      hasConfiguredHeaderMedia: boolean;
+    }>(`/whatsapp-batch/templates/${encodeURIComponent(templateName)}/header-image?language=${encodeURIComponent(language)}`, {
+      method: 'DELETE',
+    }),
 };
 
 // Knowledge API

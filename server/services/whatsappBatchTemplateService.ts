@@ -74,8 +74,8 @@ function getTemplateOrThrow(templateKey: string): WhatsAppTemplateCatalogItem {
 
 function assertTemplateHeaderMediaConfigured(template: WhatsAppTemplateCatalogItem): void {
   if (!template.requiresHeaderMedia) return;
-  if (template.headerImageUrl?.trim()) return;
-  throw new Error('Este template exige imagem de cabeçalho. Cadastre uma URL pública antes de enviar.');
+  if (template.hasConfiguredHeaderMedia || template.headerMediaId || template.headerImageUrl?.trim()) return;
+  throw new Error('Este template exige imagem de cabeçalho. Anexe uma imagem antes de enviar.');
 }
 
 function assertTemplateApproved(template: WhatsAppTemplateCatalogItem): void {

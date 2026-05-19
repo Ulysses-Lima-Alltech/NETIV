@@ -113,6 +113,9 @@ export function WhatsAppBatchTemplatePage() {
   const [templatesLoadError, setTemplatesLoadError] = useState<string | null>(null);
   const [templatesSyncWarning, setTemplatesSyncWarning] = useState<string | null>(null);
   const [templatesCatalogSource, setTemplatesCatalogSource] = useState<'meta_sync' | 'local_fallback' | 'unknown'>('unknown');
+  const [headerImageFeedback, setHeaderImageFeedback] = useState<string | null>(null);
+  const [headerImageUploading, setHeaderImageUploading] = useState(false);
+  const [headerImageRemoving, setHeaderImageRemoving] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'batch' | 'templates'>('batch');
   const [metaTemplates, setMetaTemplates] = useState<WhatsAppMetaTemplateItem[]>([]);
@@ -131,13 +134,14 @@ export function WhatsAppBatchTemplatePage() {
   const [metaStatusFilter, setMetaStatusFilter] = useState('ALL');
   const [metaCategoryFilter, setMetaCategoryFilter] = useState('ALL');
   const metaTemplateBodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const headerImageFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
+  const loadBatchTemplates = async (opts?: { refresh?: boolean }) => {
     setTemplatesLoading(true);
     setTemplatesLoadError(null);
     setTemplatesSyncWarning(null);
-    void whatsappBatchApi
-      .listTemplates()
+    return whatsappBatchApi
+      .listTemplates(opts)
       .then((r) => {
         setTemplates(r.templates ?? []);
         setTemplatesSyncWarning(r.warning ?? null);
@@ -159,6 +163,10 @@ export function WhatsAppBatchTemplatePage() {
         }
       })
       .finally(() => setTemplatesLoading(false));
+  };
+
+  useEffect(() => {
+    void loadBatchTemplates();
 
     void projectsApi
       .list(true)
@@ -243,10 +251,7 @@ export function WhatsAppBatchTemplatePage() {
     try {
       await whatsappApi.syncTemplates();
       await loadMetaTemplates();
-      const refreshed = await whatsappBatchApi.listTemplates({ refresh: true });
-      setTemplates(refreshed.templates ?? []);
-      setTemplatesSyncWarning(refreshed.warning ?? null);
-      setTemplatesCatalogSource((refreshed.source as 'meta_sync' | 'local_fallback' | undefined) ?? 'unknown');
+      await loadBatchTemplates({ refresh: true });
       setMetaActionFeedback('Templates sincronizados com sucesso.');
     } catch (e) {
       setMetaActionFeedback(e instanceof Error ? e.message : 'Erro ao sincronizar templates.');
@@ -264,9 +269,11 @@ export function WhatsAppBatchTemplatePage() {
     selectedTemplate && !selectedTemplateUsable
       ? 'Este template ainda não está aprovado na Meta. Ele pode ser visualizado, mas não pode ser usado para disparo.'
       : null;
-  const headerMediaMissing = !!selectedTemplate?.requiresHeaderMedia && !selectedTemplate?.headerImageUrl;
+  const headerMediaMissing =
+    !!selectedTemplate?.requiresHeaderMedia &&
+    !(selectedTemplate?.hasConfiguredHeaderMedia || selectedTemplate?.headerMediaId || selectedTemplate?.headerImageUrl);
   const headerMediaMissingMessage = headerMediaMissing
-    ? 'Este template exige imagem de cabeçalho. Cadastre uma URL pública antes de enviar.'
+    ? 'Este template exige imagem de cabeçalho. Anexe uma imagem antes de enviar.'
     : null;
   const missingBrokersMessage =
     selectedBrokerIds.length === 0 ? 'Selecione ao menos um corretor responsável para distribuir a base.' : null;
@@ -374,6 +381,7 @@ export function WhatsAppBatchTemplatePage() {
     setTestResult(null);
     setSendResult(null);
     setTestRowNumber(null);
+    setHeaderImageFeedback(null);
 
     const tpl = templates.find((t) => t.key === key) ?? null;
     setVariableMappings((prev) => {
@@ -521,6 +529,40 @@ export function WhatsAppBatchTemplatePage() {
       setError(e instanceof Error ? e.message : 'Erro ao enviar mensagens.');
     } finally {
       setLoadingSend(false);
+    }
+  };
+
+  const handleUploadHeaderImage = async (fileToUpload: File) => {
+    if (!selectedTemplate) return;
+    setHeaderImageUploading(true);
+    setHeaderImageFeedback(null);
+    try {
+      const form = new FormData();
+      form.append('file', fileToUpload);
+      form.append('language', selectedTemplate.languageCode || 'pt_BR');
+      await whatsappBatchApi.uploadTemplateHeaderImage(selectedTemplate.key, form);
+      setHeaderImageFeedback('Imagem anexada com sucesso.');
+      await loadBatchTemplates({ refresh: true });
+    } catch (e) {
+      setHeaderImageFeedback(e instanceof Error ? e.message : 'Erro ao anexar imagem.');
+    } finally {
+      setHeaderImageUploading(false);
+      if (headerImageFileInputRef.current) headerImageFileInputRef.current.value = '';
+    }
+  };
+
+  const handleRemoveHeaderImage = async () => {
+    if (!selectedTemplate) return;
+    setHeaderImageRemoving(true);
+    setHeaderImageFeedback(null);
+    try {
+      await whatsappBatchApi.deleteTemplateHeaderImage(selectedTemplate.key, selectedTemplate.languageCode || 'pt_BR');
+      setHeaderImageFeedback('Imagem removida com sucesso.');
+      await loadBatchTemplates({ refresh: true });
+    } catch (e) {
+      setHeaderImageFeedback(e instanceof Error ? e.message : 'Erro ao remover imagem.');
+    } finally {
+      setHeaderImageRemoving(false);
     }
   };
 
@@ -890,6 +932,11 @@ export function WhatsAppBatchTemplatePage() {
                 <p className="text-amber-900 text-sm">{templateNotApprovedMessage}</p>
               </div>
             )}
+            {headerMediaMissingMessage && (
+              <div className="bg-amber-50 border border-amber-200 rounded-md p-4">
+                <p className="text-amber-900 text-sm">{headerMediaMissingMessage}</p>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="space-y-6">
@@ -900,6 +947,62 @@ export function WhatsAppBatchTemplatePage() {
                   loading={templatesLoading}
                   selectDisabled={!!templatesLoadError}
                 />
+                {selectedTemplate?.requiresHeaderMedia && (
+                  <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      {selectedTemplate.hasConfiguredHeaderMedia || selectedTemplate.headerMediaId || selectedTemplate.headerImageUrl ? (
+                        <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">
+                          Imagem anexada
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800">
+                          Requer imagem
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-[12px] font-medium text-[#374151] mb-2">Imagem do cabeçalho</p>
+                      {selectedTemplate.headerMediaFilename ? (
+                        <p className="text-[12px] text-[#4B5563] mb-2">Imagem atual: {selectedTemplate.headerMediaFilename}</p>
+                      ) : null}
+                      <input
+                        ref={headerImageFileInputRef}
+                        type="file"
+                        accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
+                        className="hidden"
+                        onChange={(e) => {
+                          const nextFile = e.target.files?.[0];
+                          if (nextFile) void handleUploadHeaderImage(nextFile);
+                        }}
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => headerImageFileInputRef.current?.click()}
+                          disabled={headerImageUploading || headerImageRemoving}
+                          className="px-4 py-2 rounded-[10px] bg-[#0EA5E9] text-white text-[13px] font-semibold hover:bg-[#0284C7] disabled:opacity-60"
+                        >
+                          {headerImageUploading
+                            ? 'Enviando imagem...'
+                            : selectedTemplate.headerMediaFilename
+                              ? 'Substituir imagem'
+                              : 'Anexar imagem'}
+                        </button>
+                        {(selectedTemplate.headerMediaId || selectedTemplate.headerImageUrl) && (
+                          <button
+                            type="button"
+                            onClick={() => void handleRemoveHeaderImage()}
+                            disabled={headerImageUploading || headerImageRemoving}
+                            className="px-4 py-2 rounded-[10px] border border-red-200 text-red-700 bg-red-50 text-[13px] font-semibold hover:bg-red-100 disabled:opacity-60"
+                          >
+                            {headerImageRemoving ? 'Removendo...' : 'Remover imagem'}
+                          </button>
+                        )}
+                      </div>
+                      {headerImageFeedback ? <p className="text-[12px] text-[#065F46] mt-2">{headerImageFeedback}</p> : null}
+                    </div>
+                  </section>
+                )}
                 {!templatesLoading && !templatesLoadError && usableTemplates.length === 0 && (
                   <div className="bg-amber-50 border border-amber-200 rounded-md p-3">
                     <p className="text-amber-900 text-sm">

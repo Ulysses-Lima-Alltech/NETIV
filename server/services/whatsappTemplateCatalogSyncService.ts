@@ -6,6 +6,7 @@ import {
   type WhatsAppTemplateVariableDef,
 } from '../catalogs/whatsappTemplates.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
+import { listMediaSettings } from '../repositories/whatsappTemplateMediaSettingsRepository.js';
 
 const META_GRAPH_BASE = 'https://graph.facebook.com';
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -87,9 +88,20 @@ function buildVariablesFromBody(components: MetaTemplateComponent[]): WhatsAppTe
   return ids.map((id) => ({ id, label: `Variável ${id}`, required: true }));
 }
 
-function mapMetaTemplateToCatalogItem(template: MetaTemplateItem): WhatsAppTemplateCatalogItem | null {
+function buildTemplateLangKey(templateName: string, language: string): string {
+  return `${templateName}::${language || 'pt_BR'}`;
+}
+
+function mapMetaTemplateToCatalogItem(
+  template: MetaTemplateItem,
+  configuredMedia: Map<
+    string,
+    { headerImageUrl: string | null; headerMediaId: string | null; headerMediaFilename: string | null }
+  >
+): WhatsAppTemplateCatalogItem | null {
   const key = String(template.name ?? '').trim();
   if (!key) return null;
+  const languageCode = String(template.language ?? 'pt_BR');
   const status = String(template.status ?? 'UNKNOWN').toUpperCase() || 'UNKNOWN';
   const components = Array.isArray(template.components) ? template.components : [];
   const header = components.find((component) => String(component.type ?? '').toUpperCase() === 'HEADER');
@@ -99,10 +111,14 @@ function mapMetaTemplateToCatalogItem(template: MetaTemplateItem): WhatsAppTempl
   const hasHeaderDocument = headerFormat === 'DOCUMENT';
   const hasButtons = components.some((component) => String(component.type ?? '').toUpperCase() === 'BUTTONS');
   const variables = buildVariablesFromBody(components);
+  const persisted = configuredMedia.get(buildTemplateLangKey(key, languageCode));
+  const headerImageUrl = persisted?.headerImageUrl?.trim() || null;
+  const headerMediaId = persisted?.headerMediaId?.trim() || null;
+  const headerMediaFilename = persisted?.headerMediaFilename?.trim() || null;
   return {
     key,
     name: toFriendlyName(key),
-    languageCode: String(template.language ?? 'pt_BR'),
+    languageCode,
     metaTemplateName: key,
     metaTemplateId: String(template.id ?? ''),
     category: String(template.category ?? '').toUpperCase() || undefined,
@@ -118,6 +134,10 @@ function mapMetaTemplateToCatalogItem(template: MetaTemplateItem): WhatsAppTempl
     bodyVariableCount: variables.length,
     hasButtons,
     requiresHeaderMedia: hasHeaderImage || hasHeaderVideo || hasHeaderDocument,
+    headerImageUrl: headerImageUrl || undefined,
+    headerMediaId,
+    headerMediaFilename,
+    hasConfiguredHeaderMedia: Boolean(headerMediaId || headerImageUrl),
     variables,
   };
 }
@@ -149,17 +169,36 @@ export async function listMetaTemplatesRaw(): Promise<MetaTemplateItem[]> {
 
 async function fetchMetaTemplatesForBatch(): Promise<WhatsAppTemplateCatalogItem[]> {
   const raw = await listMetaTemplatesRaw();
+  const persisted = await listMediaSettings();
+  const configuredMedia = new Map<
+    string,
+    { headerImageUrl: string | null; headerMediaId: string | null; headerMediaFilename: string | null }
+  >();
+  for (const item of persisted) {
+    configuredMedia.set(buildTemplateLangKey(item.templateName, item.language), {
+      headerImageUrl: item.headerImageUrl,
+      headerMediaId: item.headerMediaId,
+      headerMediaFilename: item.headerMediaFilename,
+    });
+  }
   return raw
-    .map(mapMetaTemplateToCatalogItem)
+    .map((template) => mapMetaTemplateToCatalogItem(template, configuredMedia))
     .filter((item): item is WhatsAppTemplateCatalogItem => Boolean(item));
 }
 
 function mergeWithLocalHeaderMedia(templates: WhatsAppTemplateCatalogItem[]): WhatsAppTemplateCatalogItem[] {
   const localByKey = new Map(WHATSAPP_TEMPLATES_CATALOG.map((item) => [item.key, item]));
   return templates.map((template) => {
+    if (template.headerMediaId || template.headerImageUrl) {
+      return { ...template, hasConfiguredHeaderMedia: true };
+    }
     const local = localByKey.get(template.key);
-    if (!local?.headerImageUrl) return template;
-    return { ...template, headerImageUrl: local.headerImageUrl };
+    if (!local?.headerImageUrl) return { ...template, hasConfiguredHeaderMedia: false };
+    return {
+      ...template,
+      headerImageUrl: local.headerImageUrl,
+      hasConfiguredHeaderMedia: true,
+    };
   });
 }
 
@@ -236,6 +275,7 @@ export async function listBatchTemplatesFromMetaOrFallback(params?: {
   } catch {
     const fallback = WHATSAPP_TEMPLATES_CATALOG.map((item) => ({
       ...item,
+      hasConfiguredHeaderMedia: Boolean(item.headerMediaId || item.headerImageUrl?.trim()),
       source: 'local_fallback' as const,
     }));
     setRuntimeWhatsAppTemplatesCatalog(fallback);

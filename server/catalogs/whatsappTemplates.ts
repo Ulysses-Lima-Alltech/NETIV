@@ -34,6 +34,9 @@ export interface WhatsAppTemplateCatalogItem {
   requiresHeaderMedia?: boolean;
   variables: WhatsAppTemplateVariableDef[];
   headerImageUrl?: string;
+  headerMediaId?: string | null;
+  headerMediaFilename?: string | null;
+  hasConfiguredHeaderMedia?: boolean;
 
   /**
    * Opcional: texto do corpo como na Meta, com placeholders {{1}}, {{2}}, etc.,

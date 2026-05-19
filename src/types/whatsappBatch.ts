@@ -22,7 +22,10 @@ export interface BatchTemplateCatalogItem {
   bodyVariableCount?: number;
   hasButtons?: boolean;
   requiresHeaderMedia?: boolean;
-  headerImageUrl?: string;
+  headerMediaId?: string | null;
+  headerImageUrl?: string | null;
+  headerMediaFilename?: string | null;
+  hasConfiguredHeaderMedia?: boolean;
   variables: WhatsAppTemplateVariableDef[];
   /** Corpo com {{1}}, {{2}}… (opcional; inbox usa fallback por label se ausente). */
   messageBodyTemplate?: string;

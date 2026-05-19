@@ -9,9 +9,20 @@ import {
 import { parseSpreadsheet } from '../services/spreadsheetParseService.js';
 import { listBatchTemplatesFromMetaOrFallback } from '../services/whatsappTemplateCatalogSyncService.js';
 import { BatchMappingDtoSchema, BatchSpreadsheetOperationSchema } from '../validators/whatsappBatch.js';
+import { uploadWhatsAppMedia } from '../services/whatsappMetaService.js';
+import {
+  clearHeaderMedia,
+  getMediaSetting,
+  upsertHeaderImageUpload,
+} from '../repositories/whatsappTemplateMediaSettingsRepository.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+const ALLOWED_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
 
 router.get('/templates', async (req, res) => {
   try {
@@ -29,6 +40,82 @@ router.get('/templates', async (req, res) => {
   } catch (e) {
     console.error('[WHATSAPP_BATCH_TEMPLATES_ERROR]', e);
     res.status(500).json({ error: 'Erro ao listar templates do WhatsApp.' });
+  }
+});
+
+router.post('/templates/:templateName/header-image', imageUpload.single('file'), async (req, res) => {
+  try {
+    const templateName = String(req.params.templateName ?? '').trim();
+    if (!templateName) {
+      return res.status(400).json({ error: 'Template inválido.' });
+    }
+    const language = String(req.body?.language ?? 'pt_BR').trim() || 'pt_BR';
+    if (!req.file) {
+      return res.status(400).json({ error: 'Arquivo de imagem é obrigatório.' });
+    }
+    if (!ALLOWED_IMAGE_MIME_TYPES.has(req.file.mimetype)) {
+      return res.status(400).json({ error: 'Formato inválido. Use PNG, JPG, JPEG ou WEBP.' });
+    }
+    if (req.file.size > 5 * 1024 * 1024) {
+      return res.status(400).json({ error: 'Imagem excede 5MB.' });
+    }
+
+    const uploadResult = await uploadWhatsAppMedia({
+      buffer: req.file.buffer,
+      filename: req.file.originalname,
+      mimeType: req.file.mimetype === 'image/jpg' ? 'image/jpeg' : req.file.mimetype,
+    });
+    if (!uploadResult.success || !uploadResult.mediaId) {
+      return res.status(uploadResult.httpStatus ?? 502).json({
+        error: uploadResult.error ?? 'Falha no upload da imagem para Meta.',
+        metaErrorCode: uploadResult.metaErrorCode,
+        metaErrorType: uploadResult.metaErrorType,
+      });
+    }
+
+    await upsertHeaderImageUpload({
+      templateName,
+      language,
+      fileBytes: req.file.buffer,
+      filename: req.file.originalname,
+      mimeType: req.file.mimetype,
+      sizeBytes: req.file.size,
+      headerMediaId: uploadResult.mediaId,
+    });
+    await listBatchTemplatesFromMetaOrFallback({ forceRefresh: true });
+
+    return res.json({
+      success: true,
+      templateName,
+      language,
+      headerMediaId: uploadResult.mediaId,
+      filename: req.file.originalname,
+      mimeType: req.file.mimetype,
+      sizeBytes: req.file.size,
+    });
+  } catch (e) {
+    console.error('[WHATSAPP_BATCH_HEADER_IMAGE_UPLOAD_ERROR]', e);
+    return res.status(500).json({ error: 'Erro ao anexar imagem do cabeçalho.' });
+  }
+});
+
+router.delete('/templates/:templateName/header-image', async (req, res) => {
+  try {
+    const templateName = String(req.params.templateName ?? '').trim();
+    if (!templateName) return res.status(400).json({ error: 'Template inválido.' });
+    const language = String(req.query.language ?? 'pt_BR').trim() || 'pt_BR';
+    await clearHeaderMedia(templateName, language);
+    await listBatchTemplatesFromMetaOrFallback({ forceRefresh: true });
+    const setting = await getMediaSetting(templateName, language);
+    return res.json({
+      success: true,
+      templateName,
+      language,
+      hasConfiguredHeaderMedia: Boolean(setting?.headerMediaId || setting?.headerImageUrl),
+    });
+  } catch (e) {
+    console.error('[WHATSAPP_BATCH_HEADER_IMAGE_DELETE_ERROR]', e);
+    return res.status(500).json({ error: 'Erro ao remover imagem do cabeçalho.' });
   }
 });
 
