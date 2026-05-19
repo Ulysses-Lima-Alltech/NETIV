@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import { useAuth } from '../contexts/AuthContext';
@@ -130,6 +130,7 @@ export function WhatsAppBatchTemplatePage() {
   const [metaSearch, setMetaSearch] = useState('');
   const [metaStatusFilter, setMetaStatusFilter] = useState('ALL');
   const [metaCategoryFilter, setMetaCategoryFilter] = useState('ALL');
+  const metaTemplateBodyRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     setTemplatesLoading(true);
@@ -293,6 +294,55 @@ export function WhatsAppBatchTemplatePage() {
     const matchesCategory = metaCategoryFilter === 'ALL' || category === metaCategoryFilter;
     return matchesSearch && matchesStatus && matchesCategory;
   });
+
+  const previewMessage = useMemo(() => {
+    if (!metaTemplateBody.trim()) return '';
+    return metaTemplateBody
+      .replaceAll('{{1}}', 'Maria')
+      .replaceAll('{{2}}', 'Residencial Évora')
+      .replaceAll('{{3}}', 'João, corretor responsável');
+  }, [metaTemplateBody]);
+
+  const variableValidation = useMemo(() => {
+    const text = metaTemplateBody;
+    const validMatches = Array.from(text.matchAll(/\{\{(\d+)\}\}/g));
+    const usedNumbers = validMatches
+      .map((match) => Number(match[1]))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const uniqueNumbers = Array.from(new Set(usedNumbers)).sort((a, b) => a - b);
+    const hasSequenceGap = uniqueNumbers.some((value, index) => value !== index + 1);
+    const hasInvalidFormat =
+      /\{[^{}]*\}/.test(text.replace(/\{\{\d+\}\}/g, '')) ||
+      /{{\s*\d+\s*}}/.test(text) ||
+      /{{[^}]*[a-zA-Z][^}]*}}/.test(text);
+
+    return { hasSequenceGap, hasInvalidFormat };
+  }, [metaTemplateBody]);
+
+  const insertVariableIntoBody = (variableToken: string) => {
+    const textarea = metaTemplateBodyRef.current;
+    if (!textarea) {
+      const separator = metaTemplateBody && !metaTemplateBody.endsWith(' ') ? ' ' : '';
+      setMetaTemplateBody(`${metaTemplateBody}${separator}${variableToken}`.trim());
+      return;
+    }
+
+    const start = textarea.selectionStart ?? metaTemplateBody.length;
+    const end = textarea.selectionEnd ?? metaTemplateBody.length;
+    const before = metaTemplateBody.slice(0, start);
+    const after = metaTemplateBody.slice(end);
+    const needsLeadingSpace = before.length > 0 && !before.endsWith(' ') && !before.endsWith('\n');
+    const needsTrailingSpace = after.length > 0 && !after.startsWith(' ') && !after.startsWith('\n');
+    const insertText = `${needsLeadingSpace ? ' ' : ''}${variableToken}${needsTrailingSpace ? ' ' : ''}`;
+    const nextValue = `${before}${insertText}${after}`;
+    setMetaTemplateBody(nextValue);
+
+    window.requestAnimationFrame(() => {
+      textarea.focus();
+      const nextCursor = before.length + insertText.length;
+      textarea.setSelectionRange(nextCursor, nextCursor);
+    });
+  };
 
   const validPreviewRows = (preview?.rows ?? []).filter((row) => row.status === 'valid');
   const canUseRowMode = validPreviewRows.length > 0;
@@ -585,14 +635,91 @@ export function WhatsAppBatchTemplatePage() {
                   <div>
                     <label className="block text-[12px] text-[#374151] mb-1">Mensagem principal</label>
                     <textarea
+                      ref={metaTemplateBodyRef}
                       className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px] min-h-[100px]"
                       placeholder="Digite aqui o texto que será enviado ao cliente."
                       value={metaTemplateBody}
                       onChange={(e) => setMetaTemplateBody(e.target.value)}
                     />
                     <p className="text-[11px] text-[#6B7280] mt-1">
-                      Esse é o conteúdo principal. Você pode usar variáveis como {`{{1}}`} e {`{{2}}`}.
+                      Use variáveis quando uma parte da mensagem mudar para cada contato, como nome, empreendimento ou corretor.
+                      Escreva as variáveis no formato {`{{1}}`}, {`{{2}}`}, {`{{3}}`}. Depois, no envio em lote, você escolherá
+                      qual coluna da planilha preencherá cada variável.
                     </p>
+                    <div className="mt-2 rounded-[10px] border border-[#DBEAFE] bg-[#EFF6FF] px-3 py-2">
+                      <p className="text-[11px] font-semibold text-[#1E3A8A]">Exemplo:</p>
+                      <p className="text-[12px] text-[#1E3A8A] mt-1">Olá {`{{1}}`}, temos um convite especial para você conhecer o {`{{2}}`}.</p>
+                      <p className="text-[11px] text-[#1D4ED8] mt-2">Neste exemplo:</p>
+                      <p className="text-[11px] text-[#1D4ED8]">{`{{1}}`} pode ser a coluna Nome</p>
+                      <p className="text-[11px] text-[#1D4ED8]">{`{{2}}`} pode ser a coluna Empreendimento</p>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => insertVariableIntoBody('{{1}}')}
+                        className="px-2.5 py-1 rounded-[8px] border border-[#BFDBFE] bg-white text-[#1E40AF] text-[11px] font-medium hover:bg-[#EFF6FF]"
+                      >
+                        + Nome {`{{1}}`}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => insertVariableIntoBody('{{2}}')}
+                        className="px-2.5 py-1 rounded-[8px] border border-[#BFDBFE] bg-white text-[#1E40AF] text-[11px] font-medium hover:bg-[#EFF6FF]"
+                      >
+                        + Empreendimento {`{{2}}`}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => insertVariableIntoBody('{{3}}')}
+                        className="px-2.5 py-1 rounded-[8px] border border-[#BFDBFE] bg-white text-[#1E40AF] text-[11px] font-medium hover:bg-[#EFF6FF]"
+                      >
+                        + Corretor {`{{3}}`}
+                      </button>
+                    </div>
+                    {(variableValidation.hasSequenceGap || variableValidation.hasInvalidFormat) && (
+                      <div className="mt-2 rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2 space-y-1">
+                        {variableValidation.hasSequenceGap && (
+                          <p className="text-[11px] text-amber-800">
+                            As variáveis devem seguir a ordem {`{{1}}`}, {`{{2}}`}, {`{{3}}`} sem pular números.
+                          </p>
+                        )}
+                        {variableValidation.hasInvalidFormat && (
+                          <p className="text-[11px] text-amber-800">
+                            Use variáveis no formato {`{{1}}`}, {`{{2}}`}, {`{{3}}`}. Evite nomes ou espaços dentro das chaves.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    <div className="mt-2 rounded-[10px] border border-[#E5E7EB] bg-white px-3 py-2">
+                      <p className="text-[11px] font-semibold text-[#374151]">Prévia de exemplo</p>
+                      <p className="text-[12px] text-[#4B5563] mt-1">
+                        {previewMessage || 'A prévia aparecerá aqui conforme você escrever a mensagem.'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="rounded-[10px] border border-[#E5E7EB] bg-white px-3 py-3 space-y-2">
+                    <h4 className="text-[12px] font-semibold text-[#111827]">Como usar variáveis</h4>
+                    <p className="text-[12px] text-[#4B5563]">
+                      Variáveis são espaços que serão preenchidos automaticamente com dados da planilha no momento do disparo.
+                    </p>
+                    <p className="text-[12px] text-[#111827]">Exemplo de mensagem:</p>
+                    <p className="text-[12px] text-[#4B5563]">
+                      Olá {`{{1}}`}, o empreendimento {`{{2}}`} tem uma condição especial para você.
+                    </p>
+                    <p className="text-[12px] text-[#111827]">Exemplo de preenchimento:</p>
+                    <p className="text-[12px] text-[#4B5563]">{`{{1}}`} = Nome do cliente</p>
+                    <p className="text-[12px] text-[#4B5563]">{`{{2}}`} = Nome do empreendimento</p>
+                    <p className="text-[12px] text-[#4B5563]">
+                      No disparo em lote, o sistema pedirá para você ligar cada variável a uma coluna da planilha.
+                    </p>
+                    <p className="text-[12px] font-semibold text-[#111827]">Regras importantes</p>
+                    <ul className="list-disc pl-5 text-[12px] text-[#4B5563] space-y-1">
+                      <li>Use sempre números em sequência: {`{{1}}`}, {`{{2}}`}, {`{{3}}`}.</li>
+                      <li>Não pule números. Evite usar {`{{1}}`} e {`{{3}}`} sem usar {`{{2}}`}.</li>
+                      <li>Não repita a mesma variável para informações diferentes.</li>
+                      <li>Não coloque dados reais fixos se eles mudarem por contato.</li>
+                      <li>Templates com variáveis precisam ser aprovados pela Meta antes do envio.</li>
+                    </ul>
                   </div>
                   <div>
                     <label className="block text-[12px] text-[#374151] mb-1">Título da mensagem, opcional</label>
@@ -898,6 +1025,7 @@ export function WhatsAppBatchTemplatePage() {
     </div>
   );
 }
+
 
 
 

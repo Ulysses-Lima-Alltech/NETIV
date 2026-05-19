@@ -132,6 +132,14 @@ export function ColumnMappingPanel({
       </div>
 
       <div className="space-y-3">
+        {template.variables.length > 0 && (
+          <div className="rounded-[10px] border border-[#DBEAFE] bg-[#EFF6FF] px-3 py-2">
+            <p className="text-[12px] text-[#1E3A8A] font-medium">
+              Este template possui variáveis. Escolha qual coluna da planilha preencherá cada informação no envio.
+            </p>
+            <p className="text-[11px] text-[#1D4ED8] mt-1">Exemplo: {`{{1}}`} - Nome | {`{{2}}`} - Empreendimento</p>
+          </div>
+        )}
         {template.variables.map((v) => {
           const mapping = variableMappings[String(v.id)] ?? { type: 'column', columnName: '' };
           return (
@@ -234,3 +242,4 @@ export function ColumnMappingPanel({
     </section>
   );
 }
+
