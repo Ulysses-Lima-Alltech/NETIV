@@ -81,9 +81,7 @@ function assertTemplateHeaderMediaConfigured(template: WhatsAppTemplateCatalogIt
 function assertTemplateApproved(template: WhatsAppTemplateCatalogItem): void {
   const status = String(template.status ?? 'APPROVED').toUpperCase();
   if (status === 'APPROVED') return;
-  throw new Error(
-    'Este template ainda não está aprovado na Meta. Ele aparecerá aqui para acompanhamento, mas só poderá ser usado após aprovação.'
-  );
+  throw new Error('Apenas templates aprovados podem ser usados no disparo em lote.');
 }
 
 async function resolveEnterprise(selectedEnterpriseId: number | null | undefined): Promise<{ id: number; name: string } | null> {
@@ -110,7 +108,11 @@ async function resolveSelectedBrokers(mapping: BatchMappingDto): Promise<Array<{
       if (!broker || !broker.active) throw new Error('Um dos corretores selecionados é inválido ou inativo.');
       brokers.push({ id: broker.id, fullName: broker.full_name });
     }
-    return brokers;
+    return brokers.sort((a, b) => {
+      const byName = a.fullName.localeCompare(b.fullName, 'pt-BR', { sensitivity: 'base' });
+      if (byName !== 0) return byName;
+      return a.id - b.id;
+    });
   }
 
   const single = await resolveBroker(mapping.selectedBrokerId ?? null);

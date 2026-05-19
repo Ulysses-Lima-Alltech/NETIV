@@ -61,10 +61,19 @@ export function ColumnMappingPanel({
     onVariableMappingsChange({ ...variableMappings, [variableId]: mapping });
   };
 
+  const activeBrokers = brokers.filter((b) => b.active);
+  const toggleBroker = (brokerId: string) => {
+    if (selectedBrokerIds.includes(brokerId)) {
+      onSelectedBrokerIdsChange(selectedBrokerIds.filter((id) => id !== brokerId));
+      return;
+    }
+    onSelectedBrokerIdsChange([...selectedBrokerIds, brokerId]);
+  };
+
   return (
     <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-4">
       <h2 className="text-[14px] font-semibold">Mapeamento de dados</h2>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
           <label className="block text-[12px] text-[#374151] mb-1">Coluna de telefone</label>
@@ -77,10 +86,10 @@ export function ColumnMappingPanel({
             ))}
           </select>
           {suggestions?.phoneColumn && (
-            <p className="text-[11px] text-[#6B7280] mt-1">Sugest√£o autom√°tica: {suggestions.phoneColumn}</p>
+            <p className="text-[11px] text-[#6B7280] mt-1">Sugest„o autom·tica: {suggestions.phoneColumn}</p>
           )}
         </div>
-        
+
         <div>
           <label className="block text-[12px] text-[#374151] mb-1">Empreendimento (cadastro interno)</label>
           <select className={inputCls} value={selectedEnterpriseId} onChange={(e) => onSelectedEnterpriseIdChange(e.target.value)}>
@@ -92,27 +101,33 @@ export function ColumnMappingPanel({
             ))}
           </select>
         </div>
-        
-        <div>
-          <label className="block text-[12px] text-[#374151] mb-1">Corretores respons√°veis (round-robin)</label>
-          <select
-            multiple
-            className={`${inputCls} h-[112px]`}
-            value={selectedBrokerIds}
-            onChange={(e) => {
-              const next = Array.from(e.currentTarget.selectedOptions).map((opt) => opt.value);
-              onSelectedBrokerIdsChange(next);
-            }}
-          >
-            {brokers
-              .filter((b) => b.active)
-              .map((b) => (
-                <option key={b.id} value={String(b.id)}>
-                  {b.fullName}
-                </option>
-              ))}
-          </select>
-          <p className="text-[11px] text-[#6B7280] mt-1">A ordem selecionada define a fila de distribui√ß√£o.</p>
+
+        <div className="md:col-span-3">
+          <label className="block text-[12px] text-[#374151] mb-1">Corretores participantes do lote</label>
+          <p className="text-[11px] text-[#6B7280] mb-2">
+            Selecione os corretores que participar„o da distribuiÁ„o autom·tica deste lote.
+          </p>
+          <div className="border border-[#E5E7EB] rounded-[10px] max-h-[180px] overflow-y-auto p-2 space-y-1 bg-white">
+            {activeBrokers.length === 0 ? (
+              <p className="text-[12px] text-[#6B7280] px-1 py-1">Nenhum corretor ativo disponÌvel.</p>
+            ) : (
+              activeBrokers.map((b) => {
+                const brokerId = String(b.id);
+                const checked = selectedBrokerIds.includes(brokerId);
+                return (
+                  <label key={b.id} className="flex items-center gap-2 px-1 py-1.5 rounded hover:bg-[#F8FAFC]">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-[#0EA5E9]"
+                      checked={checked}
+                      onChange={() => toggleBroker(brokerId)}
+                    />
+                    <span className="text-[13px] text-[#111827]">{b.fullName}</span>
+                  </label>
+                );
+              })
+            )}
+          </div>
         </div>
       </div>
 
@@ -126,35 +141,39 @@ export function ColumnMappingPanel({
                 {v.id}
                 {'}}'} - {v.label} {v.required && <span className="text-red-500">*</span>}
               </p>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                 <div>
                   <label className="text-[11px] text-[#6B7280]">Tipo</label>
                   <select
                     className={inputCls}
                     value={mapping.type}
-                    onChange={(e) => updateVariableMapping(String(v.id), { 
-                      type: e.target.value as 'column' | 'fixed' | 'enterprise',
-                      columnName: e.target.value === 'column' ? mapping.columnName : undefined,
-                      fixedValue: e.target.value === 'fixed' ? mapping.fixedValue : undefined,
-                    })}
+                    onChange={(e) =>
+                      updateVariableMapping(String(v.id), {
+                        type: e.target.value as 'column' | 'fixed' | 'enterprise',
+                        columnName: e.target.value === 'column' ? mapping.columnName : undefined,
+                        fixedValue: e.target.value === 'fixed' ? mapping.fixedValue : undefined,
+                      })
+                    }
                   >
                     <option value="column">Coluna da planilha</option>
                     <option value="fixed">Valor fixo</option>
                     <option value="enterprise">Nome do empreendimento</option>
                   </select>
                 </div>
-                
+
                 {mapping.type === 'column' && (
                   <div>
                     <label className="text-[11px] text-[#6B7280]">Coluna</label>
                     <select
                       className={inputCls}
                       value={mapping.columnName || ''}
-                      onChange={(e) => updateVariableMapping(String(v.id), { 
-                        ...mapping, 
-                        columnName: e.target.value 
-                      })}
+                      onChange={(e) =>
+                        updateVariableMapping(String(v.id), {
+                          ...mapping,
+                          columnName: e.target.value,
+                        })
+                      }
                     >
                       <option value="">Selecione</option>
                       {spreadsheet.headers.map((h) => (
@@ -165,7 +184,7 @@ export function ColumnMappingPanel({
                     </select>
                   </div>
                 )}
-                
+
                 {mapping.type === 'fixed' && (
                   <div>
                     <label className="text-[11px] text-[#6B7280]">Valor</label>
@@ -173,22 +192,24 @@ export function ColumnMappingPanel({
                       type="text"
                       className={inputCls}
                       value={mapping.fixedValue || ''}
-                      onChange={(e) => updateVariableMapping(String(v.id), { 
-                        ...mapping, 
-                        fixedValue: e.target.value 
-                      })}
+                      onChange={(e) =>
+                        updateVariableMapping(String(v.id), {
+                          ...mapping,
+                          fixedValue: e.target.value,
+                        })
+                      }
                       placeholder="Digite o valor fixo"
                     />
                   </div>
                 )}
-                
+
                 {mapping.type === 'enterprise' && (
                   <div>
                     <label className="text-[11px] text-[#6B7280]">Valor</label>
                     <input
                       type="text"
                       className={inputCls}
-                      value={selectedEnterpriseId ? projects.find(p => String(p.id) === selectedEnterpriseId)?.name || '' : ''}
+                      value={selectedEnterpriseId ? projects.find((p) => String(p.id) === selectedEnterpriseId)?.name || '' : ''}
                       disabled
                       placeholder="Nome do empreendimento selecionado"
                     />
@@ -209,9 +230,7 @@ export function ColumnMappingPanel({
           {loadingPreview ? 'Gerando preview...' : 'Gerar preview'}
         </button>
       </div>
-      {previewDisabledReason && (
-        <p className="text-[12px] text-[#B45309]">{previewDisabledReason}</p>
-      )}
+      {previewDisabledReason && <p className="text-[12px] text-[#B45309]">{previewDisabledReason}</p>}
     </section>
   );
 }

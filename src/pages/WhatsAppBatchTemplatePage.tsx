@@ -220,10 +220,11 @@ export function WhatsAppBatchTemplatePage() {
   };
 
   const selectedTemplate = templates.find((tpl) => tpl.key === selectedTemplateKey) ?? null;
+  const approvedTemplates = templates.filter((tpl) => normalizeMetaStatus(tpl.status) === 'APPROVED');
   const templateStatus = normalizeMetaStatus(selectedTemplate?.status);
   const templateNotApprovedMessage =
     selectedTemplate && templateStatus !== 'APPROVED'
-      ? 'Este template ainda não está aprovado na Meta. Ele pode ser visualizado, mas não pode ser usado para disparo.'
+      ? 'Este template ainda nao esta aprovado na Meta. Ele pode ser visualizado, mas nao pode ser usado para disparo.'
       : null;
   const headerMediaMissing = !!selectedTemplate?.requiresHeaderMedia && !selectedTemplate?.headerImageUrl;
   const headerMediaMissingMessage = headerMediaMissing
@@ -686,12 +687,19 @@ export function WhatsAppBatchTemplatePage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="space-y-6">
                 <TemplateSelector
-                  templates={templates}
+                  templates={approvedTemplates}
                   selectedKey={selectedTemplateKey}
                   onSelect={handleSelectedTemplateKeyChange}
                   loading={templatesLoading}
                   selectDisabled={!!templatesLoadError}
                 />
+                {!templatesLoading && !templatesLoadError && approvedTemplates.length === 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-md p-3">
+                    <p className="text-amber-900 text-sm">
+                      Nenhum template aprovado disponível para disparo. Acompanhe aprovações na aba Templates META.
+                    </p>
+                  </div>
+                )}
 
                 <SpreadsheetUploadPanel file={file} onFileChange={handleFileChange} onParse={handleParse} loading={loadingParse} />
 
@@ -810,3 +818,5 @@ export function WhatsAppBatchTemplatePage() {
     </div>
   );
 }
+
+
