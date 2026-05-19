@@ -174,10 +174,16 @@ function ensureBatchFile(req: Request, res: Response): Express.Multer.File | nul
 router.get('/templates', async (_req, res) => {
   try {
     const list = await listMetaTemplatesRaw();
-    return res.json({ templates: list, source: 'meta_sync' });
+    return res.json({
+      templates: list.map((item) => ({ ...item, source: 'meta' as const })),
+      source: 'meta_sync',
+    });
   } catch (error) {
     console.error('[WHATSAPP_TEMPLATES_LIST_ERROR]', error);
-    return res.json({ templates: listWhatsAppTemplatesCatalog(), source: 'local_fallback' });
+    return res.json({
+      templates: listWhatsAppTemplatesCatalog().map((item) => ({ ...item, source: 'local_fallback' as const })),
+      source: 'local_fallback',
+    });
   }
 });
 

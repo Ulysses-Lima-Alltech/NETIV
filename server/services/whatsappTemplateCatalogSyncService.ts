@@ -84,7 +84,7 @@ function extractBodyVariableIds(text: string | undefined): number[] {
 function buildVariablesFromBody(components: MetaTemplateComponent[]): WhatsAppTemplateVariableDef[] {
   const body = components.find((component) => String(component.type ?? '').toUpperCase() === 'BODY');
   const ids = extractBodyVariableIds(body?.text);
-  return ids.map((id) => ({ id, label: `Variavel ${id}`, required: true }));
+  return ids.map((id) => ({ id, label: `Variável ${id}`, required: true }));
 }
 
 function mapMetaTemplateToCatalogItem(template: MetaTemplateItem): WhatsAppTemplateCatalogItem | null {

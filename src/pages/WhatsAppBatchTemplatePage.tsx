@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import { useAuth } from '../contexts/AuthContext';
@@ -36,12 +36,30 @@ function statusLabel(status: string): string {
     REJECTED: 'Rejeitado',
     PAUSED: 'Pausado',
     DISABLED: 'Desativado',
-    DELETED: 'Excluido',
+    DELETED: 'Excluído',
+    LOCAL: 'Local',
     UNKNOWN: 'Desconhecido',
   };
   return map[status] ?? `Outro: ${status}`;
 }
 
+function categoryLabel(category: string | null | undefined): string {
+  const value = String(category ?? '').trim().toUpperCase();
+  const map: Record<string, string> = {
+    MARKETING: 'Marketing',
+    UTILITY: 'Utilidade',
+    AUTHENTICATION: 'Autenticação',
+    CORRETOR: 'Corretor',
+  };
+  return map[value] ?? (value || 'Desconhecida');
+}
+function languageLabel(language: string | null | undefined): string {
+  const value = String(language ?? '').trim();
+  if (!value) return '-';
+  if (value === 'pt_BR') return 'Português do Brasil (pt_BR)';
+  if (value === 'en') return 'Inglês (en)';
+  return value;
+}
 function statusBadgeClass(status: string): string {
   const map: Record<string, string> = {
     APPROVED: 'bg-emerald-100 text-emerald-800',
@@ -126,17 +144,17 @@ export function WhatsAppBatchTemplatePage() {
       })
       .catch((err: unknown) => {
         setTemplates([]);
-        const base = 'Nao foi possivel carregar a lista de templates.';
+        const base = 'Não foi possível carregar a lista de templates.';
         if (err instanceof ApiError) {
           let msg = `${base} ${err.message}`;
           if (err.status != null) msg += ` (HTTP ${err.status})`;
-          if (err.status === 401) msg += ' Faca login novamente (sessao invalida ou expirada).';
-          if (err.status === 403) msg += ' A rota exige perfil ADMIN (integracoes).';
+          if (err.status === 401) msg += ' Faça login novamente (sessão inválida ou expirada).';
+          if (err.status === 403) msg += ' A rota exige perfil ADMIN (integrações).';
           setTemplatesLoadError(msg);
         } else if (err instanceof Error) {
           setTemplatesLoadError(`${base} ${err.message}`);
         } else {
-          setTemplatesLoadError(`${base} Verifique rede, VITE_API_URL e se o backend esta no ar.`);
+          setTemplatesLoadError(`${base} Verifique rede, VITE_API_URL e se o backend está no ar.`);
         }
       })
       .finally(() => setTemplatesLoading(false));
@@ -172,7 +190,7 @@ export function WhatsAppBatchTemplatePage() {
   const handleCreateMetaTemplate = async () => {
     setMetaActionFeedback(null);
     if (!metaTemplateName.trim() || !metaTemplateBody.trim()) {
-      setMetaActionFeedback('Nome tecnico e BODY sao obrigatorios.');
+      setMetaActionFeedback('Nome do template e mensagem principal são obrigatórios.');
       return;
     }
     setMetaActionLoading(true);
@@ -185,27 +203,27 @@ export function WhatsAppBatchTemplatePage() {
         headerText: metaTemplateHeader.trim() || undefined,
         footerText: metaTemplateFooter.trim() || undefined,
       });
-      setMetaActionFeedback('Template enviado para criacao na Meta com sucesso.');
+      setMetaActionFeedback('Solicitação enviada para a Meta. Acompanhe o status na lista de templates.');
       setMetaTemplateName('');
       setMetaTemplateBody('');
       setMetaTemplateHeader('');
       setMetaTemplateFooter('');
       await loadMetaTemplates();
     } catch (e) {
-      setMetaActionFeedback(e instanceof Error ? e.message : 'Erro ao criar template na Meta.');
+      setMetaActionFeedback(e instanceof Error ? e.message : 'Erro ao solicitar criação do template na Meta.');
     } finally {
       setMetaActionLoading(false);
     }
   };
 
   const handleDeleteMetaTemplate = async (name: string) => {
-    const confirmed = window.confirm(`Confirma a exclusao do template "${name}" na Meta?`);
+    const confirmed = window.confirm(`Confirma a exclusão do template "${name}" na Meta?`);
     if (!confirmed) return;
     setMetaActionLoading(true);
     setMetaActionFeedback(null);
     try {
       await whatsappApi.deleteTemplate(name);
-      setMetaActionFeedback(`Template ${name} removido na Meta.`);
+      setMetaActionFeedback('Template excluído com sucesso.');
       await loadMetaTemplates();
     } catch (e) {
       if (e instanceof ApiError && (e.status === 404 || e.status === 400)) {
@@ -228,7 +246,7 @@ export function WhatsAppBatchTemplatePage() {
       setTemplates(refreshed.templates ?? []);
       setTemplatesSyncWarning(refreshed.warning ?? null);
       setTemplatesCatalogSource((refreshed.source as 'meta_sync' | 'local_fallback' | undefined) ?? 'unknown');
-      setMetaActionFeedback('Sincronizacao concluida.');
+      setMetaActionFeedback('Templates sincronizados com sucesso.');
     } catch (e) {
       setMetaActionFeedback(e instanceof Error ? e.message : 'Erro ao sincronizar templates.');
     } finally {
@@ -243,14 +261,14 @@ export function WhatsAppBatchTemplatePage() {
     : false;
   const templateNotApprovedMessage =
     selectedTemplate && !selectedTemplateUsable
-      ? 'Este template ainda nao esta aprovado na Meta. Ele pode ser visualizado, mas nao pode ser usado para disparo.'
+      ? 'Este template ainda não está aprovado na Meta. Ele pode ser visualizado, mas não pode ser usado para disparo.'
       : null;
   const headerMediaMissing = !!selectedTemplate?.requiresHeaderMedia && !selectedTemplate?.headerImageUrl;
   const headerMediaMissingMessage = headerMediaMissing
-    ? 'Este template exige imagem de cabecalho. Cadastre uma URL publica antes de enviar.'
+    ? 'Este template exige imagem de cabeçalho. Cadastre uma URL pública antes de enviar.'
     : null;
   const missingBrokersMessage =
-    selectedBrokerIds.length === 0 ? 'Selecione ao menos um corretor responsavel para distribuir a base.' : null;
+    selectedBrokerIds.length === 0 ? 'Selecione ao menos um corretor responsável para distribuir a base.' : null;
   const actionBlockedReason = templateNotApprovedMessage ?? headerMediaMissingMessage ?? missingBrokersMessage;
 
   const allMetaStatuses = Array.from(
@@ -468,7 +486,7 @@ export function WhatsAppBatchTemplatePage() {
       <div className="w-full max-w-none px-6 lg:px-8 py-6 space-y-5">
         <div>
           <p className="text-[13px] text-[#6B7280]">
-            Envie templates do WhatsApp em lote a partir de uma planilha: faca o upload, escolha o template, mapeie colunas e envie.
+            Envie templates do WhatsApp em lote a partir de uma planilha: faça o upload, escolha o template, mapeie colunas e envie.
           </p>
         </div>
 
@@ -499,7 +517,10 @@ export function WhatsAppBatchTemplatePage() {
               <div>
                 <h2 className="text-[16px] font-semibold">Templates META</h2>
                 <p className="text-[13px] text-[#4B5563] mt-1">
-                  Gerencie templates na Meta: liste, crie, exclua e acompanhe o status de aprovacao.
+                  Crie modelos de mensagem para envio em lote e acompanhe a aprovação pela Meta.
+                </p>
+                <p className="text-[12px] text-[#6B7280] mt-1">
+                  Templates novos precisam ser aprovados pela Meta antes de poderem ser usados em disparos.
                 </p>
               </div>
               <button
@@ -523,55 +544,89 @@ export function WhatsAppBatchTemplatePage() {
               <div className="space-y-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[12px] p-4">
                 <h3 className="text-[14px] font-semibold">Criar template</h3>
                 <div className="grid grid-cols-1 gap-3">
-                  <input
-                    className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
-                    placeholder="Nome tecnico (ex: oferta_lancamento_maio)"
-                    value={metaTemplateName}
-                    onChange={(e) => setMetaTemplateName(e.target.value)}
-                  />
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <select
-                      className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
-                      value={metaTemplateCategory}
-                      onChange={(e) => setMetaTemplateCategory(e.target.value as 'MARKETING' | 'UTILITY' | 'AUTHENTICATION')}
-                    >
-                      <option value="MARKETING">MARKETING</option>
-                      <option value="UTILITY">UTILITY</option>
-                      <option value="AUTHENTICATION">AUTHENTICATION</option>
-                    </select>
+                  <div>
+                    <label className="block text-[12px] text-[#374151] mb-1">Nome do template</label>
                     <input
                       className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
-                      placeholder="Idioma (pt_BR)"
-                      value={metaTemplateLanguage}
-                      onChange={(e) => setMetaTemplateLanguage(e.target.value)}
+                      placeholder="Ex: convite_evento_maio"
+                      value={metaTemplateName}
+                      onChange={(e) => setMetaTemplateName(e.target.value)}
                     />
+                    <p className="text-[11px] text-[#6B7280] mt-1">
+                      Use apenas letras minúsculas, números e underline. Esse nome identifica o modelo na Meta.
+                    </p>
                   </div>
-                  <textarea
-                    className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px] min-h-[100px]"
-                    placeholder="BODY (obrigatorio)"
-                    value={metaTemplateBody}
-                    onChange={(e) => setMetaTemplateBody(e.target.value)}
-                  />
-                  <input
-                    className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
-                    placeholder="HEADER texto (opcional)"
-                    value={metaTemplateHeader}
-                    onChange={(e) => setMetaTemplateHeader(e.target.value)}
-                  />
-                  <input
-                    className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
-                    placeholder="FOOTER texto (opcional)"
-                    value={metaTemplateFooter}
-                    onChange={(e) => setMetaTemplateFooter(e.target.value)}
-                  />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[12px] text-[#374151] mb-1">Tipo de mensagem</label>
+                      <select
+                        className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
+                        value={metaTemplateCategory}
+                        onChange={(e) => setMetaTemplateCategory(e.target.value as 'MARKETING' | 'UTILITY' | 'AUTHENTICATION')}
+                      >
+                        <option value="MARKETING">Marketing</option>
+                        <option value="UTILITY">Utilidade</option>
+                        <option value="AUTHENTICATION">Autenticação</option>
+                      </select>
+                      <p className="text-[11px] text-[#6B7280] mt-1">
+                        Marketing: divulgações e campanhas. Utilidade: confirmações e avisos. Autenticação: códigos de verificação.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-[12px] text-[#374151] mb-1">Idioma da mensagem</label>
+                      <input
+                        className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
+                        placeholder="Português do Brasil (pt_BR)"
+                        value={metaTemplateLanguage}
+                        onChange={(e) => setMetaTemplateLanguage(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[12px] text-[#374151] mb-1">Mensagem principal</label>
+                    <textarea
+                      className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px] min-h-[100px]"
+                      placeholder="Digite aqui o texto que será enviado ao cliente."
+                      value={metaTemplateBody}
+                      onChange={(e) => setMetaTemplateBody(e.target.value)}
+                    />
+                    <p className="text-[11px] text-[#6B7280] mt-1">
+                      Esse é o conteúdo principal. Você pode usar variáveis como {`{{1}}`} e {`{{2}}`}.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-[12px] text-[#374151] mb-1">Título da mensagem, opcional</label>
+                    <input
+                      className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
+                      placeholder="Ex: Convite especial"
+                      value={metaTemplateHeader}
+                      onChange={(e) => setMetaTemplateHeader(e.target.value)}
+                    />
+                    <p className="text-[11px] text-[#6B7280] mt-1">
+                      Aparece antes da mensagem principal. Aqui é aceito apenas texto.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-[12px] text-[#374151] mb-1">Texto final, opcional</label>
+                    <input
+                      className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
+                      placeholder="Ex: Equipe Quero Meu Apê"
+                      value={metaTemplateFooter}
+                      onChange={(e) => setMetaTemplateFooter(e.target.value)}
+                    />
+                    <p className="text-[11px] text-[#6B7280] mt-1">Aparece no final da mensagem, em destaque discreto.</p>
+                  </div>
                   <button
                     type="button"
                     onClick={() => void handleCreateMetaTemplate()}
                     disabled={metaActionLoading}
                     className="w-full px-4 py-2 rounded-[10px] bg-[#0EA5E9] text-white text-[13px] font-semibold hover:bg-[#0284C7] disabled:opacity-60"
                   >
-                    {metaActionLoading ? 'Enviando...' : 'Criar template na Meta'}
+                    {metaActionLoading ? 'Enviando...' : 'Solicitar criação do template na Meta'}
                   </button>
+                  <p className="text-[11px] text-[#6B7280]">
+                    Após solicitar, a Meta analisará o template. Ele poderá ficar como Pendente, Aprovado ou Rejeitado.
+                  </p>
                 </div>
               </div>
 
@@ -585,7 +640,7 @@ export function WhatsAppBatchTemplatePage() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   <input
                     className="md:col-span-2 w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
-                    placeholder="Buscar por nome, categoria ou idioma"
+                    placeholder="Buscar por nome, tipo de mensagem ou idioma"
                     value={metaSearch}
                     onChange={(e) => setMetaSearch(e.target.value)}
                   />
@@ -610,7 +665,7 @@ export function WhatsAppBatchTemplatePage() {
                   <option value="ALL">Todas as categorias</option>
                   {allMetaCategories.map((category) => (
                     <option key={category} value={category}>
-                      {category}
+                      {categoryLabel(category)}
                     </option>
                   ))}
                 </select>
@@ -627,7 +682,7 @@ export function WhatsAppBatchTemplatePage() {
                           <th className="px-3 py-2">Status</th>
                           <th className="px-3 py-2">Categoria</th>
                           <th className="px-3 py-2">Idioma</th>
-                          <th className="px-3 py-2 text-right">Acoes</th>
+                          <th className="px-3 py-2 text-right">Ações</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -644,11 +699,11 @@ export function WhatsAppBatchTemplatePage() {
                                     isLocalFallbackRow ? 'bg-slate-200 text-slate-800' : statusBadgeClass(status)
                                   }`}
                                 >
-                                  {isLocalFallbackRow ? 'LOCAL' : statusLabel(status)}
+                                  {isLocalFallbackRow ? statusLabel('LOCAL') : statusLabel(status)}
                                 </span>
                               </td>
-                              <td className="px-3 py-2">{String(tpl.category ?? 'UNKNOWN').toUpperCase()}</td>
-                              <td className="px-3 py-2">{tpl.language ?? '-'}</td>
+                              <td className="px-3 py-2">{categoryLabel(tpl.category)}</td>
+                              <td className="px-3 py-2">{languageLabel(tpl.language)}</td>
                               <td className="px-3 py-2 text-right">
                                 {tpl.name ? (
                                   <button
@@ -721,7 +776,7 @@ export function WhatsAppBatchTemplatePage() {
                 {!templatesLoading && !templatesLoadError && usableTemplates.length === 0 && (
                   <div className="bg-amber-50 border border-amber-200 rounded-md p-3">
                     <p className="text-amber-900 text-sm">
-                      Nenhum template aprovado disponível para disparo. Acompanhe aprovações na aba Templates META.
+                      Nenhum template aprovado disponível para disparo. Verifique o status na aba Templates META.
                     </p>
                   </div>
                 )}
@@ -753,7 +808,7 @@ export function WhatsAppBatchTemplatePage() {
               <div className="space-y-6">
                 <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 space-y-5">
                   <div>
-                    <h2 className="text-[16px] font-semibold text-[#111827]">Validacao e envio</h2>
+                    <h2 className="text-[16px] font-semibold text-[#111827]">Validação e envio</h2>
                     <p className="text-[13px] text-[#4B5563] mt-1">Revise os contatos, envie um teste e confirme o disparo final.</p>
                   </div>
 
@@ -809,15 +864,15 @@ export function WhatsAppBatchTemplatePage() {
                   <div className="space-y-4">
                     <h3 className="text-[14px] font-semibold text-[#111827]">3. Envio final</h3>
                     <p className="text-[13px] text-[#4B5563]">
-                      Revise os dados antes de confirmar. Apenas contatos validos serao enviados.
+                      Revise os dados antes de confirmar. Apenas contatos válidos serão enviados.
                     </p>
                     <div className="flex flex-wrap items-center gap-2 text-[12px]">
                       <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-medium">Total: {preview?.total ?? 0}</span>
                       <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-medium">
-                        Validos: {preview?.validCount ?? 0}
+                        Válidos: {preview?.validCount ?? 0}
                       </span>
                       <span className="px-3 py-1 rounded-full bg-red-100 text-red-800 font-medium">
-                        Invalidos/Bloqueados: {(preview?.invalidCount ?? 0) + (preview?.blockedCount ?? 0)}
+                        Inválidos/Bloqueados: {(preview?.invalidCount ?? 0) + (preview?.blockedCount ?? 0)}
                       </span>
                     </div>
                     <button
@@ -843,5 +898,6 @@ export function WhatsAppBatchTemplatePage() {
     </div>
   );
 }
+
 
 

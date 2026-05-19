@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import authRouter from './auth.js';
 import ssoRouter from './sso.js';
 import usersRouter from './users.js';
@@ -45,7 +45,7 @@ router.get('/whatsapp-batch/templates', async (req, res) => {
     res.setHeader('Expires', '0');
     res.json({
       templates,
-      warning: fallbackUsed ? 'NÃ£o foi possÃ­vel sincronizar com a Meta. Exibindo catÃ¡logo local.' : null,
+      warning: fallbackUsed ? 'Não foi possível sincronizar com a Meta. Exibindo catálogo local.' : null,
       source: fallbackUsed ? 'local_fallback' : 'meta_sync',
     });
   } catch (error) {
