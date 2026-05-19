@@ -107,6 +107,7 @@ function mapMetaTemplateToCatalogItem(template: MetaTemplateItem): WhatsAppTempl
     metaTemplateId: String(template.id ?? ''),
     category: String(template.category ?? '').toUpperCase() || undefined,
     status,
+    source: 'meta',
     components: components as Array<Record<string, unknown>>,
     createdAt: template.created_time ?? null,
     updatedAt: template.updated_time ?? null,
@@ -232,7 +233,10 @@ export async function listBatchTemplatesFromMetaOrFallback(params?: {
     setRuntimeWhatsAppTemplatesCatalog(merged);
     return { templates: merged, fallbackUsed: false };
   } catch {
-    const fallback = WHATSAPP_TEMPLATES_CATALOG;
+    const fallback = WHATSAPP_TEMPLATES_CATALOG.map((item) => ({
+      ...item,
+      source: 'local_fallback' as const,
+    }));
     setRuntimeWhatsAppTemplatesCatalog(fallback);
     return { templates: fallback, fallbackUsed: true };
   }

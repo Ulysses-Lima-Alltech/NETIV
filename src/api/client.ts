@@ -163,6 +163,7 @@ export interface WhatsAppMetaTemplateItem {
   category?: string;
   created_time?: string;
   updated_time?: string;
+  source?: 'meta' | 'local_fallback';
   components?: Array<Record<string, unknown>>;
 }
 

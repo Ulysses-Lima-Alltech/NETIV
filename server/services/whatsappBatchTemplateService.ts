@@ -68,7 +68,7 @@ function normalizeValue(value: string | null | undefined): string | null {
 
 function getTemplateOrThrow(templateKey: string): WhatsAppTemplateCatalogItem {
   const template = getWhatsAppTemplateByKey(templateKey);
-  if (!template) throw new Error('Template inválido.');
+  if (!template) throw new Error('Template não encontrado no catálogo disponível.');
   return template;
 }
 
@@ -79,6 +79,7 @@ function assertTemplateHeaderMediaConfigured(template: WhatsAppTemplateCatalogIt
 }
 
 function assertTemplateApproved(template: WhatsAppTemplateCatalogItem): void {
+  if (template.source === 'local_fallback') return;
   const status = String(template.status ?? 'APPROVED').toUpperCase();
   if (status === 'APPROVED') return;
   throw new Error('Apenas templates aprovados podem ser usados no disparo em lote.');

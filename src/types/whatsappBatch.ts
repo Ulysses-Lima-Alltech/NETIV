@@ -12,6 +12,7 @@ export interface BatchTemplateCatalogItem {
   status?: string;
   createdAt?: string | null;
   updatedAt?: string | null;
+  source?: 'meta' | 'local_fallback';
   metaTemplateId?: string;
   components?: Array<Record<string, unknown>>;
   hasHeaderImage?: boolean;

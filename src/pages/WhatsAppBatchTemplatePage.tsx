@@ -55,6 +55,16 @@ function statusBadgeClass(status: string): string {
   return map[status] ?? 'bg-slate-100 text-slate-700';
 }
 
+function isTemplateUsableForBatch(
+  template: BatchTemplateCatalogItem,
+  catalogSource: 'meta_sync' | 'local_fallback' | 'unknown',
+): boolean {
+  const status = normalizeMetaStatus(template.status);
+  if (status === 'APPROVED') return true;
+  if (catalogSource === 'local_fallback' && template.source === 'local_fallback') return true;
+  return false;
+}
+
 export function WhatsAppBatchTemplatePage() {
   const { isAdmin } = useAuth();
   const [file, setFile] = useState<File | null>(null);
@@ -82,11 +92,13 @@ export function WhatsAppBatchTemplatePage() {
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [templatesLoadError, setTemplatesLoadError] = useState<string | null>(null);
   const [templatesSyncWarning, setTemplatesSyncWarning] = useState<string | null>(null);
+  const [templatesCatalogSource, setTemplatesCatalogSource] = useState<'meta_sync' | 'local_fallback' | 'unknown'>('unknown');
 
   const [activeTab, setActiveTab] = useState<'batch' | 'templates'>('batch');
   const [metaTemplates, setMetaTemplates] = useState<WhatsAppMetaTemplateItem[]>([]);
   const [metaTemplatesLoading, setMetaTemplatesLoading] = useState(false);
   const [metaTemplatesError, setMetaTemplatesError] = useState<string | null>(null);
+  const [metaTemplatesSource, setMetaTemplatesSource] = useState<'meta_sync' | 'local_fallback' | 'unknown'>('unknown');
   const [metaActionLoading, setMetaActionLoading] = useState(false);
   const [metaActionFeedback, setMetaActionFeedback] = useState<string | null>(null);
   const [metaTemplateName, setMetaTemplateName] = useState('');
@@ -108,6 +120,7 @@ export function WhatsAppBatchTemplatePage() {
       .then((r) => {
         setTemplates(r.templates ?? []);
         setTemplatesSyncWarning(r.warning ?? null);
+        setTemplatesCatalogSource((r.source as 'meta_sync' | 'local_fallback' | undefined) ?? 'unknown');
       })
       .catch((err: unknown) => {
         setTemplates([]);
@@ -139,6 +152,7 @@ export function WhatsAppBatchTemplatePage() {
     try {
       const res = await whatsappApi.listTemplates();
       setMetaTemplates(res.templates ?? []);
+      setMetaTemplatesSource((res.source as 'meta_sync' | 'local_fallback' | undefined) ?? 'unknown');
     } catch (e) {
       setMetaTemplatesError(e instanceof Error ? e.message : 'Erro ao carregar templates da Meta.');
     } finally {
@@ -211,6 +225,7 @@ export function WhatsAppBatchTemplatePage() {
       const refreshed = await whatsappBatchApi.listTemplates({ refresh: true });
       setTemplates(refreshed.templates ?? []);
       setTemplatesSyncWarning(refreshed.warning ?? null);
+      setTemplatesCatalogSource((refreshed.source as 'meta_sync' | 'local_fallback' | undefined) ?? 'unknown');
       setMetaActionFeedback('Sincronizacao concluida.');
     } catch (e) {
       setMetaActionFeedback(e instanceof Error ? e.message : 'Erro ao sincronizar templates.');
@@ -220,7 +235,7 @@ export function WhatsAppBatchTemplatePage() {
   };
 
   const selectedTemplate = templates.find((tpl) => tpl.key === selectedTemplateKey) ?? null;
-  const approvedTemplates = templates.filter((tpl) => normalizeMetaStatus(tpl.status) === 'APPROVED');
+  const usableTemplates = templates.filter((tpl) => isTemplateUsableForBatch(tpl, templatesCatalogSource));
   const templateStatus = normalizeMetaStatus(selectedTemplate?.status);
   const templateNotApprovedMessage =
     selectedTemplate && templateStatus !== 'APPROVED'
@@ -500,7 +515,7 @@ export function WhatsAppBatchTemplatePage() {
               <div className="bg-slate-50 border border-slate-200 rounded-md p-3 text-sm text-slate-700">{metaActionFeedback}</div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-[360px_minmax(0,1fr)] gap-5">
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] items-start gap-5">
               <div className="space-y-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[12px] p-4">
                 <h3 className="text-[14px] font-semibold">Criar template</h3>
                 <div className="grid grid-cols-1 gap-3">
@@ -549,14 +564,14 @@ export function WhatsAppBatchTemplatePage() {
                     type="button"
                     onClick={() => void handleCreateMetaTemplate()}
                     disabled={metaActionLoading}
-                    className="px-4 py-2 rounded-[10px] bg-[#0EA5E9] text-white text-[13px] font-semibold hover:bg-[#0284C7] disabled:opacity-60"
+                    className="w-full px-4 py-2 rounded-[10px] bg-[#0EA5E9] text-white text-[13px] font-semibold hover:bg-[#0284C7] disabled:opacity-60"
                   >
                     {metaActionLoading ? 'Enviando...' : 'Criar template na Meta'}
                   </button>
                 </div>
               </div>
 
-              <div className="space-y-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[12px] p-4">
+              <div className="h-fit space-y-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[12px] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <h3 className="text-[14px] font-semibold">Templates</h3>
                   <span className="text-[12px] text-[#6B7280]">
@@ -600,7 +615,7 @@ export function WhatsAppBatchTemplatePage() {
                 ) : filteredMetaTemplates.length === 0 ? (
                   <p className="text-[13px] text-[#6B7280]">Nenhum template retornado pela Meta.</p>
                 ) : (
-                  <div className="overflow-auto border border-[#E5E7EB] rounded-[10px] bg-white">
+                  <div className="overflow-auto border border-[#E5E7EB] rounded-[10px] bg-white max-h-[380px]">
                     <table className="w-full text-left">
                       <thead className="border-b border-[#E5E7EB] bg-[#F8FAFC]">
                         <tr className="text-[11px] uppercase tracking-wide text-[#6B7280]">
@@ -614,12 +629,18 @@ export function WhatsAppBatchTemplatePage() {
                       <tbody>
                         {filteredMetaTemplates.map((tpl) => {
                           const status = normalizeMetaStatus(tpl.status);
+                          const isLocalFallbackRow =
+                            metaTemplatesSource === 'local_fallback' || tpl.source === 'local_fallback';
                           return (
                             <tr key={`${tpl.id ?? tpl.name}-${status}`} className="border-b border-[#F3F4F6] text-[12px]">
                               <td className="px-3 py-2 font-medium text-[#111827]">{tpl.name ?? '-'}</td>
                               <td className="px-3 py-2">
-                                <span className={`px-2 py-1 rounded-full text-[10px] font-semibold ${statusBadgeClass(status)}`}>
-                                  {statusLabel(status)}
+                                <span
+                                  className={`px-2 py-1 rounded-full text-[10px] font-semibold ${
+                                    isLocalFallbackRow ? 'bg-slate-200 text-slate-800' : statusBadgeClass(status)
+                                  }`}
+                                >
+                                  {isLocalFallbackRow ? 'LOCAL' : statusLabel(status)}
                                 </span>
                               </td>
                               <td className="px-3 py-2">{String(tpl.category ?? 'UNKNOWN').toUpperCase()}</td>
@@ -687,13 +708,13 @@ export function WhatsAppBatchTemplatePage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="space-y-6">
                 <TemplateSelector
-                  templates={approvedTemplates}
+                  templates={usableTemplates}
                   selectedKey={selectedTemplateKey}
                   onSelect={handleSelectedTemplateKeyChange}
                   loading={templatesLoading}
                   selectDisabled={!!templatesLoadError}
                 />
-                {!templatesLoading && !templatesLoadError && approvedTemplates.length === 0 && (
+                {!templatesLoading && !templatesLoadError && usableTemplates.length === 0 && (
                   <div className="bg-amber-50 border border-amber-200 rounded-md p-3">
                     <p className="text-amber-900 text-sm">
                       Nenhum template aprovado disponível para disparo. Acompanhe aprovações na aba Templates META.

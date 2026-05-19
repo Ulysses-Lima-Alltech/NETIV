@@ -23,6 +23,7 @@ export interface WhatsAppTemplateCatalogItem {
   status?: string;
   createdAt?: string | null;
   updatedAt?: string | null;
+  source?: 'meta' | 'local_fallback';
   components?: Array<Record<string, unknown>>;
   hasHeaderImage?: boolean;
   hasHeaderVideo?: boolean;
