@@ -1,4 +1,3 @@
-﻿import { getConversationMessageCounts } from '../repositories/messageRepository.js';
 import {
   sendLocalMediaToWhatsApp,
   sendTextMessage,
@@ -6,81 +5,7 @@ import {
   type SendTextResult,
 } from './whatsappMetaService.js';
 
-export const ANA_OUTBOUND_QUOTA_EXCEEDED_REASON = 'ana_outbound_quota_exceeded';
-
-export interface AnaOutboundQuotaCounts {
-  inboundCount: number;
-  anaOutboundCount: number;
-}
-
-export interface AnaOutboundQuotaDecision {
-  allowed: boolean;
-  reason: typeof ANA_OUTBOUND_QUOTA_EXCEEDED_REASON | null;
-}
-
-export type AnaQuotaSendResult = SendTextResult & {
-  blockedByAnaQuota?: boolean;
-  quota?: AnaOutboundQuotaCounts;
-  blockedReason?: typeof ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
-};
-
-export function evaluateAnaOutboundQuota(params: {
-  inboundCount: number;
-  anaOutboundCount: number;
-  isAutomaticAna: boolean;
-}): AnaOutboundQuotaDecision {
-  // Bloqueio proporcional desativado: em campanhas/disparo em lote, o primeiro outbound
-  // pode existir antes da primeira inbound do lead, e a regra antiga bloqueava indevidamente
-  // respostas válidas da Ana.
-  //
-  // Mantemos o envelope de decisão para compatibilidade de logs/auditoria.
-  void params.inboundCount;
-  void params.anaOutboundCount;
-  void params.isAutomaticAna;
-  return { allowed: true, reason: null };
-}
-export function isAnaOutboundQuotaBlocked(result: AnaQuotaSendResult): boolean {
-  return result.blockedByAnaQuota === true;
-}
-
-async function enforceAnaOutboundQuota(params: {
-  conversationId: number;
-  phase: string;
-}): Promise<{ allowed: true; quota: AnaOutboundQuotaCounts } | { allowed: false; quota: AnaOutboundQuotaCounts }> {
-  const quota = await getConversationMessageCounts(params.conversationId);
-  const decision = evaluateAnaOutboundQuota({
-    inboundCount: quota.inboundCount,
-    anaOutboundCount: quota.anaOutboundCount,
-    isAutomaticAna: true,
-  });
-  if (!decision.allowed) {
-    console.warn('[ANA_OUTBOUND_QUOTA_BLOCKED]', {
-      conversationId: params.conversationId,
-      phase: params.phase,
-      reason: ANA_OUTBOUND_QUOTA_EXCEEDED_REASON,
-      inboundCount: quota.inboundCount,
-      anaOutboundCount: quota.anaOutboundCount,
-    });
-    return { allowed: false, quota };
-  }
-  console.log('[ANA_OUTBOUND_QUOTA_ALLOWED]', {
-    conversationId: params.conversationId,
-    phase: params.phase,
-    inboundCount: quota.inboundCount,
-    anaOutboundCount: quota.anaOutboundCount,
-  });
-  return { allowed: true, quota };
-}
-
-function blockedResult(quota: AnaOutboundQuotaCounts): AnaQuotaSendResult {
-  return {
-    success: false,
-    error: ANA_OUTBOUND_QUOTA_EXCEEDED_REASON,
-    blockedByAnaQuota: true,
-    blockedReason: ANA_OUTBOUND_QUOTA_EXCEEDED_REASON,
-    quota,
-  };
-}
+export type AnaQuotaSendResult = SendTextResult;
 
 export async function sendAnaTextMessageWithQuota(params: {
   conversationId: number;
@@ -88,13 +13,9 @@ export async function sendAnaTextMessageWithQuota(params: {
   text: string;
   phase: string;
 }): Promise<AnaQuotaSendResult> {
-  const quota = await enforceAnaOutboundQuota({
-    conversationId: params.conversationId,
-    phase: params.phase,
-  });
-  if (!quota.allowed) return blockedResult(quota.quota);
-  const result = await sendTextMessage(params.to, params.text);
-  return { ...result, quota: quota.quota };
+  void params.conversationId;
+  void params.phase;
+  return sendTextMessage(params.to, params.text);
 }
 
 export async function sendAnaLocalMediaToWhatsAppWithQuota(params: {
@@ -106,18 +27,13 @@ export async function sendAnaLocalMediaToWhatsAppWithQuota(params: {
   phase: string;
   options?: { logCtx?: DocumentSendLogContext; caption?: string | null };
 }): Promise<AnaQuotaSendResult> {
-  const quota = await enforceAnaOutboundQuota({
-    conversationId: params.conversationId,
-    phase: params.phase,
-  });
-  if (!quota.allowed) return blockedResult(quota.quota);
-  const result = await sendLocalMediaToWhatsApp(
+  void params.conversationId;
+  void params.phase;
+  return sendLocalMediaToWhatsApp(
     params.to,
     params.filePath,
     params.filename,
     params.mimeFromDb,
     params.options
   );
-  return { ...result, quota: quota.quota };
 }
-

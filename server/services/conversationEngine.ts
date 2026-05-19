@@ -16,8 +16,6 @@ import {
   markAnaAskedForCustomerName,
 } from '../repositories/conversationRepository.js';
 import {
-  ANA_OUTBOUND_QUOTA_EXCEEDED_REASON,
-  isAnaOutboundQuotaBlocked,
   sendAnaLocalMediaToWhatsAppWithQuota as sendLocalMediaToWhatsApp,
   sendAnaTextMessageWithQuota as sendTextMessage,
 } from './anaOutboundQuotaService.js';
@@ -1910,20 +1908,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         text: deterministicReply,
         phase: 'enterprise_resolution_clarification',
       });
-      if (isAnaOutboundQuotaBlocked(sendClarification)) {
-        anaTurnAuditOutcome = 'blocked';
-        anaTurnAuditBlockedReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
-        anaTurnAuditGuardsApplied.outboundReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
-        anaTurnDiagnostics.finalResponse.replySource = 'enterprise_resolution_clarification';
-        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-          replySource: 'enterprise_resolution_clarification',
-          outboundStatus: anaTurnAuditOutcome,
-          blockedReason: anaTurnAuditBlockedReason,
-          quota: sendClarification.quota ?? null,
-        });
-        return;
-      }
       if (sendClarification.success && sendClarification.metaMessageId) {
         await insertMessage(conversationId, 'assistant', deterministicReply, sendClarification.metaMessageId ?? null);
         anaTurnAuditOutcome = 'sent';
@@ -2583,20 +2567,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         text: blockedReply,
         phase: 'enterprise_ai_blocked',
       });
-      if (isAnaOutboundQuotaBlocked(blockedSendResult)) {
-        anaTurnAuditOutcome = 'blocked';
-        anaTurnAuditBlockedReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
-        anaTurnAuditGuardsApplied.outboundReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
-        anaTurnDiagnostics.finalResponse.replySource = 'enterprise_ai_blocked';
-        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-          replySource: 'enterprise_ai_blocked',
-          outboundStatus: anaTurnAuditOutcome,
-          blockedReason: anaTurnAuditBlockedReason,
-          quota: blockedSendResult.quota ?? null,
-        });
-        return;
-      }
       if (blockedSendResult.success && blockedSendResult.metaMessageId) {
         await insertMessage(conversationId, 'assistant', blockedReply, blockedSendResult.metaMessageId);
         anaTurnAuditOutcome = 'sent';
@@ -2752,20 +2722,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         text: deterministicVisitReply,
         phase: 'deterministic_visit_scheduling',
       });
-      if (isAnaOutboundQuotaBlocked(sendVisitResult)) {
-        anaTurnAuditOutcome = 'blocked';
-        anaTurnAuditBlockedReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
-        anaTurnAuditGuardsApplied.outboundReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
-        anaTurnDiagnostics.finalResponse.replySource = 'deterministic_visit_scheduling';
-        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-          replySource: 'deterministic_visit_scheduling',
-          outboundStatus: anaTurnAuditOutcome,
-          blockedReason: anaTurnAuditBlockedReason,
-          quota: sendVisitResult.quota ?? null,
-        });
-        return;
-      }
       if (!sendVisitResult.success || !sendVisitResult.metaMessageId) {
         anaTurnAuditOutcome = 'send_failed';
         anaTurnAuditBlockedReason = 'direct_visit_scheduling_send_failed';
@@ -4245,20 +4201,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         text: ackText,
         phase: 'doc_ack_after_media',
       });
-      if (isAnaOutboundQuotaBlocked(sendAckResult)) {
-        anaTurnAuditOutcome = 'blocked';
-        anaTurnAuditBlockedReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
-        anaTurnAuditGuardsApplied.outboundReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
-        anaTurnDiagnostics.finalResponse.replySource = 'doc_ack';
-        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-          replySource: 'doc_ack',
-          outboundStatus: anaTurnAuditOutcome,
-          blockedReason: anaTurnAuditBlockedReason,
-          quota: sendAckResult.quota ?? null,
-        });
-        return;
-      }
       if (isPipelineStale(conversationId, replyPipelineToken)) {
         console.log('[ANA_DOC_PIPELINE_STALE_ABORT]', {
           conversationId,
@@ -5334,19 +5276,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           text: chunk,
           phase: 'ana_main_reply',
         });
-        if (isAnaOutboundQuotaBlocked(chunkSendResult)) {
-          anaTurnAuditOutcome = 'blocked';
-          anaTurnAuditBlockedReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
-          anaTurnAuditGuardsApplied.outboundReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
-          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-          markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-            replySource,
-            outboundStatus: anaTurnAuditOutcome,
-            blockedReason: anaTurnAuditBlockedReason,
-            quota: chunkSendResult.quota ?? null,
-          });
-          return;
-        }
         if (!chunkSendResult.success || !chunkSendResult.metaMessageId) {
           anaTurnAuditOutcome = 'send_failed';
           anaTurnAuditBlockedReason = 'main_reply_send_failed';
@@ -5388,20 +5317,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       text: replyText,
       phase: 'ana_main_reply',
     });
-    if (isAnaOutboundQuotaBlocked(sendResult)) {
-      anaTurnAuditOutcome = 'blocked';
-      anaTurnAuditBlockedReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
-      anaTurnAuditGuardsApplied.outboundReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
-      anaTurnDiagnostics.finalResponse.replySource = replySource;
-      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-      markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-        replySource,
-        outboundStatus: anaTurnAuditOutcome,
-        blockedReason: anaTurnAuditBlockedReason,
-        quota: sendResult.quota ?? null,
-      });
-      return;
-    }
     if (sendResult.success && sendResult.metaMessageId) {
       await insertMessage(conversationId, 'assistant', replyText, sendResult.metaMessageId);
       anaEngineTrace('final_send_success', {

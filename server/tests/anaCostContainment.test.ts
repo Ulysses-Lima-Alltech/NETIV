@@ -1,10 +1,6 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import {
-  ANA_OUTBOUND_QUOTA_EXCEEDED_REASON,
-  evaluateAnaOutboundQuota,
-} from '../services/anaOutboundQuotaService.js';
 import {
   ANA_HUMAN_ATTENDANCE_POLICY,
   buildAnaSystemPrompt,
@@ -19,73 +15,6 @@ import {
   sanitizeTooManyQuestionsReply,
 } from '../utils/anaReplyFinalize.js';
 import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
-
-test('cota permite Ana quando inbound_count=1 e ana_outbound_count=0', () => {
-  const decision = evaluateAnaOutboundQuota({
-    inboundCount: 1,
-    anaOutboundCount: 0,
-    isAutomaticAna: true,
-  });
-
-  assert.equal(decision.allowed, true);
-  assert.equal(decision.reason, null);
-});
-
-test('cota nao bloqueia Ana quando inbound_count=1 e ana_outbound_count=1 em operacao com disparo em lote', () => {
-  const decision = evaluateAnaOutboundQuota({
-    inboundCount: 1,
-    anaOutboundCount: 1,
-    isAutomaticAna: true,
-  });
-
-  assert.equal(decision.allowed, true);
-  assert.equal(decision.reason, null);
-});
-
-test('cota permite Ana quando inbound_count=2 e ana_outbound_count=1', () => {
-  const decision = evaluateAnaOutboundQuota({
-    inboundCount: 2,
-    anaOutboundCount: 1,
-    isAutomaticAna: true,
-  });
-
-  assert.equal(decision.allowed, true);
-  assert.equal(decision.reason, null);
-});
-
-test('cota nao bloqueia Ana quando inbound_count=2 e ana_outbound_count=2 em operacao com disparo em lote', () => {
-  const decision = evaluateAnaOutboundQuota({
-    inboundCount: 2,
-    anaOutboundCount: 2,
-    isAutomaticAna: true,
-  });
-
-  assert.equal(decision.allowed, true);
-  assert.equal(decision.reason, null);
-});
-
-test('cota nao bloqueia mensagem manual/humana', () => {
-  const decision = evaluateAnaOutboundQuota({
-    inboundCount: 1,
-    anaOutboundCount: 10,
-    isAutomaticAna: false,
-  });
-
-  assert.equal(decision.allowed, true);
-  assert.equal(decision.reason, null);
-});
-
-test('cota permanece sem bloqueio mesmo com outbound muito acima do inbound em campanha', () => {
-  const decision = evaluateAnaOutboundQuota({
-    inboundCount: 1,
-    anaOutboundCount: 700,
-    isAutomaticAna: true,
-  });
-
-  assert.equal(decision.allowed, true);
-  assert.notEqual(decision.reason, ANA_OUTBOUND_QUOTA_EXCEEDED_REASON);
-  assert.equal(decision.reason, null);
-});
 
 test('resolve modelo da Ana por DB com gpt-4.1', () => {
   const resolution = resolveAnaOpenAIModel({
@@ -211,12 +140,12 @@ test('saudacao inicial seca ou robotica e bloqueada', () => {
     isFirstAnaReply: true,
   });
   const good = evaluateAnaEmptyFallbackGuard({
-    reply: 'Boa noite! Tudo bem? Me fala qual empreendimento vocÃƒÂª quer conhecer que eu te ajudo por aqui.',
+    reply: 'Boa noite! Tudo bem? Me fala qual empreendimento vocÃª quer conhecer que eu te ajudo por aqui.',
     userMessage: 'Oi',
     isFirstAnaReply: true,
   });
   const multipleQuestions = evaluateAnaEmptyFallbackGuard({
-    reply: 'Boa noite! Tudo bem? VocÃƒÂª quer loteamento ou apartamento? ÃƒÂ‰ para morar ou investir?',
+    reply: 'Boa noite! Tudo bem? VocÃª quer loteamento ou apartamento? Ã para morar ou investir?',
     userMessage: 'Oi',
     isFirstAnaReply: true,
   });
@@ -264,19 +193,19 @@ test('patch local de saudacao nao mascara resposta curta e pouco util', () => {
 
 test('pergunta objetiva nao pode virar permissao, formulario ou fallback', () => {
   const good = evaluateAnaEmptyFallbackGuard({
-    reply: 'A metragem parte de 250 mÃ‚Â², e o valor cadastrado comeÃƒÂ§a em R$ 180.000.',
+    reply: 'A metragem parte de 250 mÂ², e o valor cadastrado comeÃ§a em R$ 180.000.',
     userMessage: 'Quero saber a metragem e valor',
-    knowledgeText: 'metragem: 250 mÃ‚Â²\nvalor: R$ 180.000',
+    knowledgeText: 'metragem: 250 mÂ²\nvalor: R$ 180.000',
   });
   const emptyPhrase = evaluateAnaEmptyFallbackGuard({
     reply: 'Posso te explicar os principais pontos de forma objetiva.',
     userMessage: 'Quero saber a metragem e valor',
-    knowledgeText: 'metragem: 250 mÃ‚Â²\nvalor: R$ 180.000',
+    knowledgeText: 'metragem: 250 mÂ²\nvalor: R$ 180.000',
   });
   const earlyHandoff = evaluateAnaEmptyFallbackGuard({
     reply: 'Vou confirmar com o consultor e te retorno.',
     userMessage: 'Quero saber a metragem e valor',
-    knowledgeText: 'metragem: 250 mÃ‚Â²\nvalor: R$ 180.000',
+    knowledgeText: 'metragem: 250 mÂ²\nvalor: R$ 180.000',
   });
 
   assert.equal(good.blocked, false);
@@ -288,13 +217,13 @@ test('mensagem curta contextual sobre lazer precisa ser respondida, nao devolvid
   const good = evaluateAnaEmptyFallbackGuard({
     reply: 'No lazer, a base cita piscina, academia e playground.',
     userMessage: 'Lazer',
-    lastAssistantMessage: 'Estou vendo as informaÃƒÂ§ÃƒÂµes desse empreendimento.',
+    lastAssistantMessage: 'Estou vendo as informaÃ§Ãµes desse empreendimento.',
     knowledgeText: 'lazer: piscina, academia, playground',
   });
   const bad = evaluateAnaEmptyFallbackGuard({
     reply: 'Lazer?',
     userMessage: 'Lazer',
-    lastAssistantMessage: 'Estou vendo as informaÃƒÂ§ÃƒÂµes desse empreendimento.',
+    lastAssistantMessage: 'Estou vendo as informaÃ§Ãµes desse empreendimento.',
     knowledgeText: 'lazer: piscina, academia, playground',
   });
 
@@ -318,18 +247,18 @@ test('lead irritado deve receber tom de solucao, sem defensividade', () => {
 
 test('sem resposta segura nao envia fallback generico', () => {
   const outbound = evaluateAnaOutboundText({
-    reply: 'NÃƒÂ£o consegui continuar daqui agora. Me manda novamente em uma frase o que vocÃƒÂª quer saber.',
-    technicalFallbackText: 'NÃƒÂ£o consegui continuar daqui agora. Me manda novamente em uma frase o que vocÃƒÂª quer saber.',
+    reply: 'NÃ£o consegui continuar daqui agora. Me manda novamente em uma frase o que vocÃª quer saber.',
+    technicalFallbackText: 'NÃ£o consegui continuar daqui agora. Me manda novamente em uma frase o que vocÃª quer saber.',
     conversationType: 'CLIENT',
   });
   const materialUnavailable = pickMaterialUnavailableNeutralReply(null);
   const opGuard = applyOperationalFactGuard(
-    'As obras estÃƒÂ£o avanÃƒÂ§adas e vocÃƒÂª jÃƒÂ¡ pode construir.',
-    'JÃƒÂ¡ pode construir?',
+    'As obras estÃ£o avanÃ§adas e vocÃª jÃ¡ pode construir.',
+    'JÃ¡ pode construir?',
     ''
   );
   const axisGuard = applyAnaCommercialSingleAxisGuard({
-    reply: 'Fica em Centro, tem 250 mÃ‚Â² e custa R$ 180.000.',
+    reply: 'Fica em Centro, tem 250 mÂ² e custa R$ 180.000.',
     userMessage: 'Quero saber o valor',
     isFirstAnaReply: false,
   });
@@ -337,9 +266,9 @@ test('sem resposta segura nao envia fallback generico', () => {
   assert.equal(outbound.valid, false);
   assert.equal(materialUnavailable, '');
   assert.equal(opGuard.blocked, true);
-  assert.equal(opGuard.text, 'As obras estÃƒÂ£o avanÃƒÂ§adas e vocÃƒÂª jÃƒÂ¡ pode construir.');
+  assert.equal(opGuard.text, 'As obras estÃ£o avanÃ§adas e vocÃª jÃ¡ pode construir.');
   assert.equal(axisGuard.changed, false);
-  assert.equal(axisGuard.text, 'Fica em Centro, tem 250 mÃ‚Â² e custa R$ 180.000.');
+  assert.equal(axisGuard.text, 'Fica em Centro, tem 250 mÂ² e custa R$ 180.000.');
 });
 
 test('sanitiza resposta valida com perguntas finais em excesso sem esvaziar conteudo', () => {
@@ -351,10 +280,11 @@ test('sanitiza resposta valida com perguntas finais em excesso sem esvaziar cont
   assert.equal((output.match(/\?/g) || []).length <= 1, true);
   assert.match(output, /loteamento fechado em Atibaia/i);
   const hasSafeQuestion =
-    output.includes('Quer que eu te fale mais sobre a localizaÃ§Ã£o?') ||
-    output.includes('Quer saber mais sobre a localizaÃ§Ã£o ou prefere falar com um corretor?') ||
+    output.includes('Quer que eu te fale mais sobre a localização?') ||
+    output.includes('Quer saber mais sobre a localização ou prefere falar com um corretor?') ||
     output.includes('Quer que eu te fale mais sobre a localizacao?') ||
     output.includes('Quer saber mais sobre a localizacao ou prefere falar com um corretor?');
   assert.equal(hasSafeQuestion, true);
 });
+
 

@@ -5,8 +5,6 @@ import { getLastUserMessageRow, getLastVisibleMessageRoleAndId } from '../reposi
 import { conversationHasActiveAppointmentForReengageBlock } from '../repositories/appointmentRepository.js';
 import { publishConversationUpdated, publishMessageCreated } from '../realtime/realtimePublisher.js';
 import {
-  ANA_OUTBOUND_QUOTA_EXCEEDED_REASON,
-  isAnaOutboundQuotaBlocked,
   sendAnaTextMessageWithQuota,
 } from './anaOutboundQuotaService.js';
 import {
@@ -217,15 +215,6 @@ async function trySendReengagementForConversation(conversationId: number): Promi
       text: body,
       phase: 'ana_reengagement',
     });
-    if (isAnaOutboundQuotaBlocked(sendRes)) {
-      await client.query('ROLLBACK');
-      console.log('[ANA_REENGAGE_SKIP]', {
-        conversationId,
-        reason: ANA_OUTBOUND_QUOTA_EXCEEDED_REASON,
-        quota: sendRes.quota ?? null,
-      });
-      return;
-    }
     if (!sendRes.success || !sendRes.metaMessageId) {
       await client.query('ROLLBACK');
       console.log('[ANA_REENGAGE_ERROR]', {
