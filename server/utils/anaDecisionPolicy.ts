@@ -1,4 +1,4 @@
-import type { RequestedProductType } from './anaRequestedProductType.js';
+﻿import type { RequestedProductType } from './anaRequestedProductType.js';
 import type { CommercialAxis } from './anaCommercialAxisGuard.js';
 import { hasAnaEvidenceForNeed, type AnaEnterpriseEvidence } from './anaEnterpriseEvidence.js';
 
@@ -94,7 +94,7 @@ function detectAxisFallbackFromMessage(userMessage: string): CommercialAxis | nu
 
   if (/\b(quanto|custa|valor|preco|r\$)\b/.test(n)) return 'preco';
   if (
-    /\b(metragem|tamanho|quantos metros|m2|m²|metros quadrados|area do lote|area do apartamento|area util)\b/.test(
+    /\b(metragem|tamanho|quantos metros|m2|mÂ²|metros quadrados|area do lote|area do apartamento|area util)\b/.test(
       n
     )
   ) {
@@ -115,6 +115,17 @@ function detectAxisFallbackFromMessage(userMessage: string): CommercialAxis | nu
   return null;
 }
 
+function detectDirectCommercialInterest(userMessage: string): boolean {
+  const n = norm(userMessage);
+  if (!n) return false;
+
+  return (
+    /\b(tenho interesse|tenho sim interesse|me interessei|estou interessado|estou interessada|gostei|curti)\b/.test(n) ||
+    /\b(gostaria de saber mais|quero saber mais|queria saber mais|pode me passar mais informacoes|me passa mais informacoes)\b/.test(n) ||
+    /\b(me fala mais|me conte mais|quero conhecer|quero entender melhor|quero mais detalhes)\b/.test(n) ||
+    /\b(vi o anuncio|vim pelo anuncio|recebi a mensagem|quero informacoes|quero informações)\b/.test(n)
+  );
+}
 function detectAskingForMoreOnSameAxis(userMessage: string): boolean {
   const n = norm(userMessage);
   if (!n) return false;
@@ -181,16 +192,24 @@ function detectVisitOpportunity(params: {
   if (!n) return false;
   if (params.requestedAxis === 'visita_agendamento') return true;
 
+  const directCommercialInterest = detectDirectCommercialInterest(params.userMessage);
+
+  if (
+    directCommercialInterest ||
+    /\b(visitar|visita|conhecer pessoalmente|agendar|marcar horario|marcar visita)\b/.test(n) ||
+    /\b(quero fechar|quero avancar|quero avançar|vamos avancar|vamos avançar)\b/.test(n)
+  ) {
+    return true;
+  }
+
   const contextLooksMature =
     params.historyCount >= 2 ||
     params.conversationPhase === 'scoped' ||
     params.conversationPhase === 'appointment';
+
   if (!contextLooksMature) return false;
 
-  return (
-    /\b(visitar|visita|conhecer pessoalmente|agendar)\b/.test(n) ||
-    /\b(gostei|tenho interesse|quero fechar|quero avancar)\b/.test(n)
-  );
+  return /\b(gostei|curti|me interessei)\b/.test(n);
 }
 
 function resolveCurrentAxis(input: AnaDecisionPolicyInput): AnaDecisionCurrentAxis {
@@ -339,3 +358,5 @@ export function buildAnaDecisionPolicy(input: AnaDecisionPolicyInput): AnaDecisi
     shouldAvoidGenericFallback,
   };
 }
+
+

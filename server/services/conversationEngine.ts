@@ -2994,7 +2994,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           : 'Responda em formato estruturado quando fizer sentido (linhas curtas/lista objetiva), entre 5 e 7 itens e sem misturar varios temas.'
         : 'Responda de forma curta e objetiva, com no maximo 3 linhas e no maximo 1 pergunta.',
       anaDecision.shouldSuggestVisit
-        ? 'Se houver aderencia ao contexto, voce pode sugerir visita de forma natural e sem insistencia.'
+        ? 'O cliente demonstrou interesse comercial direto ou oportunidade clara de avanço. Nao responda apenas com localizacao ou uma frase vaga como "Que mais?". Responda com acolhimento curto, no maximo UMA informacao forte do empreendimento e conduza com UMA pergunta util: perfil de busca (morar/investir/construir) ou convite leve para visita quando fizer sentido. Se falar de visita, use tom humano: "O corretor pode te passar tudo certinho. Que tal marcarmos uma visita?".'
         : null,
       !anaDecision.canMentionExactLocation
         ? 'Nao passe endereco/localizacao exata como se estivesse confirmado.'
@@ -5568,6 +5568,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
   }
 }
+
 
 
 
