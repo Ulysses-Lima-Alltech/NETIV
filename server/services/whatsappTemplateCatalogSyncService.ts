@@ -204,6 +204,7 @@ export async function deleteMetaTemplateByName(templateName: string): Promise<un
     const rawMessage = String(payload.error?.message ?? '').toLowerCase();
     const isNotFound =
       response.status === 404 ||
+      response.status === 400 ||
       rawMessage.includes('does not exist') ||
       rawMessage.includes('not found') ||
       rawMessage.includes('unknown template') ||
