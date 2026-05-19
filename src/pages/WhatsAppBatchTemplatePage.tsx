@@ -88,11 +88,17 @@ export function WhatsAppBatchTemplatePage() {
   }, []);
 
   const selectedTemplate = templates.find((tpl) => tpl.key === selectedTemplateKey) ?? null;
+  const templateStatus = String(selectedTemplate?.status ?? 'APPROVED').toUpperCase();
+  const templateNotApprovedMessage =
+    selectedTemplate && templateStatus !== 'APPROVED'
+      ? 'Este template ainda não está aprovado na Meta. Ele aparecerá aqui para acompanhamento, mas só poderá ser usado após aprovação.'
+      : null;
   const headerMediaMissing =
     !!selectedTemplate?.requiresHeaderMedia && !selectedTemplate?.headerImageUrl;
   const headerMediaMissingMessage = headerMediaMissing
     ? 'Este template exige imagem de cabeçalho. Cadastre uma URL pública antes de enviar.'
     : null;
+  const actionBlockedReason = templateNotApprovedMessage ?? headerMediaMissingMessage;
   console.log('[WHATSAPP_BATCH_FRONT_STATE_KEYS]', templates.map((t) => t.key));
   const validPreviewRows = (preview?.rows ?? []).filter((row) => row.status === 'valid');
   const canUseRowMode = validPreviewRows.length > 0;
@@ -193,8 +199,8 @@ export function WhatsAppBatchTemplatePage() {
   };
 
   const handlePreview = async () => {
-    if (headerMediaMissingMessage) {
-      setError(headerMediaMissingMessage);
+    if (actionBlockedReason) {
+      setError(actionBlockedReason);
       return;
     }
     if (!parseData) return;
@@ -224,8 +230,8 @@ export function WhatsAppBatchTemplatePage() {
   };
 
   const handleTest = async () => {
-    if (headerMediaMissingMessage) {
-      setError(headerMediaMissingMessage);
+    if (actionBlockedReason) {
+      setError(actionBlockedReason);
       return;
     }
     if (!selectedTemplate || !parseData) return;
@@ -255,8 +261,8 @@ export function WhatsAppBatchTemplatePage() {
   };
 
   const handleSend = async () => {
-    if (headerMediaMissingMessage) {
-      setError(headerMediaMissingMessage);
+    if (actionBlockedReason) {
+      setError(actionBlockedReason);
       return;
     }
     if (!preview || preview.validCount === 0) return;
@@ -324,6 +330,11 @@ export function WhatsAppBatchTemplatePage() {
           </p>
         </div>
       )}
+      {templateNotApprovedMessage && (
+        <div className="bg-amber-50 border border-amber-200 rounded-md p-4">
+          <p className="text-amber-900 text-sm">{templateNotApprovedMessage}</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="space-y-6">
@@ -359,7 +370,7 @@ export function WhatsAppBatchTemplatePage() {
               onVariableMappingsChange={setVariableMappings}
               onPreview={handlePreview}
               loadingPreview={loadingPreview}
-              previewDisabledReason={headerMediaMissingMessage}
+              previewDisabledReason={actionBlockedReason}
             />
           )}
         </div>
@@ -373,7 +384,7 @@ export function WhatsAppBatchTemplatePage() {
               </p>
             </div>
 
-            <div className="border border-[#E5E7EB] rounded-[12px] p-4 space-y-3 bg-white">
+            <div className="space-y-3">
               <h3 className="text-[14px] font-semibold text-[#111827]">1. Preview dos contatos</h3>
               {preview ? (
                 <BatchPreviewTable
@@ -391,7 +402,9 @@ export function WhatsAppBatchTemplatePage() {
               )}
             </div>
 
-            <div className="border border-[#E5E7EB] rounded-[12px] p-4 space-y-3 bg-white">
+            <div className="h-px bg-[#E5E7EB]" />
+
+            <div className="space-y-3">
               <h3 className="text-[14px] font-semibold text-[#111827]">2. Envio de teste</h3>
               {selectedTemplate && preview ? (
                 <TestSendPanel
@@ -410,42 +423,36 @@ export function WhatsAppBatchTemplatePage() {
                   testResult={testResult}
                   canUseRowMode={canUseRowMode}
                   selectedPreviewRow={selectedPreviewRow}
-                  disableReason={headerMediaMissingMessage}
+                  disableReason={actionBlockedReason}
                   embedded
                 />
               ) : (
-                <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-3">
-                  <p className="text-[13px] text-[#374151]">
+                <div className="px-1 py-1">
+                  <p className="text-[13px] text-[#6B7280]">
                     Selecione um template e gere o preview para testar o envio.
                   </p>
                 </div>
               )}
             </div>
 
-            <div className="border border-[#E5E7EB] rounded-[12px] p-4 space-y-4 bg-white">
+            <div className="h-px bg-[#E5E7EB]" />
+
+            <div className="space-y-4">
               <h3 className="text-[14px] font-semibold text-[#111827]">3. Envio final</h3>
               <p className="text-[13px] text-[#4B5563]">
                 Revise os dados antes de confirmar. Apenas contatos válidos serão enviados.
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="rounded-[10px] border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2">
-                  <p className="text-[11px] uppercase tracking-wide text-[#6B7280]">Total</p>
-                  <p className="text-[16px] font-semibold text-[#111827]">{preview?.total ?? 0}</p>
-                </div>
-                <div className="rounded-[10px] border border-[#BBF7D0] bg-[#F0FDF4] px-3 py-2">
-                  <p className="text-[11px] uppercase tracking-wide text-[#166534]">Válidos</p>
-                  <p className="text-[16px] font-semibold text-[#166534]">{preview?.validCount ?? 0}</p>
-                </div>
-                <div className="rounded-[10px] border border-[#FECACA] bg-[#FEF2F2] px-3 py-2">
-                  <p className="text-[11px] uppercase tracking-wide text-[#991B1B]">Inválidos/Bloqueados</p>
-                  <p className="text-[16px] font-semibold text-[#991B1B]">
-                    {(preview?.invalidCount ?? 0) + (preview?.blockedCount ?? 0)}
-                  </p>
-                </div>
+              <div className="flex flex-wrap items-center gap-2 text-[12px]">
+                <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-medium">Total: {preview?.total ?? 0}</span>
+                <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-medium">Válidos: {preview?.validCount ?? 0}</span>
+                <span className="px-3 py-1 rounded-full bg-red-100 text-red-800 font-medium">
+                  Inválidos/Bloqueados:{' '}
+                  {((preview?.invalidCount ?? 0) + (preview?.blockedCount ?? 0))}
+                </span>
               </div>
               <button
                 onClick={handleSend}
-                disabled={loadingSend || (preview?.validCount ?? 0) === 0 || !selectedTemplateKey || !!headerMediaMissingMessage}
+                disabled={loadingSend || (preview?.validCount ?? 0) === 0 || !selectedTemplateKey || !!actionBlockedReason}
                 className="w-full bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
               >
                 {loadingSend ? 'Enviando...' : `Enviar ${preview?.validCount ?? 0} mensagens`}

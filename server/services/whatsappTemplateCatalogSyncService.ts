@@ -61,7 +61,8 @@ function mapMetaTemplateToCatalogItem(template: MetaTemplateItem): WhatsAppTempl
   const key = String(template.name ?? '').trim();
   if (!key) return null;
   const status = String(template.status ?? '').toUpperCase();
-  if (status !== 'APPROVED') return null;
+  const allowedStatus = new Set(['APPROVED', 'PENDING', 'REJECTED', 'PAUSED']);
+  if (!allowedStatus.has(status)) return null;
   const components = Array.isArray(template.components) ? template.components : [];
   const header = components.find((component) => String(component.type ?? '').toUpperCase() === 'HEADER');
   const headerFormat = String(header?.format ?? '').toUpperCase();
@@ -90,7 +91,7 @@ function mapMetaTemplateToCatalogItem(template: MetaTemplateItem): WhatsAppTempl
   };
 }
 
-async function fetchMetaApprovedTemplates(): Promise<WhatsAppTemplateCatalogItem[]> {
+async function fetchMetaTemplatesForBatch(): Promise<WhatsAppTemplateCatalogItem[]> {
   const integrationConfig = await getWhatsAppConfig();
   const token = integrationConfig?.metaAccessToken?.trim() || config.meta.whatsappToken?.trim();
   const apiVersion = integrationConfig?.apiVersion?.trim() || config.meta.apiVersion || config.metaApiVersion;
@@ -145,7 +146,7 @@ export async function listBatchTemplatesFromMetaOrFallback(params?: {
     return { templates: cacheEntry.templates, fallbackUsed: false };
   }
   try {
-    const fromMeta = await fetchMetaApprovedTemplates();
+    const fromMeta = await fetchMetaTemplatesForBatch();
     const merged = mergeWithLocalHeaderMedia(fromMeta);
     cacheEntry = { templates: merged, cachedAt: now };
     setRuntimeWhatsAppTemplatesCatalog(merged);

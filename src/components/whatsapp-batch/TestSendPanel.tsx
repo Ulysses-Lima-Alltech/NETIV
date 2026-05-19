@@ -97,7 +97,7 @@ export function TestSendPanel({
             <p className="text-[11px] text-[#B45309] mt-1">Gere o preview para selecionar uma linha válida.</p>
           )}
           {selectedPreviewRow && (
-            <div className="mt-2 p-2 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] text-[11px]">
+            <div className={`mt-2 p-2 text-[11px] ${embedded ? 'bg-[#F8FAFC]/70 border border-[#E5E7EB]/70 rounded-[8px]' : 'bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px]'}`}>
               <p className="font-semibold mb-1">Variáveis da linha selecionada:</p>
               {selectedPreviewRow.resolvedVariables.map((v) => (
                 <div key={v.variableId} className="mb-1">
@@ -147,7 +147,7 @@ export function TestSendPanel({
       {disableReason && <p className="text-[12px] text-[#B45309]">{disableReason}</p>}
 
       {testResult && (
-        <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
+        <div className={`${embedded ? 'bg-[#F8FAFC]/70 border border-[#E5E7EB]/70' : 'bg-gray-50 border border-gray-200'} rounded-md p-4`}>
           <h3 className="text-sm font-medium text-gray-900 mb-2">Resultado do teste:</h3>
           <pre className="text-xs text-gray-700 whitespace-pre-wrap">{testResult}</pre>
         </div>

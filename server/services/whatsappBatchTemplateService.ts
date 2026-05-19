@@ -76,6 +76,14 @@ function assertTemplateHeaderMediaConfigured(template: WhatsAppTemplateCatalogIt
   throw new Error('Este template exige imagem de cabeçalho. Cadastre uma URL pública antes de enviar.');
 }
 
+function assertTemplateApproved(template: WhatsAppTemplateCatalogItem): void {
+  const status = String(template.status ?? 'APPROVED').toUpperCase();
+  if (status === 'APPROVED') return;
+  throw new Error(
+    'Este template ainda não está aprovado na Meta. Ele aparecerá aqui para acompanhamento, mas só poderá ser usado após aprovação.'
+  );
+}
+
 async function resolveEnterprise(selectedEnterpriseId: number | null | undefined): Promise<{ id: number; name: string } | null> {
   if (selectedEnterpriseId == null) return null;
   const ent = await getEnterpriseById(selectedEnterpriseId);
@@ -177,6 +185,7 @@ export async function buildBatchPreview(params: {
   rows: BatchPreviewRow[];
 }> {
   const template = getTemplateOrThrow(params.mapping.templateKey);
+  assertTemplateApproved(template);
   assertTemplateHeaderMediaConfigured(template);
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
   const previewRows: BatchPreviewRow[] = [];
@@ -300,6 +309,7 @@ export async function sendBatchTemplate(params: {
   mapping: BatchMappingDto;
 }): Promise<BatchExecutionResult> {
   const template = getTemplateOrThrow(params.mapping.templateKey);
+  assertTemplateApproved(template);
   assertTemplateHeaderMediaConfigured(template);
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
   const broker = await resolveBroker(params.mapping.selectedBrokerId);
@@ -460,6 +470,7 @@ export async function sendBatchTemplateTest(params: {
   metaMessageId?: string;
 }> {
   const template = getTemplateOrThrow(params.mapping.templateKey);
+  assertTemplateApproved(template);
   assertTemplateHeaderMediaConfigured(template);
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
   let resolved: ReturnType<typeof resolveVariablesForRow>;

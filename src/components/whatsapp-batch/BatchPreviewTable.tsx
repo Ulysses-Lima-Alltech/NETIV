@@ -35,7 +35,7 @@ export function BatchPreviewTable({ preview, onSelectTestRow, selectedTestRow, e
   return (
     <section className={embedded ? 'space-y-3' : 'bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3'}>
       {!embedded && <h2 className="text-[14px] font-semibold">Preview antes do envio</h2>}
-<div className="text-[12px] text-[#374151] bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px] p-3 flex flex-wrap gap-2">
+<div className={`text-[12px] text-[#374151] p-3 flex flex-wrap gap-2 ${embedded ? 'bg-transparent border-0 rounded-none px-0' : 'bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px]'}`}>
         <button 
           type="button" 
           className={`px-2 py-1 rounded ${filter === 'all' ? 'bg-[#DBEAFE] text-[#1D4ED8]' : 'bg-white border border-[#E5E7EB]'}`} 
@@ -73,7 +73,7 @@ export function BatchPreviewTable({ preview, onSelectTestRow, selectedTestRow, e
           </span>
         </div>
       </div>
-      <div className="overflow-x-auto border border-[#E5E7EB] rounded-[10px]">
+      <div className={`overflow-x-auto ${embedded ? 'border border-[#E5E7EB]/70 rounded-[8px]' : 'border border-[#E5E7EB] rounded-[10px]'}`}>
         <table className="w-full text-left">
           <thead className="bg-[#F9FAFB] border-b border-[#E5E7EB]">
             <tr className="text-[11px] uppercase tracking-wide text-[#6B7280]">

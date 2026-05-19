@@ -21,6 +21,13 @@ export function TemplateSelector({ templates, selectedKey, onSelect, loading, se
   const languageBadge = selected?.languageCode ?? 'pt_BR';
   const contentBadge = selected?.requiresHeaderMedia ? 'Requer imagem' : 'Texto puro';
   const variableBadge = selected?.hasBodyVariables ? `Possui variáveis (${selected.bodyVariableCount ?? 0})` : 'Sem variáveis';
+  const statusColors: Record<string, string> = {
+    APPROVED: 'bg-emerald-100 text-emerald-800',
+    PENDING: 'bg-amber-100 text-amber-800',
+    REJECTED: 'bg-red-100 text-red-800',
+    PAUSED: 'bg-slate-200 text-slate-700',
+  };
+  const statusClass = statusColors[statusBadge] ?? 'bg-slate-100 text-slate-700';
   return (
     <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
       <h2 className="text-[14px] font-semibold">Template Aprovado</h2>
@@ -44,7 +51,7 @@ export function TemplateSelector({ templates, selectedKey, onSelect, loading, se
       {selected && (
         <div className="text-[12px] text-[#374151] bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px] p-3 space-y-1">
           <div className="flex flex-wrap gap-2 mb-2">
-            <span className="px-2 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-semibold">{statusBadge}</span>
+            <span className={`px-2 py-1 rounded-full text-[11px] font-semibold ${statusClass}`}>{statusBadge}</span>
             <span className="px-2 py-1 rounded-full bg-sky-100 text-sky-800 text-[11px] font-semibold">{categoryBadge}</span>
             <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-700 text-[11px] font-semibold">{languageBadge}</span>
             <span className="px-2 py-1 rounded-full bg-amber-100 text-amber-800 text-[11px] font-semibold">{contentBadge}</span>
