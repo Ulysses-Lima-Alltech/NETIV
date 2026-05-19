@@ -881,6 +881,37 @@ function normText(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim();
 }
 
+const ANA_INTERNAL_LEAK_PATTERNS: RegExp[] = [
+  /finalizar com pergunta aberta e natural/i,
+  /sem resposta fixa deterministica/i,
+  /pergunta aberta e natural/i,
+  /\bfinalizar com\b/i,
+  /\bnao mencionar\b/i,
+  /\binstrucao\b/i,
+  /\bregra\b/i,
+];
+
+function hasAnaInternalInstructionLeak(text: string): boolean {
+  const normalized = normText(text || '');
+  if (!normalized) return false;
+  return ANA_INTERNAL_LEAK_PATTERNS.some((re) => re.test(normalized));
+}
+
+function isEvoraLocationQuestion(userMessage: string): boolean {
+  const n = normText(userMessage || '');
+  if (!n) return false;
+  const asksLocation =
+    /\b(onde fica|localizacao|localizacao do|fica onde|qual o endereco|endereco|acesso)\b/.test(n) ||
+    /\b(evora)\b/.test(n);
+  return asksLocation && /\bevora\b/.test(n);
+}
+
+const EVORA_LOCATION_REPLY_CHUNKS = [
+  'O Évora fica em Atibaia, próximo à região da Pedreira.',
+  'Tem fácil acesso pela Rodovia Dom Pedro I, em uma localização que combina tranquilidade, natureza e boa conexão com a cidade.',
+  'Quer que eu te envie mais detalhes sobre o acesso ou prefere agendar uma visita para conhecer?',
+];
+
 function hasExplicitHandoffIntent(message: string): boolean {
   return HANDOFF_INTENT_PATTERNS.some((p) => normText(message).includes(p));
 }
@@ -5266,6 +5297,83 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
       anaTurnAuditOutcome = 'silent';
       anaTurnAuditBlockedReason = 'pipeline_stale_after_reply_delay';
+      return;
+    }
+
+    if (hasAnaInternalInstructionLeak(replyText)) {
+      logAnaOutboundBlocked({
+        reason: 'internal_instruction_leak_guard',
+        userMessage: trimmed,
+        conversationId,
+        replyCandidate: replyText,
+      });
+      anaTurnAuditOutcome = 'blocked';
+      anaTurnAuditBlockedReason = 'internal_instruction_leak_guard';
+      anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+        replySource,
+        outboundStatus: anaTurnAuditOutcome,
+        blockedReason: anaTurnAuditBlockedReason,
+      });
+      return;
+    }
+
+    const shouldForceEvoraLocationTriplet = isEvoraLocationQuestion(trimmed);
+    if (shouldForceEvoraLocationTriplet) {
+      const sentChunks: string[] = [];
+      for (const chunk of EVORA_LOCATION_REPLY_CHUNKS) {
+        anaEngineTrace('final_send_start', {
+          conversationId,
+          phase: 'ana_main_reply_evora_location_chunk',
+          replyLen: chunk.length,
+        });
+        const chunkSendResult = await sendTextMessage({
+          conversationId,
+          to: toPhoneNumber,
+          text: chunk,
+          phase: 'ana_main_reply',
+        });
+        if (isAnaOutboundQuotaBlocked(chunkSendResult)) {
+          anaTurnAuditOutcome = 'blocked';
+          anaTurnAuditBlockedReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
+          anaTurnAuditGuardsApplied.outboundReason = ANA_OUTBOUND_QUOTA_EXCEEDED_REASON;
+          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+          markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+            replySource,
+            outboundStatus: anaTurnAuditOutcome,
+            blockedReason: anaTurnAuditBlockedReason,
+            quota: chunkSendResult.quota ?? null,
+          });
+          return;
+        }
+        if (!chunkSendResult.success || !chunkSendResult.metaMessageId) {
+          anaTurnAuditOutcome = 'send_failed';
+          anaTurnAuditBlockedReason = 'main_reply_send_failed';
+          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+          markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+            replySource,
+            outboundStatus: anaTurnAuditOutcome,
+            blockedReason: anaTurnAuditBlockedReason,
+          });
+          return;
+        }
+        await insertMessage(conversationId, 'assistant', chunk, chunkSendResult.metaMessageId);
+        sentChunks.push(chunk);
+      }
+      replyText = sentChunks.join('\n');
+      anaTurnAuditOutcome = shouldAttemptDocSend ? 'material_failed' : 'sent';
+      anaTurnAuditBlockedReason = null;
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
+        replySource,
+        outboundStatus: anaTurnAuditOutcome,
+        fallbackUsed: anaTurnDiagnostics.fallbackUsed,
+      });
+      console.log('[ANA_EVORA_LOCATION_TRIPLET_SENT]', {
+        conversationId,
+        chunks: EVORA_LOCATION_REPLY_CHUNKS.length,
+      });
       return;
     }
 
