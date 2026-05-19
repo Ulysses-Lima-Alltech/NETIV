@@ -21,6 +21,8 @@ export interface WhatsAppTemplateCatalogItem {
   metaTemplateId?: string;
   category?: 'CLIENT' | 'CORRETOR' | 'ADMIN' | 'MARKETING' | 'UTILITY' | 'AUTHENTICATION' | string;
   status?: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
   components?: Array<Record<string, unknown>>;
   hasHeaderImage?: boolean;
   hasHeaderVideo?: boolean;

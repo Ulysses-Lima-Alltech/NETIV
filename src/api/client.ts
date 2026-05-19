@@ -161,6 +161,8 @@ export interface WhatsAppMetaTemplateItem {
   language?: string;
   status?: string;
   category?: string;
+  created_time?: string;
+  updated_time?: string;
   components?: Array<Record<string, unknown>>;
 }
 

@@ -22,6 +22,8 @@ export type MetaTemplateItem = {
   language?: string;
   status?: string;
   category?: string;
+  created_time?: string;
+  updated_time?: string;
   components?: MetaTemplateComponent[];
 };
 
@@ -88,9 +90,7 @@ function buildVariablesFromBody(components: MetaTemplateComponent[]): WhatsAppTe
 function mapMetaTemplateToCatalogItem(template: MetaTemplateItem): WhatsAppTemplateCatalogItem | null {
   const key = String(template.name ?? '').trim();
   if (!key) return null;
-  const status = String(template.status ?? '').toUpperCase();
-  const allowedStatus = new Set(['APPROVED', 'PENDING', 'REJECTED', 'PAUSED']);
-  if (!allowedStatus.has(status)) return null;
+  const status = String(template.status ?? 'UNKNOWN').toUpperCase() || 'UNKNOWN';
   const components = Array.isArray(template.components) ? template.components : [];
   const header = components.find((component) => String(component.type ?? '').toUpperCase() === 'HEADER');
   const headerFormat = String(header?.format ?? '').toUpperCase();
@@ -108,6 +108,8 @@ function mapMetaTemplateToCatalogItem(template: MetaTemplateItem): WhatsAppTempl
     category: String(template.category ?? '').toUpperCase() || undefined,
     status,
     components: components as Array<Record<string, unknown>>,
+    createdAt: template.created_time ?? null,
+    updatedAt: template.updated_time ?? null,
     hasHeaderImage,
     hasHeaderVideo,
     hasHeaderDocument,
@@ -121,18 +123,27 @@ function mapMetaTemplateToCatalogItem(template: MetaTemplateItem): WhatsAppTempl
 
 export async function listMetaTemplatesRaw(): Promise<MetaTemplateItem[]> {
   const { token, apiVersion, wabaId } = await getMetaCredentialsOrThrow();
-  const params = new URLSearchParams({
-    fields: 'name,language,status,category,components,id',
-    limit: '100',
-  });
-  const url = `${META_GRAPH_BASE}/${apiVersion}/${wabaId}/message_templates?${params.toString()}`;
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  const payload = (await response.json().catch(() => ({}))) as {
-    data?: MetaTemplateItem[];
-    error?: { message?: string };
-  };
-  if (!response.ok) throw new Error(payload.error?.message || `Meta list failed (${response.status}).`);
-  return payload.data ?? [];
+  const fields = 'name,language,status,category,components,id,created_time,updated_time';
+  const firstParams = new URLSearchParams({ fields, limit: '100' });
+  let nextUrl: string | null = `${META_GRAPH_BASE}/${apiVersion}/${wabaId}/message_templates?${firstParams.toString()}`;
+  const collected: MetaTemplateItem[] = [];
+  let pageCount = 0;
+
+  while (nextUrl) {
+    pageCount++;
+    if (pageCount > 30) break;
+    const response = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } });
+    const payload = (await response.json().catch(() => ({}))) as {
+      data?: MetaTemplateItem[];
+      paging?: { next?: string };
+      error?: { message?: string };
+    };
+    if (!response.ok) throw new Error(payload.error?.message || `Meta list failed (${response.status}).`);
+    collected.push(...(payload.data ?? []));
+    nextUrl = payload.paging?.next ?? null;
+  }
+
+  return collected;
 }
 
 async function fetchMetaTemplatesForBatch(): Promise<WhatsAppTemplateCatalogItem[]> {

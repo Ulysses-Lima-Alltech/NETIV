@@ -24,6 +24,37 @@ import type {
   TemplateVariableSource,
 } from '../types/whatsappBatch';
 
+function normalizeMetaStatus(raw: string | null | undefined): string {
+  const value = String(raw ?? '').trim().toUpperCase();
+  return value || 'UNKNOWN';
+}
+
+function statusLabel(status: string): string {
+  const map: Record<string, string> = {
+    APPROVED: 'Aprovado',
+    PENDING: 'Pendente',
+    REJECTED: 'Rejeitado',
+    PAUSED: 'Pausado',
+    DISABLED: 'Desativado',
+    DELETED: 'Excluido',
+    UNKNOWN: 'Desconhecido',
+  };
+  return map[status] ?? `Outro: ${status}`;
+}
+
+function statusBadgeClass(status: string): string {
+  const map: Record<string, string> = {
+    APPROVED: 'bg-emerald-100 text-emerald-800',
+    PENDING: 'bg-amber-100 text-amber-800',
+    REJECTED: 'bg-red-100 text-red-800',
+    PAUSED: 'bg-orange-100 text-orange-800',
+    DISABLED: 'bg-slate-300 text-slate-800',
+    DELETED: 'bg-slate-700 text-white',
+    UNKNOWN: 'bg-slate-100 text-slate-700',
+  };
+  return map[status] ?? 'bg-slate-100 text-slate-700';
+}
+
 export function WhatsAppBatchTemplatePage() {
   const { isAdmin } = useAuth();
   const [file, setFile] = useState<File | null>(null);
@@ -64,6 +95,9 @@ export function WhatsAppBatchTemplatePage() {
   const [metaTemplateBody, setMetaTemplateBody] = useState('');
   const [metaTemplateHeader, setMetaTemplateHeader] = useState('');
   const [metaTemplateFooter, setMetaTemplateFooter] = useState('');
+  const [metaSearch, setMetaSearch] = useState('');
+  const [metaStatusFilter, setMetaStatusFilter] = useState('ALL');
+  const [metaCategoryFilter, setMetaCategoryFilter] = useState('ALL');
 
   useEffect(() => {
     setTemplatesLoading(true);
@@ -186,10 +220,10 @@ export function WhatsAppBatchTemplatePage() {
   };
 
   const selectedTemplate = templates.find((tpl) => tpl.key === selectedTemplateKey) ?? null;
-  const templateStatus = String(selectedTemplate?.status ?? 'APPROVED').toUpperCase();
+  const templateStatus = normalizeMetaStatus(selectedTemplate?.status);
   const templateNotApprovedMessage =
     selectedTemplate && templateStatus !== 'APPROVED'
-      ? 'Este template ainda nao esta aprovado na Meta. Ele aparecera aqui para acompanhamento, mas so podera ser usado apos aprovacao.'
+      ? 'Este template ainda não está aprovado na Meta. Ele pode ser visualizado, mas não pode ser usado para disparo.'
       : null;
   const headerMediaMissing = !!selectedTemplate?.requiresHeaderMedia && !selectedTemplate?.headerImageUrl;
   const headerMediaMissingMessage = headerMediaMissing
@@ -198,6 +232,29 @@ export function WhatsAppBatchTemplatePage() {
   const missingBrokersMessage =
     selectedBrokerIds.length === 0 ? 'Selecione ao menos um corretor responsavel para distribuir a base.' : null;
   const actionBlockedReason = templateNotApprovedMessage ?? headerMediaMissingMessage ?? missingBrokersMessage;
+
+  const allMetaStatuses = Array.from(
+    new Set(metaTemplates.map((tpl) => normalizeMetaStatus(tpl.status))),
+  ).sort((a, b) => a.localeCompare(b));
+  const allMetaCategories = Array.from(
+    new Set(metaTemplates.map((tpl) => String(tpl.category ?? 'UNKNOWN').toUpperCase())),
+  ).sort((a, b) => a.localeCompare(b));
+  const filteredMetaTemplates = metaTemplates.filter((tpl) => {
+    const status = normalizeMetaStatus(tpl.status);
+    const category = String(tpl.category ?? 'UNKNOWN').toUpperCase();
+    const language = String(tpl.language ?? '').toLowerCase();
+    const name = String(tpl.name ?? '').toLowerCase();
+    const search = metaSearch.trim().toLowerCase();
+    const matchesSearch =
+      !search ||
+      name.includes(search) ||
+      category.toLowerCase().includes(search) ||
+      language.includes(search) ||
+      status.toLowerCase().includes(search);
+    const matchesStatus = metaStatusFilter === 'ALL' || status === metaStatusFilter;
+    const matchesCategory = metaCategoryFilter === 'ALL' || category === metaCategoryFilter;
+    return matchesSearch && matchesStatus && matchesCategory;
+  });
 
   const validPreviewRows = (preview?.rows ?? []).filter((row) => row.status === 'valid');
   const canUseRowMode = validPreviewRows.length > 0;
@@ -412,7 +469,7 @@ export function WhatsAppBatchTemplatePage() {
               activeTab === 'templates' ? 'bg-[#DBEAFE] text-[#1D4ED8]' : 'text-[#4B5563] hover:bg-[#F3F4F6]'
             }`}
           >
-            Templates WhatsApp
+            Templates META
           </button>
         </div>
 
@@ -420,9 +477,9 @@ export function WhatsAppBatchTemplatePage() {
           <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 space-y-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-[16px] font-semibold">Templates WhatsApp</h2>
+                <h2 className="text-[16px] font-semibold">Templates META</h2>
                 <p className="text-[13px] text-[#4B5563] mt-1">
-                  Gerencie templates na Meta: listar, criar, excluir e sincronizar status.
+                  Gerencie templates na Meta: liste, crie, exclua e acompanhe o status de aprovacao.
                 </p>
               </div>
               <button
@@ -442,8 +499,8 @@ export function WhatsAppBatchTemplatePage() {
               <div className="bg-slate-50 border border-slate-200 rounded-md p-3 text-sm text-slate-700">{metaActionFeedback}</div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              <div className="space-y-3">
+            <div className="grid grid-cols-1 lg:grid-cols-[360px_minmax(0,1fr)] gap-5">
+              <div className="space-y-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[12px] p-4">
                 <h3 className="text-[14px] font-semibold">Criar template</h3>
                 <div className="grid grid-cols-1 gap-3">
                   <input
@@ -498,54 +555,91 @@ export function WhatsAppBatchTemplatePage() {
                 </div>
               </div>
 
-              <div className="space-y-3">
-                <h3 className="text-[14px] font-semibold">Templates existentes</h3>
+              <div className="space-y-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[12px] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-[14px] font-semibold">Templates</h3>
+                  <span className="text-[12px] text-[#6B7280]">
+                    {filteredMetaTemplates.length} de {metaTemplates.length}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <input
+                    className="md:col-span-2 w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
+                    placeholder="Buscar por nome, categoria ou idioma"
+                    value={metaSearch}
+                    onChange={(e) => setMetaSearch(e.target.value)}
+                  />
+                  <select
+                    className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
+                    value={metaStatusFilter}
+                    onChange={(e) => setMetaStatusFilter(e.target.value)}
+                  >
+                    <option value="ALL">Todos os status</option>
+                    {allMetaStatuses.map((status) => (
+                      <option key={status} value={status}>
+                        {statusLabel(status)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <select
+                  className="w-full md:w-[280px] border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
+                  value={metaCategoryFilter}
+                  onChange={(e) => setMetaCategoryFilter(e.target.value)}
+                >
+                  <option value="ALL">Todas as categorias</option>
+                  {allMetaCategories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
                 {metaTemplatesLoading ? (
                   <p className="text-[13px] text-[#6B7280]">Carregando templates...</p>
-                ) : metaTemplates.length === 0 ? (
+                ) : filteredMetaTemplates.length === 0 ? (
                   <p className="text-[13px] text-[#6B7280]">Nenhum template retornado pela Meta.</p>
                 ) : (
-                  <div className="max-h-[480px] overflow-auto border border-[#E5E7EB] rounded-[10px] divide-y divide-[#F3F4F6]">
-                    {metaTemplates.map((tpl) => {
-                      const status = String(tpl.status ?? 'UNKNOWN').toUpperCase();
-                      const statusClass =
-                        status === 'APPROVED'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : status === 'PENDING'
-                            ? 'bg-amber-100 text-amber-800'
-                            : status === 'REJECTED'
-                              ? 'bg-red-100 text-red-800'
-                              : status === 'PAUSED'
-                                ? 'bg-slate-200 text-slate-700'
-                                : 'bg-slate-100 text-slate-700';
-
-                      return (
-                        <div key={tpl.id ?? tpl.name} className="px-3 py-3 flex items-center justify-between gap-3">
-                          <div>
-                            <p className="text-[13px] font-semibold text-[#111827]">{tpl.name ?? '-'}</p>
-                            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
-                              <span className={`px-2 py-1 rounded-full font-semibold ${statusClass}`}>{status}</span>
-                              <span className="px-2 py-1 rounded-full bg-sky-100 text-sky-800 font-semibold">
-                                {tpl.category ?? '-'}
-                              </span>
-                              <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-700 font-semibold">
-                                {tpl.language ?? '-'}
-                              </span>
-                            </div>
-                          </div>
-                          {tpl.name && (
-                            <button
-                              type="button"
-                              onClick={() => void handleDeleteMetaTemplate(tpl.name!)}
-                              disabled={metaActionLoading}
-                              className="px-3 py-1.5 rounded-[8px] border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-60"
-                            >
-                              Excluir
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
+                  <div className="overflow-auto border border-[#E5E7EB] rounded-[10px] bg-white">
+                    <table className="w-full text-left">
+                      <thead className="border-b border-[#E5E7EB] bg-[#F8FAFC]">
+                        <tr className="text-[11px] uppercase tracking-wide text-[#6B7280]">
+                          <th className="px-3 py-2">Nome</th>
+                          <th className="px-3 py-2">Status</th>
+                          <th className="px-3 py-2">Categoria</th>
+                          <th className="px-3 py-2">Idioma</th>
+                          <th className="px-3 py-2 text-right">Acoes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredMetaTemplates.map((tpl) => {
+                          const status = normalizeMetaStatus(tpl.status);
+                          return (
+                            <tr key={`${tpl.id ?? tpl.name}-${status}`} className="border-b border-[#F3F4F6] text-[12px]">
+                              <td className="px-3 py-2 font-medium text-[#111827]">{tpl.name ?? '-'}</td>
+                              <td className="px-3 py-2">
+                                <span className={`px-2 py-1 rounded-full text-[10px] font-semibold ${statusBadgeClass(status)}`}>
+                                  {statusLabel(status)}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2">{String(tpl.category ?? 'UNKNOWN').toUpperCase()}</td>
+                              <td className="px-3 py-2">{tpl.language ?? '-'}</td>
+                              <td className="px-3 py-2 text-right">
+                                {tpl.name ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleDeleteMetaTemplate(tpl.name!)}
+                                    disabled={metaActionLoading}
+                                    className="px-2.5 py-1 rounded-[8px] border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-60"
+                                  >
+                                    Excluir
+                                  </button>
+                                ) : null}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>

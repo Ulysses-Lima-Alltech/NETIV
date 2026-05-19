@@ -26,12 +26,15 @@ export function TemplateSelector({ templates, selectedKey, onSelect, loading, se
     PENDING: 'bg-amber-100 text-amber-800',
     REJECTED: 'bg-red-100 text-red-800',
     PAUSED: 'bg-slate-200 text-slate-700',
+    DELETED: 'bg-slate-700 text-white',
+    DISABLED: 'bg-orange-100 text-orange-800',
+    UNKNOWN: 'bg-slate-100 text-slate-700',
   };
   const statusClass = statusColors[statusBadge] ?? 'bg-slate-100 text-slate-700';
 
   return (
     <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
-      <h2 className="text-[14px] font-semibold">Template Aprovado</h2>
+      <h2 className="text-[14px] font-semibold">Templates</h2>
       {loading ? <p className="text-[13px] text-[#6B7280]">Carregando templates...</p> : null}
       <select
         className={inputCls}
@@ -43,7 +46,7 @@ export function TemplateSelector({ templates, selectedKey, onSelect, loading, se
         <option value="">Selecione um template</option>
         {templates.map((tpl) => (
           <option key={tpl.key} value={tpl.key}>
-            {tpl.name}
+            {`${tpl.name} - ${String(tpl.status ?? 'UNKNOWN').toUpperCase()} - ${String(tpl.category ?? 'SEM_CATEGORIA').toUpperCase()}`}
           </option>
         ))}
       </select>

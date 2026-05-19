@@ -10,6 +10,8 @@ export interface BatchTemplateCatalogItem {
   languageCode: string;
   category?: string;
   status?: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
   metaTemplateId?: string;
   components?: Array<Record<string, unknown>>;
   hasHeaderImage?: boolean;
