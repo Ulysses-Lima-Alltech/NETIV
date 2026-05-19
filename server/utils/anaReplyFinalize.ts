@@ -153,7 +153,7 @@ function humanizeLazerReplyWhenNeeded(reply: string, userMessage?: string | null
   return HUMAN_LAZER_REPLY;
 }
 
-const GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION = 'Me conta, quais são suas dúvidas? Vou responder todas.';
+const GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION = 'Finalizar com pergunta aberta e natural, sem resposta fixa determinística.';
 
 function replyAlreadyEndsWithQuestion(text: string): boolean {
   return /\?\s*$/.test((text || '').trim());
