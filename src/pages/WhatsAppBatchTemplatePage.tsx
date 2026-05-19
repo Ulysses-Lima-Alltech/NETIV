@@ -61,7 +61,9 @@ function isTemplateUsableForBatch(
 ): boolean {
   const status = normalizeMetaStatus(template.status);
   if (status === 'APPROVED') return true;
-  if (catalogSource === 'local_fallback' && template.source === 'local_fallback') return true;
+  if (template.source === 'local_fallback') return true;
+  if (status === 'LOCAL') return true;
+  if (catalogSource === 'local_fallback' && template.source !== 'meta') return true;
   return false;
 }
 
@@ -236,9 +238,11 @@ export function WhatsAppBatchTemplatePage() {
 
   const selectedTemplate = templates.find((tpl) => tpl.key === selectedTemplateKey) ?? null;
   const usableTemplates = templates.filter((tpl) => isTemplateUsableForBatch(tpl, templatesCatalogSource));
-  const templateStatus = normalizeMetaStatus(selectedTemplate?.status);
+  const selectedTemplateUsable = selectedTemplate
+    ? isTemplateUsableForBatch(selectedTemplate, templatesCatalogSource)
+    : false;
   const templateNotApprovedMessage =
-    selectedTemplate && templateStatus !== 'APPROVED'
+    selectedTemplate && !selectedTemplateUsable
       ? 'Este template ainda nao esta aprovado na Meta. Ele pode ser visualizado, mas nao pode ser usado para disparo.'
       : null;
   const headerMediaMissing = !!selectedTemplate?.requiresHeaderMedia && !selectedTemplate?.headerImageUrl;

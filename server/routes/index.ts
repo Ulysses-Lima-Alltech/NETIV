@@ -21,7 +21,7 @@ import knowledgeRouter from './knowledge.js';
 import realtimeRouter from './realtime.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { ROLES_ORG_ADMIN, ROLES_SETTINGS_ADMIN } from '../constants/roles.js';
-import { listWhatsAppTemplatesCatalog } from '../catalogs/whatsappTemplates.js';
+import { listBatchTemplatesFromMetaOrFallback } from '../services/whatsappTemplateCatalogSyncService.js';
 
 const router = Router();
 
@@ -36,8 +36,22 @@ router.use('/api/service', apiDjangoRouter);
  * Compatibilidade explícita para a URL pública usada pelo frontend:
  * GET /api/whatsapp-batch/templates
  */
-router.get('/whatsapp-batch/templates', (_req, res) => {
-  res.json({ templates: listWhatsAppTemplatesCatalog() });
+router.get('/whatsapp-batch/templates', async (req, res) => {
+  try {
+    const forceRefresh = String(req.query.refresh ?? '') === '1';
+    const { templates, fallbackUsed } = await listBatchTemplatesFromMetaOrFallback({ forceRefresh });
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.json({
+      templates,
+      warning: fallbackUsed ? 'NÃ£o foi possÃ­vel sincronizar com a Meta. Exibindo catÃ¡logo local.' : null,
+      source: fallbackUsed ? 'local_fallback' : 'meta_sync',
+    });
+  } catch (error) {
+    console.error('[WHATSAPP_BATCH_TEMPLATES_COMPAT_ERROR]', error);
+    res.status(500).json({ error: 'Erro ao listar templates do WhatsApp.' });
+  }
 });
 router.use('/realtime', realtimeRouter);
 
