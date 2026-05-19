@@ -1,4 +1,4 @@
-import { getConversationMessageCounts } from '../repositories/messageRepository.js';
+﻿import { getConversationMessageCounts } from '../repositories/messageRepository.js';
 import {
   sendLocalMediaToWhatsApp,
   sendTextMessage,
@@ -29,22 +29,16 @@ export function evaluateAnaOutboundQuota(params: {
   anaOutboundCount: number;
   isAutomaticAna: boolean;
 }): AnaOutboundQuotaDecision {
-  // Regra desativada para produção com disparos em lote.
-  // O disparo inicial cria mensagem outbound antes da primeira resposta do cliente,
-  // então bloquear por anaOutboundCount >= inboundCount impede a Ana de responder leads reais.
-  // Mantemos a função para compatibilidade/auditoria, mas ela não bloqueia mais envio automático.
-  void params;
-  return { allowed: true, reason: null };
-}): AnaOutboundQuotaDecision {
-  if (!params.isAutomaticAna) {
-    return { allowed: true, reason: null };
-  }
-  if (params.anaOutboundCount >= params.inboundCount) {
-    return { allowed: false, reason: ANA_OUTBOUND_QUOTA_EXCEEDED_REASON };
-  }
+  // Bloqueio proporcional desativado: em campanhas/disparo em lote, o primeiro outbound
+  // pode existir antes da primeira inbound do lead, e a regra antiga bloqueava indevidamente
+  // respostas válidas da Ana.
+  //
+  // Mantemos o envelope de decisão para compatibilidade de logs/auditoria.
+  void params.inboundCount;
+  void params.anaOutboundCount;
+  void params.isAutomaticAna;
   return { allowed: true, reason: null };
 }
-
 export function isAnaOutboundQuotaBlocked(result: AnaQuotaSendResult): boolean {
   return result.blockedByAnaQuota === true;
 }
@@ -126,3 +120,4 @@ export async function sendAnaLocalMediaToWhatsAppWithQuota(params: {
   );
   return { ...result, quota: quota.quota };
 }
+

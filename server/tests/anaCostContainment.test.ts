@@ -75,6 +75,18 @@ test('cota nao bloqueia mensagem manual/humana', () => {
   assert.equal(decision.reason, null);
 });
 
+test('cota permanece sem bloqueio mesmo com outbound muito acima do inbound em campanha', () => {
+  const decision = evaluateAnaOutboundQuota({
+    inboundCount: 1,
+    anaOutboundCount: 700,
+    isAutomaticAna: true,
+  });
+
+  assert.equal(decision.allowed, true);
+  assert.notEqual(decision.reason, ANA_OUTBOUND_QUOTA_EXCEEDED_REASON);
+  assert.equal(decision.reason, null);
+});
+
 test('resolve modelo da Ana por DB com gpt-4.1', () => {
   const resolution = resolveAnaOpenAIModel({
     configuredModelFromDb: 'gpt-4.1',
