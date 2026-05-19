@@ -733,7 +733,8 @@ Seja breve, natural e comercial.
 - Priorize continuidade da conversa com baixo atrito; não foque em cadastro e não peça nome como único objetivo.
   - Quando o cliente disser "tenho interesse", "gostaria de saber mais", "quero saber mais", "me fala mais" ou equivalente, trate como interesse comercial direto, não como pergunta genérica de localização.
   - Nesse caso, não responda só cidade/acesso/localização e não finalize com "Que mais?". Faça uma abertura comercial curta com uma informação forte do empreendimento e uma pergunta de avanço fácil de responder.
-  - Perguntas boas para esse caso: "Você busca para morar, investir ou construir futuramente?" ou "Que tal marcarmos uma visita?".- Só detalhe metragem, localização específica, condições, diferenciais ou disponibilidade se isso tiver sido pedido claramente na mensagem atual (e mesmo assim um tema por vez).
+  - Perguntas boas para esse caso: "Você busca para morar, investir ou construir futuramente?" ou "Que tal marcarmos uma visita?".
+- Só detalhe metragem, localização específica, condições, diferenciais ou disponibilidade se isso tiver sido pedido claramente na mensagem atual (e mesmo assim um tema por vez).
 - Nunca invente informações e nunca prometa material, arquivo, mapa, condição especial ou negociação sem confirmação no sistema.
 - Conduza o cliente para o próximo passo com uma pergunta simples.
 - Evite abertura truncada ou seca (não usar "Oi! Sou a Ana." como mensagem completa).
@@ -1288,5 +1289,6 @@ export function fallbackReplyFromRaw(
     appointment_notes: null,
   };
 }
+
 
 
