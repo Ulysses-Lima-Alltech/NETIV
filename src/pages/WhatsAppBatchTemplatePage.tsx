@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import { useAuth } from '../contexts/AuthContext';
@@ -6,9 +6,11 @@ import {
   ApiError,
   corretoresApi,
   projectsApi,
+  whatsappApi,
   whatsappBatchApi,
   type Corretor,
   type ProjectListItem,
+  type WhatsAppMetaTemplateItem,
 } from '../api/client';
 import { SpreadsheetUploadPanel } from '../components/whatsapp-batch/SpreadsheetUploadPanel';
 import { TemplateSelector } from '../components/whatsapp-batch/TemplateSelector';
@@ -32,7 +34,7 @@ export function WhatsAppBatchTemplatePage() {
   const [parseData, setParseData] = useState<BatchParseResponse | null>(null);
   const [phoneColumn, setPhoneColumn] = useState('');
   const [selectedEnterpriseId, setSelectedEnterpriseId] = useState('');
-  const [selectedBrokerId, setSelectedBrokerId] = useState('');
+  const [selectedBrokerIds, setSelectedBrokerIds] = useState<string[]>([]);
   const [variableMappings, setVariableMappings] = useState<Record<string, TemplateVariableSource>>({});
   const [preview, setPreview] = useState<BatchPreviewResponse | null>(null);
   const [testPhone, setTestPhone] = useState('');
@@ -50,6 +52,19 @@ export function WhatsAppBatchTemplatePage() {
   const [templatesLoadError, setTemplatesLoadError] = useState<string | null>(null);
   const [templatesSyncWarning, setTemplatesSyncWarning] = useState<string | null>(null);
 
+  const [activeTab, setActiveTab] = useState<'batch' | 'templates'>('batch');
+  const [metaTemplates, setMetaTemplates] = useState<WhatsAppMetaTemplateItem[]>([]);
+  const [metaTemplatesLoading, setMetaTemplatesLoading] = useState(false);
+  const [metaTemplatesError, setMetaTemplatesError] = useState<string | null>(null);
+  const [metaActionLoading, setMetaActionLoading] = useState(false);
+  const [metaActionFeedback, setMetaActionFeedback] = useState<string | null>(null);
+  const [metaTemplateName, setMetaTemplateName] = useState('');
+  const [metaTemplateCategory, setMetaTemplateCategory] = useState<'MARKETING' | 'UTILITY' | 'AUTHENTICATION'>('MARKETING');
+  const [metaTemplateLanguage, setMetaTemplateLanguage] = useState('pt_BR');
+  const [metaTemplateBody, setMetaTemplateBody] = useState('');
+  const [metaTemplateHeader, setMetaTemplateHeader] = useState('');
+  const [metaTemplateFooter, setMetaTemplateFooter] = useState('');
+
   useEffect(() => {
     setTemplatesLoading(true);
     setTemplatesLoadError(null);
@@ -57,25 +72,22 @@ export function WhatsAppBatchTemplatePage() {
     void whatsappBatchApi
       .listTemplates()
       .then((r) => {
-        console.log('[WHATSAPP_BATCH_FRONT_API_KEYS]', (r.templates ?? []).map((t) => t.key));
         setTemplates(r.templates ?? []);
         setTemplatesSyncWarning(r.warning ?? null);
       })
       .catch((err: unknown) => {
         setTemplates([]);
-        const base = 'Não foi possível carregar a lista de templates.';
+        const base = 'Nao foi possivel carregar a lista de templates.';
         if (err instanceof ApiError) {
           let msg = `${base} ${err.message}`;
           if (err.status != null) msg += ` (HTTP ${err.status})`;
-          if (err.status === 401) msg += ' Faça login novamente (sessão inválida ou expirada).';
-          if (err.status === 403) msg += ' A rota exige perfil ADMIN (integrações).';
+          if (err.status === 401) msg += ' Faca login novamente (sessao invalida ou expirada).';
+          if (err.status === 403) msg += ' A rota exige perfil ADMIN (integracoes).';
           setTemplatesLoadError(msg);
         } else if (err instanceof Error) {
           setTemplatesLoadError(`${base} ${err.message}`);
         } else {
-          setTemplatesLoadError(
-            `${base} Verifique rede, VITE_API_URL e se o backend está no ar.`,
-          );
+          setTemplatesLoadError(`${base} Verifique rede, VITE_API_URL e se o backend esta no ar.`);
         }
       })
       .finally(() => setTemplatesLoading(false));
@@ -87,31 +99,113 @@ export function WhatsAppBatchTemplatePage() {
     void corretoresApi.list().then((d) => setBrokers(d.corretores)).catch(() => setBrokers([]));
   }, []);
 
+  const loadMetaTemplates = async () => {
+    setMetaTemplatesLoading(true);
+    setMetaTemplatesError(null);
+    try {
+      const res = await whatsappApi.listTemplates();
+      setMetaTemplates(res.templates ?? []);
+    } catch (e) {
+      setMetaTemplatesError(e instanceof Error ? e.message : 'Erro ao carregar templates da Meta.');
+    } finally {
+      setMetaTemplatesLoading(false);
+    }
+  };
+
+  const handleEnterTemplatesTab = async () => {
+    setActiveTab('templates');
+    if (metaTemplates.length === 0 && !metaTemplatesLoading) {
+      await loadMetaTemplates();
+    }
+  };
+
+  const handleCreateMetaTemplate = async () => {
+    setMetaActionFeedback(null);
+    if (!metaTemplateName.trim() || !metaTemplateBody.trim()) {
+      setMetaActionFeedback('Nome tecnico e BODY sao obrigatorios.');
+      return;
+    }
+    setMetaActionLoading(true);
+    try {
+      await whatsappApi.createTemplate({
+        name: metaTemplateName.trim(),
+        category: metaTemplateCategory,
+        language: metaTemplateLanguage.trim() || 'pt_BR',
+        body: metaTemplateBody.trim(),
+        headerText: metaTemplateHeader.trim() || undefined,
+        footerText: metaTemplateFooter.trim() || undefined,
+      });
+      setMetaActionFeedback('Template enviado para criacao na Meta com sucesso.');
+      setMetaTemplateName('');
+      setMetaTemplateBody('');
+      setMetaTemplateHeader('');
+      setMetaTemplateFooter('');
+      await loadMetaTemplates();
+    } catch (e) {
+      setMetaActionFeedback(e instanceof Error ? e.message : 'Erro ao criar template na Meta.');
+    } finally {
+      setMetaActionLoading(false);
+    }
+  };
+
+  const handleDeleteMetaTemplate = async (name: string) => {
+    const confirmed = window.confirm(`Confirma a exclusao do template "${name}" na Meta?`);
+    if (!confirmed) return;
+    setMetaActionLoading(true);
+    setMetaActionFeedback(null);
+    try {
+      await whatsappApi.deleteTemplate(name);
+      setMetaActionFeedback(`Template ${name} removido na Meta.`);
+      await loadMetaTemplates();
+    } catch (e) {
+      setMetaActionFeedback(e instanceof Error ? e.message : 'Erro ao excluir template na Meta.');
+    } finally {
+      setMetaActionLoading(false);
+    }
+  };
+
+  const handleSyncMetaTemplates = async () => {
+    setMetaActionLoading(true);
+    setMetaActionFeedback(null);
+    try {
+      await whatsappApi.syncTemplates();
+      await loadMetaTemplates();
+      const refreshed = await whatsappBatchApi.listTemplates({ refresh: true });
+      setTemplates(refreshed.templates ?? []);
+      setTemplatesSyncWarning(refreshed.warning ?? null);
+      setMetaActionFeedback('Sincronizacao concluida.');
+    } catch (e) {
+      setMetaActionFeedback(e instanceof Error ? e.message : 'Erro ao sincronizar templates.');
+    } finally {
+      setMetaActionLoading(false);
+    }
+  };
+
   const selectedTemplate = templates.find((tpl) => tpl.key === selectedTemplateKey) ?? null;
   const templateStatus = String(selectedTemplate?.status ?? 'APPROVED').toUpperCase();
   const templateNotApprovedMessage =
     selectedTemplate && templateStatus !== 'APPROVED'
-      ? 'Este template ainda não está aprovado na Meta. Ele aparecerá aqui para acompanhamento, mas só poderá ser usado após aprovação.'
+      ? 'Este template ainda nao esta aprovado na Meta. Ele aparecera aqui para acompanhamento, mas so podera ser usado apos aprovacao.'
       : null;
-  const headerMediaMissing =
-    !!selectedTemplate?.requiresHeaderMedia && !selectedTemplate?.headerImageUrl;
+  const headerMediaMissing = !!selectedTemplate?.requiresHeaderMedia && !selectedTemplate?.headerImageUrl;
   const headerMediaMissingMessage = headerMediaMissing
-    ? 'Este template exige imagem de cabeçalho. Cadastre uma URL pública antes de enviar.'
+    ? 'Este template exige imagem de cabecalho. Cadastre uma URL publica antes de enviar.'
     : null;
-  const actionBlockedReason = templateNotApprovedMessage ?? headerMediaMissingMessage;
-  console.log('[WHATSAPP_BATCH_FRONT_STATE_KEYS]', templates.map((t) => t.key));
+  const missingBrokersMessage =
+    selectedBrokerIds.length === 0 ? 'Selecione ao menos um corretor responsavel para distribuir a base.' : null;
+  const actionBlockedReason = templateNotApprovedMessage ?? headerMediaMissingMessage ?? missingBrokersMessage;
+
   const validPreviewRows = (preview?.rows ?? []).filter((row) => row.status === 'valid');
   const canUseRowMode = validPreviewRows.length > 0;
   const selectedPreviewRow =
-    testRowNumber == null
-      ? null
-      : validPreviewRows.find((row) => row.rowNumber === testRowNumber) ?? null;
+    testRowNumber == null ? null : validPreviewRows.find((row) => row.rowNumber === testRowNumber) ?? null;
 
   const buildMappingPayload = () => ({
     templateKey: selectedTemplateKey,
     phoneColumn,
     selectedEnterpriseId: selectedEnterpriseId ? parseInt(selectedEnterpriseId, 10) : null,
-    selectedBrokerId: selectedBrokerId ? parseInt(selectedBrokerId, 10) : null,
+    selectedBrokerId: selectedBrokerIds.length > 0 ? parseInt(selectedBrokerIds[0]!, 10) : null,
+    selectedBrokerIds: selectedBrokerIds.map((id) => parseInt(id, 10)).filter((id) => Number.isFinite(id)),
     variableMappings,
   });
 
@@ -134,9 +228,7 @@ export function WhatsAppBatchTemplatePage() {
 
     const tpl = templates.find((t) => t.key === key) ?? null;
     setVariableMappings((prev) => {
-      if (!tpl) {
-        return {};
-      }
+      if (!tpl) return {};
       const allowed = new Set(tpl.variables.map((v) => String(v.id)));
       const next: Record<string, TemplateVariableSource> = {};
       for (const [k, v] of Object.entries(prev)) {
@@ -204,8 +296,7 @@ export function WhatsAppBatchTemplatePage() {
       return;
     }
     if (!parseData) return;
-    const rows = parseData.spreadsheet.rows;
-    if (!Array.isArray(rows) || rows.length === 0) {
+    if (!Array.isArray(parseData.spreadsheet.rows) || parseData.spreadsheet.rows.length === 0) {
       setError('Processe a planilha com "Ler colunas" antes de gerar o preview.');
       return;
     }
@@ -292,184 +383,332 @@ export function WhatsAppBatchTemplatePage() {
         <span className="text-[15px] font-semibold">Disparo em Lote</span>
         <AppNav />
       </nav>
+
       <div className="w-full max-w-none px-6 lg:px-8 py-6 space-y-5">
-      <div>
-        <p className="text-[13px] text-[#6B7280]">
-          Envie templates do WhatsApp em lote a partir de uma planilha: faça o upload, escolha o template, mapeie colunas e envie.
-        </p>
-      </div>
-
-      {templatesLoadError && (
-        <div className="bg-red-50 border border-red-200 rounded-md p-4">
-          <p className="text-red-800 text-sm font-medium">{templatesLoadError}</p>
-        </div>
-      )}
-
-      {!templatesLoading && !templatesLoadError && templates.length === 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-md p-4">
-          <p className="text-amber-900 text-sm">Nenhum template foi encontrado para esta conta.</p>
-        </div>
-      )}
-
-      {templatesSyncWarning && (
-        <div className="bg-amber-50 border border-amber-200 rounded-md p-4">
-          <p className="text-amber-900 text-sm">{templatesSyncWarning}</p>
-        </div>
-      )}
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-md p-4">
-          <p className="text-red-800 text-sm">{error}</p>
-        </div>
-      )}
-
-      {parseData && !selectedTemplateKey && (
-        <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
-          <p className="text-blue-900 text-sm">
-            Selecione um template para configurar o mapeamento e gerar o preview.
+        <div>
+          <p className="text-[13px] text-[#6B7280]">
+            Envie templates do WhatsApp em lote a partir de uma planilha: faca o upload, escolha o template, mapeie colunas e envie.
           </p>
         </div>
-      )}
-      {templateNotApprovedMessage && (
-        <div className="bg-amber-50 border border-amber-200 rounded-md p-4">
-          <p className="text-amber-900 text-sm">{templateNotApprovedMessage}</p>
-        </div>
-      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="space-y-6">
-          <TemplateSelector
-            templates={templates}
-            selectedKey={selectedTemplateKey}
-            onSelect={handleSelectedTemplateKeyChange}
-            loading={templatesLoading}
-            selectDisabled={!!templatesLoadError}
-          />
-
-          <SpreadsheetUploadPanel
-            file={file}
-            onFileChange={handleFileChange}
-            onParse={handleParse}
-            loading={loadingParse}
-          />
-
-          {parseData && (
-            <ColumnMappingPanel
-              spreadsheet={parseData.spreadsheet}
-              suggestions={parseData.suggestions}
-              template={selectedTemplate}
-              phoneColumn={phoneColumn}
-              onPhoneColumnChange={setPhoneColumn}
-              selectedEnterpriseId={selectedEnterpriseId}
-              onSelectedEnterpriseIdChange={setSelectedEnterpriseId}
-              selectedBrokerId={selectedBrokerId}
-              onSelectedBrokerIdChange={setSelectedBrokerId}
-              projects={projects}
-              brokers={brokers}
-              variableMappings={variableMappings}
-              onVariableMappingsChange={setVariableMappings}
-              onPreview={handlePreview}
-              loadingPreview={loadingPreview}
-              previewDisabledReason={actionBlockedReason}
-            />
-          )}
+        <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-2 inline-flex gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveTab('batch')}
+            className={`px-3 py-2 rounded-[10px] text-[13px] font-medium ${
+              activeTab === 'batch' ? 'bg-[#DBEAFE] text-[#1D4ED8]' : 'text-[#4B5563] hover:bg-[#F3F4F6]'
+            }`}
+          >
+            Disparo em lote
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleEnterTemplatesTab()}
+            className={`px-3 py-2 rounded-[10px] text-[13px] font-medium ${
+              activeTab === 'templates' ? 'bg-[#DBEAFE] text-[#1D4ED8]' : 'text-[#4B5563] hover:bg-[#F3F4F6]'
+            }`}
+          >
+            Templates WhatsApp
+          </button>
         </div>
 
-        <div className="space-y-6">
+        {activeTab === 'templates' ? (
           <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 space-y-5">
-            <div>
-              <h2 className="text-[16px] font-semibold text-[#111827]">Validação e envio</h2>
-              <p className="text-[13px] text-[#4B5563] mt-1">
-                Revise os contatos, envie um teste e confirme o disparo final.
-              </p>
-            </div>
-
-            <div className="space-y-3">
-              <h3 className="text-[14px] font-semibold text-[#111827]">1. Preview dos contatos</h3>
-              {preview ? (
-                <BatchPreviewTable
-                  preview={preview}
-                  onSelectTestRow={setTestRowNumber}
-                  selectedTestRow={testRowNumber}
-                  embedded
-                />
-              ) : (
-                <div className="rounded-[10px] border border-[#DBEAFE] bg-[#EFF6FF] px-3 py-3">
-                  <p className="text-[13px] text-[#1E3A8A] font-medium">
-                    Gere o preview para validar os contatos antes do envio.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="h-px bg-[#E5E7EB]" />
-
-            <div className="space-y-3">
-              <h3 className="text-[14px] font-semibold text-[#111827]">2. Envio de teste</h3>
-              {selectedTemplate && preview ? (
-                <TestSendPanel
-                  template={selectedTemplate}
-                  testPhone={testPhone}
-                  onTestPhoneChange={setTestPhone}
-                  testMode={testMode}
-                  onTestModeChange={setTestMode}
-                  testRowNumber={testRowNumber}
-                  onTestRowNumberChange={setTestRowNumber}
-                  availableTestRows={validPreviewRows.map((r) => r.rowNumber)}
-                  manualTestVariables={manualTestVariables}
-                  onManualTestVariablesChange={setManualTestVariables}
-                  onTest={handleTest}
-                  loadingTest={loadingTest}
-                  testResult={testResult}
-                  canUseRowMode={canUseRowMode}
-                  selectedPreviewRow={selectedPreviewRow}
-                  disableReason={actionBlockedReason}
-                  embedded
-                />
-              ) : (
-                <div className="px-1 py-1">
-                  <p className="text-[13px] text-[#6B7280]">
-                    Selecione um template e gere o preview para testar o envio.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="h-px bg-[#E5E7EB]" />
-
-            <div className="space-y-4">
-              <h3 className="text-[14px] font-semibold text-[#111827]">3. Envio final</h3>
-              <p className="text-[13px] text-[#4B5563]">
-                Revise os dados antes de confirmar. Apenas contatos válidos serão enviados.
-              </p>
-              <div className="flex flex-wrap items-center gap-2 text-[12px]">
-                <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-medium">Total: {preview?.total ?? 0}</span>
-                <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-medium">Válidos: {preview?.validCount ?? 0}</span>
-                <span className="px-3 py-1 rounded-full bg-red-100 text-red-800 font-medium">
-                  Inválidos/Bloqueados:{' '}
-                  {((preview?.invalidCount ?? 0) + (preview?.blockedCount ?? 0))}
-                </span>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-[16px] font-semibold">Templates WhatsApp</h2>
+                <p className="text-[13px] text-[#4B5563] mt-1">
+                  Gerencie templates na Meta: listar, criar, excluir e sincronizar status.
+                </p>
               </div>
               <button
-                onClick={handleSend}
-                disabled={loadingSend || (preview?.validCount ?? 0) === 0 || !selectedTemplateKey || !!actionBlockedReason}
-                className="w-full bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                type="button"
+                onClick={() => void handleSyncMetaTemplates()}
+                disabled={metaActionLoading || metaTemplatesLoading}
+                className="px-3 py-2 rounded-[10px] border border-[#BFDBFE] text-[#1D4ED8] bg-[#EFF6FF] hover:bg-[#DBEAFE] disabled:opacity-60"
               >
-                {loadingSend ? 'Enviando...' : `Enviar ${preview?.validCount ?? 0} mensagens`}
+                {metaActionLoading ? 'Sincronizando...' : 'Atualizar/Sincronizar'}
               </button>
-              {sendResult && (
-                <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px] p-4">
-                  <p className="text-[12px] font-semibold text-[#334155] mb-2">Resultado do envio</p>
-                  <pre className="text-xs text-gray-700 whitespace-pre-wrap">{sendResult}</pre>
+            </div>
+
+            {metaTemplatesError && (
+              <div className="bg-red-50 border border-red-200 rounded-md p-3 text-sm text-red-800">{metaTemplatesError}</div>
+            )}
+            {metaActionFeedback && (
+              <div className="bg-slate-50 border border-slate-200 rounded-md p-3 text-sm text-slate-700">{metaActionFeedback}</div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              <div className="space-y-3">
+                <h3 className="text-[14px] font-semibold">Criar template</h3>
+                <div className="grid grid-cols-1 gap-3">
+                  <input
+                    className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
+                    placeholder="Nome tecnico (ex: oferta_lancamento_maio)"
+                    value={metaTemplateName}
+                    onChange={(e) => setMetaTemplateName(e.target.value)}
+                  />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <select
+                      className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
+                      value={metaTemplateCategory}
+                      onChange={(e) => setMetaTemplateCategory(e.target.value as 'MARKETING' | 'UTILITY' | 'AUTHENTICATION')}
+                    >
+                      <option value="MARKETING">MARKETING</option>
+                      <option value="UTILITY">UTILITY</option>
+                      <option value="AUTHENTICATION">AUTHENTICATION</option>
+                    </select>
+                    <input
+                      className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
+                      placeholder="Idioma (pt_BR)"
+                      value={metaTemplateLanguage}
+                      onChange={(e) => setMetaTemplateLanguage(e.target.value)}
+                    />
+                  </div>
+                  <textarea
+                    className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px] min-h-[100px]"
+                    placeholder="BODY (obrigatorio)"
+                    value={metaTemplateBody}
+                    onChange={(e) => setMetaTemplateBody(e.target.value)}
+                  />
+                  <input
+                    className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
+                    placeholder="HEADER texto (opcional)"
+                    value={metaTemplateHeader}
+                    onChange={(e) => setMetaTemplateHeader(e.target.value)}
+                  />
+                  <input
+                    className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
+                    placeholder="FOOTER texto (opcional)"
+                    value={metaTemplateFooter}
+                    onChange={(e) => setMetaTemplateFooter(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleCreateMetaTemplate()}
+                    disabled={metaActionLoading}
+                    className="px-4 py-2 rounded-[10px] bg-[#0EA5E9] text-white text-[13px] font-semibold hover:bg-[#0284C7] disabled:opacity-60"
+                  >
+                    {metaActionLoading ? 'Enviando...' : 'Criar template na Meta'}
+                  </button>
                 </div>
-              )}
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-[14px] font-semibold">Templates existentes</h3>
+                {metaTemplatesLoading ? (
+                  <p className="text-[13px] text-[#6B7280]">Carregando templates...</p>
+                ) : metaTemplates.length === 0 ? (
+                  <p className="text-[13px] text-[#6B7280]">Nenhum template retornado pela Meta.</p>
+                ) : (
+                  <div className="max-h-[480px] overflow-auto border border-[#E5E7EB] rounded-[10px] divide-y divide-[#F3F4F6]">
+                    {metaTemplates.map((tpl) => {
+                      const status = String(tpl.status ?? 'UNKNOWN').toUpperCase();
+                      const statusClass =
+                        status === 'APPROVED'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : status === 'PENDING'
+                            ? 'bg-amber-100 text-amber-800'
+                            : status === 'REJECTED'
+                              ? 'bg-red-100 text-red-800'
+                              : status === 'PAUSED'
+                                ? 'bg-slate-200 text-slate-700'
+                                : 'bg-slate-100 text-slate-700';
+
+                      return (
+                        <div key={tpl.id ?? tpl.name} className="px-3 py-3 flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-[13px] font-semibold text-[#111827]">{tpl.name ?? '-'}</p>
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+                              <span className={`px-2 py-1 rounded-full font-semibold ${statusClass}`}>{status}</span>
+                              <span className="px-2 py-1 rounded-full bg-sky-100 text-sky-800 font-semibold">
+                                {tpl.category ?? '-'}
+                              </span>
+                              <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-700 font-semibold">
+                                {tpl.language ?? '-'}
+                              </span>
+                            </div>
+                          </div>
+                          {tpl.name && (
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteMetaTemplate(tpl.name!)}
+                              disabled={metaActionLoading}
+                              className="px-3 py-1.5 rounded-[8px] border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-60"
+                            >
+                              Excluir
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </section>
-        </div>
-      </div>
+        ) : (
+          <>
+            {templatesLoadError && (
+              <div className="bg-red-50 border border-red-200 rounded-md p-4">
+                <p className="text-red-800 text-sm font-medium">{templatesLoadError}</p>
+              </div>
+            )}
+
+            {!templatesLoading && !templatesLoadError && templates.length === 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-md p-4">
+                <p className="text-amber-900 text-sm">Nenhum template foi encontrado para esta conta.</p>
+              </div>
+            )}
+
+            {templatesSyncWarning && (
+              <div className="bg-amber-50 border border-amber-200 rounded-md p-4">
+                <p className="text-amber-900 text-sm">{templatesSyncWarning}</p>
+              </div>
+            )}
+
+            {error && (
+              <div className="bg-red-50 border border-red-200 rounded-md p-4">
+                <p className="text-red-800 text-sm">{error}</p>
+              </div>
+            )}
+
+            {parseData && !selectedTemplateKey && (
+              <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
+                <p className="text-blue-900 text-sm">Selecione um template para configurar o mapeamento e gerar o preview.</p>
+              </div>
+            )}
+
+            {templateNotApprovedMessage && (
+              <div className="bg-amber-50 border border-amber-200 rounded-md p-4">
+                <p className="text-amber-900 text-sm">{templateNotApprovedMessage}</p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="space-y-6">
+                <TemplateSelector
+                  templates={templates}
+                  selectedKey={selectedTemplateKey}
+                  onSelect={handleSelectedTemplateKeyChange}
+                  loading={templatesLoading}
+                  selectDisabled={!!templatesLoadError}
+                />
+
+                <SpreadsheetUploadPanel file={file} onFileChange={handleFileChange} onParse={handleParse} loading={loadingParse} />
+
+                {parseData && (
+                  <ColumnMappingPanel
+                    spreadsheet={parseData.spreadsheet}
+                    suggestions={parseData.suggestions}
+                    template={selectedTemplate}
+                    phoneColumn={phoneColumn}
+                    onPhoneColumnChange={setPhoneColumn}
+                    selectedEnterpriseId={selectedEnterpriseId}
+                    onSelectedEnterpriseIdChange={setSelectedEnterpriseId}
+                    selectedBrokerIds={selectedBrokerIds}
+                    onSelectedBrokerIdsChange={setSelectedBrokerIds}
+                    projects={projects}
+                    brokers={brokers}
+                    variableMappings={variableMappings}
+                    onVariableMappingsChange={setVariableMappings}
+                    onPreview={handlePreview}
+                    loadingPreview={loadingPreview}
+                    previewDisabledReason={actionBlockedReason}
+                  />
+                )}
+              </div>
+
+              <div className="space-y-6">
+                <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 space-y-5">
+                  <div>
+                    <h2 className="text-[16px] font-semibold text-[#111827]">Validacao e envio</h2>
+                    <p className="text-[13px] text-[#4B5563] mt-1">Revise os contatos, envie um teste e confirme o disparo final.</p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <h3 className="text-[14px] font-semibold text-[#111827]">1. Preview dos contatos</h3>
+                    {preview ? (
+                      <BatchPreviewTable
+                        preview={preview}
+                        onSelectTestRow={setTestRowNumber}
+                        selectedTestRow={testRowNumber}
+                        embedded
+                      />
+                    ) : (
+                      <div className="rounded-[10px] border border-[#DBEAFE] bg-[#EFF6FF] px-3 py-3">
+                        <p className="text-[13px] text-[#1E3A8A] font-medium">Gere o preview para validar os contatos antes do envio.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="h-px bg-[#E5E7EB]" />
+
+                  <div className="space-y-3">
+                    <h3 className="text-[14px] font-semibold text-[#111827]">2. Envio de teste</h3>
+                    {selectedTemplate && preview ? (
+                      <TestSendPanel
+                        template={selectedTemplate}
+                        testPhone={testPhone}
+                        onTestPhoneChange={setTestPhone}
+                        testMode={testMode}
+                        onTestModeChange={setTestMode}
+                        testRowNumber={testRowNumber}
+                        onTestRowNumberChange={setTestRowNumber}
+                        availableTestRows={validPreviewRows.map((r) => r.rowNumber)}
+                        manualTestVariables={manualTestVariables}
+                        onManualTestVariablesChange={setManualTestVariables}
+                        onTest={handleTest}
+                        loadingTest={loadingTest}
+                        testResult={testResult}
+                        canUseRowMode={canUseRowMode}
+                        selectedPreviewRow={selectedPreviewRow}
+                        disableReason={actionBlockedReason}
+                        embedded
+                      />
+                    ) : (
+                      <div className="px-1 py-1">
+                        <p className="text-[13px] text-[#6B7280]">Selecione um template e gere o preview para testar o envio.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="h-px bg-[#E5E7EB]" />
+
+                  <div className="space-y-4">
+                    <h3 className="text-[14px] font-semibold text-[#111827]">3. Envio final</h3>
+                    <p className="text-[13px] text-[#4B5563]">
+                      Revise os dados antes de confirmar. Apenas contatos validos serao enviados.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 text-[12px]">
+                      <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-medium">Total: {preview?.total ?? 0}</span>
+                      <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-medium">
+                        Validos: {preview?.validCount ?? 0}
+                      </span>
+                      <span className="px-3 py-1 rounded-full bg-red-100 text-red-800 font-medium">
+                        Invalidos/Bloqueados: {(preview?.invalidCount ?? 0) + (preview?.blockedCount ?? 0)}
+                      </span>
+                    </div>
+                    <button
+                      onClick={handleSend}
+                      disabled={loadingSend || (preview?.validCount ?? 0) === 0 || !selectedTemplateKey || !!actionBlockedReason}
+                      className="w-full bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                    >
+                      {loadingSend ? 'Enviando...' : `Enviar ${preview?.validCount ?? 0} mensagens`}
+                    </button>
+                    {sendResult && (
+                      <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px] p-4">
+                        <p className="text-[12px] font-semibold text-[#334155] mb-2">Resultado do envio</p>
+                        <pre className="text-xs text-gray-700 whitespace-pre-wrap">{sendResult}</pre>
+                      </div>
+                    )}
+                  </div>
+                </section>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
-
-

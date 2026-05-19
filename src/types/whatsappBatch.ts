@@ -36,6 +36,7 @@ export interface BatchMappingConfig {
   phoneColumn: string;
   selectedEnterpriseId?: number | null;
   selectedBrokerId?: number | null;
+  selectedBrokerIds?: number[];
   variableMappings: Record<string, TemplateVariableSource>;
 }
 
@@ -62,6 +63,8 @@ export interface BatchPreviewRow {
   isValid: boolean;
   status: 'valid' | 'invalid' | 'blocked';
   error: string | null;
+  assignedBrokerId?: number | null;
+  assignedBrokerName?: string | null;
   resolvedVariables: Array<{
     variableId: number;
     label: string;

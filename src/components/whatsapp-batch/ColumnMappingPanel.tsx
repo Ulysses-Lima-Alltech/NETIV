@@ -17,8 +17,8 @@ interface Props {
   onPhoneColumnChange: (value: string) => void;
   selectedEnterpriseId: string;
   onSelectedEnterpriseIdChange: (value: string) => void;
-  selectedBrokerId: string;
-  onSelectedBrokerIdChange: (value: string) => void;
+  selectedBrokerIds: string[];
+  onSelectedBrokerIdsChange: (value: string[]) => void;
   projects: ProjectListItem[];
   brokers: Corretor[];
   variableMappings: Record<string, TemplateVariableSource>;
@@ -39,8 +39,8 @@ export function ColumnMappingPanel({
   onPhoneColumnChange,
   selectedEnterpriseId,
   onSelectedEnterpriseIdChange,
-  selectedBrokerId,
-  onSelectedBrokerIdChange,
+  selectedBrokerIds,
+  onSelectedBrokerIdsChange,
   projects,
   brokers,
   variableMappings,
@@ -94,9 +94,16 @@ export function ColumnMappingPanel({
         </div>
         
         <div>
-          <label className="block text-[12px] text-[#374151] mb-1">Corretor responsável pela base</label>
-          <select className={inputCls} value={selectedBrokerId} onChange={(e) => onSelectedBrokerIdChange(e.target.value)}>
-            <option value="">Nenhum</option>
+          <label className="block text-[12px] text-[#374151] mb-1">Corretores responsáveis (round-robin)</label>
+          <select
+            multiple
+            className={`${inputCls} h-[112px]`}
+            value={selectedBrokerIds}
+            onChange={(e) => {
+              const next = Array.from(e.currentTarget.selectedOptions).map((opt) => opt.value);
+              onSelectedBrokerIdsChange(next);
+            }}
+          >
             {brokers
               .filter((b) => b.active)
               .map((b) => (
@@ -105,6 +112,7 @@ export function ColumnMappingPanel({
                 </option>
               ))}
           </select>
+          <p className="text-[11px] text-[#6B7280] mt-1">A ordem selecionada define a fila de distribuição.</p>
         </div>
       </div>
 

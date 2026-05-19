@@ -1,5 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import type { ZodIssue } from 'zod';
+import { z } from 'zod';
 import { randomBytes } from 'crypto';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -12,6 +13,12 @@ import {
   sendLocalMediaToWhatsApp,
 } from '../services/whatsappMetaService.js';
 import { listWhatsAppTemplatesCatalog } from '../catalogs/whatsappTemplates.js';
+import {
+  createMetaTemplate,
+  deleteMetaTemplateByName,
+  listMetaTemplatesRaw,
+  listBatchTemplatesFromMetaOrFallback,
+} from '../services/whatsappTemplateCatalogSyncService.js';
 import { parseSpreadsheet } from '../services/spreadsheetParseService.js';
 import {
   parseBatchConfigSchema,
@@ -164,7 +171,75 @@ function ensureBatchFile(req: Request, res: Response): Express.Multer.File | nul
 }
 
 router.get('/templates', async (_req, res) => {
-  res.json({ templates: listWhatsAppTemplatesCatalog() });
+  try {
+    const list = await listMetaTemplatesRaw();
+    return res.json({ templates: list, source: 'meta_sync' });
+  } catch (error) {
+    console.error('[WHATSAPP_TEMPLATES_LIST_ERROR]', error);
+    return res.json({ templates: listWhatsAppTemplatesCatalog(), source: 'local_fallback' });
+  }
+});
+
+const createTemplateSchema = z.object({
+  name: z.string().min(1),
+  category: z.enum(['MARKETING', 'UTILITY', 'AUTHENTICATION']),
+  language: z.string().default('pt_BR'),
+  body: z.string().min(1),
+  headerText: z.string().optional(),
+  footerText: z.string().optional(),
+});
+
+router.post('/templates', async (req, res) => {
+  try {
+    const parsed = createTemplateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Payload inválido para criação de template.', details: parsed.error.issues });
+    }
+    console.log('[WHATSAPP_TEMPLATE_CREATE_REQUEST]', {
+      name: parsed.data.name,
+      category: parsed.data.category,
+      language: parsed.data.language,
+    });
+    const result = await createMetaTemplate(parsed.data);
+    console.log('[WHATSAPP_TEMPLATE_CREATE_SUCCESS]', { name: parsed.data.name });
+    return res.json({ success: true, result });
+  } catch (error) {
+    console.error('[WHATSAPP_TEMPLATE_CREATE_ERROR]', error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Erro ao criar template na Meta.',
+    });
+  }
+});
+
+router.delete('/templates/:name', async (req, res) => {
+  try {
+    const templateName = String(req.params.name ?? '').trim();
+    if (!templateName) return res.status(400).json({ error: 'Nome do template é obrigatório.' });
+    console.log('[WHATSAPP_TEMPLATE_DELETE_REQUEST]', { name: templateName });
+    const result = await deleteMetaTemplateByName(templateName);
+    console.log('[WHATSAPP_TEMPLATE_DELETE_SUCCESS]', { name: templateName });
+    return res.json({ success: true, result });
+  } catch (error) {
+    console.error('[WHATSAPP_TEMPLATE_DELETE_ERROR]', error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Erro ao excluir template na Meta.',
+    });
+  }
+});
+
+router.post('/templates/sync', async (_req, res) => {
+  try {
+    const { templates, fallbackUsed } = await listBatchTemplatesFromMetaOrFallback({ forceRefresh: true });
+    return res.json({ success: true, templates, fallbackUsed });
+  } catch (error) {
+    console.error('[WHATSAPP_TEMPLATE_SYNC_ERROR]', error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Erro ao sincronizar templates com a Meta.',
+    });
+  }
 });
 
 router.post('/templates/batch/parse', batchUpload.single('file'), async (req, res) => {

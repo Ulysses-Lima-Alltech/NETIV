@@ -155,6 +155,15 @@ export interface WhatsAppConfigUpdate {
   enabled?: boolean;
 }
 
+export interface WhatsAppMetaTemplateItem {
+  id?: string;
+  name?: string;
+  language?: string;
+  status?: string;
+  category?: string;
+  components?: Array<Record<string, unknown>>;
+}
+
 export interface ConversationListItem {
   id: string;
   channel: string;
@@ -463,6 +472,28 @@ export const whatsappApi = {
       body: options?.templateKey ? { to, templateKey: options.templateKey } : { to, message },
     }),
   configCheck: () => request<{ configured: boolean }>('/whatsapp/config/check'),
+  listTemplates: () => request<{ templates: WhatsAppMetaTemplateItem[]; source?: string }>('/whatsapp/templates'),
+  createTemplate: (body: {
+    name: string;
+    category: 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
+    language?: string;
+    body: string;
+    headerText?: string;
+    footerText?: string;
+  }) =>
+    request<{ success: boolean; result?: unknown; error?: string }>('/whatsapp/templates', {
+      method: 'POST',
+      body,
+    }),
+  deleteTemplate: (name: string) =>
+    request<{ success: boolean; result?: unknown; error?: string }>(`/whatsapp/templates/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    }),
+  syncTemplates: () =>
+    request<{ success: boolean; templates?: BatchTemplateCatalogItem[]; fallbackUsed?: boolean; error?: string }>(
+      '/whatsapp/templates/sync',
+      { method: 'POST' }
+    ),
   getConversations: (params?: {
     channel?: string;
     limit?: number;

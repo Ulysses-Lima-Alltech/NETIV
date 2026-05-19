@@ -23,6 +23,8 @@ export interface BatchPreviewRow {
   isValid: boolean;
   status: 'valid' | 'invalid' | 'blocked';
   error: string | null;
+  assignedBrokerId?: number | null;
+  assignedBrokerName?: string | null;
   resolvedVariables: Array<{
     variableId: number;
     label: string;
@@ -96,6 +98,23 @@ async function resolveBroker(selectedBrokerId: number | null | undefined): Promi
   const broker = await getCorretorById(selectedBrokerId);
   if (!broker || !broker.active) throw new Error('Corretor selecionado é inválido ou inativo.');
   return { id: broker.id, fullName: broker.full_name };
+}
+
+async function resolveSelectedBrokers(mapping: BatchMappingDto): Promise<Array<{ id: number; fullName: string }>> {
+  const explicitIds = Array.isArray(mapping.selectedBrokerIds) ? mapping.selectedBrokerIds : [];
+  const uniqueIds = [...new Set(explicitIds.filter((id) => Number.isInteger(id) && id > 0))];
+  if (uniqueIds.length > 0) {
+    const brokers: Array<{ id: number; fullName: string }> = [];
+    for (const brokerId of uniqueIds) {
+      const broker = await getCorretorById(brokerId);
+      if (!broker || !broker.active) throw new Error('Um dos corretores selecionados é inválido ou inativo.');
+      brokers.push({ id: broker.id, fullName: broker.full_name });
+    }
+    return brokers;
+  }
+
+  const single = await resolveBroker(mapping.selectedBrokerId ?? null);
+  return single ? [single] : [];
 }
 
 function resolveVariablesForRow(params: {
@@ -187,11 +206,16 @@ export async function buildBatchPreview(params: {
   const template = getTemplateOrThrow(params.mapping.templateKey);
   assertTemplateApproved(template);
   assertTemplateHeaderMediaConfigured(template);
+  const selectedBrokers = await resolveSelectedBrokers(params.mapping);
+  if (selectedBrokers.length === 0) {
+    throw new Error('Selecione ao menos um corretor responsável para gerar o preview.');
+  }
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
   const previewRows: BatchPreviewRow[] = [];
   let validCount = 0;
   let invalidCount = 0;
   let blockedCount = 0;
+  let roundRobinIndex = 0;
 
   for (let i = 0; i < params.rows.length; i++) {
     const row = params.rows[i];
@@ -235,6 +259,8 @@ export async function buildBatchPreview(params: {
     }
 
     validCount++;
+    const assignedBroker = selectedBrokers[roundRobinIndex % selectedBrokers.length];
+    roundRobinIndex++;
     previewRows.push({
       rowIndex: i,
       rowNumber: i + 2,
@@ -243,6 +269,8 @@ export async function buildBatchPreview(params: {
       isValid: true,
       status: 'valid',
       error: null,
+      assignedBrokerId: assignedBroker.id,
+      assignedBrokerName: assignedBroker.fullName,
       resolvedVariables: resolved.details,
     });
   }
@@ -312,12 +340,16 @@ export async function sendBatchTemplate(params: {
   assertTemplateApproved(template);
   assertTemplateHeaderMediaConfigured(template);
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
-  const broker = await resolveBroker(params.mapping.selectedBrokerId);
+  const selectedBrokers = await resolveSelectedBrokers(params.mapping);
+  if (selectedBrokers.length === 0) {
+    throw new Error('Selecione ao menos um corretor responsável para enviar em lote.');
+  }
   const config = await getWhatsAppConfig();
   const details: BatchExecutionResult['details'] = [];
   let success = 0;
   let failed = 0;
   let validCandidates = 0;
+  let roundRobinIndex = 0;
 
   for (let i = 0; i < params.rows.length; i++) {
     const row = params.rows[i];
@@ -371,6 +403,8 @@ export async function sendBatchTemplate(params: {
     }
 
     validCandidates++;
+    const assignedBroker = selectedBrokers[roundRobinIndex % selectedBrokers.length];
+    roundRobinIndex++;
     const result = await sendTemplateMessage(normalizedPhone, template.key, {
       parameters: resolved.values,
     });
@@ -430,7 +464,7 @@ export async function sendBatchTemplate(params: {
     await applyBatchOwnershipAndContextByPhone({
       phoneE164: normalizedPhone,
       enterpriseId: enterprise?.id ?? null,
-      brokerId: broker?.id ?? null,
+      brokerId: assignedBroker.id,
       sourceKey: `batch:${template.key}`,
       sourceRowNumber: rowNumber,
     });

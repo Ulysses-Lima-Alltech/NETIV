@@ -4,9 +4,7 @@ interface Props {
   templates: BatchTemplateCatalogItem[];
   selectedKey: string;
   onSelect: (key: string) => void;
-  /** Enquanto true, o select fica desabilitado e mostra estado de carregamento */
   loading?: boolean;
-  /** Ex.: falha ao carregar lista — desabilita o select */
   selectDisabled?: boolean;
 }
 
@@ -15,12 +13,14 @@ const inputCls =
 
 export function TemplateSelector({ templates, selectedKey, onSelect, loading, selectDisabled }: Props) {
   const selected = templates.find((item) => item.key === selectedKey) ?? null;
-  console.log('[WHATSAPP_BATCH_TEMPLATE_SELECTOR_KEYS]', templates.map((item) => item.key));
-  const statusBadge = selected?.status ?? 'APPROVED';
+  const statusBadge = String(selected?.status ?? 'APPROVED').toUpperCase();
   const categoryBadge = selected?.category ?? 'UTILITY';
   const languageBadge = selected?.languageCode ?? 'pt_BR';
   const contentBadge = selected?.requiresHeaderMedia ? 'Requer imagem' : 'Texto puro';
-  const variableBadge = selected?.hasBodyVariables ? `Possui variáveis (${selected.bodyVariableCount ?? 0})` : 'Sem variáveis';
+  const variableBadge = selected?.hasBodyVariables
+    ? `Possui variaveis (${selected.bodyVariableCount ?? 0})`
+    : 'Sem variaveis';
+
   const statusColors: Record<string, string> = {
     APPROVED: 'bg-emerald-100 text-emerald-800',
     PENDING: 'bg-amber-100 text-amber-800',
@@ -28,12 +28,11 @@ export function TemplateSelector({ templates, selectedKey, onSelect, loading, se
     PAUSED: 'bg-slate-200 text-slate-700',
   };
   const statusClass = statusColors[statusBadge] ?? 'bg-slate-100 text-slate-700';
+
   return (
     <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
       <h2 className="text-[14px] font-semibold">Template Aprovado</h2>
-      {loading ? (
-        <p className="text-[13px] text-[#6B7280]">Carregando templates…</p>
-      ) : null}
+      {loading ? <p className="text-[13px] text-[#6B7280]">Carregando templates...</p> : null}
       <select
         className={inputCls}
         value={selectedKey}

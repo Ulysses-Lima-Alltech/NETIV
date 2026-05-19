@@ -35,31 +35,31 @@ export function BatchPreviewTable({ preview, onSelectTestRow, selectedTestRow, e
   return (
     <section className={embedded ? 'space-y-3' : 'bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3'}>
       {!embedded && <h2 className="text-[14px] font-semibold">Preview antes do envio</h2>}
-<div className={`text-[12px] text-[#374151] p-3 flex flex-wrap gap-2 ${embedded ? 'bg-transparent border-0 rounded-none px-0' : 'bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px]'}`}>
-        <button 
-          type="button" 
-          className={`px-2 py-1 rounded ${filter === 'all' ? 'bg-[#DBEAFE] text-[#1D4ED8]' : 'bg-white border border-[#E5E7EB]'}`} 
+      <div className={`text-[12px] text-[#374151] p-3 flex flex-wrap gap-2 ${embedded ? 'bg-transparent border-0 rounded-none px-0' : 'bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px]'}`}>
+        <button
+          type="button"
+          className={`px-2 py-1 rounded ${filter === 'all' ? 'bg-[#DBEAFE] text-[#1D4ED8]' : 'bg-white border border-[#E5E7EB]'}`}
           onClick={() => setFilterAndResetPage('all')}
         >
           Total: {preview.total}
         </button>
-        <button 
-          type="button" 
-          className={`px-2 py-1 rounded ${filter === 'valid' ? 'bg-[#DCFCE7] text-[#166534]' : 'bg-white border border-[#E5E7EB]'}`} 
+        <button
+          type="button"
+          className={`px-2 py-1 rounded ${filter === 'valid' ? 'bg-[#DCFCE7] text-[#166534]' : 'bg-white border border-[#E5E7EB]'}`}
           onClick={() => setFilterAndResetPage('valid')}
         >
-          Válidos: {preview.validCount}
+          Validos: {preview.validCount}
         </button>
-        <button 
-          type="button" 
-          className={`px-2 py-1 rounded ${filter === 'invalid' ? 'bg-[#FEE2E2] text-[#991B1B]' : 'bg-white border border-[#E5E7EB]'}`} 
+        <button
+          type="button"
+          className={`px-2 py-1 rounded ${filter === 'invalid' ? 'bg-[#FEE2E2] text-[#991B1B]' : 'bg-white border border-[#E5E7EB]'}`}
           onClick={() => setFilterAndResetPage('invalid')}
         >
-          Inválidos: {preview.invalidCount}
+          Invalidos: {preview.invalidCount}
         </button>
-        <button 
-          type="button" 
-          className={`px-2 py-1 rounded ${filter === 'blocked' ? 'bg-[#FEF3C7] text-[#92400E]' : 'bg-white border border-[#E5E7EB]'}`} 
+        <button
+          type="button"
+          className={`px-2 py-1 rounded ${filter === 'blocked' ? 'bg-[#FEF3C7] text-[#92400E]' : 'bg-white border border-[#E5E7EB]'}`}
           onClick={() => setFilterAndResetPage('blocked')}
         >
           Bloqueados: {preview.blockedCount}
@@ -69,7 +69,7 @@ export function BatchPreviewTable({ preview, onSelectTestRow, selectedTestRow, e
             Exibindo {pageRows.length} de {filteredRows.length}
           </span>
           <span>
-            Página {currentPage} / {pageCount}
+            Pagina {currentPage} / {pageCount}
           </span>
         </div>
       </div>
@@ -81,43 +81,45 @@ export function BatchPreviewTable({ preview, onSelectTestRow, selectedTestRow, e
               <th className="px-3 py-2">Telefone original</th>
               <th className="px-3 py-2">Telefone normalizado</th>
               <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2">Variáveis resolvidas</th>
+              <th className="px-3 py-2">Corretor</th>
+              <th className="px-3 py-2">Variaveis resolvidas</th>
               <th className="px-3 py-2">Erro</th>
               {onSelectTestRow && <th className="px-3 py-2">Teste</th>}
             </tr>
           </thead>
           <tbody>
             {pageRows.map((row) => (
-              <tr 
-                key={row.rowNumber} 
-                className={`border-b border-[#F3F4F6] text-[12px] ${
-                  selectedTestRow === row.rowNumber ? 'bg-[#FEF3C7]' : ''
-                }`}
+              <tr
+                key={row.rowNumber}
+                className={`border-b border-[#F3F4F6] text-[12px] ${selectedTestRow === row.rowNumber ? 'bg-[#FEF3C7]' : ''}`}
               >
                 <td className="px-3 py-2">{row.rowNumber}</td>
                 <td className="px-3 py-2">{row.phoneOriginal || '-'}</td>
                 <td className="px-3 py-2">{row.phoneNormalized || '-'}</td>
                 <td className="px-3 py-2">
-                  <span className={`px-2 py-1 rounded text-[10px] ${
-                    row.status === 'valid' ? 'bg-[#DCFCE7] text-[#166534]' :
-                    row.status === 'invalid' ? 'bg-[#FEE2E2] text-[#991B1B]' :
-                    'bg-[#FEF3C7] text-[#92400E]'
-                  }`}>
+                  <span
+                    className={`px-2 py-1 rounded text-[10px] ${
+                      row.status === 'valid'
+                        ? 'bg-[#DCFCE7] text-[#166534]'
+                        : row.status === 'invalid'
+                          ? 'bg-[#FEE2E2] text-[#991B1B]'
+                          : 'bg-[#FEF3C7] text-[#92400E]'
+                    }`}
+                  >
                     {row.status}
                   </span>
                 </td>
+                <td className="px-3 py-2">{row.assignedBrokerName || '-'}</td>
                 <td className="px-3 py-2">
                   {row.resolvedVariables.map((v) => (
                     <div key={`${row.rowNumber}-${v.variableId}`} className="mb-1">
                       <span className="font-mono text-[10px]">
-                        {'{{'}{v.variableId}{'}'}
+                        {'{{'}
+                        {v.variableId}
+                        {'}}'}
                       </span>
-                      <span className="ml-1">
-                        {v.value ?? '(vazio)'}
-                      </span>
-                      <span className="text-[#6B7280] text-[10px]">
-                        [{v.sourceType}]
-                      </span>
+                      <span className="ml-1">{v.value ?? '(vazio)'}</span>
+                      <span className="text-[#6B7280] text-[10px]">[{v.sourceType}]</span>
                     </div>
                   ))}
                 </td>
@@ -129,8 +131,8 @@ export function BatchPreviewTable({ preview, onSelectTestRow, selectedTestRow, e
                         type="button"
                         onClick={() => onSelectTestRow(selectedTestRow === row.rowNumber ? null : row.rowNumber)}
                         className={`px-2 py-1 rounded text-[10px] ${
-                          selectedTestRow === row.rowNumber 
-                            ? 'bg-[#3B82F6] text-white' 
+                          selectedTestRow === row.rowNumber
+                            ? 'bg-[#3B82F6] text-white'
                             : 'bg-[#E5E7EB] text-[#374151] hover:bg-[#D1D5DB]'
                         }`}
                       >
@@ -144,7 +146,7 @@ export function BatchPreviewTable({ preview, onSelectTestRow, selectedTestRow, e
           </tbody>
         </table>
       </div>
-      
+
       <div className="flex items-center justify-end gap-2">
         <button
           type="button"
@@ -160,7 +162,7 @@ export function BatchPreviewTable({ preview, onSelectTestRow, selectedTestRow, e
           onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
           className="px-3 py-1 rounded border border-[#E5E7EB] text-[12px] disabled:opacity-50"
         >
-          Próxima
+          Proxima
         </button>
       </div>
     </section>

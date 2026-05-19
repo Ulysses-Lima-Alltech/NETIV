@@ -10,7 +10,8 @@ export const BatchMappingDtoSchema = z.object({
   templateKey: z.string().min(1, 'Template é obrigatório'),
   phoneColumn: z.string().min(1, 'Coluna de telefone é obrigatória'),
   selectedEnterpriseId: z.number().nullable(),
-  selectedBrokerId: z.number().nullable(),
+  selectedBrokerId: z.number().nullable().optional(),
+  selectedBrokerIds: z.array(z.number().int().positive()).default([]),
   variableMappings: z.record(z.string(), VariableMappingSchema),
 });
 
