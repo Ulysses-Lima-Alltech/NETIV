@@ -29,6 +29,13 @@ export function evaluateAnaOutboundQuota(params: {
   anaOutboundCount: number;
   isAutomaticAna: boolean;
 }): AnaOutboundQuotaDecision {
+  // Regra desativada para produção com disparos em lote.
+  // O disparo inicial cria mensagem outbound antes da primeira resposta do cliente,
+  // então bloquear por anaOutboundCount >= inboundCount impede a Ana de responder leads reais.
+  // Mantemos a função para compatibilidade/auditoria, mas ela não bloqueia mais envio automático.
+  void params;
+  return { allowed: true, reason: null };
+}): AnaOutboundQuotaDecision {
   if (!params.isAutomaticAna) {
     return { allowed: true, reason: null };
   }
