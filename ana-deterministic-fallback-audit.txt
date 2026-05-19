@@ -1,0 +1,605 @@
+﻿AUDITORIA DE REGRAS DETERMINISTICAS E FALLBACK - ANA
+Gerado em: 2026-05-19 16:20:45
+
+Objetivo:
+- localizar respostas hardcoded;
+- localizar fallback outbound;
+- remover/alterar somente regras que estejam substituindo a base comercial;
+- manter guardrails, handoff, agendamento e bloqueios de segurança.
+
+
+==============================
+PADRAO: O Évora é um loteamento fechado
+==============================
+
+==============================
+PADRAO: Me conta, quais são suas dúvidas
+==============================
+
+==============================
+PADRAO: Você deu uma sumida
+==============================
+
+==============================
+PADRAO: fallback
+==============================
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\catalogs\whatsappTemplates.ts:26: source?: 'meta' | 'local_fallback';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\db\migrate.ts:40: console.log('[migrate] DATABASE_URL ausente; usando fallback de config.ts.');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\middleware\auth.ts:44: * Bearer inválido/expirado: 401 (não faz fallback embutido).
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\repositories\anaTurnAuditRepository.ts:43: api_key_source: 'enterprise' | 'global_fallback' | null;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\repositories\anaTurnAuditRepository.ts:84: apiKeySource?: 'enterprise' | 'global_fallback' | null;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\repositories\anaTurnAuditRepository.ts:113: apiKeySource?: 'enterprise' | 'global_fallback' | null;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\repositories\conversationRepository.ts:1085: classifierSource: 'ai' | 'fallback';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\repositories\enterpriseKnowledgeChunkRepository.ts:172: // Fallback legado: banco sem migration de metadados ainda aplicada.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\repositories\enterpriseKnowledgeChunkRepository.ts:252: message: 'Consulta S3-only de chunks falhou; nenhum fallback legado será aplicado.',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\repositories\enterpriseRepository.ts:689: // Para local (legado): guarda BYTEA como fallback para FS efêmero.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\repositories\enterpriseRepository.ts:1142: const fallbackOrphanedStorageKeys = Array.from(orphanedStorageKeySet);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\repositories\enterpriseRepository.ts:1159: orphanedStorageKeys: fallbackOrphanedStorageKeys,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\repositories\llmUsageRepository.ts:6: apiKeySource?: 'enterprise' | 'global_fallback' | null;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\routes\index.ts:24: import { listBatchTemplatesFromMetaOrFallback } from '../services/whatsappTemplateCatalogSyncService.js';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\routes\index.ts:42: const { templates, fallbackUsed } = await listBatchTemplatesFromMetaOrFallback({ forceRefresh });
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\routes\index.ts:48: warning: fallbackUsed ? 'Não foi possível sincronizar com a Meta. Exibindo catálogo local.' : null,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\routes\index.ts:49: source: fallbackUsed ? 'local_fallback' : 'meta_sync',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\routes\whatsapp.ts:20: listBatchTemplatesFromMetaOrFallback,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\routes\whatsapp.ts:184: templates: listWhatsAppTemplatesCatalog().map((item) => ({ ...item, source: 'local_fallback' as const })),
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\routes\whatsapp.ts:185: source: 'local_fallback',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\routes\whatsapp.ts:247: const { templates, fallbackUsed } = await listBatchTemplatesFromMetaOrFallback({ forceRefresh: true });
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\routes\whatsapp.ts:248: return res.json({ success: true, templates, fallbackUsed });
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\routes\whatsapp.ts:671: fallbackLabel: 'Cliente',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\routes\whatsappBatch.ts:10: import { listBatchTemplatesFromMetaOrFallback } from '../services/whatsappTemplateCatalogSyncService.js';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\routes\whatsappBatch.ts:19: const { templates, fallbackUsed } = await listBatchTemplatesFromMetaOrFallback({ forceRefresh });
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\routes\whatsappBatch.ts:26: warning: fallbackUsed ? 'Não foi possível sincronizar com a Meta. Exibindo catálogo local.' : null,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\routes\whatsappBatch.ts:27: source: fallbackUsed ? 'local_fallback' : 'meta_sync',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\scripts\addLlmCostBackfill.js:27: function loadLocalEnvFallback() {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\scripts\addLlmCostBackfill.js:63: loadLocalEnvFallback();
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\scripts\backfillLeadClassification.ts:44: sourceFallback: number;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\scripts\backfillLeadClassification.ts:194: else summary.sourceFallback += 1;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\scripts\backfillLeadClassification.ts:324: sourceFallback: 0,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\scripts\backfillLeadClassification.ts:350: totalSourceFallback: summary.sourceFallback,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\scripts\diagnoseLeadClassifier.ts:53: `[lead-classifier-diagnostic] banco indisponivel (${error instanceof Error ? error.message : String(error)}), usando fallback offline.`
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\scripts\diagnoseLeadClassifier.ts:128: console.log('[lead-classifier-diagnostic] fonte de empreendimentos: fallback offline');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\scripts\syncOpenAiCosts.ts:3: function parseDateArg(raw: string | undefined, fallback: Date): Date {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\scripts\syncOpenAiCosts.ts:4: if (!raw) return fallback;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\scripts\syncOpenAiCosts.ts:12: function parseNumberArg(raw: string | undefined, fallback: number): number {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\scripts\syncOpenAiCosts.ts:13: if (!raw) return fallback;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\scripts\syncOpenAiCosts.ts:15: if (!Number.isFinite(n)) return fallback;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:46: export const ANA_FALLBACK_INCOMPREHENSION_REPLY =
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:49: /** Fallback técnico mínimo quando a API falha ou a resposta é inválida — sem catálogo nem menu. */
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:50: export const ANA_TECHNICAL_FALLBACK_NEUTRAL =
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:57: export const ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY =
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:61: export const ANA_FALLBACK_ASK_PRODUCT_TYPE =
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:107: * Fallback com lista real de nomes do portfólio — usado quando o cliente pede explicitamente catálogo
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:108: * e a reply da LLM falhou no parse ou caiu em fallback genérico.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:110: export function buildCatalogFallbackReply(
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:121: /** Fallback de refinamento sensível ao tipo de produto inferido no contexto recente. */
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:133: return buildCatalogFallbackReply(allEnterpriseNames, recentContext, productTypeHint);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:136: return ANA_FALLBACK_ASK_PRODUCT_TYPE;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:138: return buildCatalogFallbackReply([], recentContext, productTypeHint);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:142: return buildCatalogFallbackReply(allEnterpriseNames, recentContext, productTypeHint ?? 'LOTEAMENTO');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:144: return ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:146: return ANA_FALLBACK_REFINEMENT_CONTEXT_REPLY;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:966: * Objetivo: evitar promover texto fraco/tecnico so para fugir de fallback.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:1122: * Falha só em JSON inválido ou reply ausente/inútil — fallback técnico neutro fica no engine.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:1255: export function fallbackReplyFromRaw(
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAgentService.ts:1266: reply: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAppointmentFromChatService.ts:43: * - Data/hora: `resolveAppointmentDateTimeFromContext` (texto do cliente + fallback JSON) em America/Sao_Paulo.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\anaAppointmentFromChatService.ts:94: fallbackLabel: 'Cliente',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:80: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:97: buildGreetingSafeFallback,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:101: evaluateAnaEmptyFallbackGuard,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:131: ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:132: ANA_FALLBACK_APPOINTMENT_FLOW_REPLY,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:227: | 'rag_empty_fallback_retry';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:290: function hasBlockedGenericFallbackPhrase(text: string): boolean {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:300: function buildDirectAxisFallbackReply(axis: CommercialAxis): string {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:526: /** Motivo do fallback com `ANA_TECHNICAL_FALLBACK_NEUTRAL` (log [ANA_FALLBACK_TRACE]). */
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:527: type AnaFallbackTraceReason =
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:538: function computeAnaTechnicalFallbackTraceReason(
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:541: ): AnaFallbackTraceReason {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:568: function logAnaFallbackTrace(params: {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:569: reason: AnaFallbackTraceReason;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:577: console.log('[ANA_FALLBACK_TRACE] fallback_selected', true);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:578: console.log('[ANA_FALLBACK_TRACE] reason', reason);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:579: console.log('[ANA_FALLBACK_TRACE] conversationId', conversationId);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:580: console.log('[ANA_FALLBACK_TRACE] hasRawOpenAIResponse', hasRaw);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:581: console.log('[ANA_FALLBACK_TRACE] hasStructuredReply', false);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:582: console.log('[ANA_FALLBACK_TRACE] rawOpenAIResponseLen', raw.length);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:583: console.log('[ANA_FALLBACK_TRACE] parseAttempted', parseAttempted);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:584: console.log('[ANA_FALLBACK_TRACE] httpStatus', result.httpStatus ?? null);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:593: failureReason: AnaFallbackTraceReason | null;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:630: // Regra do projeto: não usar fallback operacional de modelo/provedor para a Ana.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:634: function containsProhibitedTechnicalFallbackText(text: string): boolean {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:732: function anaTechnicalFallbackStructured(classificationHint: string | null): AnaStructuredReply {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:734: reply: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:1347: // Sem fallback determinístico: o engine vai bloquear outbound e acionar handoff operacional.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:1363: // Sem fallback determinístico: o engine vai bloquear outbound e acionar handoff operacional.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:1386: // Sem fallback determinístico: material indisponível vira bloqueio/handoff.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:1424: // Sem fallback determinístico: falha de envio vira bloqueio/handoff.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:1525: let anaTurnAuditApiKeySource: 'enterprise' | 'global_fallback' | null = null;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2011: // limpa foco antigo para evitar fallback sequestrado por contexto anterior.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2394: emptyFallbackBlocked: false,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2431: shouldAvoidGenericFallback: anaDecision.shouldAvoidGenericFallback,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2454: shouldAvoidGenericFallback: anaDecision.shouldAvoidGenericFallback,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3100: | 'technical_fallback'
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3103: | 'rag_empty_fallback_retry' = 'openai';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3104: let fallbackReason: string | null = null;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3153: failureReason: structured != null ? null : computeAnaTechnicalFallbackTraceReason(result, parseAttempted),
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3173: `Use o contexto abaixo para resolver follow-up curto/contextual sem fallback genérico.\n${retryContextBlock}`,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3237: : computeAnaTechnicalFallbackTraceReason(retryResult, retryResult.success && retryRaw.length > 0),
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3272: 'Nao use fallback generico, nao cite erro tecnico, nao invente dados comerciais. ' +
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3328: : computeAnaTechnicalFallbackTraceReason(regenResult, regenResult.success && regenRaw.length > 0),
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3339: anaTurnDiagnostics.llm.providerFallbackAttempted = true;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3342: 'provider_fallback',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3345: fallbackConfigured: true,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3356: 'Nao use fallback generico nem mensagem de erro tecnico. Se faltar dado real, use apenas o padrao de informacao ausente.',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3370: purpose: 'ana_provider_fallback',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3371: requestType: 'ana_provider_fallback',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3381: captureLlmAudit(secondaryResult, 'ana_provider_fallback');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3390: console.log('[ANA_PROVIDER_FALLBACK]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3409: : computeAnaTechnicalFallbackTraceReason(secondaryResult, secondaryResult.success && secondaryRaw.length > 0),
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3413: anaTurnDiagnostics.llm.providerFallbackAttempted = false;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3416: 'provider_fallback',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3419: fallbackConfigured: false,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3420: reason: 'provider_fallback_not_configured',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3441: (blockingLastAttempt?.failureReason as AnaFallbackTraceReason | null) ??
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3442: computeAnaTechnicalFallbackTraceReason(result, parseAttempted);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3443: logAnaFallbackTrace({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3449: fallbackReason = traceReason;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3450: anaTurnDiagnostics.fallbackReason = traceReason;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3464: anaTurnDiagnostics.fallbackUsed = false;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3474: fallbackReason: traceReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3485: usedFallback: false,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3499: fallbackReason: traceReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3500: usedFallback: false,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3508: console.log('[ANA_RATE_LIMIT_ABORT_NO_FALLBACK]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3517: reason: fallbackReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3525: technical_fallback_used: false,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3544: const traceReason = computeAnaTechnicalFallbackTraceReason(result, parseAttempted);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3545: logAnaFallbackTrace({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3551: fallbackReason = traceReason;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3552: replySource = 'technical_fallback';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3553: anaTurnDiagnostics.fallbackUsed = true;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3554: anaTurnDiagnostics.fallbackReason = traceReason;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3565: anaTurnDiagnostics.llm.providerFallbackAttempted = false;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3568: 'provider_fallback',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3571: fallbackConfigured: false,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3572: reason: 'provider_fallback_not_configured',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3577: const isGreetingForFallback = isBareGreetingOnly(trimmed);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3579: // [ANA_CONTINUATION_FALLBACK] log centralizado para todo fallback tecnico
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3580: console.log('[ANA_CONTINUATION_FALLBACK]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3583: reason: fallbackReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3584: isGreeting: isGreetingForFallback,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3590: technical_fallback_used: true,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3593: structured = anaTechnicalFallbackStructured(effectiveConv.classification);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3608: let deterministicFallbackReply = structured.reply;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3610: deterministicFallbackReply = ANA_PROVIDER_FAILURE_HANDOFF_REPLY;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3612: deterministicFallbackReply = `Perfeito, ${trustedCustomerName}. Como posso te ajudar agora?`;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3614: deterministicFallbackReply = 'Perfeito, obrigada. Como posso te ajudar agora?';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3616: deterministicFallbackReply = isAppointmentContextualQuestion(trimmed)
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3617: ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3618: : ANA_FALLBACK_APPOINTMENT_FLOW_REPLY;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3620: deterministicFallbackReply = buildSpecificMissingAxisReply(currentAxisForRepetition) ?? deterministicFallbackReply;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3621: console.log('[ANA_GENERIC_FALLBACK_DEBUG]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3630: fallbackReason: traceReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3631: genericFallbackBlocked: true,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3633: } else if (anaDecision.shouldAvoidGenericFallback && currentAxisForRepetition != null) {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3634: deterministicFallbackReply = buildDirectAxisFallbackReply(currentAxisForRepetition);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3636: structured = { ...structured, reply: deterministicFallbackReply };
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3648: reply: deterministicFallbackReply.slice(0, 220),
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3650: console.log('[ANA_FALLBACK]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3663: generated_reply_before_fallback: rawTrimmed.slice(0, 260) || null,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3664: deterministic_reply: deterministicFallbackReply,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3672: if (isGreetingForFallback && !isProviderFailureClassifiedError(providerFailure?.classifiedError)) {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3673: const safeReply = buildGreetingSafeFallback(effectiveConv.customer_name);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3677: reason: 'technical_fallback_suppressed_for_bare_greeting',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3678: fallbackReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3704: console.log('[ANA_GENERIC_FALLBACK_DEBUG]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3713: fallbackReason: 'policy_missing_information',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3714: genericFallbackBlocked: true,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3774: console.log('[ANA_DOC_SEND_BLOCKED_NO_FALLBACK]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3865: fallbackReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4179: technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4319: fallbackReason: fallbackReason ?? null,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4362: console.log('[ANA_DOC_HARD_FAIL_NO_FALLBACK]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4444: anaDecision.shouldAvoidGenericFallback &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4449: console.log('[ANA_GENERIC_FALLBACK_DEBUG]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4458: fallbackReason: 'generic_axis_question_after_requested_axis',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4459: genericFallbackBlocked: true,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4486: technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4515: technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4546: const shouldRunEmptyFallbackGuard = !shouldAttemptDocSend && !operationalResolverFired;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4547: let skipPostPolicyEmptyFallbackBlock = false;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4548: let finalEmptyFallbackGuard = shouldRunEmptyFallbackGuard
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4549: ? evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4558: shouldRunEmptyFallbackGuard &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4560: finalEmptyFallbackGuard.blocked &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4561: finalEmptyFallbackGuard.reason === 'first_reply_missing_greeting'
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4571: technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4576: const patchedEmptyGuard = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4586: finalEmptyFallbackGuard = patchedEmptyGuard;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4595: phase: 'empty_fallback_pre_retry',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4604: const shouldRetryEmptyFallbackGuard =
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4605: shouldRunEmptyFallbackGuard &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4607: (finalOutboundEval.valid && finalEmptyFallbackGuard.blocked) ||
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4611: if (shouldRetryEmptyFallbackGuard) {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4612: if (!finalEmptyFallbackGuard.blocked) {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4613: finalEmptyFallbackGuard = { blocked: true, reason: finalOutboundEval.reason };
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4615: const emptyFallbackReason = finalEmptyFallbackGuard.reason ?? finalOutboundEval.reason ?? 'blocked';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4617: /^empty_phrase_/.test(emptyFallbackReason) || emptyFallbackReason === 'empty_closure_vague_disposition';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4618: const isTooManyQuestionsBlock = emptyFallbackReason === 'too_many_questions';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4621: fallbackReason == null &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4628: reason: emptyFallbackReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4634: console.log('[ANA_EMPTY_FALLBACK_GUARD]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4637: reason: emptyFallbackReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4647: technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4654: finalEmptyFallbackGuard = { blocked: false, reason: null };
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4655: skipPostPolicyEmptyFallbackBlock = true;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4659: retryAudit.retrySkippedReason = emptyFallbackReason;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4666: phase: 'empty_fallback_pre_retry',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4667: reason: emptyFallbackReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4675: if (hasPrimaryValidReply && finalEmptyFallbackGuard.blocked && isGenericHeuristicBlock) {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4679: retryAudit.retrySkippedReason = emptyFallbackReason;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4681: skipPostPolicyEmptyFallbackBlock = true;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4682: finalEmptyFallbackGuard = { blocked: false, reason: null };
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4684: console.log('[ANA_EMPTY_FALLBACK_GUARD_SKIP_RETRY_VALID_REPLY]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4687: reason: emptyFallbackReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4693: anaTurnAuditGuardsApplied.emptyFallbackGuard = retryAudit;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4702: emptyFallbackBlocked: finalEmptyFallbackGuard.blocked,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4705: emptyFallbackGuard: retryAudit,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4708: if (finalEmptyFallbackGuard.blocked) {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4710: anaTurnAuditBlockedReason = `empty_fallback_guard_${finalEmptyFallbackGuard.reason ?? 'blocked'}`;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4721: console.log('[ANA_EMPTY_FALLBACK_BLOCKED]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4724: reason: finalEmptyFallbackGuard.reason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4742: console.log('[ANA_GENERIC_FALLBACK_DEBUG]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4751: fallbackReason: finalOutboundEval.reason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4752: genericFallbackBlocked: true,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4766: technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4802: let blockedGenericFallback = false;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4804: anaDecision.shouldAvoidGenericFallback &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4806: hasBlockedGenericFallbackPhrase(replyText)
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4808: blockedGenericFallback = true;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4809: const missingFallback =
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4815: ? (missingFallback ?? buildDirectAxisFallbackReply(currentAxisForRepetition))
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4816: : (directSanitized !== replyText ? directSanitized : buildDirectAxisFallbackReply(currentAxisForRepetition));
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4817: console.log('[ANA_GENERIC_FALLBACK_BLOCKED]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4845: } else if (anaDecision.shouldAvoidGenericFallback && similarToAnyRecentReply) {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4853: buildDirectAxisFallbackReply(currentAxisForRepetition)
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4855: : buildDirectAxisFallbackReply(currentAxisForRepetition);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4921: technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4944: technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4965: const postPolicyEmptyGuard = shouldRunEmptyFallbackGuard
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4966: ? evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4979: fallbackReason == null &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4988: technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5007: ? evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5019: skipPostPolicyEmptyFallbackBlock &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5021: fallbackReason == null &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5025: console.log('[ANA_EMPTY_FALLBACK_POST_POLICY_SKIP_VALID_REPLY]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5031: fallbackReason: fallbackReason ?? null,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5044: anaTurnAuditBlockedReason = `empty_fallback_guard_${postPolicyGuardAfterSanitize.reason ?? 'blocked'}`;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5046: anaTurnAuditGuardsApplied.emptyFallbackGuard = {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5047: ...(typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' && anaTurnAuditGuardsApplied.emptyFallbackGuard !== null
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5048: ? anaTurnAuditGuardsApplied.emptyFallbackGuard as Record<string, unknown>
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5065: console.log('[ANA_EMPTY_FALLBACK_BLOCKED_AFTER_POST_POLICY]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5077: containsProhibitedTechnicalFallbackText(replyText)
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5085: console.log('ANA_MULTI_TOPIC_MESSAGE_HANDLED', { conversationId, phase: 'technical_fallback_phrase_rescue' });
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5086: console.log('ANA_PARTIAL_COMMERCIAL_REPLY_ALLOWED', { conversationId, reason: 'technical_fallback_phrase_guard' });
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5092: reason: 'technical_fallback_phrase_guard',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5097: fallbackReason = fallbackReason ?? guardFailureReason;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5101: anaTurnAuditGuardsApplied.technicalFallbackPhraseGuard = {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5103: fallbackReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5108: technicalFallbackPhraseGuard: {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5111: fallbackReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5112: usedFallback: false,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5117: anaTurnDiagnostics.fallbackUsed = false;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5118: anaTurnDiagnostics.fallbackReason = fallbackReason;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5119: anaTurnDiagnostics.llm.finalFailureReason = fallbackReason;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5128: fallbackReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5129: usedFallback: false,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5135: console.log('[ANA_TECHNICAL_FALLBACK_PHRASE_BLOCKED]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5137: fallbackReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5145: if (blockedGenericFallback && !reasonForNotRepeatingAnswer) {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5146: reasonForNotRepeatingAnswer = 'generic_fallback_blocked_for_direct_axis';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5174: usedFallback: false,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5175: fallbackReason: fallbackReason ?? (anaDecision.shouldUseMissingInformationReply ? 'policy_missing_information' : null),
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5176: blockedGenericFallback,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5189: typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5190: anaTurnAuditGuardsApplied.emptyFallbackGuard !== null &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5191: (anaTurnAuditGuardsApplied.emptyFallbackGuard as Record<string, unknown>).retried === true,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5192: emptyFallbackBlocked: blockedGenericFallback,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5207: typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5208: anaTurnAuditGuardsApplied.emptyFallbackGuard !== null &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5209: (anaTurnAuditGuardsApplied.emptyFallbackGuard as Record<string, unknown>).retried === true,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5210: emptyFallbackBlocked:
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5211: typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5212: anaTurnAuditGuardsApplied.emptyFallbackGuard !== null,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5220: usedTechnicalFallbackNeutral: replyText.trim() === ANA_TECHNICAL_FALLBACK_NEUTRAL.trim(),
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5228: fallbackReason: fallbackReason ?? null,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5244: fallbackReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5349: fallbackUsed: false,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5350: fallbackReason,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5358: typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5359: anaTurnAuditGuardsApplied.emptyFallbackGuard !== null &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5360: (anaTurnAuditGuardsApplied.emptyFallbackGuard as Record<string, unknown>).retried === true,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5361: emptyFallbackBlocked:
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5362: typeof anaTurnAuditGuardsApplied.emptyFallbackGuard === 'object' &&
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5363: anaTurnAuditGuardsApplied.emptyFallbackGuard !== null,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:5382: fallbackUsed: anaTurnDiagnostics.fallbackUsed,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\djangoSyncWorker.ts:36: * O JOIN em contacts traz full_name pra usar como fallback do nome do cliente
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\djangoWebhook.ts:83: * IMPORTANTE — fallback do nome:
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\djangoWebhook.ts:90: * O parâmetro `fallbacks` é opcional (chamadas antigas em fire-and-forget
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\djangoWebhook.ts:95: fallbacks?: {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\djangoWebhook.ts:104: whatsappDisplayName: conv.whatsapp_display_name ?? fallbacks?.whatsappDisplayName ?? null,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\djangoWebhook.ts:105: contactFullName: fallbacks?.contactFullName ?? null,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\djangoWebhook.ts:106: contactFirstName: fallbacks?.contactFirstName ?? null,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\djangoWebhook.ts:108: fallbackLabel: 'Cliente',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\enterpriseAiSettingsService.ts:17: export type AiApiKeySource = 'enterprise' | 'global_fallback';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\enterpriseAiSettingsService.ts:501: apiKeySource: 'global_fallback',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:65: source: 'ai' | 'fallback';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:79: apiKeySource?: 'enterprise' | 'global_fallback';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:98: apiKeySource?: 'enterprise' | 'global_fallback';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:250: function toShortReason(value: unknown, fallback: string): string {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:252: if (!text) return fallback;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:450: function safeFallbackDecision(input: ClassifyLeadConversationInput, reason: string): LeadClassifierDecision {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:456: temperatureReason: currentTemperature ? 'fallback_keep_current_temperature' : 'fallback_default_frio',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:460: enterpriseReason: 'fallback_keep_current_enterprise',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:467: source: 'fallback',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:636: return safeFallbackDecision(input, aiConfig?.blockedReason ?? 'openai_api_key_not_configured');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:674: return safeFallbackDecision(
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:681: return safeFallbackDecision(input, `classifier_provider_error:${result.error || 'unknown_error'}`);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:686: const fallback = safeFallbackDecision(input, 'classifier_invalid_json');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:687: fallback.rawClassifierJson = result.content.slice(0, 1200);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\leadClassificationService.ts:688: return fallback;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\openaiService.ts:36: apiKeySource?: 'enterprise' | 'global_fallback' | null;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\whatsappBatchTemplateService.ts:82: if (template.source === 'local_fallback') return;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\whatsappTemplateCatalogSyncService.ts:221: export async function listBatchTemplatesFromMetaOrFallback(params?: {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\whatsappTemplateCatalogSyncService.ts:223: }): Promise<{ templates: WhatsAppTemplateCatalogItem[]; fallbackUsed: boolean }> {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\whatsappTemplateCatalogSyncService.ts:228: return { templates: cacheEntry.templates, fallbackUsed: false };
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\whatsappTemplateCatalogSyncService.ts:235: return { templates: merged, fallbackUsed: false };
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\whatsappTemplateCatalogSyncService.ts:237: const fallback = WHATSAPP_TEMPLATES_CATALOG.map((item) => ({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\whatsappTemplateCatalogSyncService.ts:239: source: 'local_fallback' as const,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\whatsappTemplateCatalogSyncService.ts:241: setRuntimeWhatsAppTemplatesCatalog(fallback);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\whatsappTemplateCatalogSyncService.ts:242: return { templates: fallback, fallbackUsed: true };
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaContextualGreetingAndSanitizer.test.ts:5: buildGreetingSafeFallback,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaContextualGreetingAndSanitizer.test.ts:6: evaluateAnaEmptyFallbackGuard,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaContextualGreetingAndSanitizer.test.ts:12: const guard = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaContextualGreetingAndSanitizer.test.ts:23: const guard = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaContextualGreetingAndSanitizer.test.ts:33: const guard = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaContextualGreetingAndSanitizer.test.ts:60: test('caso 6: sem resposta segura nao cria fallback textual generico', () => {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaContextualGreetingAndSanitizer.test.ts:61: assert.equal(buildGreetingSafeFallback(null), '');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:17: evaluateAnaEmptyFallbackGuard,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:196: const dry = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:201: const good = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:206: const multipleQuestions = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:220: const blocked = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:229: const afterPatch = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:253: test('pergunta objetiva nao pode virar permissao, formulario ou fallback', () => {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:254: const good = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:259: const emptyPhrase = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:264: const earlyHandoff = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:276: const good = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:282: const bad = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:294: const good = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:298: const defensive = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:307: test('sem resposta segura nao envia fallback generico', () => {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaCostContainment.test.ts:310: technicalFallbackText: 'NÃ£o consegui continuar daqui agora. Me manda novamente em uma frase o que vocÃª quer saber.',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaFirstReplyGreetingPatch.test.ts:9: assert.match(engineSource, /phase:\s*'empty_fallback_pre_retry'/);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaFirstReplyGreetingPatch.test.ts:10: assert.match(engineSource, /finalEmptyFallbackGuard\.reason === 'first_reply_missing_greeting'/);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaFirstReplyGreetingPatch.test.ts:13: /finalEmptyFallbackGuard\s*=\s*patchedEmptyGuard;[\s\S]*const shouldRetryEmptyFallbackGuard\s*=/
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaFirstReplyGreetingPatch.test.ts:19: const marker = "phase: 'empty_fallback_pre_retry'";
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaFirstReplyGreetingPatch.test.ts:29: test('guard de fallback vazio continua existindo para casos realmente invalidos', () => {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaFirstReplyGreetingPatch.test.ts:31: assert.match(engineSource, /\[ANA_EMPTY_FALLBACK_GUARD\]/);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaFirstReplyGreetingPatch.test.ts:32: assert.match(engineSource, /\[ANA_EMPTY_FALLBACK_BLOCKED\]/);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaFirstReplyGreetingPatch.test.ts:37: assert.match(engineSource, /\[ANA_EMPTY_FALLBACK_GUARD_SKIP_RETRY_VALID_REPLY\]/);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaFirstReplyGreetingPatch.test.ts:38: assert.doesNotMatch(engineSource, /ana_rag_empty_fallback_retry/);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaFirstReplyGreetingPatch.test.ts:44: assert.match(engineSource, /\[ANA_RATE_LIMIT_ABORT_NO_FALLBACK\]/);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaFirstReplyGreetingPatch.test.ts:49: assert.match(engineSource, /let skipPostPolicyEmptyFallbackBlock = false/);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaFirstReplyGreetingPatch.test.ts:50: assert.match(engineSource, /skipPostPolicyEmptyFallbackBlock = true/);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaFirstReplyGreetingPatch.test.ts:51: assert.match(engineSource, /\[ANA_EMPTY_FALLBACK_POST_POLICY_SKIP_VALID_REPLY\]/);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaMultiTopicCommercialReply.test.ts:5: evaluateAnaEmptyFallbackGuard,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaMultiTopicCommercialReply.test.ts:26: const guard = evaluateAnaEmptyFallbackGuard({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\enterpriseAiSettingsService.test.ts:65: test('use_global_defaults=true usa fallback global quando não há chave própria', () => {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\enterpriseAiSettingsService.test.ts:73: assert.equal(resolved.apiKeySource, 'global_fallback');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\enterpriseAiSettingsService.test.ts:102: test('sem API própria e sem fallback global permitido bloqueia com erro controlado', () => {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\enterpriseResolutionOrder.test.ts:18: test('engine de conversa tenta usar contact.enterprise_id no fallback de enterprise', () => {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\leadClassificationService.test.ts:78: assert.equal(result.source, 'fallback');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\leadClassificationService.test.ts:248: assert.equal(result.source, 'fallback');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\leadClassificationService.test.ts:259: assert.equal(result.source, 'fallback');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\llmUsageTracking.test.ts:347: test('dashboard prioriza snapshot oficial e faz fallback para custo local quando necessario', () => {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\realtimePublisherContract.test.ts:5: test('realtimePublisher usa contact_type via contacts com fallback CLIENT', () => {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaAppointmentIntent.ts:3: * Evita triagem genérica e fallback de incompreensão quando a intenção já está no histórico.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaAppointmentIntent.ts:108: /** Fluxo de agendamento ativo — não tratar como triagem “fria” nem usar fallback genérico. */
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaAppointmentIntent.ts:157: export const ANA_FALLBACK_APPOINTMENT_FLOW_REPLY =
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaAppointmentIntent.ts:161: export const ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY =
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaCatalogMessages.ts:10: /** Texto único para listagem 📍 — usado por catálogo injetado e duplicate fallback (evita divergência). */
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaDecisionPolicy.ts:66: shouldAvoidGenericFallback: boolean;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaDecisionPolicy.ts:91: function detectAxisFallbackFromMessage(userMessage: string): CommercialAxis | null {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaDecisionPolicy.ts:203: const fallbackAxis = detectAxisFallbackFromMessage(input.userMessage);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaDecisionPolicy.ts:204: if (fallbackAxis != null) return fallbackAxis;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaDecisionPolicy.ts:301: const shouldAvoidGenericFallback =
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaDecisionPolicy.ts:339: shouldAvoidGenericFallback,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaEnterpriseLocationContext.ts:153: * 2) fallback região IBGE / `commercial_region` (imediata ou intermediária do município);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaMaterialReply.ts:29: const HONEST_FALLBACK_PURE = '';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaMaterialReply.ts:30: const HONEST_FALLBACK_MARKER = '';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaMaterialReply.ts:85: export function buildHumanMaterialFallback(params: {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaMaterialReply.ts:95: export function mergeHonestMaterialFallbackWhenNoFile(reply: string): string {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaMaterialReply.ts:97: if (!base) return HONEST_FALLBACK_PURE;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaMaterialReply.ts:107: * buildHumanMaterialFallback diretamente.)
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaMaterialReply.ts:109: export function forceHonestMaterialFallbackWhenNoFile(reply: string): string {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaMaterialReply.ts:111: if (!base) return HONEST_FALLBACK_PURE;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaMaterialReply.ts:112: if (HONEST_FALLBACK_MARKER && base.includes(HONEST_FALLBACK_MARKER)) return base;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaOperationalFactGuard.ts:218: // Sem fallback determinístico: o engine deve tentar repair/retry ou bloquear outbound.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaOperationalFactResolver.ts:103: * Fallback: busca por janela de texto ao redor do primeiro match no corpus inteiro.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaOperationalFactResolver.ts:112: // Fallback: janela ao redor do match
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaReplyFinalize.ts:17: export function buildGreetingSafeFallback(customerName?: string | null): string {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaReplyFinalize.ts:22: const DUPLICATE_FALLBACKS_GENERIC = [
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaReplyFinalize.ts:26: export interface PickDuplicateFallbackOpts {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaReplyFinalize.ts:33: * Fallback enviado quando a reply da IA ficou duplicada/similar à anterior.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaReplyFinalize.ts:36: export function pickDuplicateFallbackReply(
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaReplyFinalize.ts:39: opts?: PickDuplicateFallbackOpts
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaReplyFinalize.ts:644: technicalFallbackText?: string;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaReplyFinalize.ts:661: const technicalNorm = normOutbound(opts.technicalFallbackText || '');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaReplyFinalize.ts:663: return { text: raw, valid: false, reason: 'fallback_technical_blocked' };
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaReplyFinalize.ts:669: return { text: raw, valid: false, reason: 'fallback_technical_blocked' };
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaReplyFinalize.ts:801: export function evaluateAnaEmptyFallbackGuard(opts: {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaReplyFinalize.ts:1238: * Usada para não aplicar o fallback genérico de incompreensão quando já há contexto aproveitável.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaReplyFinalize.ts:1290: * Saudações curtas de abertura — não devem cair em fallback de incompreensão.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaTurnDiagnostics.ts:9: | 'provider_fallback'
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaTurnDiagnostics.ts:35: fallbackUsed: boolean;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaTurnDiagnostics.ts:36: fallbackReason: string | null;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaTurnDiagnostics.ts:68: providerFallbackAttempted: boolean;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaTurnDiagnostics.ts:93: fallbackUsed: false,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaTurnDiagnostics.ts:94: fallbackReason: null,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaTurnDiagnostics.ts:115: providerFallbackAttempted: false,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\appointmentRelativeDateResolve.ts:2: * Resolve data/hora de agendamento a partir do texto do cliente + fallback JSON da Ana.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\appointmentRelativeDateResolve.ts:167: /** Preferir o instante da última mensagem do usuário; fallback `new Date()`. */
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\customerNameResolver.ts:7: | 'fallback_label';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\customerNameResolver.ts:15: fallbackLabel?: string | null;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\customerNameResolver.ts:39: const fallback = cleanName(input.fallbackLabel ?? 'Cliente', 64) ?? 'Cliente';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\customerNameResolver.ts:40: return { value: fallback, source: 'fallback_label' };
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\customerNameResolver.ts:54: fallbackLabel: input.fallbackLabel ?? 'Cliente',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\extractCustomerNameFromMessage.ts:53: * (Sem fallback genérico de 2–3 palavras fora desse contexto.)
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\api\client.ts:166: source?: 'meta' | 'local_fallback';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\api\client.ts:295: export type ApiKeySource = 'enterprise' | 'global_fallback';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\api\client.ts:496: request<{ success: boolean; templates?: BatchTemplateCatalogItem[]; fallbackUsed?: boolean; error?: string }>(
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\components\ChatPanel.tsx:102: function displayOrFallback(value: string | null | undefined): string {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\components\ChatPanel.tsx:487: <dd className="max-w-[190px] text-right font-medium">{displayOrFallback(conversation.projectName || conversation.empreendimento)}</dd>
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\components\ChatPanel.tsx:491: <dd className="max-w-[190px] text-right font-medium">{displayOrFallback(conversation.assignedBrokerName)}</dd>
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\components\ChatPanel.tsx:499: <dd className="font-medium">{displayOrFallback(conversation.temperatura)}</dd>
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\contexts\AuthContext.tsx:41: // Função para ativar bypass (fallback temporário)
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\contexts\AuthContext.tsx:66: // Timeout para fallback (se não receber SSO em 3 segundos)
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\EmpreendimentosPage.tsx:288: // fallback legado para ambientes ainda não migrados.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\SettingsWhatsAppPage.tsx:936: Usada pela Ana como fallback de atendimento quando o empreendimento não tiver chave própria ativa.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\SettingsWhatsAppPage.tsx:1256: Quando um empreendimento possui API própria, a Ana usa essa chave nas chamadas de IA desse empreendimento. Se a opção de API global estiver ativa, a Ana usa a configuração global como fallback.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\SettingsWhatsAppPage.tsx:1296: {item.use_global_defaults ? 'Usa fallback global' : 'Somente API própria'}
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\SettingsWhatsAppPage.tsx:1337: <span className="text-[14px] text-[#111827]">Usar API global padrão (fallback)</span>
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\WhatsAppBatchTemplatePage.tsx:78: catalogSource: 'meta_sync' | 'local_fallback' | 'unknown',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\WhatsAppBatchTemplatePage.tsx:82: if (template.source === 'local_fallback') return true;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\WhatsAppBatchTemplatePage.tsx:84: if (catalogSource === 'local_fallback' && template.source !== 'meta') return true;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\WhatsAppBatchTemplatePage.tsx:115: const [templatesCatalogSource, setTemplatesCatalogSource] = useState<'meta_sync' | 'local_fallback' | 'unknown'>('unknown');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\WhatsAppBatchTemplatePage.tsx:121: const [metaTemplatesSource, setMetaTemplatesSource] = useState<'meta_sync' | 'local_fallback' | 'unknown'>('unknown');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\WhatsAppBatchTemplatePage.tsx:144: setTemplatesCatalogSource((r.source as 'meta_sync' | 'local_fallback' | undefined) ?? 'unknown');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\WhatsAppBatchTemplatePage.tsx:176: setMetaTemplatesSource((res.source as 'meta_sync' | 'local_fallback' | undefined) ?? 'unknown');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\WhatsAppBatchTemplatePage.tsx:249: setTemplatesCatalogSource((refreshed.source as 'meta_sync' | 'local_fallback' | undefined) ?? 'unknown');
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\WhatsAppBatchTemplatePage.tsx:818: const isLocalFallbackRow =
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\WhatsAppBatchTemplatePage.tsx:819: metaTemplatesSource === 'local_fallback' || tpl.source === 'local_fallback';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\WhatsAppBatchTemplatePage.tsx:826: isLocalFallbackRow ? 'bg-slate-200 text-slate-800' : statusBadgeClass(status)
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\pages\WhatsAppBatchTemplatePage.tsx:829: {isLocalFallbackRow ? statusLabel('LOCAL') : statusLabel(status)}
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\types\municipioIbge.ts:10: * fazer fallback quando não houver empreendimento na cidade exata.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\types\whatsappBatch.ts:15: source?: 'meta' | 'local_fallback';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\src\types\whatsappBatch.ts:27: /** Corpo com {{1}}, {{2}}… (opcional; inbox usa fallback por label se ausente). */
+
+==============================
+PADRAO: fallbackResponse
+==============================
+
+==============================
+PADRAO: defaultResponse
+==============================
+
+==============================
+PADRAO: deterministic
+==============================
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:159: handleVisitSchedulingDeterministically,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:1813: const deterministicReply: string =
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:1879: text: deterministicReply,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:1897: await insertMessage(conversationId, 'assistant', deterministicReply, sendClarification.metaMessageId ?? null);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2624: ? handleVisitSchedulingDeterministically({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2647: deterministicSchedulingHandled: directVisitSchedulingDecision?.handled === true,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2658: deterministicSchedulingHandled: directVisitSchedulingAudit.deterministicSchedulingHandled,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2669: let deterministicVisitReply = directVisitSchedulingDecision.reply;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2686: notes: 'Agendamento confirmado no fluxo deterministico da Ana.',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2698: deterministicVisitReply =
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2714: anaTurnDiagnostics.finalResponse.replySource = 'deterministic_visit_scheduling';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2721: text: deterministicVisitReply,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2722: phase: 'deterministic_visit_scheduling',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2728: anaTurnDiagnostics.finalResponse.replySource = 'deterministic_visit_scheduling';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2731: replySource: 'deterministic_visit_scheduling',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2741: anaTurnDiagnostics.finalResponse.replySource = 'deterministic_visit_scheduling';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2744: replySource: 'deterministic_visit_scheduling',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2750: await insertMessage(conversationId, 'assistant', deterministicVisitReply, sendVisitResult.metaMessageId);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2753: anaTurnDiagnostics.finalResponse.replySource = 'deterministic_visit_scheduling';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2756: replySource: 'deterministic_visit_scheduling',
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3608: let deterministicFallbackReply = structured.reply;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3610: deterministicFallbackReply = ANA_PROVIDER_FAILURE_HANDOFF_REPLY;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3612: deterministicFallbackReply = `Perfeito, ${trustedCustomerName}. Como posso te ajudar agora?`;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3614: deterministicFallbackReply = 'Perfeito, obrigada. Como posso te ajudar agora?';
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3616: deterministicFallbackReply = isAppointmentContextualQuestion(trimmed)
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3620: deterministicFallbackReply = buildSpecificMissingAxisReply(currentAxisForRepetition) ?? deterministicFallbackReply;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3634: deterministicFallbackReply = buildDirectAxisFallbackReply(currentAxisForRepetition);
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3636: structured = { ...structured, reply: deterministicFallbackReply };
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3637: console.log('[ANA_DETERMINISTIC_REPLY]', {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3648: reply: deterministicFallbackReply.slice(0, 220),
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3664: deterministic_reply: deterministicFallbackReply,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3949: // --- ANA OPERATIONAL FACT RESOLVER (camada deterministica) ---
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4499: const guardDecision = handleVisitSchedulingDeterministically({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4533: deterministicSchedulingHandled: true,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaDirectVisitScheduling.test.ts:4: handleVisitSchedulingDeterministically,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaDirectVisitScheduling.test.ts:30: test('fluxo deterministico confirma 18h e 19h30, mas recusa 20h e 06h', () => {
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaDirectVisitScheduling.test.ts:34: const decision = handleVisitSchedulingDeterministically({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaDirectVisitScheduling.test.ts:46: const decision = handleVisitSchedulingDeterministically({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaDirectVisitScheduling.ts:279: export function handleVisitSchedulingDeterministically(
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaTurnDiagnostics.ts:57: deterministicSchedulingHandled: boolean;
+
+==============================
+PADRAO: deterministica
+==============================
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:159: handleVisitSchedulingDeterministically,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:2624: ? handleVisitSchedulingDeterministically({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3949: // --- ANA OPERATIONAL FACT RESOLVER (camada deterministica) ---
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:4499: const guardDecision = handleVisitSchedulingDeterministically({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaDirectVisitScheduling.test.ts:4: handleVisitSchedulingDeterministically,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaDirectVisitScheduling.test.ts:34: const decision = handleVisitSchedulingDeterministically({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\tests\anaDirectVisitScheduling.test.ts:46: const decision = handleVisitSchedulingDeterministically({
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaDirectVisitScheduling.ts:279: export function handleVisitSchedulingDeterministically(
+
+==============================
+PADRAO: determinístico
+==============================
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:1347: // Sem fallback determinístico: o engine vai bloquear outbound e acionar handoff operacional.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:1363: // Sem fallback determinístico: o engine vai bloquear outbound e acionar handoff operacional.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:1386: // Sem fallback determinístico: material indisponível vira bloqueio/handoff.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:1424: // Sem fallback determinístico: falha de envio vira bloqueio/handoff.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\services\conversationEngine.ts:3957: // O resolver determinístico antigo não escreve mais atendimento. O LLM responde com RAG;
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaCommercialAxisGuard.ts:2: * Guard determinístico: garante no máximo UM eixo comercial principal por mensagem,
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaOperationalFactGuard.ts:218: // Sem fallback determinístico: o engine deve tentar repair/retry ou bloquear outbound.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaOperationalFactResolver.ts:2: * Resolver determinístico para perguntas operacionais do empreendimento.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\anaReplyFinalize.ts:370: // do fluxo determinístico após tentativa real de outbound.
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\commercialFlowState.ts:52: /** Último status de envio de material no fluxo determinístico. */
+C:\Users\ulyss\Desktop\NETIV\inbox-app\server\utils\commercialFlowState.ts:54: /** Fluxo determinístico de visita aguardando complemento do cliente. */
+
+==============================
+PADRAO: resposta padrão
+==============================
+
+==============================
+PADRAO: condição vigente
+==============================
+
+==============================
+PADRAO: material comercial de referência
+==============================
+
+==============================
+PADRAO: não consegui entender
+==============================
+
+==============================
+PADRAO: não tenho essa informação
+==============================
+
+==============================
+PADRAO: vou encaminhar para o corretor
+==============================
+
+==============================
+PADRAO: Esse horário está dentro da faixa
+==============================
+
+==============================
+PADRAO: solicitação do agendamento
+==============================
+
+==============================
+PADRAO: dados fornecidos
+==============================
