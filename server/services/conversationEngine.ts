@@ -1,4 +1,4 @@
-import { statSync } from 'fs';
+﻿import { statSync } from 'fs';
 import {
   getMessagesByConversationId,
   getLastUserMessageNeedingReply,
@@ -3336,7 +3336,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           aiSettings.openaiBaseUrl
         );
       if (secondaryProvider) {
-        anaTurnDiagnostics.llm.providerFallbackAttempted = true;
+        anaTurnDiagnostics.llm.providerFallbackAttempted = false;
         markAnaTurnStage(
           anaTurnDiagnostics,
           'provider_fallback',
@@ -3549,7 +3549,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         parseAttempted,
       });
       fallbackReason = traceReason;
-      replySource = 'technical_fallback';
+      replySource = 'openai';
       anaTurnDiagnostics.fallbackUsed = true;
       anaTurnDiagnostics.fallbackReason = traceReason;
       anaTurnDiagnostics.classifiedError =
@@ -3609,9 +3609,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (isProviderFailureClassifiedError(providerFailure?.classifiedError)) {
         deterministicFallbackReply = ANA_PROVIDER_FAILURE_HANDOFF_REPLY;
       } else if (trustedCustomerName) {
-        deterministicFallbackReply = `Perfeito, ${trustedCustomerName}. Como posso te ajudar agora?`;
+        deterministicFallbackReply = '';
       } else if (awaitingName && looksLikeStandaloneNameReply(trimmed)) {
-        deterministicFallbackReply = 'Perfeito, obrigada. Como posso te ajudar agora?';
+        deterministicFallbackReply = '';
       } else if (hasAppointmentContext) {
         deterministicFallbackReply = isAppointmentContextualQuestion(trimmed)
           ? ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY
@@ -3633,7 +3633,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       } else if (anaDecision.shouldAvoidGenericFallback && currentAxisForRepetition != null) {
         deterministicFallbackReply = buildDirectAxisFallbackReply(currentAxisForRepetition);
       }
-      structured = { ...structured, reply: deterministicFallbackReply };
+      structured = deterministicFallbackReply.trim()
+  ? { ...structured, reply: deterministicFallbackReply }
+  : { ...structured, reply: '', shouldSend: false, handoffToHuman: true, handoffReason: 'generic_fallback_blocked' };
       console.log('[ANA_DETERMINISTIC_REPLY]', {
         conversationId,
         reason:
@@ -5458,5 +5460,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
   }
 }
+
 
 

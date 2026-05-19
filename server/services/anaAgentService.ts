@@ -1,4 +1,4 @@
-import type { EnterpriseRow, EnterpriseTipo } from '../repositories/enterpriseRepository.js';
+﻿import type { EnterpriseRow, EnterpriseTipo } from '../repositories/enterpriseRepository.js';
 import type { RequestedProductType } from '../utils/anaRequestedProductType.js';
 import type { LocationQueryContext } from '../utils/anaEnterpriseLocationContext.js';
 import { parseAddons, normalizeFileCategory, type FileCategory } from '../repositories/enterpriseRepository.js';
@@ -43,12 +43,10 @@ export interface AnaStructuredReply {
 }
 
 /** Resposta quando o JSON da IA falha ou a chamada não retorna conteúdo válido (backend). */
-export const ANA_FALLBACK_INCOMPREHENSION_REPLY =
-  '';
+export const ANA_FALLBACK_INCOMPREHENSION_REPLY = '';
 
 /** Fallback técnico mínimo quando a API falha ou a resposta é inválida — sem catálogo nem menu. */
-export const ANA_TECHNICAL_FALLBACK_NEUTRAL =
-  'Não consegui continuar daqui agora. Me manda novamente em uma frase o que você quer saber.';
+export const ANA_TECHNICAL_FALLBACK_NEUTRAL = '';
 
 /**
  * Próximo passo único quando há sinais de busca mas o modelo falhou (substitui variantes antigas por produto).
@@ -1288,3 +1286,4 @@ export function fallbackReplyFromRaw(
     appointment_notes: null,
   };
 }
+
