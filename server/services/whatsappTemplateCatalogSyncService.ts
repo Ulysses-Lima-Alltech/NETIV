@@ -41,6 +41,15 @@ type CacheEntry = {
 
 let cacheEntry: CacheEntry | null = null;
 
+export class MetaTemplateDeleteError extends Error {
+  statusCode: number;
+  constructor(message: string, statusCode: number) {
+    super(message);
+    this.name = 'MetaTemplateDeleteError';
+    this.statusCode = statusCode;
+  }
+}
+
 async function getMetaCredentialsOrThrow(): Promise<{ token: string; apiVersion: string; wabaId: string }> {
   const integrationConfig = await getWhatsAppConfig();
   const token = integrationConfig?.metaAccessToken?.trim() || config.meta.whatsappToken?.trim();
@@ -176,8 +185,22 @@ export async function deleteMetaTemplateByName(templateName: string): Promise<un
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   });
-  const payload = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
-  if (!response.ok) throw new Error(payload.error?.message || `Meta delete failed (${response.status}).`);
+  const payload = (await response.json().catch(() => ({}))) as {
+    error?: { message?: string; code?: number; error_subcode?: number };
+  };
+  if (!response.ok) {
+    const rawMessage = String(payload.error?.message ?? '').toLowerCase();
+    const isNotFound =
+      response.status === 404 ||
+      rawMessage.includes('does not exist') ||
+      rawMessage.includes('not found') ||
+      rawMessage.includes('unknown template') ||
+      rawMessage.includes('invalid parameter');
+    if (isNotFound) {
+      throw new MetaTemplateDeleteError('Template não encontrado na Meta.', 404);
+    }
+    throw new MetaTemplateDeleteError('Falha ao excluir template na Meta.', 502);
+  }
   cacheEntry = null;
   return payload;
 }

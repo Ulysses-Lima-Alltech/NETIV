@@ -18,6 +18,7 @@ import {
   deleteMetaTemplateByName,
   listMetaTemplatesRaw,
   listBatchTemplatesFromMetaOrFallback,
+  MetaTemplateDeleteError,
 } from '../services/whatsappTemplateCatalogSyncService.js';
 import { parseSpreadsheet } from '../services/spreadsheetParseService.js';
 import {
@@ -222,9 +223,15 @@ router.delete('/templates/:name', async (req, res) => {
     return res.json({ success: true, result });
   } catch (error) {
     console.error('[WHATSAPP_TEMPLATE_DELETE_ERROR]', error);
+    if (error instanceof MetaTemplateDeleteError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        error: error.message,
+      });
+    }
     return res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : 'Erro ao excluir template na Meta.',
+      error: 'Erro ao excluir template na Meta.',
     });
   }
 });

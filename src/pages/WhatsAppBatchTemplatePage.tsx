@@ -158,7 +158,11 @@ export function WhatsAppBatchTemplatePage() {
       setMetaActionFeedback(`Template ${name} removido na Meta.`);
       await loadMetaTemplates();
     } catch (e) {
-      setMetaActionFeedback(e instanceof Error ? e.message : 'Erro ao excluir template na Meta.');
+      if (e instanceof ApiError && (e.status === 404 || e.status === 400)) {
+        setMetaActionFeedback('Não foi possível excluir este template. Ele pode não existir mais na Meta.');
+      } else {
+        setMetaActionFeedback('Não foi possível excluir este template. Ele pode não existir mais na Meta.');
+      }
     } finally {
       setMetaActionLoading(false);
     }
