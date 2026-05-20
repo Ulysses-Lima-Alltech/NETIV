@@ -235,6 +235,40 @@ function anaEngineTrace(tag: string, payload: Record<string, unknown>): void {
   console.log(`[ANA_ENGINE_TRACE] ${tag}`, payload);
 }
 
+
+function detectAnaDirectBatchInterestMessage(userMessage: string): boolean {
+  const n = userMessage
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!n) return false;
+
+  return (
+    /\b(tenho interesse|tenho sim interesse|me interessei|estou interessado|estou interessada)\b/.test(n) ||
+    /\b(gostaria de saber mais|quero saber mais|queria saber mais|me fala mais|me conte mais)\b/.test(n) ||
+    /\b(quero mais informacoes|quero informacoes|quero informações|pode me passar mais informacoes)\b/.test(n) ||
+    /\b(quero conhecer|quero entender melhor|quero mais detalhes|vi o anuncio|vim pelo anuncio)\b/.test(n)
+  );
+}
+
+function buildAnaDirectBatchInterestReply(params: {
+  enterpriseName: string | null;
+}): string {
+  const enterpriseName = (params.enterpriseName || '').trim();
+
+  if (/^e[vé]ora$/i.test(enterpriseName) || enterpriseName.toLowerCase().includes('evora') || enterpriseName.toLowerCase().includes('évora')) {
+    return 'Que bom! O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², lazer completo e segurança 24h. Você busca o lote para morar, investir ou construir futuramente?';
+  }
+
+  if (enterpriseName) {
+    return `Que bom! Posso te ajudar com as informações do ${enterpriseName}. Você busca para morar, investir ou construir futuramente?`;
+  }
+
+  return 'Que bom! Posso te ajudar com as informações. Você busca para morar, investir ou construir futuramente?';
+}
 function logAnaOutboundBlocked(params: {
   reason: string;
   userMessage: string;
@@ -2791,6 +2825,100 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    const shouldUseDeterministicDirectInterestReply =
+      detectAnaDirectBatchInterestMessage(trimmed) &&
+      anaDecision.canRespond &&
+      anaDecision.outboundAllowed &&
+      !appointmentPreflight.active;
+
+    if (shouldUseDeterministicDirectInterestReply) {
+      const deterministicDirectInterestReply = buildAnaDirectBatchInterestReply({
+        enterpriseName: ent?.name ?? null,
+      });
+
+      console.log('[ANA_DIRECT_INTEREST_DETERMINISTIC_START]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        enterpriseName: ent?.name ?? null,
+        userMessagePreview: trimmed.slice(0, 180),
+        replyPreview: deterministicDirectInterestReply.slice(0, 180),
+      });
+
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_direct_interest_send';
+        anaTurnDiagnostics.finalResponse.replySource = 'deterministic_direct_interest';
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+          replySource: 'deterministic_direct_interest',
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: anaTurnAuditBlockedReason,
+        });
+        return;
+      }
+
+      const directInterestSendResult = await sendTextMessage({
+        conversationId,
+        to: toPhoneNumber,
+        text: deterministicDirectInterestReply,
+        phase: 'deterministic_direct_interest',
+      });
+
+      if (!directInterestSendResult.success || !directInterestSendResult.metaMessageId) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'deterministic_direct_interest_send_failed';
+        anaTurnDiagnostics.finalResponse.replySource = 'deterministic_direct_interest';
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+          replySource: 'deterministic_direct_interest',
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: anaTurnAuditBlockedReason,
+        });
+        console.error('[ANA_DIRECT_INTEREST_DETERMINISTIC_SEND_FAILED]', {
+          conversationId,
+          enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+          result: directInterestSendResult,
+        });
+        return;
+      }
+
+      await insertMessage(
+        conversationId,
+        'assistant',
+        deterministicDirectInterestReply,
+        directInterestSendResult.metaMessageId
+      );
+
+      await applyAnaConversationUpdate(conversationId, {
+        classification: maxLeadTemperature(effectiveConv.classification, 'Qualificado'),
+        lead_temperature: maxLeadTemperature(effectiveConv.lead_temperature, 'quente'),
+        handoff: false,
+      });
+
+      anaTurnAuditOutcome = 'sent';
+      anaTurnAuditBlockedReason = null;
+      anaTurnAuditLlmStatus = 'skipped';
+      anaTurnAuditModel = 'deterministic_direct_interest';
+      anaTurnAuditGuardsApplied.outboundReason = 'deterministic_direct_interest';
+      anaTurnDiagnostics.finalResponse.replySource = 'deterministic_direct_interest';
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      markAnaTurnStage(anaTurnDiagnostics, 'llm_generation', 'skipped', {
+        reason: 'deterministic_direct_interest_bypass',
+      });
+      markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
+        replySource: 'deterministic_direct_interest',
+        outboundStatus: anaTurnAuditOutcome,
+      });
+
+      console.log('[ANA_DIRECT_INTEREST_DETERMINISTIC_SENT]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        enterpriseName: ent?.name ?? null,
+        outboundMetaMessageId: directInterestSendResult.metaMessageId,
+      });
+
+      return;
+    }
     if (historyCount === 0) {
       console.log('[CLEAR_HISTORY_AFTER]', {
         conversationId,
@@ -5483,6 +5611,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
   }
 }
+
 
 
 
