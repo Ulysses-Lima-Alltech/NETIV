@@ -79,3 +79,8 @@ export function isReengagementDueNow(lastUserMessageAt: Date, now: Date, eligibl
   
   return true;
 }
+
+export function computeCommercialFollowupEligibleAtUtc(lastUserMessageAt: Date, cycleCount: number): Date | null {
+  if (cycleCount < 0 || cycleCount > 4) return null;
+  return new Date(lastUserMessageAt.getTime() + (cycleCount + 1) * MINUTE_MS);
+}

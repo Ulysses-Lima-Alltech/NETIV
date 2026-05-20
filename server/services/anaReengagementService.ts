@@ -9,9 +9,13 @@ import {
 } from './anaOutboundQuotaService.js';
 import {
   computeEligibleReengagementAtUtc,
+  computeCommercialFollowupEligibleAtUtc,
   isReengagementDueNow,
 } from '../utils/anaReengagementSchedule.js';
 import { isAnaEmergencyHandoffEnabled } from '../utils/anaEmergencyHandoff.js';
+import { getActiveEnterpriseById } from '../repositories/enterpriseRepository.js';
+import { resolveAiSettingsForEnterprise } from './enterpriseAiSettingsService.js';
+import { resolveAnaCommercialFollowupMessage } from './anaCommercialRulesService.js';
 
 const SCAN_LIMIT = 150;
 
@@ -95,6 +99,10 @@ async function trySendReengagementForConversation(conversationId: number): Promi
     console.log('[ANA_REENGAGE_SKIP]', { conversationId, reason: 'classification', classification: conv.classification });
     return;
   }
+  if (conv.assigned_broker_id != null) {
+    console.log('[ANA_REENGAGE_SKIP]', { conversationId, reason: 'assigned_broker' });
+    return;
+  }
   if (conv.manual_closed_at != null) {
     console.log('[ANA_REENGAGE_SKIP]', { conversationId, reason: 'manual_closed' });
     return;
@@ -112,20 +120,23 @@ async function trySendReengagementForConversation(conversationId: number): Promi
     return;
   }
 
-  if (
-    conv.reengagement_for_user_message_id != null &&
-    conv.reengagement_for_user_message_id === lastUser.id
-  ) {
-    console.log('[ANA_REENGAGE_SKIP]', { conversationId, reason: 'already_sent_this_cycle', userMessageId: lastUser.id });
-    return;
-  }
-
   if (await conversationHasActiveAppointmentForReengageBlock(conversationId)) {
     console.log('[ANA_REENGAGE_SKIP]', { conversationId, reason: 'active_appointment' });
     return;
   }
 
-  const eligibleAt = computeEligibleReengagementAtUtc(new Date(lastUser.created_at));
+  const enterprise = conv.enterprise_id ? await getActiveEnterpriseById(conv.enterprise_id) : null;
+  const cycleCount =
+    conv.reengagement_for_user_message_id != null && conv.reengagement_for_user_message_id === lastUser.id
+      ? Number(conv.reengagement_count ?? 0)
+      : 0;
+  const commercialFollowupText = resolveAnaCommercialFollowupMessage({
+    enterpriseName: enterprise?.name ?? null,
+    cycleCount,
+  });
+  const eligibleAt = commercialFollowupText
+    ? computeCommercialFollowupEligibleAtUtc(new Date(lastUser.created_at), cycleCount)
+    : computeEligibleReengagementAtUtc(new Date(lastUser.created_at));
   if (!eligibleAt) {
     console.log('[ANA_REENGAGE_SKIP]', { conversationId, reason: 'no_eligible_slot' });
     return;
@@ -142,7 +153,13 @@ async function trySendReengagementForConversation(conversationId: number): Promi
     return;
   }
 
-  const body = buildReengagementMessageText(conv);
+  const aiSettings = await resolveAiSettingsForEnterprise(conv.enterprise_id ?? null);
+  if (aiSettings.blocked || !aiSettings.aiEnabled) {
+    console.log('[ANA_REENGAGE_SKIP]', { conversationId, reason: 'ai_disabled_or_blocked' });
+    return;
+  }
+
+  const body = commercialFollowupText ?? buildReengagementMessageText(conv);
 
   console.log('[ANA_REENGAGE_ELIGIBLE]', {
     conversationId,
@@ -164,7 +181,12 @@ async function trySendReengagementForConversation(conversationId: number): Promi
       await client.query('ROLLBACK');
       return;
     }
-    if (locked.handoff === true || locked.manual_closed_at != null || isBlockedClassification(locked.classification)) {
+    if (
+      locked.handoff === true ||
+      locked.manual_closed_at != null ||
+      isBlockedClassification(locked.classification) ||
+      locked.assigned_broker_id != null
+    ) {
       await client.query('ROLLBACK');
       console.log('[ANA_REENGAGE_SKIP]', { conversationId, reason: 'changed_after_lock' });
       return;
@@ -183,10 +205,19 @@ async function trySendReengagementForConversation(conversationId: number): Promi
       return;
     }
 
-    if (
-      locked.reengagement_for_user_message_id != null &&
-      locked.reengagement_for_user_message_id === u.id
-    ) {
+    const lockedCycleCount =
+      locked.reengagement_for_user_message_id != null && locked.reengagement_for_user_message_id === u.id
+        ? Number(locked.reengagement_count ?? 0)
+        : 0;
+    const lockedEnterprise = locked.enterprise_id ? await getActiveEnterpriseById(locked.enterprise_id) : null;
+    const lockedCommercialFollowupText = resolveAnaCommercialFollowupMessage({
+      enterpriseName: lockedEnterprise?.name ?? null,
+      cycleCount: lockedCycleCount,
+    });
+    const lockedEligibleAt = lockedCommercialFollowupText
+      ? computeCommercialFollowupEligibleAtUtc(new Date(u.created_at), lockedCycleCount)
+      : computeEligibleReengagementAtUtc(new Date(u.created_at));
+    if (!lockedEligibleAt) {
       await client.query('ROLLBACK');
       return;
     }
@@ -203,17 +234,17 @@ async function trySendReengagementForConversation(conversationId: number): Promi
       return;
     }
 
-    const elig = computeEligibleReengagementAtUtc(new Date(u.created_at));
-    if (!elig || !isReengagementDueNow(new Date(u.created_at), new Date(), elig)) {
+    if (!isReengagementDueNow(new Date(u.created_at), new Date(), lockedEligibleAt)) {
       await client.query('ROLLBACK');
       return;
     }
 
+    const outboundText = lockedCommercialFollowupText ?? body;
     const sendRes = await sendAnaTextMessageWithQuota({
       conversationId,
       to,
-      text: body,
-      phase: 'ana_reengagement',
+      text: outboundText,
+      phase: lockedCommercialFollowupText ? 'ana_commercial_followup' : 'ana_reengagement',
     });
     if (!sendRes.success || !sendRes.metaMessageId) {
       await client.query('ROLLBACK');
@@ -239,14 +270,17 @@ async function trySendReengagementForConversation(conversationId: number): Promi
       `INSERT INTO messages (conversation_id, role, content, meta_message_id, message_kind, attachment_json)
        VALUES ($1, 'assistant', $2, $3, 'text', NULL::jsonb)
        RETURNING id, conversation_id, role, content, meta_message_id, message_kind, attachment_json, created_at, deleted_at`,
-      [conversationId, body, sendRes.metaMessageId]
+      [conversationId, outboundText, sendRes.metaMessageId]
     );
 
     await client.query(
       `UPDATE conversations SET
          reengagement_sent_at = NOW(),
          reengagement_for_user_message_id = $1,
-         reengagement_count = COALESCE(reengagement_count, 0) + 1,
+         reengagement_count = CASE
+           WHEN reengagement_for_user_message_id = $1 THEN COALESCE(reengagement_count, 0) + 1
+           ELSE 1
+         END,
          last_message_at = NOW(),
          updated_at = NOW()
        WHERE id = $2`,

@@ -1,0 +1,59 @@
+﻿export type AnaCommercialIntent =
+  | 'first_contact'
+  | 'valor_metro_quadrado'
+  | 'oferta_visita'
+  | 'formas_pagamento'
+  | 'localizacao_regiao'
+  | 'endereco'
+  | 'investimento'
+  | 'valor_condominio'
+  | 'areas_lazer';
+
+export const ANA_COMMERCIAL_RULES = {
+  enterpriseKey: 'evora',
+  firstContactMessages: [
+    'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas.',
+    'Fácil acesso pela Rodovia Dom Pedro I, perto da área da Pedreira, a aproximadamente 50 minutos de Sao Paulo.',
+    'Me conta, quais são suas dúvidas? Vou responder todas.',
+  ],
+  byIntent: {
+    valor_metro_quadrado: [
+      'O nosso metro quadrado é o mais atrativo da região, a partir de R$775,00',
+      'O que mais eu posso te ajudar neste momento?',
+    ],
+    oferta_visita: [
+      'Que tal você marcar uma visita?',
+      'Aproveita pra conhecer nosso stand que fica localizado no próprio empreendimento, assim você conhece o loteamento e já pode até visitar o seu lote.',
+      'Estamos com 55% de obras executadas, vale a pena a visita, vamos marcar?',
+    ],
+    formas_pagamento: [
+      'Temos diversas formas de pagamento que podem se encaixar na sua realidade. Para parcelas mais baixas temos planos estendidos em ate 120x e para parcelamento sem juros temos planos em ate 48x. Essas condições são únicas no mercado, isso voce so encontra aqui no Evora',
+      'O financiamento é facilitado por ser direto com a construtora, menos burocracia e mais facilidade pra você.',
+    ],
+    localizacao_regiao: [
+      'Atibaia está na região bragantina, com clima agradável e qualidade de vida, a aproximadamente 50 minutos de São Paulo.',
+      'O acesso é facilitado pela Rodovia Dom Pedro I e pela avenida Lucas Nogueira Garces.',
+    ],
+    endereco: [
+      'Fica na Região da pedreira, no bairro do Rio Abaixo. Um bairro já conceituado com diversos condomínios de médio e alto padrão.',
+    ],
+    investimento: [
+      'Show! O Évora tem um ótimo potencial de valorização, viu? Agora me diz: você prefere terrenos menores e práticos ou maiores com mais privacidade? Temos opções de 360m² até 1.000m².',
+      'Perfeito! Os terrenos abaixo de [X] são práticos pra quem quer investir e manter custos mais controlados. Você faz questão de uma vista específica, tipo pra área verde ou pra região das piscinas?',
+    ],
+    valor_condominio: [
+      'O valor de condomínio vai depender das definições feitas pelos próprios moradores e associação do condomínio, mas temos uma estimativa entre R$400,00 e R$700,00',
+    ],
+    areas_lazer: [
+      'Temos: Piscina adulto, Academia, Salão de festas, Playground, Coworking, Espaço zen, Fireplace, Quadra de beach tennis e Campo society.',
+      'Além da área de lazer, temos estação de carregamento para carros elétricos, portaria 24 horas com controle de acesso.',
+    ],
+  } satisfies Record<Exclude<AnaCommercialIntent, 'first_contact'>, string[]>,
+  followupWhileNoResponseMessages: [
+    'Só passando para te lembrar que posso te ajudar com todos os detalhes do Évora.',
+    'Se quiser, eu te explico opções de tamanho de lote, localização e condições de pagamento.',
+    'Também posso te mostrar os diferenciais de lazer e infraestrutura para você comparar com calma.',
+    'Se preferir, já adianto as melhores condições disponíveis hoje para facilitar sua análise.',
+    'Você deu uma sumida. Se quiser posso te enviar o Book pra você analisar, o que acha?',
+  ],
+} as const;
