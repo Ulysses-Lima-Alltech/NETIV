@@ -254,8 +254,66 @@ function detectAnaDirectBatchInterestMessage(userMessage: string): boolean {
   );
 }
 
-function buildAnaDirectBatchInterestReply(params: {
+function buildAnaDirectBatchInterestReplies(params: {
   enterpriseName: string | null;
+}): string[] {
+  const enterpriseName = (params.enterpriseName || '').trim();
+  const normalizedEnterpriseName = enterpriseName
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  if (
+    normalizedEnterpriseName === 'evora' ||
+    normalizedEnterpriseName.includes('evora')
+  ) {
+    return [
+      'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas.',
+      'Fácil acesso pela Rodovia Dom Pedro I, perto da área da Pedreira, a aproximadamente 50 minutos de Sao Paulo.',
+      'Me conta, quais são suas dúvidas? Vou responder todas.',
+    ];
+  }
+
+  if (enterpriseName) {
+    return [
+      `Que bom! Posso te ajudar com as informações do ${enterpriseName}.`,
+      'Me conta, quais são suas dúvidas? Vou responder todas.',
+    ];
+  }
+
+  return [
+    'Que bom! Posso te ajudar com as informações.',
+    'Me conta, quais são suas dúvidas? Vou responder todas.',
+  ];
+}): string[] {
+  const enterpriseName = (params.enterpriseName || '').trim();
+  const normalizedEnterpriseName = enterpriseName
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  if (
+    normalizedEnterpriseName === 'evora' ||
+    normalizedEnterpriseName.includes('evora')
+  ) {
+    return [
+      'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas.',
+      'Fácil acesso pela Rodovia Dom Pedro I, perto da área da Pedreira, a aproximadamente 50 minutos de Sao Paulo.',
+      'Me conta, quais são suas dúvidas? Vou responder todas.',
+    ];
+  }
+
+  if (enterpriseName) {
+    return [
+      `Que bom! Posso te ajudar com as informações do ${enterpriseName}.`,
+      'Me conta, quais são suas dúvidas? Vou responder todas.',
+    ];
+  }
+
+  return [
+    'Que bom! Posso te ajudar com as informações.',
+    'Me conta, quais são suas dúvidas? Vou responder todas.',
+  ];
 }): string {
   const enterpriseName = (params.enterpriseName || '').trim();
 
@@ -2832,7 +2890,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       !appointmentPreflight.active;
 
     if (shouldUseDeterministicDirectInterestReply) {
-      const deterministicDirectInterestReply = buildAnaDirectBatchInterestReply({
+      const deterministicDirectInterestReplies = buildAnaDirectBatchInterestReplies({
         enterpriseName: ent?.name ?? null,
       });
 
@@ -2841,7 +2899,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
         enterpriseName: ent?.name ?? null,
         userMessagePreview: trimmed.slice(0, 180),
-        replyPreview: deterministicDirectInterestReply.slice(0, 180),
+        messagesCount: deterministicDirectInterestReplies.length,
+        replyPreview: deterministicDirectInterestReplies.join(' | ').slice(0, 260),
       });
 
       if (isPipelineStale(conversationId, replyPipelineToken)) {
@@ -2857,40 +2916,59 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         return;
       }
 
-      const directInterestSendResult = await sendTextMessage({
-        conversationId,
-        to: toPhoneNumber,
-        text: deterministicDirectInterestReply,
-        phase: 'deterministic_direct_interest',
-      });
+      let lastDirectInterestMetaMessageId: string | null = null;
 
-      if (!directInterestSendResult.success || !directInterestSendResult.metaMessageId) {
-        anaTurnAuditOutcome = 'send_failed';
-        anaTurnAuditBlockedReason = 'deterministic_direct_interest_send_failed';
-        anaTurnDiagnostics.finalResponse.replySource = 'deterministic_direct_interest';
-        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-          replySource: 'deterministic_direct_interest',
-          outboundStatus: anaTurnAuditOutcome,
-          blockedReason: anaTurnAuditBlockedReason,
-        });
-        console.error('[ANA_DIRECT_INTEREST_DETERMINISTIC_SEND_FAILED]', {
+      for (const [index, deterministicDirectInterestReply] of deterministicDirectInterestReplies.entries()) {
+        if (index > 0) {
+          await sleepMs(900);
+        }
+
+        const directInterestSendResult = await sendTextMessage({
           conversationId,
-          enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
-          result: directInterestSendResult,
+          to: toPhoneNumber,
+          text: deterministicDirectInterestReply,
+          phase: 'deterministic_direct_interest',
         });
-        return;
+
+        if (!directInterestSendResult.success || !directInterestSendResult.metaMessageId) {
+          anaTurnAuditOutcome = 'send_failed';
+          anaTurnAuditBlockedReason = 'deterministic_direct_interest_send_failed';
+          anaTurnDiagnostics.finalResponse.replySource = 'deterministic_direct_interest';
+          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+          markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+            replySource: 'deterministic_direct_interest',
+            outboundStatus: anaTurnAuditOutcome,
+            blockedReason: anaTurnAuditBlockedReason,
+            failedMessageIndex: index + 1,
+          });
+          console.error('[ANA_DIRECT_INTEREST_DETERMINISTIC_SEND_FAILED]', {
+            conversationId,
+            enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+            failedMessageIndex: index + 1,
+            result: directInterestSendResult,
+          });
+          return;
+        }
+
+        lastDirectInterestMetaMessageId = directInterestSendResult.metaMessageId;
+
+        await insertMessage(
+          conversationId,
+          'assistant',
+          deterministicDirectInterestReply,
+          directInterestSendResult.metaMessageId
+        );
+
+        console.log('[ANA_DIRECT_INTEREST_DETERMINISTIC_MESSAGE_SENT]', {
+          conversationId,
+          messageIndex: index + 1,
+          messagesCount: deterministicDirectInterestReplies.length,
+          outboundMetaMessageId: directInterestSendResult.metaMessageId,
+        });
       }
 
-      await insertMessage(
-        conversationId,
-        'assistant',
-        deterministicDirectInterestReply,
-        directInterestSendResult.metaMessageId
-      );
-
       await applyAnaConversationUpdate(conversationId, {
-        classification: maxLeadTemperature(effectiveConv.classification, 'Qualificado'),
+        classification: 'Qualificado',
         lead_temperature: maxLeadTemperature(effectiveConv.lead_temperature, 'quente'),
         handoff: false,
       });
@@ -2899,7 +2977,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       anaTurnAuditBlockedReason = null;
       anaTurnAuditLlmStatus = 'skipped';
       anaTurnAuditModel = 'deterministic_direct_interest';
-      anaTurnAuditGuardsApplied.outboundReason = 'deterministic_direct_interest';
+      anaTurnAuditGuardsApplied.outboundReason = 'deterministic_direct_interest_first_contact_3_messages';
       anaTurnDiagnostics.finalResponse.replySource = 'deterministic_direct_interest';
       anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
       markAnaTurnStage(anaTurnDiagnostics, 'llm_generation', 'skipped', {
@@ -2908,17 +2986,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
         replySource: 'deterministic_direct_interest',
         outboundStatus: anaTurnAuditOutcome,
+        messagesCount: deterministicDirectInterestReplies.length,
       });
 
       console.log('[ANA_DIRECT_INTEREST_DETERMINISTIC_SENT]', {
         conversationId,
         enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
         enterpriseName: ent?.name ?? null,
-        outboundMetaMessageId: directInterestSendResult.metaMessageId,
+        messagesCount: deterministicDirectInterestReplies.length,
+        outboundMetaMessageId: lastDirectInterestMetaMessageId,
       });
 
       return;
     }
+
     if (historyCount === 0) {
       console.log('[CLEAR_HISTORY_AFTER]', {
         conversationId,
