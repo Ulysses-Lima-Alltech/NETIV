@@ -305,9 +305,6 @@ export async function buildBatchPreview(params: {
   assertTemplateApproved(template);
   assertTemplateHeaderMediaConfigured(template);
   const selectedBrokers = await resolveSelectedBrokers(params.mapping);
-  if (selectedBrokers.length === 0) {
-    throw new Error('Selecione ao menos um corretor responsável para gerar o preview.');
-  }
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
   const previewRows: BatchPreviewRow[] = [];
   let validCount = 0;
@@ -357,8 +354,11 @@ export async function buildBatchPreview(params: {
     }
 
     validCount++;
-    const assignedBroker = selectedBrokers[roundRobinIndex % selectedBrokers.length];
-    roundRobinIndex++;
+    const assignedBroker =
+      selectedBrokers.length > 0
+        ? selectedBrokers[roundRobinIndex % selectedBrokers.length] ?? null
+        : null;
+    if (selectedBrokers.length > 0) roundRobinIndex++;
     previewRows.push({
       rowIndex: i,
       rowNumber: i + 2,
@@ -367,8 +367,8 @@ export async function buildBatchPreview(params: {
       isValid: true,
       status: 'valid',
       error: null,
-      assignedBrokerId: assignedBroker.id,
-      assignedBrokerName: assignedBroker.fullName,
+      assignedBrokerId: assignedBroker?.id ?? null,
+      assignedBrokerName: assignedBroker?.fullName ?? null,
       resolvedVariables: resolved.details,
     });
   }
@@ -442,8 +442,11 @@ function buildPreparedBatchCandidates(params: {
       continue;
     }
 
-    const assignedBroker = params.selectedBrokers[roundRobinIndex % params.selectedBrokers.length];
-    roundRobinIndex++;
+    const assignedBroker =
+      params.selectedBrokers.length > 0
+        ? params.selectedBrokers[roundRobinIndex % params.selectedBrokers.length] ?? null
+        : null;
+    if (params.selectedBrokers.length > 0) roundRobinIndex++;
     candidates.push({
       rowNumber,
       phoneOriginal,
@@ -623,9 +626,6 @@ export async function sendBatchTemplate(params: {
   assertTemplateHeaderMediaConfigured(template);
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
   const selectedBrokers = await resolveSelectedBrokers(params.mapping);
-  if (selectedBrokers.length === 0) {
-    throw new Error('Selecione ao menos um corretor responsável para enviar em lote.');
-  }
   const config = await getWhatsAppConfig();
   const prepared = buildPreparedBatchCandidates({
     rows: params.rows,
@@ -679,9 +679,6 @@ async function scheduleBatchTemplate(params: {
   assertTemplateHeaderMediaConfigured(template);
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
   const selectedBrokers = await resolveSelectedBrokers(params.mapping);
-  if (selectedBrokers.length === 0) {
-    throw new Error('Selecione ao menos um corretor responsável para agendar o disparo.');
-  }
   const scheduledAt = parseScheduledAtOrThrow(params.scheduledAt);
   const prepared = buildPreparedBatchCandidates({
     rows: params.rows,

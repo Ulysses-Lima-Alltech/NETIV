@@ -86,7 +86,7 @@ export function ColumnMappingPanel({
             ))}
           </select>
           {suggestions?.phoneColumn && (
-            <p className="text-[11px] text-[#6B7280] mt-1">Sugest„o autom·tica: {suggestions.phoneColumn}</p>
+            <p className="text-[11px] text-[#6B7280] mt-1">Sugest√£o autom√°tica: {suggestions.phoneColumn}</p>
           )}
         </div>
 
@@ -105,11 +105,11 @@ export function ColumnMappingPanel({
         <div className="md:col-span-3">
           <label className="block text-[12px] text-[#374151] mb-1">Corretores participantes do lote</label>
           <p className="text-[11px] text-[#6B7280] mb-2">
-            Selecione os corretores que participar„o da distribuiÁ„o autom·tica deste lote.
+            Opcional. Selecione corretores apenas se quiser distribuir ou vincular este disparo a respons√°veis.
           </p>
           <div className="border border-[#E5E7EB] rounded-[10px] max-h-[180px] overflow-y-auto p-2 space-y-1 bg-white">
             {activeBrokers.length === 0 ? (
-              <p className="text-[12px] text-[#6B7280] px-1 py-1">Nenhum corretor ativo disponÌvel.</p>
+              <p className="text-[12px] text-[#6B7280] px-1 py-1">Nenhum corretor ativo dispon√≠vel.</p>
             ) : (
               activeBrokers.map((b) => {
                 const brokerId = String(b.id);
@@ -135,7 +135,7 @@ export function ColumnMappingPanel({
         {template.variables.length > 0 && (
           <div className="rounded-[10px] border border-[#DBEAFE] bg-[#EFF6FF] px-3 py-2">
             <p className="text-[12px] text-[#1E3A8A] font-medium">
-              Este template possui vari·veis. Escolha qual coluna da planilha preencher· cada informaÁ„o no envio.
+              Este template possui vari√°veis. Escolha qual coluna da planilha preencher√° cada informa√ß√£o no envio.
             </p>
             <p className="text-[11px] text-[#1D4ED8] mt-1">Exemplo: {`{{1}}`} - Nome | {`{{2}}`} - Empreendimento</p>
           </div>

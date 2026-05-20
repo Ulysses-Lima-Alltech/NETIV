@@ -1,4 +1,4 @@
-import { z } from 'zod';
+﻿import { z } from 'zod';
 
 export const VariableMappingSchema = z.object({
   type: z.enum(['column', 'fixed', 'enterprise']),

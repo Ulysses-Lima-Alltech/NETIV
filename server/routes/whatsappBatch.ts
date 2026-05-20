@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import multer from 'multer';
 import {
   buildBatchPreview,
@@ -191,6 +191,11 @@ router.post('/send', async (req, res) => {
       return res.status(400).json({ error: 'Payload inválido', details: bodyResult.error.issues });
     }
 
+    console.log('[WHATSAPP_BATCH_SEND_MODE]', {
+      sendMode: bodyResult.data.sendMode,
+      scheduledAt: bodyResult.data.scheduledAt ?? null,
+    });
+
     const { spreadsheet, mapping } = bodyResult.data;
     const result = await sendBatchTemplate({
       rows: spreadsheet.rows,
@@ -218,6 +223,11 @@ router.post('/schedule', async (req, res) => {
     if (!bodyResult.success) {
       return res.status(400).json({ error: 'Payload inválido', details: bodyResult.error.issues });
     }
+
+    console.log('[WHATSAPP_BATCH_SEND_MODE]', {
+      sendMode: 'SCHEDULED',
+      scheduledAt: bodyResult.data.scheduledAt ?? null,
+    });
 
     const { spreadsheet, mapping } = bodyResult.data;
     const result = await sendBatchTemplate({
@@ -263,7 +273,7 @@ router.post('/test', async (req, res) => {
 
     const spreadsheetRows = Array.isArray(spreadsheet?.rows) ? spreadsheet.rows : null;
     if (!spreadsheetRows) {
-      return res.status(400).json({ error: 'Spreadsheet inv?lida para envio de teste.' });
+      return res.status(400).json({ error: 'Spreadsheet inválida para envio de teste.' });
     }
 
     const result = await sendBatchTemplateTest({

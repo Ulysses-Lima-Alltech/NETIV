@@ -22,6 +22,8 @@ import type {
   BatchParseResponse,
   BatchPostSendMode,
   BatchPreviewResponse,
+  BatchSendResponse,
+  BatchSendResult,
   BatchSendMode,
   BatchTemplateCatalogItem,
   TemplateVariableSource,
@@ -95,6 +97,36 @@ function defaultMetaTemplateExampleValue(variableId: number): string {
   return `Exemplo ${variableId}`;
 }
 
+type BatchSendOutcomeCard =
+  | {
+      kind: 'scheduled';
+      batchId: number;
+      status: string;
+      total: number;
+      validRecipients: number;
+      invalidRecipients: number;
+      scheduledAt: string;
+    }
+  | {
+      kind: 'sent';
+      total: number;
+      success: number;
+      failed: number;
+      details: Array<{
+        rowNumber: number;
+        phoneOriginal: string | null;
+        phoneNormalized: string | null;
+        status: 'sent' | 'blocked' | 'error';
+        error: string | null;
+      }>;
+    };
+
+function isScheduledBatchSendResponse(
+  response: BatchSendResponse,
+): response is Extract<BatchSendResponse, { scheduled: true }> {
+  return 'scheduled' in response && response.scheduled === true;
+}
+
 function isTemplateUsableForBatch(
   template: BatchTemplateCatalogItem,
   catalogSource: 'meta_sync' | 'local_fallback' | 'unknown',
@@ -125,7 +157,7 @@ export function WhatsAppBatchTemplatePage() {
   const [testRowNumber, setTestRowNumber] = useState<number | null>(null);
   const [manualTestVariables, setManualTestVariables] = useState<Record<string, string>>({});
   const [testResult, setTestResult] = useState<string | null>(null);
-  const [sendResult, setSendResult] = useState<string | null>(null);
+  const [sendResult, setSendResult] = useState<BatchSendOutcomeCard | null>(null);
   const [conversationType, setConversationType] = useState<BatchConversationType>('CLIENT');
   const [postSendMode, setPostSendMode] = useState<BatchPostSendMode>('ANA');
   const [sendMode, setSendMode] = useState<BatchSendMode>('NOW');
@@ -314,9 +346,7 @@ export function WhatsAppBatchTemplatePage() {
   const headerMediaMissingMessage = headerMediaMissing
     ? 'Este template exige imagem de cabeçalho. Anexe uma imagem antes de enviar.'
     : null;
-  const missingBrokersMessage =
-    selectedBrokerIds.length === 0 ? 'Selecione ao menos um corretor responsável para distribuir a base.' : null;
-  const actionBlockedReason = templateNotApprovedMessage ?? headerMediaMissingMessage ?? missingBrokersMessage;
+  const actionBlockedReason = templateNotApprovedMessage ?? headerMediaMissingMessage;
 
   const allMetaStatuses = Array.from(
     new Set(metaTemplates.map((tpl) => normalizeMetaStatus(tpl.status))),
@@ -603,13 +633,48 @@ export function WhatsAppBatchTemplatePage() {
     setSendResult(null);
     try {
       const mapping = buildMappingPayload();
-      const result = await whatsappBatchApi.sendBatch(parseData!.spreadsheet, mapping, {
-        conversationType,
-        postSendMode,
-        sendMode,
-        scheduledAt: sendMode === 'SCHEDULED' && scheduledAtDate ? scheduledAtDate.toISOString() : undefined,
-      });
-      setSendResult(JSON.stringify(result, null, 2));
+      const scheduledAtIso =
+        sendMode === 'SCHEDULED' && scheduledAtDate ? scheduledAtDate.toISOString() : undefined;
+      const result: BatchSendResponse =
+        sendMode === 'SCHEDULED'
+          ? await whatsappBatchApi.scheduleBatch(parseData!.spreadsheet, mapping, {
+              conversationType,
+              postSendMode,
+              sendMode: 'SCHEDULED',
+              scheduledAt: scheduledAtIso,
+            })
+          : await whatsappBatchApi.sendBatch(parseData!.spreadsheet, mapping, {
+              conversationType,
+              postSendMode,
+              sendMode: 'NOW',
+            });
+
+      if (isScheduledBatchSendResponse(result)) {
+        setSendResult({
+          kind: 'scheduled',
+          batchId: result.batchId,
+          status: result.status,
+          total: result.total,
+          validRecipients: result.validRecipients,
+          invalidRecipients: result.invalidRecipients,
+          scheduledAt: result.scheduledAt,
+        });
+      } else {
+        const immediateResult: BatchSendResult = result;
+        setSendResult({
+          kind: 'sent',
+          total: immediateResult.total,
+          success: immediateResult.success,
+          failed: immediateResult.failed,
+          details: immediateResult.details.map((detail) => ({
+            rowNumber: detail.rowNumber,
+            phoneOriginal: detail.phoneOriginal,
+            phoneNormalized: detail.phoneNormalized,
+            status: detail.status,
+            error: detail.error,
+          })),
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao enviar mensagens.');
     } finally {
@@ -1304,9 +1369,86 @@ export function WhatsAppBatchTemplatePage() {
                         : (sendMode === 'SCHEDULED' ? 'Agendar disparo' : 'Enviar disparo')}
                     </button>
                     {sendResult && (
-                      <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px] p-4">
-                        <p className="text-[12px] font-semibold text-[#334155] mb-2">Resultado do envio</p>
-                        <pre className="text-xs text-gray-700 whitespace-pre-wrap">{sendResult}</pre>
+                      <div
+                        className={`rounded-[10px] p-4 space-y-3 ${
+                          sendResult.kind === 'scheduled'
+                            ? 'bg-blue-50 border border-blue-200'
+                            : sendResult.failed > 0
+                              ? 'bg-amber-50 border border-amber-200'
+                              : 'bg-emerald-50 border border-emerald-200'
+                        }`}
+                      >
+                        {sendResult.kind === 'scheduled' ? (
+                          <>
+                            <div className="flex items-center gap-2">
+                              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-blue-700 font-bold">◷</span>
+                              <p className="text-[14px] font-semibold text-[#1E3A8A]">Disparo agendado com sucesso</p>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[12px] text-[#334155]">
+                              <p><strong>Total de contatos agendados:</strong> {sendResult.validRecipients}</p>
+                              <p>
+                                <strong>Data/hora do envio:</strong>{' '}
+                                {new Date(sendResult.scheduledAt).toLocaleString('pt-BR')}
+                              </p>
+                              <p><strong>Destino:</strong> {destinationLabel}</p>
+                              <p><strong>Atendimento:</strong> {postSendModeLabel}</p>
+                              <p><strong>Status:</strong> Agendado</p>
+                              <p><strong>Inválidos/Bloqueados:</strong> {sendResult.invalidRecipients}</p>
+                            </div>
+                            <p className="text-[12px] text-[#1E3A8A]">
+                              O envio será realizado automaticamente no horário programado, desde que o backend esteja ativo.
+                            </p>
+                            <details className="text-[12px] text-[#334155]">
+                              <summary className="cursor-pointer font-medium">Ver detalhes técnicos</summary>
+                              <p className="mt-2">batchId: {sendResult.batchId}</p>
+                              <p>status: {sendResult.status}</p>
+                              <p>total informado: {sendResult.total}</p>
+                            </details>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`inline-flex h-6 w-6 items-center justify-center rounded-full font-bold ${
+                                  sendResult.failed > 0
+                                    ? 'bg-amber-100 text-amber-700'
+                                    : 'bg-emerald-100 text-emerald-700'
+                                }`}
+                              >
+                                {sendResult.failed > 0 ? '!' : '✓'}
+                              </span>
+                              <p
+                                className={`text-[14px] font-semibold ${
+                                  sendResult.failed > 0 ? 'text-[#92400E]' : 'text-[#065F46]'
+                                }`}
+                              >
+                                {sendResult.failed > 0 ? 'Alguns contatos não foram enviados' : 'Disparo enviado com sucesso'}
+                              </p>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[12px] text-[#334155]">
+                              <p><strong>Total de contatos:</strong> {sendResult.total}</p>
+                              <p><strong>Enviados:</strong> {sendResult.success}</p>
+                              <p><strong>Falhas:</strong> {sendResult.failed}</p>
+                              <p><strong>Destino:</strong> {destinationLabel}</p>
+                              <p><strong>Atendimento:</strong> {postSendModeLabel}</p>
+                            </div>
+                            {sendResult.failed > 0 && (
+                              <details className="text-[12px] text-[#334155]">
+                                <summary className="cursor-pointer font-medium">Ver detalhes técnicos</summary>
+                                <div className="mt-2 space-y-1">
+                                  {sendResult.details
+                                    .filter((detail) => detail.status !== 'sent')
+                                    .map((detail) => (
+                                      <p key={`${detail.rowNumber}-${detail.phoneNormalized ?? detail.phoneOriginal ?? 'sem-telefone'}`}>
+                                        Linha {detail.rowNumber} • {detail.phoneNormalized ?? detail.phoneOriginal ?? 'sem telefone'} •{' '}
+                                        {detail.error ?? 'Falha no envio'}
+                                      </p>
+                                    ))}
+                                </div>
+                              </details>
+                            )}
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
