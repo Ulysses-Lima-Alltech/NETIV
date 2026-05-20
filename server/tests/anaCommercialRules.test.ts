@@ -26,14 +26,16 @@ test('condominio retorna regra correta', () => {
 test('lazer retorna lista correta', () => {
   const source = readFileSync(new URL('../config/anaCommercialRules.ts', import.meta.url), 'utf8');
   for (const token of ['Piscina adulto', 'Academia', 'Salão de festas', 'Playground', 'Coworking', 'Espaço zen', 'Fireplace', 'Quadra de beach tennis', 'Campo society']) {
-    assert.match(source, new RegExp(token.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')));
+    assert.match(source, new RegExp(token.replace(/[.*+?^${}()|[\\]\\]/g, '\\\\$&')));
   }
+  assert.match(source, /Não posso deixar de comentar que o Évora é um verdadeiro paraíso/);
 });
 
 test('localizacao retorna regra correta', () => {
   const source = readFileSync(new URL('../config/anaCommercialRules.ts', import.meta.url), 'utf8');
   assert.match(source, /localizacao_regiao/);
   assert.match(source, /região bragantina|regiao bragantina/);
+  assert.doesNotMatch(source, /acesso é facilitado.*Lucas Nogueira Garces/i);
 });
 
 test('conversationEngine remove deterministic_direct_interest e mantém commercial_rules', () => {
@@ -43,9 +45,8 @@ test('conversationEngine remove deterministic_direct_interest e mantém commerci
   assert.doesNotMatch(source, /buildAnaDirectBatchInterestReplies/);
   assert.doesNotMatch(source, /deterministic_direct_interest/);
   assert.match(source, /ANA_COMMERCIAL_RULE_FIRST_CONTACT_START/);
-  assert.match(source, /commercial_rules_first_contact/);
+  assert.match(source, /resolveAnaCommercialRule\(\{/);
   const idxRule = source.indexOf('resolveAnaCommercialRule({');
   const idxOpenAi = source.indexOf('generateChatCompletion(');
   assert.ok(idxRule >= 0 && idxOpenAi > idxRule, 'commercial rule should be checked before OpenAI');
 });
-

@@ -1,6 +1,7 @@
 ﻿export type AnaCommercialIntent =
   | 'first_contact'
   | 'valor_metro_quadrado'
+  | 'detalhes_lotes'
   | 'oferta_visita'
   | 'formas_pagamento'
   | 'localizacao_regiao'
@@ -21,18 +22,24 @@ export const ANA_COMMERCIAL_RULES = {
       'O nosso metro quadrado é o mais atrativo da região, a partir de R$775,00',
       'O que mais eu posso te ajudar neste momento?',
     ],
+    detalhes_lotes: [
+      'O Évora tem lotes a partir de 360 m², com opções para diferentes perfis de projeto. Temos lotes próximos à área de lazer, opções com fundos para área verde e metragens maiores para quem busca mais privacidade.',
+      'Você prefere um lote mais prático, a partir de 360 m², ou uma opção maior, com mais privacidade?',
+    ],
     oferta_visita: [
-      'Que tal você marcar uma visita?',
+      'Que tal você marcar uma visita ?',
       'Aproveita pra conhecer nosso stand que fica localizado no próprio empreendimento, assim você conhece o loteamento e já pode até visitar o seu lote.',
       'Estamos com 55% de obras executadas, vale a pena a visita, vamos marcar?',
     ],
     formas_pagamento: [
-      'Temos diversas formas de pagamento que podem se encaixar na sua realidade. Para parcelas mais baixas temos planos estendidos em ate 120x e para parcelamento sem juros temos planos em ate 48x. Essas condições são únicas no mercado, isso voce so encontra aqui no Evora',
+      'Temos diversas formas de pagamento que podem se encaixar na sua realidade. Para parcelas mais baixas temos planos estendidos em até 120x e para parcelamento sem juros temos planos em até 48x.',
       'O financiamento é facilitado por ser direto com a construtora, menos burocracia e mais facilidade pra você.',
+      'Você prefere parcelas mais baixas ou uma condição sem juros?',
     ],
     localizacao_regiao: [
-      'Atibaia está na região bragantina, com clima agradável e qualidade de vida, a aproximadamente 50 minutos de São Paulo.',
-      'O acesso é facilitado pela Rodovia Dom Pedro I e pela avenida Lucas Nogueira Garces.',
+      'Atibaia faz parte da região bragantina, que é uma das regiões mais valorizadas e desenvolvidas do estado. Fica a 50 minutos de São Paulo, tornando o Évora um condomínio para casas de veraneio ou até mesmo moradia.',
+      'A cidade de Atibaia é rica em gastronomia, contendo os melhores restaurantes da região, sem contar com a avenida Lucas Nogueira Garces, que além de ser um verdadeiro centro gastronômico contém também as principais grifes, bares renomados se tornando um charmoso shopping a céu aberto.',
+      'Não podemos deixar de destacar que Atibaia foi considerada a cidade com o segundo melhor clima do mundo pela ONU.',
     ],
     endereco: [
       'Fica na Região da pedreira, no bairro do Rio Abaixo. Um bairro já conceituado com diversos condomínios de médio e alto padrão.',
@@ -45,7 +52,8 @@ export const ANA_COMMERCIAL_RULES = {
       'O valor de condomínio vai depender das definições feitas pelos próprios moradores e associação do condomínio, mas temos uma estimativa entre R$400,00 e R$700,00',
     ],
     areas_lazer: [
-      'Temos: Piscina adulto, Academia, Salão de festas, Playground, Coworking, Espaço zen, Fireplace, Quadra de beach tennis e Campo society.',
+      'Não posso deixar de comentar que o Évora é um verdadeiro paraíso onde voce contempla vistas deslumbrantes, com muita natureza e área verde nos 4 cantos do empreendimento, e nossas areas de lazer são bem completas, veja:',
+      '- Piscina adulto\n- Academia\n- Salão de festas\n- Playground\n- Coworking\n- Espaço zen\n- Fireplace\n- Quadra de beach tennis\n- Campo society',
       'Além da área de lazer, temos estação de carregamento para carros elétricos, portaria 24 horas com controle de acesso.',
     ],
   } satisfies Record<Exclude<AnaCommercialIntent, 'first_contact'>, string[]>,

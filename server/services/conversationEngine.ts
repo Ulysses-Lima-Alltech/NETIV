@@ -157,6 +157,8 @@ import {
   handleVisitSchedulingDeterministically,
   hasProhibitedVisitSchedulingPhrase,
   isVisitSchedulingIntent,
+  isVisitSchedulingLoopFallbackReply,
+  isVisitSchedulingRefusalMessage,
 } from '../utils/anaDirectVisitScheduling.js';
 import { applyOperationalFactGuard } from '../utils/anaOperationalFactGuard.js';
 import {
@@ -168,6 +170,7 @@ import {
   applyAnaVisitOfferGuard,
   applyEvoraLocationGuard,
 } from '../utils/anaEvoraCommercialGuards.js';
+import { applyAnaVisitSchedulingGuard } from '../utils/anaVisitSchedulingGuard.js';
 import {
   createAnaTurnAudit,
   getLastAnaTurnAuditByConversation,
@@ -191,7 +194,12 @@ import {
   sendAnaEmergencyHandoff,
   type AnaEmergencyHandoffSendResult,
 } from '../utils/anaEmergencyHandoff.js';
-import { resolveAnaCommercialRule } from './anaCommercialRulesService.js';
+import {
+  isEvoraEnterpriseName,
+  isUserIrritated,
+  isVisitSchedulingRefusal,
+  resolveAnaCommercialRule,
+} from './anaCommercialRulesService.js';
 
 /** Desligado para rastrear o fluxo real com [ANA_ENGINE_TRACE]. */
 const ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY = false;
@@ -2617,6 +2625,29 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    const userRefusedScheduling =
+      isVisitSchedulingRefusal(trimmed) || isVisitSchedulingRefusalMessage(trimmed);
+    const userIrritatedNow = isUserIrritated(trimmed);
+    if (userRefusedScheduling && flowStateParsed.pendingVisitScheduling === true) {
+      const cancelledSchedulingState = {
+        ...flowStateParsed,
+        pendingVisitScheduling: false,
+        pendingVisitDateLabel: null,
+        pendingVisitDate: null,
+        pendingVisitEnterpriseId: null,
+        updatedAt: new Date().toISOString(),
+      };
+      await mergeConversationCommercialFlowState(conversationId, cancelledSchedulingState);
+      flowStateParsed = cancelledSchedulingState;
+      console.log('[APPOINTMENT_FLOW_CANCELLED_BY_USER]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        reason: 'user_refused_scheduling',
+        userMessagePreview: trimmed.slice(0, 220),
+      });
+      anaTurnAuditGuardsApplied.appointmentFlowCancelledByUser = true;
+    }
+
     const directVisitSchedulingIntent = isVisitSchedulingIntent({
       userMessage: trimmed,
       flowState: flowStateParsed,
@@ -2628,7 +2659,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
       referenceNow: lastUserMessageAt,
     });
-    const directVisitSchedulingDecision = directVisitSchedulingIntent
+    const directVisitSchedulingDecision = directVisitSchedulingIntent && !userRefusedScheduling
       ? handleVisitSchedulingDeterministically({
           userMessage: trimmed,
           flowState: flowStateParsed,
@@ -2713,6 +2744,39 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             pendingVisitEnterpriseId: null,
             updatedAt: new Date().toISOString(),
           });
+        }
+      }
+
+      const recentAssistantRepliesForVisitLoop = [...rows]
+        .filter((m) => m.role === 'assistant')
+        .map((m) => (m.content || '').trim())
+        .filter((content) => content.length > 0)
+        .slice(-2);
+      const repeatedVisitLoopReply = recentAssistantRepliesForVisitLoop.some(
+        (prev) =>
+          prev === deterministicVisitReply.trim() ||
+          repliesSemanticallySimilar(prev, deterministicVisitReply) ||
+          (isVisitSchedulingLoopFallbackReply(prev) && isVisitSchedulingLoopFallbackReply(deterministicVisitReply))
+      );
+      if (userRefusedScheduling || repeatedVisitLoopReply) {
+        console.warn('[ANA_REPEATED_RESPONSE_BLOCKED]', {
+          conversationId,
+          reason: userRefusedScheduling ? 'user_refused_scheduling' : 'repeated_visit_scheduling_reply',
+          reply: deterministicVisitReply,
+        });
+        if (userRefusedScheduling) {
+          deterministicVisitReply = userIrritatedNow
+            ? 'Desculpa, você tem razão. Sem agendar visita agora. Vou te passar os detalhes por aqui.'
+            : 'Claro, sem problema. Te passo os detalhes por aqui.';
+        } else {
+          anaTurnAuditOutcome = 'blocked';
+          anaTurnAuditBlockedReason = 'repeated_response_guard';
+          anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
+          await applyAnaConversationUpdate(conversationId, {
+            classification: 'Handoff',
+            handoff: true,
+          });
+          return;
         }
       }
 
@@ -2816,6 +2880,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           messagesCount: commercialRule.messages.length,
         }
       );
+      if (commercialRule.ruleId === 'detalhes_lotes') {
+        console.log('[ANA_COMMERCIAL_RULE_LOT_DETAILS]', {
+          conversationId,
+          enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+          userMessagePreview: trimmed.slice(0, 220),
+        });
+      }
+      if (commercialRule.ruleId === 'formas_pagamento') {
+        console.log('[ANA_COMMERCIAL_RULE_PAYMENT_PLANS]', {
+          conversationId,
+          enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+          userMessagePreview: trimmed.slice(0, 220),
+        });
+      }
 
       if (isPipelineStale(conversationId, replyPipelineToken)) {
         anaTurnAuditOutcome = 'silent';
@@ -5306,6 +5384,42 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       .filter((content) => content.length > 0)
       .slice(-12);
 
+    const previousVisitSchedulingState = {
+      pendingVisitScheduling: flowStateParsed.pendingVisitScheduling ?? false,
+      pendingVisitDateLabel: flowStateParsed.pendingVisitDateLabel ?? null,
+      pendingVisitDate: flowStateParsed.pendingVisitDate ?? null,
+      visitScheduling: flowStateParsed.visitScheduling ?? null,
+    };
+    const evoraVisitSchedulingGuardResult = applyAnaVisitSchedulingGuard({
+      conversationId,
+      enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+      isEvora: isEvoraEnterpriseName(ent?.name ?? null),
+      userMessage: trimmed,
+      customerName: trustedCustomerName || effectiveConv.customer_name || null,
+      flowState: flowStateParsed,
+      now: lastUserMessageAt,
+      currentAnswer: replyText,
+    });
+    const schedulingGuardHandled = evoraVisitSchedulingGuardResult.handled;
+    if (schedulingGuardHandled) {
+      replyText = evoraVisitSchedulingGuardResult.finalAnswer;
+      flowStateParsed = evoraVisitSchedulingGuardResult.nextState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+      const extractedDate = flowStateParsed.visitScheduling?.normalizedDate ?? flowStateParsed.pendingVisitDate ?? null;
+      const extractedTime = flowStateParsed.visitScheduling?.normalizedTime ?? null;
+      console.log('[ANA_VISIT_SCHEDULING_GUARD]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        previousState: previousVisitSchedulingState,
+        extractedDate,
+        extractedTime,
+        updatedState: flowStateParsed.visitScheduling ?? null,
+        nextMissingField: evoraVisitSchedulingGuardResult.nextMissingField,
+        finalAnswer: replyText,
+        reason: evoraVisitSchedulingGuardResult.reason,
+      });
+    }
+
     const evoraLocationGuardResult = applyEvoraLocationGuard({
       conversationId,
       enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
@@ -5328,7 +5442,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       userMessage: trimmed,
       answer: replyText,
       rowsBeforeSend,
-      isSchedulingFlow: appointmentPreflight.active || flowStateParsed.pendingVisitScheduling === true,
+      isSchedulingFlow:
+        schedulingGuardHandled || appointmentPreflight.active || flowStateParsed.pendingVisitScheduling === true,
       isHandoff: Boolean(structured.handoff || effectiveConv.handoff),
       isMaterialOnlyFlow: Boolean(shouldAttemptDocSend),
     });
@@ -5374,10 +5489,58 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     anaTurnDiagnostics.finalResponse.replySource = replySource;
     anaTurnDiagnostics.finalResponse.handoffUsed = structured.handoff === true;
 
+    if (
+      userRefusedScheduling &&
+      /\b(agendar|agendamento|marcar visita|qual dia|qual horario|qual horário)\b/i.test(replyText)
+    ) {
+      const recoveryPrefix = userIrritatedNow
+        ? 'Desculpa, você tem razão. Sem agendar visita agora. Vou te passar os detalhes por aqui.'
+        : 'Claro, sem problema. Te passo os detalhes por aqui.';
+      replyText = `${recoveryPrefix}\n\nVocê prefere ver primeiro lotes, pagamento, valores ou localização?`;
+    }
+
     const lastContent = (lastAsstDup?.content || '').trim();
     const ageDup = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
     if (lastContent && lastContent === replyText.trim() && ageDup < 55_000) {
       console.warn('[ANA_PIPELINE] duplicate_reply_unchanged', { conversationId, ageMs: ageDup });
+    }
+    const recentAssistantRepliesForOutbound = [...rowsBeforeSend]
+      .filter((m) => m.role === 'assistant')
+      .map((m) => (m.content || '').trim())
+      .filter((content) => content.length > 0)
+      .slice(-2);
+    const blockedByRepeatGuard = recentAssistantRepliesForOutbound.some(
+      (prev) =>
+        prev === replyText.trim() ||
+        repliesSemanticallySimilar(prev, replyText) ||
+        (isVisitSchedulingLoopFallbackReply(prev) && isVisitSchedulingLoopFallbackReply(replyText))
+    );
+    if (blockedByRepeatGuard) {
+      const alternativeReply = userIrritatedNow
+        ? 'Desculpa, você tem razão. Sem agendar visita agora. Vou te passar os detalhes por aqui.'
+        : userRefusedScheduling
+          ? 'Claro, sem problema. Te passo os detalhes por aqui.'
+          : 'Desculpa, me perdi aqui. Me diz só qual ponto você quer ver primeiro: lotes, valores, pagamento ou localização?';
+      const alternativeAlreadyRepeated = recentAssistantRepliesForOutbound.some(
+        (prev) => prev === alternativeReply || repliesSemanticallySimilar(prev, alternativeReply)
+      );
+      console.warn('[ANA_REPEATED_RESPONSE_BLOCKED]', {
+        conversationId,
+        blockedReply: replyText,
+        alternativeAlreadyRepeated,
+      });
+      if (!alternativeAlreadyRepeated) {
+        replyText = alternativeReply;
+      } else {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'repeated_response_guard';
+        anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
+        await applyAnaConversationUpdate(conversationId, {
+          classification: 'Handoff',
+          handoff: true,
+        });
+        return;
+      }
     }
     console.log('[ANA_PIPELINE] engine_reply_generated', {
       conversationId,

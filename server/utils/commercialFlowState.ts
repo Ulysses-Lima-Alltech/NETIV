@@ -59,6 +59,19 @@ export interface CommercialFlowState {
   pendingVisitDate?: string | null;
   /** Empreendimento usado no fluxo pendente de visita. */
   pendingVisitEnterpriseId?: number | null;
+  /** Estado estruturado do fluxo de agendamento de visita. */
+  visitScheduling?: {
+    active: boolean;
+    offered: boolean;
+    accepted: boolean;
+    requestedDateText: string | null;
+    requestedTimeText: string | null;
+    normalizedDate: string | null;
+    normalizedTime: string | null;
+    nameCollected: boolean;
+    customerName: string | null;
+    status: 'none' | 'collecting_date' | 'collecting_time' | 'collecting_name' | 'ready_to_confirm' | 'scheduled';
+  };
 }
 
 /** Zera shortlist e hints de foco ao sair do escopo ou trocar empreendimento por menção explícita. */
@@ -81,6 +94,7 @@ export function resetCommercialScopeHints(prev: CommercialFlowState | null): Com
   delete next.pendingVisitDateLabel;
   delete next.pendingVisitDate;
   delete next.pendingVisitEnterpriseId;
+  delete next.visitScheduling;
   next.clearedAt = new Date().toISOString();
   next.updatedAt = new Date().toISOString();
   return next;

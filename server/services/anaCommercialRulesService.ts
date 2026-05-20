@@ -1,4 +1,4 @@
-import { ANA_COMMERCIAL_RULES, type AnaCommercialIntent } from '../config/anaCommercialRules.js';
+﻿import { ANA_COMMERCIAL_RULES, type AnaCommercialIntent } from '../config/anaCommercialRules.js';
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? '')
@@ -20,13 +20,29 @@ export function isEvoraEnterpriseName(enterpriseName: string | null | undefined)
   return n === ANA_COMMERCIAL_RULES.enterpriseKey || n.includes(ANA_COMMERCIAL_RULES.enterpriseKey);
 }
 
+export function isVisitSchedulingRefusal(userMessage: string): boolean {
+  const n = normalizeText(userMessage);
+  return /\b(nao quero agendar|nao quero visita|nao quero marcar|nao quero horario|nao quero isso|ja falei|so quero detalhes|quero detalhes|me passa os detalhes|quero saber dos lotes|quero lote plano|lotes planos)\b/.test(n);
+}
+
+export function isUserIrritated(userMessage: string): boolean {
+  const n = normalizeText(userMessage);
+  return /\b(ta doida|caramba|ja falei|nao e isso|vc nao entendeu|voce nao entendeu)\b/.test(n);
+}
+
+export function shouldUseShortRecoveryPrompt(userMessage: string): boolean {
+  const n = normalizeText(userMessage);
+  return n.length <= 5 || /\b(ta|oi|ok|hm|aff)\b/.test(n);
+}
+
 function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_contact'> | null {
   const n = normalizeText(userMessage);
   if (!n) return null;
 
   if (/\b(metro quadrado|m2|m\u00b2|valor do metro|preco do metro)\b/.test(n)) return 'valor_metro_quadrado';
+  if (/\b(tipo de lote|tipos de lote|lotes planos|lote plano|detalhes do lote|detalhes de lote|opcoes de lote|opcoes de lotes|metragem|quero detalhes|quero mais detalhes)\b/.test(n)) return 'detalhes_lotes';
   if (/\b(visita|visitar|stand|conhecer o empreendimento)\b/.test(n)) return 'oferta_visita';
-  if (/\b(pagamento|parcelamento|parcelas|financiamento|juros|120x|48x)\b/.test(n)) return 'formas_pagamento';
+  if (/\b(tem plano|planos|pagamento|parcelamento|parcelas|financiamento|juros|120x|48x)\b/.test(n)) return 'formas_pagamento';
   if (/\b(localizacao|regiao|atibaia|bragantina|sao paulo|dom pedro|lucas nogueira)\b/.test(n)) return 'localizacao_regiao';
   if (/\b(endereco|onde fica|bairro|rio abaixo|pedreira)\b/.test(n)) return 'endereco';
   if (/\b(invest|valorizacao|rentabilidade|retorno)\b/.test(n)) return 'investimento';

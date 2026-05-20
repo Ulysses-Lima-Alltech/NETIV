@@ -16,7 +16,7 @@ test('visit offer guard adiciona visita e evita repeticao', () => {
   assert.match(source, /applyAnaVisitOfferGuard/);
   assert.match(source, /alreadyOfferedVisit/);
   assert.match(source, /\[ANA_VISIT_OFFER_GUARD\]/);
-  assert.match(source, /Que tal marcarmos uma visita\?/);
+  assert.match(source, /Que tal você marcar uma visita \?/);
 });
 
 test('no repeat guard existe e registra log', () => {

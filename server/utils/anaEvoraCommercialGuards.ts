@@ -10,11 +10,11 @@ const EVORA_ADDRESS_BLOCK =
 const EVORA_ACCESS_BLOCK =
   'Fica perto da área da Pedreira, com fácil acesso pela Rodovia Dom Pedro I.';
 
-const VISIT_OFFER_SHORT =
-  'Que tal marcarmos uma visita? Assim você conhece o empreendimento, o stand e já pode ver os lotes de perto.';
-
-const VISIT_OFFER_ADVANCED =
-  'Vale muito a pena conhecer pessoalmente. Estamos com 55% das obras executadas. Que tal marcarmos uma visita?';
+const VISIT_OFFER_OFFICIAL_LINES = [
+  'Que tal você marcar uma visita ?',
+  'Aproveita pra conhecer nosso stand que fica localizado no próprio empreendimento, assim você conhece o loteamento e já pode até visitar o seu lote.',
+  'Estamos com 55% de obras executadas, vale a pena a visita, vamos marcar?',
+] as const;
 
 const NO_REPEAT_FALLBACK =
   'Posso te ajudar com valores, formas de pagamento ou já marcamos uma visita para você conhecer o Évora de perto?';
@@ -62,7 +62,7 @@ function hasLucasAsAccessLeak(answer: string): boolean {
 
 function hasVisitOffer(text: string): boolean {
   const n = normalizeText(text);
-  return /(marcar uma visita|marcarmos uma visita|vamos marcar|vale muito a pena conhecer pessoalmente|55% das obras executadas)/.test(n);
+  return /(que tal voce marcar uma visita|55% de obras executadas|vamos marcar)/.test(n);
 }
 
 function isCommercialInterestQuestion(userMessage: string): boolean {
@@ -157,7 +157,7 @@ export function applyAnaVisitOfferGuard(params: {
     };
   }
 
-  const offer = commercialCount >= 2 ? VISIT_OFFER_ADVANCED : VISIT_OFFER_SHORT;
+  const offer = VISIT_OFFER_OFFICIAL_LINES.join('\n\n');
   const sep = params.answer.trim().length > 0 ? '\n\n' : '';
   const text = `${params.answer.trim()}${sep}${offer}`.trim();
 
