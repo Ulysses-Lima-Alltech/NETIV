@@ -14,4 +14,5 @@ test('mensagens de domingo e horario fora da janela estao corretas', () => {
   assert.match(source, /segunda a sábado/);
   assert.match(source, /09h às 18h/);
   assert.match(source, /fora do período de visitas/);
+  assert.doesNotMatch(source, /Só preciso que você me diga o horário para agendar sua visita/);
 });

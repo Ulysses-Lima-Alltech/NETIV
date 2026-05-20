@@ -16,6 +16,14 @@ test('valor do metro quadrado retorna regra correta', () => {
   assert.match(source, /R\$775,00/);
 });
 
+test('formas de pagamento usa bloco oficial sem esquiva', () => {
+  const source = readFileSync(new URL('../config/anaCommercialRules.ts', import.meta.url), 'utf8');
+  assert.match(source, /planos estendidos em ate 120x/);
+  assert.match(source, /planos em ate 48x/);
+  assert.match(source, /financiamento é facilitado por ser direto com a construtora|financiamento e facilitado por ser direto com a construtora/i);
+  assert.doesNotMatch(source, /Você prefere parcelas mais baixas ou uma condição sem juros\?/);
+});
+
 test('condominio retorna regra correta', () => {
   const source = readFileSync(new URL('../config/anaCommercialRules.ts', import.meta.url), 'utf8');
   assert.match(source, /valor_condominio/);
@@ -36,6 +44,12 @@ test('localizacao retorna regra correta', () => {
   assert.match(source, /localizacao_regiao/);
   assert.match(source, /região bragantina|regiao bragantina/);
   assert.doesNotMatch(source, /acesso é facilitado.*Lucas Nogueira Garces/i);
+});
+
+test('seguranca retorna regra oficial', () => {
+  const source = readFileSync(new URL('../config/anaCommercialRules.ts', import.meta.url), 'utf8');
+  assert.match(source, /seguranca/);
+  assert.match(source, /portaria 24 horas com controle de acesso/);
 });
 
 test('conversationEngine remove deterministic_direct_interest e mantém commercial_rules', () => {

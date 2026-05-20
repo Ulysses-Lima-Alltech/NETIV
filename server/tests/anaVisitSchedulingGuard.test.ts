@@ -10,6 +10,7 @@ test('applyAnaVisitSchedulingGuard existe com estado estruturado e logs', () => 
   assert.match(source, /Qual horário você prefere/);
   assert.match(source, /Me passa seu nome para deixar a visita agendada\?/);
   assert.match(source, /sua visita ficou agendada/);
+  assert.match(source, /v\.active = false/);
 });
 
 test('guard cobre domingo e horario fora da janela', () => {

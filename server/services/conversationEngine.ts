@@ -2759,6 +2759,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           (isVisitSchedulingLoopFallbackReply(prev) && isVisitSchedulingLoopFallbackReply(deterministicVisitReply))
       );
       if (userRefusedScheduling || repeatedVisitLoopReply) {
+        const schedulingAlreadyScheduled =
+          directVisitSchedulingDecision.nextState.visitScheduling?.status === 'scheduled' ||
+          flowStateParsed.visitScheduling?.status === 'scheduled';
         console.warn('[ANA_REPEATED_RESPONSE_BLOCKED]', {
           conversationId,
           reason: userRefusedScheduling ? 'user_refused_scheduling' : 'repeated_visit_scheduling_reply',
@@ -2769,14 +2772,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             ? 'Desculpa, você tem razão. Sem agendar visita agora. Vou te passar os detalhes por aqui.'
             : 'Claro, sem problema. Te passo os detalhes por aqui.';
         } else {
-          anaTurnAuditOutcome = 'blocked';
-          anaTurnAuditBlockedReason = 'repeated_response_guard';
-          anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
-          await applyAnaConversationUpdate(conversationId, {
-            classification: 'Handoff',
-            handoff: true,
-          });
-          return;
+          deterministicVisitReply = schedulingAlreadyScheduled
+            ? 'Perfeito. Visita agendada. Se quiser, também posso te ajudar com valores, pagamento ou localização.'
+            : 'Perfeito. Se quiser, seguimos com outros detalhes do Évora por aqui.';
         }
       }
 
@@ -2866,6 +2864,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       enterpriseName: ent?.name ?? null,
       userMessage: trimmed,
       isFirstAnaReply,
+      previousAssistantMessage: lastAssistantPlain,
     });
     if (commercialRule && anaDecision.canRespond && anaDecision.outboundAllowed && !appointmentPreflight.active) {
       const isFirstContactRule = commercialRule.ruleId === 'first_contact';
@@ -2894,6 +2893,37 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           userMessagePreview: trimmed.slice(0, 220),
         });
       }
+      if (commercialRule.inheritedIntent === 'payment_terms') {
+        console.log('[ANA_PAYMENT_INTENT_CONTEXT_GUARD]', {
+          conversationId,
+          enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+          previousAssistantMessage: (lastAssistantPlain ?? '').slice(0, 240),
+          customerMessage: trimmed.slice(0, 240),
+          inheritedIntent: commercialRule.inheritedIntent,
+          finalAnswer: commercialRule.messages.join('\n'),
+        });
+      }
+
+      const commercialRuleVisitOfferDecision =
+        commercialRule.ruleId === 'oferta_visita'
+          ? {
+              appendedVisitOfferMessages: [] as string[],
+              appendedVisitOffer: false,
+              commercialAnsweredQuestionsCount: 0,
+            }
+          : applyAnaVisitOfferGuard({
+              conversationId,
+              enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+              enterpriseName: ent?.name ?? null,
+              userMessage: trimmed,
+              answer: commercialRule.messages.join('\n'),
+              rowsBeforeSend: rows,
+              isSchedulingFlow: appointmentPreflight.active || flowStateParsed.pendingVisitScheduling === true,
+              isHandoff: Boolean(effectiveConv.handoff || effectiveConv.classification === 'Handoff'),
+              isMaterialOnlyFlow: false,
+            });
+      const visitOfferMessagesFromCommercialRule =
+        commercialRuleVisitOfferDecision.appendedVisitOfferMessages ?? [];
 
       if (isPipelineStale(conversationId, replyPipelineToken)) {
         anaTurnAuditOutcome = 'silent';
@@ -2911,6 +2941,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       let lastCommercialRuleMetaMessageId: string | null = null;
       for (const [index, commercialRuleMessage] of commercialRule.messages.entries()) {
         if (index > 0) await sleepMs(900);
+        if (isPipelineStale(conversationId, replyPipelineToken)) {
+          anaTurnAuditOutcome = 'silent';
+          anaTurnAuditBlockedReason = `pipeline_stale_before_commercial_rule_message_${index + 1}`;
+          anaTurnDiagnostics.finalResponse.replySource = commercialRule.replySource;
+          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+          return;
+        }
         const sendResult = await sendTextMessage({
           conversationId,
           to: toPhoneNumber,
@@ -2947,6 +2984,48 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         });
       }
 
+      for (const [visitIndex, visitOfferMessage] of visitOfferMessagesFromCommercialRule.entries()) {
+        await sleepMs(900);
+        if (isPipelineStale(conversationId, replyPipelineToken)) {
+          anaTurnAuditOutcome = 'silent';
+          anaTurnAuditBlockedReason = `pipeline_stale_before_visit_offer_message_${visitIndex + 1}`;
+          anaTurnDiagnostics.finalResponse.replySource = commercialRule.replySource;
+          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+          return;
+        }
+        const visitSendResult = await sendTextMessage({
+          conversationId,
+          to: toPhoneNumber,
+          text: visitOfferMessage,
+          phase: 'commercial_rules_visit_offer',
+        });
+        if (!visitSendResult.success || !visitSendResult.metaMessageId) {
+          anaTurnAuditOutcome = 'send_failed';
+          anaTurnAuditBlockedReason = 'commercial_rule_visit_offer_send_failed';
+          anaTurnDiagnostics.finalResponse.replySource = commercialRule.replySource;
+          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+          markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+            replySource: commercialRule.replySource,
+            outboundStatus: anaTurnAuditOutcome,
+            blockedReason: `${anaTurnAuditBlockedReason}_index_${visitIndex + 1}`,
+          });
+          console.error('[ANA_COMMERCIAL_RULE_VISIT_OFFER_SEND_FAILED]', {
+            conversationId,
+            failedMessageIndex: visitIndex + 1,
+            result: visitSendResult,
+          });
+          return;
+        }
+        lastCommercialRuleMetaMessageId = visitSendResult.metaMessageId;
+        await insertMessage(conversationId, 'assistant', visitOfferMessage, visitSendResult.metaMessageId);
+        console.log('[ANA_COMMERCIAL_RULE_VISIT_OFFER_MESSAGE_SENT]', {
+          conversationId,
+          messageIndex: visitIndex + 1,
+          messagesCount: visitOfferMessagesFromCommercialRule.length,
+          outboundMetaMessageId: visitSendResult.metaMessageId,
+        });
+      }
+
       await applyAnaConversationUpdate(conversationId, {
         classification: 'Qualificado',
         lead_temperature: maxLeadTemperature(effectiveConv.lead_temperature, 'quente'),
@@ -2966,7 +3045,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
         replySource: commercialRule.replySource,
         outboundStatus: anaTurnAuditOutcome,
-        messagesCount: commercialRule.messages.length,
+        messagesCount: commercialRule.messages.length + visitOfferMessagesFromCommercialRule.length,
       });
       console.log(
         isFirstContactRule ? '[ANA_COMMERCIAL_RULE_FIRST_CONTACT_SENT]' : '[ANA_COMMERCIAL_RULE_INTENT_SENT]',
@@ -5435,6 +5514,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       };
     }
 
+    let appendedVisitOfferMessagesForFinalSend: string[] = [];
     const visitOfferGuardResult = applyAnaVisitOfferGuard({
       conversationId,
       enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
@@ -5449,10 +5529,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
     if (visitOfferGuardResult.changed) {
       replyText = visitOfferGuardResult.text;
+      appendedVisitOfferMessagesForFinalSend = [...visitOfferGuardResult.appendedVisitOfferMessages];
       anaTurnAuditGuardsApplied.visitOfferGuard = {
         changed: true,
         reason: visitOfferGuardResult.reason,
         appendedVisitOffer: visitOfferGuardResult.appendedVisitOffer,
+        appendedVisitOfferMessages: visitOfferGuardResult.appendedVisitOfferMessages,
+        commercialAnsweredQuestionsCount: visitOfferGuardResult.commercialAnsweredQuestionsCount,
       };
     }
 
@@ -5466,6 +5549,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
     if (noRepeatGuardResult.changed) {
       replyText = noRepeatGuardResult.text;
+      appendedVisitOfferMessagesForFinalSend = [];
       anaTurnAuditGuardsApplied.noRepeatMessageGuard = {
         changed: true,
         reason: noRepeatGuardResult.reason,
@@ -5497,6 +5581,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? 'Desculpa, você tem razão. Sem agendar visita agora. Vou te passar os detalhes por aqui.'
         : 'Claro, sem problema. Te passo os detalhes por aqui.';
       replyText = `${recoveryPrefix}\n\nVocê prefere ver primeiro lotes, pagamento, valores ou localização?`;
+      appendedVisitOfferMessagesForFinalSend = [];
     }
 
     const lastContent = (lastAsstDup?.content || '').trim();
@@ -5516,11 +5601,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         (isVisitSchedulingLoopFallbackReply(prev) && isVisitSchedulingLoopFallbackReply(replyText))
     );
     if (blockedByRepeatGuard) {
+      const schedulingAlreadyScheduled = flowStateParsed.visitScheduling?.status === 'scheduled';
       const alternativeReply = userIrritatedNow
         ? 'Desculpa, você tem razão. Sem agendar visita agora. Vou te passar os detalhes por aqui.'
         : userRefusedScheduling
           ? 'Claro, sem problema. Te passo os detalhes por aqui.'
-          : 'Desculpa, me perdi aqui. Me diz só qual ponto você quer ver primeiro: lotes, valores, pagamento ou localização?';
+          : schedulingAlreadyScheduled
+            ? 'Perfeito. Visita agendada. Se quiser, também posso te ajudar com valores, pagamento ou localização.'
+            : 'Desculpa, me perdi aqui. Me diz só qual ponto você quer ver primeiro: lotes, valores, pagamento ou localização?';
       const alternativeAlreadyRepeated = recentAssistantRepliesForOutbound.some(
         (prev) => prev === alternativeReply || repliesSemanticallySimilar(prev, alternativeReply)
       );
@@ -5532,14 +5620,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (!alternativeAlreadyRepeated) {
         replyText = alternativeReply;
       } else {
-        anaTurnAuditOutcome = 'blocked';
-        anaTurnAuditBlockedReason = 'repeated_response_guard';
-        anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
-        await applyAnaConversationUpdate(conversationId, {
-          classification: 'Handoff',
-          handoff: true,
-        });
-        return;
+        if (schedulingAlreadyScheduled) {
+          replyText = 'Perfeito. Se quiser, posso te ajudar com valores, pagamento, localização ou detalhes dos lotes.';
+        } else {
+          anaTurnAuditOutcome = 'blocked';
+          anaTurnAuditBlockedReason = 'repeated_response_guard';
+          anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
+          await applyAnaConversationUpdate(conversationId, {
+            classification: 'Handoff',
+            handoff: true,
+          });
+          return;
+        }
       }
     }
     console.log('[ANA_PIPELINE] engine_reply_generated', {
@@ -5622,6 +5714,28 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         await insertMessage(conversationId, 'assistant', chunk, chunkSendResult.metaMessageId);
         sentChunks.push(chunk);
       }
+      for (const [visitIndex, visitOfferMessage] of appendedVisitOfferMessagesForFinalSend.entries()) {
+        if (isPipelineStale(conversationId, replyPipelineToken)) {
+          anaTurnAuditOutcome = 'silent';
+          anaTurnAuditBlockedReason = `pipeline_stale_before_visit_offer_message_${visitIndex + 1}`;
+          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+          return;
+        }
+        await sleepMs(900);
+        const visitChunkSendResult = await sendTextMessage({
+          conversationId,
+          to: toPhoneNumber,
+          text: visitOfferMessage,
+          phase: 'ana_main_reply_visit_offer',
+        });
+        if (!visitChunkSendResult.success || !visitChunkSendResult.metaMessageId) {
+          anaTurnAuditOutcome = 'send_failed';
+          anaTurnAuditBlockedReason = `main_reply_visit_offer_send_failed_${visitIndex + 1}`;
+          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+          return;
+        }
+        await insertMessage(conversationId, 'assistant', visitOfferMessage, visitChunkSendResult.metaMessageId);
+      }
       replyText = sentChunks.join('\n');
       anaTurnAuditOutcome = shouldAttemptDocSend ? 'material_failed' : 'sent';
       anaTurnAuditBlockedReason = null;
@@ -5651,6 +5765,26 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
     if (sendResult.success && sendResult.metaMessageId) {
       await insertMessage(conversationId, 'assistant', replyText, sendResult.metaMessageId);
+      for (const [visitIndex, visitOfferMessage] of appendedVisitOfferMessagesForFinalSend.entries()) {
+        if (isPipelineStale(conversationId, replyPipelineToken)) {
+          anaTurnAuditOutcome = 'silent';
+          anaTurnAuditBlockedReason = `pipeline_stale_before_visit_offer_message_${visitIndex + 1}`;
+          return;
+        }
+        await sleepMs(900);
+        const visitOfferSendResult = await sendTextMessage({
+          conversationId,
+          to: toPhoneNumber,
+          text: visitOfferMessage,
+          phase: 'ana_main_reply_visit_offer',
+        });
+        if (!visitOfferSendResult.success || !visitOfferSendResult.metaMessageId) {
+          anaTurnAuditOutcome = 'send_failed';
+          anaTurnAuditBlockedReason = `main_reply_visit_offer_send_failed_${visitIndex + 1}`;
+          return;
+        }
+        await insertMessage(conversationId, 'assistant', visitOfferMessage, visitOfferSendResult.metaMessageId);
+      }
       anaEngineTrace('final_send_success', {
         conversationId,
         phase: 'ana_main_reply',

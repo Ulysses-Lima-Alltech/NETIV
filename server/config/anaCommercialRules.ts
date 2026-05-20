@@ -6,6 +6,7 @@
   | 'formas_pagamento'
   | 'localizacao_regiao'
   | 'endereco'
+  | 'seguranca'
   | 'investimento'
   | 'valor_condominio'
   | 'areas_lazer';
@@ -32,9 +33,8 @@ export const ANA_COMMERCIAL_RULES = {
       'Estamos com 55% de obras executadas, vale a pena a visita, vamos marcar?',
     ],
     formas_pagamento: [
-      'Temos diversas formas de pagamento que podem se encaixar na sua realidade. Para parcelas mais baixas temos planos estendidos em até 120x e para parcelamento sem juros temos planos em até 48x.',
+      'Temos diversas formas de pagamento que podem se encaixar na sua realidade. Para parcelas mais baixas temos planos estendidos em ate 120x e para parcelamento sem juros temos planos em ate 48x. Essas condições são únicas no mercado, isso voce so encontra aqui no Evora',
       'O financiamento é facilitado por ser direto com a construtora, menos burocracia e mais facilidade pra você.',
-      'Você prefere parcelas mais baixas ou uma condição sem juros?',
     ],
     localizacao_regiao: [
       'Atibaia faz parte da região bragantina, que é uma das regiões mais valorizadas e desenvolvidas do estado. Fica a 50 minutos de São Paulo, tornando o Évora um condomínio para casas de veraneio ou até mesmo moradia.',
@@ -43,6 +43,9 @@ export const ANA_COMMERCIAL_RULES = {
     ],
     endereco: [
       'Fica na Região da pedreira, no bairro do Rio Abaixo. Um bairro já conceituado com diversos condomínios de médio e alto padrão.',
+    ],
+    seguranca: [
+      'O Évora conta com portaria 24 horas com controle de acesso, pensado para trazer mais tranquilidade aos moradores.',
     ],
     investimento: [
       'Show! O Évora tem um ótimo potencial de valorização, viu? Agora me diz: você prefere terrenos menores e práticos ou maiores com mais privacidade? Temos opções de 360m² até 1.000m².',

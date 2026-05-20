@@ -10,7 +10,7 @@ const EVORA_ADDRESS_BLOCK =
 const EVORA_ACCESS_BLOCK =
   'Fica perto da área da Pedreira, com fácil acesso pela Rodovia Dom Pedro I.';
 
-const VISIT_OFFER_OFFICIAL_LINES = [
+export const EVORA_VISIT_OFFER_MESSAGES = [
   'Que tal você marcar uma visita ?',
   'Aproveita pra conhecer nosso stand que fica localizado no próprio empreendimento, assim você conhece o loteamento e já pode até visitar o seu lote.',
   'Estamos com 55% de obras executadas, vale a pena a visita, vamos marcar?',
@@ -34,7 +34,7 @@ function normalizeCompare(value: string | null | undefined): string {
 
 function isEvoraEnterprise(enterpriseName: string | null | undefined): boolean {
   const n = normalizeText(enterpriseName);
-  return n === 'evora' || n.includes('evora') || n.includes('evora');
+  return n === 'evora' || n.includes('evora');
 }
 
 function isAddressIntent(userMessage: string): boolean {
@@ -67,11 +67,53 @@ function hasVisitOffer(text: string): boolean {
 
 function isCommercialInterestQuestion(userMessage: string): boolean {
   const n = normalizeText(userMessage);
-  return /(localizacao|regiao|endereco|acesso|valor|metro quadrado|pagamento|lote|lazer|condominio|obra|disponibilidade|investimento|moradia|book|foto|estrutura)/.test(n);
+  return /(localizacao|regiao|endereco|acesso|valor|metro quadrado|pagamento|parcela|financiamento|lote|lazer|condominio|obra|disponibilidade|investimento|moradia|book|foto|estrutura|seguranca|portaria|controle de acesso|tranquilidade)/.test(n);
 }
 
-function countCommercialUserQuestions(rows: Array<{ role: string; content?: string | null }>): number {
-  return rows.filter((r) => r.role === 'user' && isCommercialInterestQuestion(r.content ?? '')).length;
+function isGenericInitialInterest(userMessage: string): boolean {
+  const n = normalizeText(userMessage);
+  if (!/(tenho interesse|gostaria de saber mais|quero mais informac|quero saber mais)/.test(n)) return false;
+  return !/(lazer|seguranca|portaria|localizacao|regiao|endereco|acesso|valor|metro quadrado|pagamento|financiamento|parcela|lote|condominio|investimento|obra|disponibilidade|estrutura|book|foto)/.test(n);
+}
+
+function isClarificationOnlyAnswer(answer: string): boolean {
+  const n = normalizeText(answer);
+  if (!n) return true;
+  if (!n.endsWith('?')) return false;
+  if (n.length > 140) return false;
+  return /(qual|quais|prefere|pode me|me passa|me diz|para qual|que horario)/.test(n);
+}
+
+function isFallbackOrBlockedAnswer(answer: string): boolean {
+  const n = normalizeText(answer);
+  return /(desculpa, me perdi|nao consegui continuar|encaminhar seu atendimento|fallback|blocked|handoff)/.test(n);
+}
+
+function countAnsweredCommercialQuestions(rows: Array<{ role: string; content?: string | null }>): {
+  answeredBeforeCurrent: number;
+  currentUserCommercialQuestionPendingAnswer: boolean;
+} {
+  let awaitingCommercialAnswer = false;
+  let answered = 0;
+
+  for (const row of rows) {
+    const content = (row.content ?? '').trim();
+    if (row.role === 'user') {
+      const commercialQuestion =
+        content.length > 0 && isCommercialInterestQuestion(content) && !isGenericInitialInterest(content);
+      awaitingCommercialAnswer = commercialQuestion;
+      continue;
+    }
+    if (row.role === 'assistant' && awaitingCommercialAnswer) {
+      answered += 1;
+      awaitingCommercialAnswer = false;
+    }
+  }
+
+  return {
+    answeredBeforeCurrent: answered,
+    currentUserCommercialQuestionPendingAnswer: awaitingCommercialAnswer,
+  };
 }
 
 export function applyEvoraLocationGuard(params: {
@@ -126,9 +168,23 @@ export function applyAnaVisitOfferGuard(params: {
   isSchedulingFlow: boolean;
   isHandoff: boolean;
   isMaterialOnlyFlow: boolean;
-}): { text: string; changed: boolean; reason: string | null; appendedVisitOffer: boolean } {
+}): {
+  text: string;
+  changed: boolean;
+  reason: string | null;
+  appendedVisitOffer: boolean;
+  appendedVisitOfferMessages: string[];
+  commercialAnsweredQuestionsCount: number;
+} {
   if (!isEvoraEnterprise(params.enterpriseName)) {
-    return { text: params.answer, changed: false, reason: null, appendedVisitOffer: false };
+    return {
+      text: params.answer,
+      changed: false,
+      reason: null,
+      appendedVisitOffer: false,
+      appendedVisitOfferMessages: [],
+      commercialAnsweredQuestionsCount: 0,
+    };
   }
 
   const alreadyOfferedVisit = params.rowsBeforeSend
@@ -136,17 +192,30 @@ export function applyAnaVisitOfferGuard(params: {
     .some((row) => hasVisitOffer(row.content ?? ''));
 
   const hasCurrentVisitOffer = hasVisitOffer(params.answer);
-  const commercialCount = countCommercialUserQuestions(params.rowsBeforeSend);
-  const hasCurrentCommercialInterest = isCommercialInterestQuestion(params.userMessage);
-  const hasInterest = hasCurrentCommercialInterest || commercialCount >= 1;
+  const { answeredBeforeCurrent, currentUserCommercialQuestionPendingAnswer } = countAnsweredCommercialQuestions(
+    params.rowsBeforeSend
+  );
+
+  const currentAnswerIsClarificationOnly = isClarificationOnlyAnswer(params.answer);
+  const currentAnswerIsFallbackOrBlocked = isFallbackOrBlockedAnswer(params.answer);
+  const currentCountsAsAnsweredCommercialQuestion =
+    currentUserCommercialQuestionPendingAnswer &&
+    !currentAnswerIsClarificationOnly &&
+    !currentAnswerIsFallbackOrBlocked;
+
+  const commercialAnsweredQuestionsCount =
+    answeredBeforeCurrent + (currentCountsAsAnsweredCommercialQuestion ? 1 : 0);
 
   const canAppend =
-    hasInterest &&
+    currentCountsAsAnsweredCommercialQuestion &&
+    commercialAnsweredQuestionsCount >= 2 &&
     !alreadyOfferedVisit &&
     !hasCurrentVisitOffer &&
     !params.isSchedulingFlow &&
     !params.isHandoff &&
-    !params.isMaterialOnlyFlow;
+    !params.isMaterialOnlyFlow &&
+    !currentAnswerIsClarificationOnly &&
+    !currentAnswerIsFallbackOrBlocked;
 
   if (!canAppend) {
     return {
@@ -154,27 +223,28 @@ export function applyAnaVisitOfferGuard(params: {
       changed: false,
       reason: null,
       appendedVisitOffer: false,
+      appendedVisitOfferMessages: [],
+      commercialAnsweredQuestionsCount,
     };
   }
 
-  const offer = VISIT_OFFER_OFFICIAL_LINES.join('\n\n');
-  const sep = params.answer.trim().length > 0 ? '\n\n' : '';
-  const text = `${params.answer.trim()}${sep}${offer}`.trim();
-
+  const appendedVisitOfferMessages = [...EVORA_VISIT_OFFER_MESSAGES];
   console.log('[ANA_VISIT_OFFER_GUARD]', {
     conversationId: params.conversationId,
     enterpriseId: params.enterpriseId,
-    reason: 'commercial_interest_without_visit_offer',
+    commercialAnsweredQuestionsCount,
     alreadyOfferedVisit,
-    appendedVisitOffer: true,
-    finalAnswer: text,
+    appendedVisitOfferMessages,
+    reason: 'commercial_interest_after_two_answers',
   });
 
   return {
-    text,
+    text: params.answer,
     changed: true,
-    reason: 'commercial_interest_without_visit_offer',
+    reason: 'commercial_interest_after_two_answers',
     appendedVisitOffer: true,
+    appendedVisitOfferMessages,
+    commercialAnsweredQuestionsCount,
   };
 }
 

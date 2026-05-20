@@ -15,7 +15,7 @@ test('regras comerciais cobrem lotes planos e tem plano', () => {
   const svc = readFileSync(new URL('../services/anaCommercialRulesService.ts', import.meta.url), 'utf8');
   assert.match(cfg, /detalhes_lotes/);
   assert.match(cfg, /lotes a partir de 360 m²/);
-  assert.match(cfg, /planos estendidos em até 120x/);
+  assert.match(cfg, /planos estendidos em ate 120x|planos estendidos em até 120x/);
   assert.match(svc, /lotes planos|lote plano|tipo de lote/);
   assert.match(svc, /tem plano|planos/);
 });
@@ -36,4 +36,26 @@ test('logs de regra comercial obrigatoria existem', () => {
   const source = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
   assert.match(source, /ANA_COMMERCIAL_RULE_LOT_DETAILS/);
   assert.match(source, /ANA_COMMERCIAL_RULE_PAYMENT_PLANS/);
+});
+
+test('heranca contextual de pagamento existe e registra log', () => {
+  const svc = readFileSync(new URL('../services/anaCommercialRulesService.ts', import.meta.url), 'utf8');
+  const eng = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
+  assert.match(svc, /isPaymentContextFromAssistant/);
+  assert.match(svc, /isPaymentContextContinuationRequest/);
+  assert.match(svc, /inheritedIntent:\s*'payment_terms'/);
+  assert.match(eng, /ANA_PAYMENT_INTENT_CONTEXT_GUARD/);
+});
+
+test('oferta de visita e enviada em mensagens separadas', () => {
+  const source = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
+  assert.match(source, /appendedVisitOfferMessagesForFinalSend/);
+  assert.match(source, /phase:\s*'ana_main_reply_visit_offer'/);
+  assert.match(source, /ANA_COMMERCIAL_RULE_VISIT_OFFER_MESSAGE_SENT/);
+});
+
+test('agendamento confirmado nao força handoff automatico por repeticao', () => {
+  const source = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
+  assert.match(source, /Visita agendada/);
+  assert.match(source, /schedulingAlreadyScheduled/);
 });
