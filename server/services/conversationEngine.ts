@@ -169,6 +169,8 @@ import {
   applyAnaNoRepeatMessageGuard,
   applyAnaVisitOfferGuard,
   applyEvoraLocationGuard,
+  blockLegacyAggressiveVisitCtaByIntent,
+  containsLegacyAggressiveVisitCta,
   hasRecentExplicitVisitCta,
 } from '../utils/anaEvoraCommercialGuards.js';
 import { applyAnaVisitSchedulingGuard } from '../utils/anaVisitSchedulingGuard.js';
@@ -899,6 +901,14 @@ function toFirstName(value: string | null | undefined): string | null {
   if (!raw) return null;
   const first = raw.split(/\s+/)[0]?.trim() || '';
   return first.length >= 2 ? first : null;
+}
+
+function isWeakEntregaAnswer(text: string): boolean {
+  const n = normText(text || '');
+  if (!n) return true;
+  if (/^previs[aã]o de entrega\s*:?\s*$/.test(n)) return true;
+  if (/^a previs[aã]o de entrega\s*:?\s*$/.test(n)) return true;
+  return false;
 }
 
 const ANA_INTERNAL_LEAK_PATTERNS: RegExp[] = [
@@ -2914,7 +2924,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
 
       const commercialRuleVisitOfferDecision =
-        commercialRule.ruleId === 'visita_agendamento'
+        commercialRule.ruleId === 'visita_agendamento' ||
+        commercialRule.ruleId === 'localizacao_endereco' ||
+        commercialRule.ruleId === 'preco_valor_lote' ||
+        commercialRule.ruleId === 'valor_condominio' ||
+        commercialRule.ruleId === 'entrega_empreendimento'
           ? {
               appendedVisitOfferMessages: [] as string[],
               appendedVisitOffer: false,
@@ -2990,15 +3004,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           hintedTopic: 'entrega_prazo',
         });
         const fallbackEntrega =
-          'Ainda não tenho a previsão exata liberada por aqui. O corretor confirma certinho para você no atendimento.';
-        const resolvedEntrega = operational?.dataFound
-          ? operational.answer
-          : fallbackEntrega;
+          'Ainda não tenho a previsão exata liberada por aqui. O corretor confirma certinho pra você.';
+        let resolvedEntrega = operational?.dataFound ? operational.answer : fallbackEntrega;
+        if (isWeakEntregaAnswer(resolvedEntrega)) resolvedEntrega = fallbackEntrega;
         commercialMessagesToSend.length = 0;
-        commercialMessagesToSend.push(
-          resolvedEntrega.replace(/\[DATA\/PRAZO DA BASE\]/gi, '').replace(/\s{2,}/g, ' ').trim()
-        );
+        commercialMessagesToSend.push(resolvedEntrega.replace(/\[DATA\/PRAZO DA BASE\]/gi, '').replace(/\s{2,}/g, ' ').trim());
         commercialMessagesToSend.push('Quer saber também como está a infraestrutura prevista?');
+      }
+      if (commercialRule.ruleId === 'localizacao_endereco') {
+        const answer = commercialRule.messages[0] ?? '';
+        commercialMessagesToSend.length = 0;
+        commercialMessagesToSend.push(answer);
+        commercialMessagesToSend.push('Você vem de São Paulo ou de Atibaia?');
       }
 
       const shouldAskNameAfterCommercialReply =
@@ -3026,6 +3043,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           return;
         }
         let commercialRuleMessage = commercialRuleMessageRaw;
+        const aggressiveBlockCommercial = blockLegacyAggressiveVisitCtaByIntent({
+          text: commercialRuleMessage,
+          intent: commercialRule.ruleId,
+          hasRecentVisitCta,
+        });
+        if (aggressiveBlockCommercial.changed) {
+          commercialRuleMessage = aggressiveBlockCommercial.text;
+        }
         const noRepeatForCommercialRule = applyAnaNoRepeatMessageGuard({
           conversationId,
           enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
@@ -3076,6 +3101,23 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
 
       for (const [visitIndex, visitOfferMessage] of visitOfferMessagesFromCommercialRule.entries()) {
+        let safeVisitOfferMessage = visitOfferMessage;
+        const aggressiveBlockVisitOffer = blockLegacyAggressiveVisitCtaByIntent({
+          text: safeVisitOfferMessage,
+          intent: commercialRule.ruleId,
+          hasRecentVisitCta: true,
+        });
+        if (aggressiveBlockVisitOffer.changed) safeVisitOfferMessage = aggressiveBlockVisitOffer.text;
+        const noRepeatVisitOffer = applyAnaNoRepeatMessageGuard({
+          conversationId,
+          enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+          enterpriseName: ent?.name ?? null,
+          userMessage: trimmed,
+          answer: safeVisitOfferMessage,
+          recentAssistantReplies: recentAssistantForNoRepeat,
+          semanticallySimilar: repliesSemanticallySimilar,
+        });
+        if (noRepeatVisitOffer.changed) safeVisitOfferMessage = noRepeatVisitOffer.text;
         await sleepMs(900);
         if (isPipelineStale(conversationId, replyPipelineToken)) {
           anaTurnAuditOutcome = 'silent';
@@ -3087,7 +3129,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         const visitSendResult = await sendTextMessage({
           conversationId,
           to: toPhoneNumber,
-          text: visitOfferMessage,
+          text: safeVisitOfferMessage,
           phase: 'commercial_rules_visit_offer',
         });
         if (!visitSendResult.success || !visitSendResult.metaMessageId) {
@@ -3108,7 +3150,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           return;
         }
         lastCommercialRuleMetaMessageId = visitSendResult.metaMessageId;
-        await insertMessage(conversationId, 'assistant', visitOfferMessage, visitSendResult.metaMessageId);
+        await insertMessage(conversationId, 'assistant', safeVisitOfferMessage, visitSendResult.metaMessageId);
+        recentAssistantForNoRepeat.push(safeVisitOfferMessage);
         console.log('[ANA_COMMERCIAL_RULE_VISIT_OFFER_MESSAGE_SENT]', {
           conversationId,
           messageIndex: visitIndex + 1,
@@ -5645,6 +5688,29 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       anaTurnAuditGuardsApplied.noRepeatMessageGuard = {
         changed: true,
         reason: noRepeatGuardResult.reason,
+      };
+    }
+    const inferredIntentForFinalGuard =
+      inferUserRequestedAxis(trimmed) === 'localizacao'
+        ? 'localizacao_endereco'
+        : inferUserRequestedAxis(trimmed) === 'preco'
+          ? 'preco_valor_lote'
+          : /\bcondomin/.test(normText(trimmed))
+            ? 'valor_condominio'
+            : /\b(entrega|obra|prazo|lotes|construir|libera)\b/.test(normText(trimmed))
+              ? 'entrega_empreendimento'
+              : null;
+    const recentHasVisitCta = hasRecentExplicitVisitCta(recentAssistantRepliesForDeterministicGuard);
+    const aggressiveBlockFinal = blockLegacyAggressiveVisitCtaByIntent({
+      text: replyText,
+      intent: inferredIntentForFinalGuard,
+      hasRecentVisitCta: recentHasVisitCta,
+    });
+    if (aggressiveBlockFinal.changed) {
+      replyText = aggressiveBlockFinal.text;
+      anaTurnAuditGuardsApplied.legacyVisitCtaGuard = {
+        changed: true,
+        reason: aggressiveBlockFinal.reason,
       };
     }
 

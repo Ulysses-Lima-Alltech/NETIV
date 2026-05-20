@@ -11,9 +11,7 @@ const EVORA_ACCESS_BLOCK =
   'Fica perto da área da Pedreira, com fácil acesso pela Rodovia Dom Pedro I.';
 
 export const EVORA_VISIT_OFFER_MESSAGES = [
-  'Que tal você marcar uma visita ?',
-  'Aproveita pra conhecer nosso stand que fica localizado no próprio empreendimento, assim você conhece o loteamento e já pode até visitar o seu lote.',
-  'Estamos com 55% de obras executadas, vale a pena a visita, vamos marcar?',
+  'Se fizer sentido para você, posso te ajudar a agendar uma visita.',
 ] as const;
 
 function normalizeText(value: string | null | undefined): string {
@@ -74,7 +72,59 @@ function hasLucasAsAccessLeak(answer: string): boolean {
 
 function hasVisitOffer(text: string): boolean {
   const n = normalizeText(text);
-  return /(que tal voce marcar uma visita|55% de obras executadas|vamos marcar)/.test(n);
+  return /(agendar uma visita|marcar uma visita|conhecer pessoalmente|vamos marcar)/.test(n);
+}
+
+const LEGACY_AGGRESSIVE_VISIT_CTA_PATTERNS: RegExp[] = [
+  /que tal voce marcar uma visita/,
+  /aproveita pra conhecer nosso stand/,
+  /55%\s*de\s*obras executadas/,
+  /vale a pena a visita/,
+  /vamos marcar\?/,
+];
+
+export function containsLegacyAggressiveVisitCta(text: string): boolean {
+  const n = normalizeText(text);
+  return LEGACY_AGGRESSIVE_VISIT_CTA_PATTERNS.some((re) => re.test(n));
+}
+
+export function blockLegacyAggressiveVisitCtaByIntent(params: {
+  text: string;
+  intent: string | null;
+  hasRecentVisitCta: boolean;
+}): { text: string; changed: boolean; reason: string | null } {
+  const nIntent = normalizeText(params.intent ?? '');
+  const disallowByIntent =
+    nIntent === 'localizacao_endereco' ||
+    nIntent === 'preco_valor_lote' ||
+    nIntent === 'valor_condominio' ||
+    nIntent === 'entrega_empreendimento' ||
+    nIntent === 'esclarecimento';
+  if (!containsLegacyAggressiveVisitCta(params.text)) {
+    return { text: params.text, changed: false, reason: null };
+  }
+  if (!disallowByIntent && !params.hasRecentVisitCta) {
+    return { text: params.text, changed: false, reason: null };
+  }
+  if (nIntent === 'localizacao_endereco') {
+    return {
+      text: 'Você vem de São Paulo ou de Atibaia?',
+      changed: true,
+      reason: 'legacy_visit_cta_blocked_for_location',
+    };
+  }
+  if (nIntent === 'entrega_empreendimento') {
+    return {
+      text: 'Quer saber também como está a infraestrutura prevista?',
+      changed: true,
+      reason: 'legacy_visit_cta_blocked_for_delivery',
+    };
+  }
+  return {
+    text: 'Se você quiser, posso te explicar esse ponto com mais detalhe.',
+    changed: true,
+    reason: 'legacy_visit_cta_blocked',
+  };
 }
 
 function isCommercialInterestQuestion(userMessage: string): boolean {
@@ -279,13 +329,13 @@ export function applyAnaNoRepeatMessageGuard(params: {
   }
 
   const nUser = normalizeText(params.userMessage ?? '');
-  let text = 'Isso mesmo. Se quiser, eu detalho esse ponto de forma objetiva.';
+  let text = 'Posso te responder de forma mais objetiva nesse ponto.';
   if (/(entrega|obra|prazo|lotes|construir|libera)/.test(nUser)) {
-    text = 'Quer que eu te ajude a agendar uma visita para conhecer o andamento pessoalmente?';
+    text = 'Você está perguntando sobre a previsão de entrega do empreendimento. Ainda não tenho a previsão exata liberada por aqui, mas o corretor confirma certinho pra você.';
   } else if (/(entrada)/.test(nUser)) {
-    text = 'Isso mesmo. A entrada mínima é 20%. O valor exato depende do lote escolhido.';
+    text = 'A entrada mínima é 20% do valor do lote, e o valor exato depende da unidade escolhida.';
   } else if (/(preco|valor|quanto custa|lote)/.test(nUser)) {
-    text = 'Esses detalhes variam conforme as opções disponíveis. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?';
+    text = 'Esse é o valor inicial mesmo. Se quiser, o corretor pode simular conforme o lote disponível.';
   } else if (/(condominio|taxa condominial)/.test(nUser)) {
     text = 'Essa estimativa pode variar conforme as definições da associação. Se quiser, o corretor te explica no detalhe.';
   } else if (/(localizacao|endereco|onde fica|como chegar)/.test(nUser)) {
