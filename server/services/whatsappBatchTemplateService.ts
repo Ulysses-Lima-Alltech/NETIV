@@ -1,4 +1,4 @@
-﻿import { query } from '../db/pg.js';
+import { getPool, query } from '../db/pg.js';
 import {
   getWhatsAppTemplateByKey,
   renderTemplateTextForInbox,
@@ -6,15 +6,23 @@ import {
 } from '../catalogs/whatsappTemplates.js';
 import { detectBatchColumns, type BatchColumnSuggestions } from '../utils/columnDetection.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
-import type { BatchMappingDto } from '../validators/whatsappBatch.js';
+import type {
+  BatchConversationType,
+  BatchMappingDto,
+  BatchPostSendMode,
+  BatchSendMode,
+} from '../validators/whatsappBatch.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
-import { findOrCreateConversation, updateConversationType } from '../repositories/conversationRepository.js';
+import {
+  findOrCreateConversation,
+  updateClassification,
+  updateConversationType,
+} from '../repositories/conversationRepository.js';
 import { insertMessage } from '../repositories/messageRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { sendTemplateMessage } from './whatsappMetaService.js';
 import { getCorretorById } from '../repositories/corretorRepository.js';
 import { findOrCreateContactByPhone, updateContactType } from '../repositories/contactsRepository.js';
-import { isProtectedClientPhone } from '../utils/protectedClientPhone.js';
 
 export interface BatchPreviewRow {
   rowIndex: number;
@@ -51,6 +59,69 @@ export interface BatchExecutionResult {
     templateKey: string;
     metaMessageId?: string;
   }>;
+}
+
+export interface BatchScheduleResult {
+  scheduled: true;
+  batchId: number;
+  status: 'PENDING';
+  total: number;
+  validRecipients: number;
+  invalidRecipients: number;
+  scheduledAt: string;
+  conversationType: BatchConversationType;
+  postSendMode: BatchPostSendMode;
+  message: string;
+}
+
+export type BatchSendResult = BatchExecutionResult | BatchScheduleResult;
+
+type NormalizedBatchSendMode = BatchSendMode;
+type NormalizedBatchConversationType = BatchConversationType;
+type NormalizedBatchPostSendMode = BatchPostSendMode;
+
+interface BatchSendPreferences {
+  conversationType?: BatchConversationType;
+  postSendMode?: BatchPostSendMode;
+  sendMode?: BatchSendMode;
+  scheduledAt?: string | null;
+  createdByUserId?: number | null;
+}
+
+interface PreparedBatchCandidate {
+  rowNumber: number;
+  phoneOriginal: string | null;
+  phoneNormalized: string;
+  resolvedValues: string[];
+  assignedBrokerId: number | null;
+  assignedBrokerName: string | null;
+}
+
+interface PreparedBatchCandidatesResult {
+  candidates: PreparedBatchCandidate[];
+  blockedDetails: BatchExecutionResult['details'];
+}
+
+interface ScheduledBatchRow {
+  id: number;
+  enterprise_id: number | null;
+  template_key: string;
+  payload_json: unknown;
+  conversation_type: NormalizedBatchConversationType;
+  post_send_mode: NormalizedBatchPostSendMode;
+  scheduled_at: Date;
+  status: 'PENDING' | 'PROCESSING' | 'SENT' | 'PARTIAL_FAILED' | 'FAILED' | 'CANCELED';
+}
+
+interface ScheduledBatchRecipientRow {
+  id: number;
+  batch_id: number;
+  row_number: number;
+  phone: string;
+  name: string | null;
+  variables_json: unknown;
+  assigned_broker_id: number | null;
+  status: 'PENDING' | 'PROCESSING' | 'SENT' | 'FAILED' | 'CANCELED';
 }
 
 function normalizePhoneStrict(phoneRaw: string | null | undefined): { phoneNormalized: string | null; error: string | null } {
@@ -119,6 +190,29 @@ async function resolveSelectedBrokers(mapping: BatchMappingDto): Promise<Array<{
 
   const single = await resolveBroker(mapping.selectedBrokerId ?? null);
   return single ? [single] : [];
+}
+
+function normalizeConversationType(
+  conversationType: BatchConversationType | undefined
+): NormalizedBatchConversationType {
+  return conversationType === 'ADMIN' ? 'ADMIN' : 'CLIENT';
+}
+
+function normalizePostSendMode(postSendMode: BatchPostSendMode | undefined): NormalizedBatchPostSendMode {
+  return postSendMode === 'HANDOFF' ? 'HANDOFF' : 'ANA';
+}
+
+function normalizeSendMode(sendMode: BatchSendMode | undefined): NormalizedBatchSendMode {
+  return sendMode === 'SCHEDULED' ? 'SCHEDULED' : 'NOW';
+}
+
+function parseScheduledAtOrThrow(scheduledAtRaw: string | null | undefined): Date {
+  const value = String(scheduledAtRaw ?? '').trim();
+  if (!value) throw new Error('Data/hora de agendamento é obrigatória.');
+  const scheduledAt = new Date(value);
+  if (Number.isNaN(scheduledAt.getTime())) throw new Error('Data/hora de agendamento inválida.');
+  if (scheduledAt.getTime() <= Date.now()) throw new Error('A data/hora do agendamento deve ser futura.');
+  return scheduledAt;
 }
 
 function resolveVariablesForRow(params: {
@@ -288,6 +382,81 @@ export async function buildBatchPreview(params: {
   };
 }
 
+function buildPreparedBatchCandidates(params: {
+  rows: Record<string, string>[];
+  mapping: BatchMappingDto;
+  template: WhatsAppTemplateCatalogItem;
+  enterprise: { id: number; name: string } | null;
+  selectedBrokers: Array<{ id: number; fullName: string }>;
+}): PreparedBatchCandidatesResult {
+  const blockedDetails: BatchExecutionResult['details'] = [];
+  const candidates: PreparedBatchCandidate[] = [];
+  let roundRobinIndex = 0;
+
+  for (let i = 0; i < params.rows.length; i++) {
+    const row = params.rows[i];
+    const rowNumber = i + 2;
+    const phoneOriginal = normalizeValue(row[params.mapping.phoneColumn]);
+    const phone = normalizePhoneStrict(phoneOriginal);
+    const resolved = resolveVariablesForRow({
+      row,
+      template: params.template,
+      mapping: params.mapping,
+      enterprise: params.enterprise,
+    });
+
+    if (phone.error) {
+      blockedDetails.push({
+        rowNumber,
+        phoneOriginal,
+        phoneNormalized: null,
+        status: 'blocked',
+        error: phone.error,
+        templateKey: params.template.key,
+      });
+      continue;
+    }
+
+    if (resolved.missingRequired) {
+      blockedDetails.push({
+        rowNumber,
+        phoneOriginal,
+        phoneNormalized: phone.phoneNormalized,
+        status: 'blocked',
+        error: 'Variáveis obrigatórias não resolvidas.',
+        templateKey: params.template.key,
+      });
+      continue;
+    }
+
+    const normalizedPhone = phone.phoneNormalized;
+    if (!normalizedPhone) {
+      blockedDetails.push({
+        rowNumber,
+        phoneOriginal,
+        phoneNormalized: null,
+        status: 'blocked',
+        error: 'Telefone inválido após normalização.',
+        templateKey: params.template.key,
+      });
+      continue;
+    }
+
+    const assignedBroker = params.selectedBrokers[roundRobinIndex % params.selectedBrokers.length];
+    roundRobinIndex++;
+    candidates.push({
+      rowNumber,
+      phoneOriginal,
+      phoneNormalized: normalizedPhone,
+      resolvedValues: resolved.values,
+      assignedBrokerId: assignedBroker?.id ?? null,
+      assignedBrokerName: assignedBroker?.fullName ?? null,
+    });
+  }
+
+  return { candidates, blockedDetails };
+}
+
 async function applyBatchOwnershipAndContextByPhone(params: {
   phoneE164: string;
   enterpriseId: number | null;
@@ -336,10 +505,119 @@ async function applyBatchOwnershipAndContextByPhone(params: {
   );
 }
 
+async function applyBatchConversationRouting(params: {
+  conversationId: number;
+  contactId: number | null;
+  conversationType: NormalizedBatchConversationType;
+  postSendMode: NormalizedBatchPostSendMode;
+  brokerId: number | null;
+}): Promise<void> {
+  await updateConversationType(params.conversationId, params.conversationType);
+  if (params.contactId != null) {
+    await updateContactType(params.contactId, params.conversationType === 'ADMIN' ? 'INTERNO' : 'CLIENT');
+  }
+  await updateClassification(params.conversationId, {
+    handoff: params.postSendMode === 'HANDOFF',
+    assigned_broker_id: params.brokerId,
+  });
+}
+
+async function sendBatchCandidateNow(params: {
+  template: WhatsAppTemplateCatalogItem;
+  candidate: PreparedBatchCandidate;
+  configPhoneNumberId: string | null;
+  enterpriseId: number | null;
+  conversationType: NormalizedBatchConversationType;
+  postSendMode: NormalizedBatchPostSendMode;
+  sourceKeyPrefix: string;
+}): Promise<BatchExecutionResult['details'][number]> {
+  const result = await sendTemplateMessage(params.candidate.phoneNormalized, params.template.key, {
+    parameters: params.candidate.resolvedValues,
+  });
+  if (!result.success) {
+    return {
+      rowNumber: params.candidate.rowNumber,
+      phoneOriginal: params.candidate.phoneOriginal,
+      phoneNormalized: params.candidate.phoneNormalized,
+      status: 'error',
+      error: result.error ?? 'Falha no envio.',
+      errorCode: result.metaErrorCode ?? result.code,
+      errorType: result.metaErrorType,
+      httpStatus: result.httpStatus,
+      templateKey: params.template.key,
+    };
+  }
+
+  const contact = await findOrCreateContactByPhone({
+    phoneE164: params.candidate.phoneNormalized,
+    phoneDisplay: params.candidate.phoneNormalized,
+    source: 'whatsapp',
+  });
+
+  const conversation = await findOrCreateConversation(
+    'whatsapp',
+    params.candidate.phoneNormalized,
+    params.candidate.phoneNormalized,
+    params.configPhoneNumberId,
+    null,
+    null
+  );
+  await applyBatchConversationRouting({
+    conversationId: conversation.id,
+    contactId: contact.id,
+    conversationType: params.conversationType,
+    postSendMode: params.postSendMode,
+    brokerId: params.candidate.assignedBrokerId,
+  });
+
+  if (result.metaMessageId) {
+    const inboxContent = renderTemplateTextForInbox(params.template, params.candidate.resolvedValues);
+    await insertMessage(conversation.id, 'assistant', inboxContent, result.metaMessageId);
+  }
+
+  await applyBatchOwnershipAndContextByPhone({
+    phoneE164: params.candidate.phoneNormalized,
+    enterpriseId: params.enterpriseId,
+    brokerId: params.candidate.assignedBrokerId,
+    sourceKey: `${params.sourceKeyPrefix}:${params.template.key}`,
+    sourceRowNumber: params.candidate.rowNumber,
+  });
+
+  return {
+    rowNumber: params.candidate.rowNumber,
+    phoneOriginal: params.candidate.phoneOriginal,
+    phoneNormalized: params.candidate.phoneNormalized,
+    status: 'sent',
+    error: null,
+    templateKey: params.template.key,
+    metaMessageId: result.metaMessageId,
+  };
+}
+
 export async function sendBatchTemplate(params: {
   rows: Record<string, string>[];
   mapping: BatchMappingDto;
-}): Promise<BatchExecutionResult> {
+  conversationType?: BatchConversationType;
+  postSendMode?: BatchPostSendMode;
+  sendMode?: BatchSendMode;
+  scheduledAt?: string | null;
+  createdByUserId?: number | null;
+}): Promise<BatchSendResult> {
+  const conversationType = normalizeConversationType(params.conversationType);
+  const postSendMode = normalizePostSendMode(params.postSendMode);
+  const sendMode = normalizeSendMode(params.sendMode);
+
+  if (sendMode === 'SCHEDULED') {
+    return scheduleBatchTemplate({
+      rows: params.rows,
+      mapping: params.mapping,
+      conversationType,
+      postSendMode,
+      scheduledAt: params.scheduledAt ?? null,
+      createdByUserId: params.createdByUserId ?? null,
+    });
+  }
+
   const template = getTemplateOrThrow(params.mapping.templateKey);
   assertTemplateApproved(template);
   assertTemplateHeaderMediaConfigured(template);
@@ -349,141 +627,35 @@ export async function sendBatchTemplate(params: {
     throw new Error('Selecione ao menos um corretor responsável para enviar em lote.');
   }
   const config = await getWhatsAppConfig();
-  const details: BatchExecutionResult['details'] = [];
-  let success = 0;
-  let failed = 0;
-  let validCandidates = 0;
-  let roundRobinIndex = 0;
+  const prepared = buildPreparedBatchCandidates({
+    rows: params.rows,
+    mapping: params.mapping,
+    template,
+    enterprise,
+    selectedBrokers,
+  });
 
-  for (let i = 0; i < params.rows.length; i++) {
-    const row = params.rows[i];
-    const rowNumber = i + 2;
-    const phoneOriginal = normalizeValue(row[params.mapping.phoneColumn]);
-    const phone = normalizePhoneStrict(phoneOriginal);
-    const resolved = resolveVariablesForRow({
-      row,
-      template,
-      mapping: params.mapping,
-      enterprise,
-    });
-
-    if (phone.error) {
-      failed++;
-      details.push({
-        rowNumber,
-        phoneOriginal,
-        phoneNormalized: null,
-        status: 'blocked',
-        error: phone.error,
-        templateKey: template.key,
-      });
-      continue;
-    }
-    if (resolved.missingRequired) {
-      failed++;
-      details.push({
-        rowNumber,
-        phoneOriginal,
-        phoneNormalized: phone.phoneNormalized,
-        status: 'blocked',
-        error: 'Variáveis obrigatórias não resolvidas.',
-        templateKey: template.key,
-      });
-      continue;
-    }
-
-    const normalizedPhone = phone.phoneNormalized;
-    if (!normalizedPhone) {
-      failed++;
-      details.push({
-        rowNumber,
-        phoneOriginal,
-        phoneNormalized: null,
-        status: 'blocked',
-        error: 'Telefone inválido após normalização.',
-        templateKey: template.key,
-      });
-      continue;
-    }
-
-    validCandidates++;
-    const assignedBroker = selectedBrokers[roundRobinIndex % selectedBrokers.length];
-    roundRobinIndex++;
-    const result = await sendTemplateMessage(normalizedPhone, template.key, {
-      parameters: resolved.values,
-    });
-    if (!result.success) {
-      failed++;
-      details.push({
-        rowNumber,
-        phoneOriginal,
-        phoneNormalized: normalizedPhone,
-        status: 'error',
-        error: result.error ?? 'Falha no envio.',
-        errorCode: result.metaErrorCode ?? result.code,
-        errorType: result.metaErrorType,
-        httpStatus: result.httpStatus,
-        templateKey: template.key,
-      });
-      continue;
-    }
-
-    success++;
-    details.push({
-      rowNumber,
-      phoneOriginal,
-      phoneNormalized: normalizedPhone,
-      status: 'sent',
-      error: null,
-      templateKey: template.key,
-      metaMessageId: result.metaMessageId,
-    });
-
-    const contact = await findOrCreateContactByPhone({
-      phoneE164: normalizedPhone,
-      phoneDisplay: normalizedPhone,
-      source: 'whatsapp',
-    });
-    const shouldAutoClassifyAsInternal = template.category === 'CORRETOR' || template.category === 'ADMIN';
-    const protectedPhone = isProtectedClientPhone(normalizedPhone);
-    if (shouldAutoClassifyAsInternal && protectedPhone) {
-      console.warn('[INTERNAL_CLASSIFICATION_BLOCKED_FOR_PROTECTED_PHONE]', {
-        phoneTail: normalizedPhone.slice(-4),
-        templateKey: template.key,
-        category: template.category,
-      });
-    } else if (shouldAutoClassifyAsInternal) {
-      await updateContactType(contact.id, 'INTERNO');
-    }
-
-    if (config?.whatsappPhoneNumberId) {
-      const conversation = await findOrCreateConversation(
-        'whatsapp',
-        normalizedPhone,
-        normalizedPhone,
-        config.whatsappPhoneNumberId,
-        null,
-        null
-      );
-      if (template.category === 'CORRETOR' && !protectedPhone) {
-        await updateConversationType(conversation.id, 'CORRETOR');
-      }
-      if (result.metaMessageId) {
-        const inboxContent = renderTemplateTextForInbox(template, resolved.values);
-        await insertMessage(conversation.id, 'assistant', inboxContent, result.metaMessageId);
-      }
-    }
-    await applyBatchOwnershipAndContextByPhone({
-      phoneE164: normalizedPhone,
-      enterpriseId: enterprise?.id ?? null,
-      brokerId: assignedBroker.id,
-      sourceKey: `batch:${template.key}`,
-      sourceRowNumber: rowNumber,
-    });
+  if (prepared.candidates.length === 0) {
+    throw new Error('Nenhum número válido para envio.');
   }
 
-  if (validCandidates === 0) {
-    throw new Error('Nenhum número válido para envio.');
+  const details: BatchExecutionResult['details'] = [...prepared.blockedDetails];
+  let success = 0;
+  let failed = prepared.blockedDetails.length;
+
+  for (const candidate of prepared.candidates) {
+    const detail = await sendBatchCandidateNow({
+      template,
+      candidate,
+      configPhoneNumberId: config?.whatsappPhoneNumberId ?? null,
+      enterpriseId: enterprise?.id ?? null,
+      conversationType,
+      postSendMode,
+      sourceKeyPrefix: 'batch',
+    });
+    details.push(detail);
+    if (detail.status === 'sent') success++;
+    else failed++;
   }
 
   return {
@@ -492,6 +664,285 @@ export async function sendBatchTemplate(params: {
     failed,
     details,
   };
+}
+
+async function scheduleBatchTemplate(params: {
+  rows: Record<string, string>[];
+  mapping: BatchMappingDto;
+  conversationType: NormalizedBatchConversationType;
+  postSendMode: NormalizedBatchPostSendMode;
+  scheduledAt: string | null;
+  createdByUserId: number | null;
+}): Promise<BatchScheduleResult> {
+  const template = getTemplateOrThrow(params.mapping.templateKey);
+  assertTemplateApproved(template);
+  assertTemplateHeaderMediaConfigured(template);
+  const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
+  const selectedBrokers = await resolveSelectedBrokers(params.mapping);
+  if (selectedBrokers.length === 0) {
+    throw new Error('Selecione ao menos um corretor responsável para agendar o disparo.');
+  }
+  const scheduledAt = parseScheduledAtOrThrow(params.scheduledAt);
+  const prepared = buildPreparedBatchCandidates({
+    rows: params.rows,
+    mapping: params.mapping,
+    template,
+    enterprise,
+    selectedBrokers,
+  });
+
+  if (prepared.candidates.length === 0) {
+    throw new Error('Nenhum número válido para agendamento.');
+  }
+
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const payloadJson = {
+      mapping: params.mapping,
+      rowsCount: params.rows.length,
+      validRecipients: prepared.candidates.length,
+      invalidRecipients: prepared.blockedDetails.length,
+    };
+    const batchInsert = await client.query<{
+      id: number;
+      scheduled_at: Date;
+    }>(
+      `INSERT INTO whatsapp_batch_scheduled_sends (
+         enterprise_id,
+         template_key,
+         payload_json,
+         conversation_type,
+         post_send_mode,
+         scheduled_at,
+         status,
+         created_by,
+         created_at,
+         updated_at
+       ) VALUES ($1, $2, $3::jsonb, $4, $5, $6, 'PENDING', $7, NOW(), NOW())
+       RETURNING id, scheduled_at`,
+      [
+        enterprise?.id ?? null,
+        template.key,
+        JSON.stringify(payloadJson),
+        params.conversationType,
+        params.postSendMode,
+        scheduledAt.toISOString(),
+        params.createdByUserId,
+      ]
+    );
+    const batchId = batchInsert.rows[0]?.id;
+    if (!batchId) {
+      throw new Error('Falha ao criar lote agendado.');
+    }
+    for (const candidate of prepared.candidates) {
+      await client.query(
+        `INSERT INTO whatsapp_batch_scheduled_send_recipients (
+           batch_id,
+           row_number,
+           phone,
+           name,
+           variables_json,
+           assigned_broker_id,
+           status,
+           created_at,
+           updated_at
+         ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, 'PENDING', NOW(), NOW())`,
+        [
+          batchId,
+          candidate.rowNumber,
+          candidate.phoneNormalized,
+          candidate.assignedBrokerName,
+          JSON.stringify(candidate.resolvedValues),
+          candidate.assignedBrokerId,
+        ]
+      );
+    }
+    await client.query('COMMIT');
+    return {
+      scheduled: true,
+      batchId,
+      status: 'PENDING',
+      total: params.rows.length,
+      validRecipients: prepared.candidates.length,
+      invalidRecipients: prepared.blockedDetails.length,
+      scheduledAt: (batchInsert.rows[0]?.scheduled_at ?? scheduledAt).toISOString(),
+      conversationType: params.conversationType,
+      postSendMode: params.postSendMode,
+      message: 'Lote agendado com sucesso.',
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function parseScheduledRecipientVariables(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((value) => String(value ?? ''));
+}
+
+async function finalizeScheduledBatch(batchId: number): Promise<void> {
+  const summary = await query<{
+    total: string;
+    sent_count: string;
+    failed_count: string;
+  }>(
+    `SELECT
+       COUNT(*)::text AS total,
+       COUNT(*) FILTER (WHERE status = 'SENT')::text AS sent_count,
+       COUNT(*) FILTER (WHERE status = 'FAILED')::text AS failed_count
+     FROM whatsapp_batch_scheduled_send_recipients
+     WHERE batch_id = $1`,
+    [batchId]
+  );
+  const totals = summary.rows[0];
+  const total = Number(totals?.total ?? 0);
+  const sent = Number(totals?.sent_count ?? 0);
+  const failed = Number(totals?.failed_count ?? 0);
+  const finalStatus =
+    total > 0 && sent === total
+      ? 'SENT'
+      : sent > 0
+        ? 'PARTIAL_FAILED'
+        : 'FAILED';
+  await query(
+    `UPDATE whatsapp_batch_scheduled_sends
+     SET status = $1,
+         finished_at = NOW(),
+         updated_at = NOW(),
+         error_message = CASE
+           WHEN $2::int > 0 THEN CONCAT('Falhas em ', $2::text, ' destinatário(s).')
+           ELSE NULL
+         END
+     WHERE id = $3`,
+    [finalStatus, failed, batchId]
+  );
+}
+
+async function processClaimedScheduledBatch(batch: ScheduledBatchRow): Promise<void> {
+  try {
+    const template = getTemplateOrThrow(batch.template_key);
+    assertTemplateApproved(template);
+    assertTemplateHeaderMediaConfigured(template);
+    const config = await getWhatsAppConfig();
+
+    const recipientsRes = await query<ScheduledBatchRecipientRow>(
+      `SELECT id, batch_id, row_number, phone, name, variables_json, assigned_broker_id, status
+       FROM whatsapp_batch_scheduled_send_recipients
+       WHERE batch_id = $1 AND status = 'PENDING'
+       ORDER BY id ASC`,
+      [batch.id]
+    );
+    for (const recipient of recipientsRes.rows) {
+      const claimRes = await query<ScheduledBatchRecipientRow>(
+        `UPDATE whatsapp_batch_scheduled_send_recipients
+         SET status = 'PROCESSING', updated_at = NOW()
+         WHERE id = $1 AND status = 'PENDING'
+         RETURNING id, batch_id, row_number, phone, name, variables_json, assigned_broker_id, status`,
+        [recipient.id]
+      );
+      const claimed = claimRes.rows[0];
+      if (!claimed) continue;
+
+      const detail = await sendBatchCandidateNow({
+        template,
+        candidate: {
+          rowNumber: claimed.row_number,
+          phoneOriginal: claimed.phone,
+          phoneNormalized: claimed.phone,
+          resolvedValues: parseScheduledRecipientVariables(claimed.variables_json),
+          assignedBrokerId: claimed.assigned_broker_id ?? null,
+          assignedBrokerName: claimed.name ?? null,
+        },
+        configPhoneNumberId: config?.whatsappPhoneNumberId ?? null,
+        enterpriseId: batch.enterprise_id ?? null,
+        conversationType: normalizeConversationType(batch.conversation_type),
+        postSendMode: normalizePostSendMode(batch.post_send_mode),
+        sourceKeyPrefix: `scheduled_batch:${batch.id}`,
+      });
+
+      if (detail.status === 'sent') {
+        await query(
+          `UPDATE whatsapp_batch_scheduled_send_recipients
+           SET status = 'SENT',
+               sent_at = NOW(),
+               updated_at = NOW(),
+               error_message = NULL,
+               conversation_id = (
+                 SELECT id
+                 FROM conversations
+                 WHERE regexp_replace(COALESCE(contact_phone, external_contact_id, ''), '\\D', '', 'g') = $1
+                 ORDER BY updated_at DESC
+                 LIMIT 1
+               )
+           WHERE id = $2`,
+          [claimed.phone, claimed.id]
+        );
+      } else {
+        await query(
+          `UPDATE whatsapp_batch_scheduled_send_recipients
+           SET status = 'FAILED',
+               updated_at = NOW(),
+               error_message = LEFT($1, 1000)
+           WHERE id = $2`,
+          [detail.error ?? 'Falha no envio do destinatário agendado.', claimed.id]
+        );
+      }
+    }
+
+    await finalizeScheduledBatch(batch.id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Erro inesperado no processamento do lote agendado.';
+    await query(
+      `UPDATE whatsapp_batch_scheduled_sends
+       SET status = 'FAILED',
+           finished_at = NOW(),
+           updated_at = NOW(),
+           error_message = LEFT($2, 2000)
+       WHERE id = $1`,
+      [batch.id, message]
+    );
+    await query(
+      `UPDATE whatsapp_batch_scheduled_send_recipients
+       SET status = 'FAILED',
+           updated_at = NOW(),
+           error_message = LEFT($2, 1000)
+       WHERE batch_id = $1 AND status IN ('PENDING', 'PROCESSING')`,
+      [batch.id, message]
+    );
+  }
+}
+
+export async function processDueScheduledBatchSends(limit = 5): Promise<number> {
+  const dueBatches = await query<{ id: number }>(
+    `SELECT id
+     FROM whatsapp_batch_scheduled_sends
+     WHERE status = 'PENDING' AND scheduled_at <= NOW()
+     ORDER BY scheduled_at ASC, id ASC
+     LIMIT $1`,
+    [Math.max(1, Math.min(50, limit))]
+  );
+  let processed = 0;
+  for (const row of dueBatches.rows) {
+    const claim = await query<ScheduledBatchRow>(
+      `UPDATE whatsapp_batch_scheduled_sends
+       SET status = 'PROCESSING',
+           started_at = COALESCE(started_at, NOW()),
+           updated_at = NOW(),
+           error_message = NULL
+       WHERE id = $1 AND status = 'PENDING'
+       RETURNING id, enterprise_id, template_key, payload_json, conversation_type, post_send_mode, scheduled_at, status`,
+      [row.id]
+    );
+    const claimed = claim.rows[0];
+    if (!claimed) continue;
+    processed++;
+    await processClaimedScheduledBatch(claimed);
+  }
+  return processed;
 }
 
 export async function sendBatchTemplateTest(params: {

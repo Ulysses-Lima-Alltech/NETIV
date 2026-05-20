@@ -14,6 +14,7 @@ import { processDueDeferredHandoffs } from './repositories/conversationRepositor
 import { processAnaReengagementScan } from './services/anaReengagementService.js';
 import { syncAllConversationOwnersFromContacts } from './repositories/contactsRepository.js';
 import { runDjangoSyncWorker } from './services/djangoSyncWorker.js';
+import { processDueScheduledBatchSends } from './services/whatsappBatchTemplateService.js';
 import { initSocketServer, setRealtimeEnabled } from './realtime/socketServer.js';
 
 const app = express();
@@ -93,6 +94,9 @@ initPostgres()
     setInterval(() => {
       void processAnaReengagementScan().catch((err) => console.error('[ana reengage]', err));
     }, 300_000);
+    setInterval(() => {
+      void processDueScheduledBatchSends().catch((err) => console.error('[whatsapp batch scheduled worker]', err));
+    }, 30_000);
     setInterval(() => {
       void runDjangoSyncWorker().catch((err) => console.error('[django sync]', err));
     }, 10_000);

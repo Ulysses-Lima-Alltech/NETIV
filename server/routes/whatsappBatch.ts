@@ -15,6 +15,7 @@ import {
   getMediaSetting,
   upsertHeaderImageUpload,
 } from '../repositories/whatsappTemplateMediaSettingsRepository.js';
+import type { AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -194,12 +195,44 @@ router.post('/send', async (req, res) => {
     const result = await sendBatchTemplate({
       rows: spreadsheet.rows,
       mapping,
+      conversationType: bodyResult.data.conversationType,
+      postSendMode: bodyResult.data.postSendMode,
+      sendMode: bodyResult.data.sendMode,
+      scheduledAt: bodyResult.data.scheduledAt ?? null,
+      createdByUserId: (req as AuthenticatedRequest).user?.id ?? null,
     });
 
     res.json(result);
   } catch (e) {
     console.error('[WHATSAPP_BATCH_SEND_ERROR]', e);
     res.status(500).json({ error: 'Erro ao enviar batch' });
+  }
+});
+
+router.post('/schedule', async (req, res) => {
+  try {
+    const bodyResult = BatchSpreadsheetOperationSchema.safeParse({
+      ...req.body,
+      sendMode: 'SCHEDULED',
+    });
+    if (!bodyResult.success) {
+      return res.status(400).json({ error: 'Payload inválido', details: bodyResult.error.issues });
+    }
+
+    const { spreadsheet, mapping } = bodyResult.data;
+    const result = await sendBatchTemplate({
+      rows: spreadsheet.rows,
+      mapping,
+      conversationType: bodyResult.data.conversationType,
+      postSendMode: bodyResult.data.postSendMode,
+      sendMode: 'SCHEDULED',
+      scheduledAt: bodyResult.data.scheduledAt ?? null,
+      createdByUserId: (req as AuthenticatedRequest).user?.id ?? null,
+    });
+    res.json(result);
+  } catch (e) {
+    console.error('[WHATSAPP_BATCH_SCHEDULE_ERROR]', e);
+    res.status(500).json({ error: 'Erro ao agendar batch' });
   }
 });
 

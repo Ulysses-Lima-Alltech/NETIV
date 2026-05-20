@@ -3,7 +3,8 @@ import type {
   BatchParseResponse,
   BatchPreviewResponse,
   BatchTestResult,
-  BatchSendResult,
+  BatchSendResponse,
+  BatchSendOptions,
 } from '../types/whatsappBatch';
 
 /** Base da API: com VITE_API_URL (ex.: https://api.exemplo.com) → `${VITE_API_URL}/api`; sem variável → `/api` (mesmo host; em dev o Vite proxy encaminha para o backend). */
@@ -1283,10 +1284,36 @@ export const whatsappBatchApi = {
       method: 'POST',
       body: params,
     }),
-  sendBatch: (spreadsheet: BatchParseResponse['spreadsheet'], mapping: any) =>
-    request<BatchSendResult>('/whatsapp-batch/send', {
+  sendBatch: (
+    spreadsheet: BatchParseResponse['spreadsheet'],
+    mapping: any,
+    options?: BatchSendOptions
+  ) =>
+    request<BatchSendResponse>('/whatsapp-batch/send', {
       method: 'POST',
-      body: { spreadsheet, mapping },
+      body: {
+        spreadsheet,
+        mapping,
+        ...(options?.conversationType ? { conversationType: options.conversationType } : {}),
+        ...(options?.postSendMode ? { postSendMode: options.postSendMode } : {}),
+        ...(options?.sendMode ? { sendMode: options.sendMode } : {}),
+        ...(options?.scheduledAt ? { scheduledAt: options.scheduledAt } : {}),
+      },
+    }),
+  scheduleBatch: (
+    spreadsheet: BatchParseResponse['spreadsheet'],
+    mapping: any,
+    options: BatchSendOptions
+  ) =>
+    request<BatchSendResponse>('/whatsapp-batch/schedule', {
+      method: 'POST',
+      body: {
+        spreadsheet,
+        mapping,
+        ...(options.conversationType ? { conversationType: options.conversationType } : {}),
+        ...(options.postSendMode ? { postSendMode: options.postSendMode } : {}),
+        ...(options.scheduledAt ? { scheduledAt: options.scheduledAt } : {}),
+      },
     }),
   uploadTemplateHeaderImage: (templateName: string, formData: FormData) =>
     requestFormData<{

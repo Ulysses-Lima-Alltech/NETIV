@@ -46,6 +46,17 @@ export interface BatchMappingConfig {
   variableMappings: Record<string, TemplateVariableSource>;
 }
 
+export type BatchConversationType = 'CLIENT' | 'ADMIN';
+export type BatchPostSendMode = 'ANA' | 'HANDOFF';
+export type BatchSendMode = 'NOW' | 'SCHEDULED';
+
+export interface BatchSendOptions {
+  conversationType?: BatchConversationType;
+  postSendMode?: BatchPostSendMode;
+  sendMode?: BatchSendMode;
+  scheduledAt?: string;
+}
+
 export interface BatchParseResponse {
   spreadsheet: {
     headers: string[];
@@ -105,6 +116,21 @@ export interface BatchSendResult {
     metaMessageId?: string;
   }>;
 }
+
+export interface BatchScheduleResult {
+  scheduled: true;
+  batchId: number;
+  status: 'PENDING';
+  total: number;
+  validRecipients: number;
+  invalidRecipients: number;
+  scheduledAt: string;
+  conversationType: BatchConversationType;
+  postSendMode: BatchPostSendMode;
+  message: string;
+}
+
+export type BatchSendResponse = BatchSendResult | BatchScheduleResult;
 
 export interface BatchTestResult {
   success: boolean;

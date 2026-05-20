@@ -18,8 +18,11 @@ import { ColumnMappingPanel } from '../components/whatsapp-batch/ColumnMappingPa
 import { BatchPreviewTable } from '../components/whatsapp-batch/BatchPreviewTable';
 import { TestSendPanel } from '../components/whatsapp-batch/TestSendPanel';
 import type {
+  BatchConversationType,
   BatchParseResponse,
+  BatchPostSendMode,
   BatchPreviewResponse,
+  BatchSendMode,
   BatchTemplateCatalogItem,
   TemplateVariableSource,
 } from '../types/whatsappBatch';
@@ -104,6 +107,10 @@ export function WhatsAppBatchTemplatePage() {
   const [manualTestVariables, setManualTestVariables] = useState<Record<string, string>>({});
   const [testResult, setTestResult] = useState<string | null>(null);
   const [sendResult, setSendResult] = useState<string | null>(null);
+  const [conversationType, setConversationType] = useState<BatchConversationType>('CLIENT');
+  const [postSendMode, setPostSendMode] = useState<BatchPostSendMode>('ANA');
+  const [sendMode, setSendMode] = useState<BatchSendMode>('NOW');
+  const [scheduledAtLocal, setScheduledAtLocal] = useState('');
   const [loadingParse, setLoadingParse] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [loadingTest, setLoadingTest] = useState(false);
@@ -355,6 +362,25 @@ export function WhatsAppBatchTemplatePage() {
   const canUseRowMode = validPreviewRows.length > 0;
   const selectedPreviewRow =
     testRowNumber == null ? null : validPreviewRows.find((row) => row.rowNumber === testRowNumber) ?? null;
+  const scheduledAtDate = useMemo(() => {
+    if (!scheduledAtLocal.trim()) return null;
+    const parsed = new Date(scheduledAtLocal);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed;
+  }, [scheduledAtLocal]);
+  const scheduleValidationError = useMemo(() => {
+    if (sendMode !== 'SCHEDULED') return null;
+    if (!scheduledAtLocal.trim()) return 'Informe a data e hora para agendar o disparo.';
+    if (!scheduledAtDate) return 'Data/hora inválida para agendamento.';
+    if (scheduledAtDate.getTime() <= Date.now()) return 'A data/hora do agendamento deve ser futura.';
+    return null;
+  }, [scheduledAtDate, scheduledAtLocal, sendMode]);
+  const destinationLabel = conversationType === 'ADMIN' ? 'Interno' : 'Clientes';
+  const postSendModeLabel = postSendMode === 'HANDOFF' ? 'Handoff / atendimento humano' : 'Atendimento da Ana';
+  const sendModeLabel =
+    sendMode === 'SCHEDULED' && scheduledAtDate
+      ? `Agendado para ${scheduledAtDate.toLocaleString('pt-BR')}`
+      : 'Enviar agora';
 
   const buildMappingPayload = () => ({
     templateKey: selectedTemplateKey,
@@ -518,12 +544,21 @@ export function WhatsAppBatchTemplatePage() {
       setError('Selecione um template antes de enviar em lote.');
       return;
     }
+    if (scheduleValidationError) {
+      setError(scheduleValidationError);
+      return;
+    }
     setLoadingSend(true);
     setError(null);
     setSendResult(null);
     try {
       const mapping = buildMappingPayload();
-      const result = await whatsappBatchApi.sendBatch(parseData!.spreadsheet, mapping);
+      const result = await whatsappBatchApi.sendBatch(parseData!.spreadsheet, mapping, {
+        conversationType,
+        postSendMode,
+        sendMode,
+        scheduledAt: sendMode === 'SCHEDULED' && scheduledAtDate ? scheduledAtDate.toISOString() : undefined,
+      });
       setSendResult(JSON.stringify(result, null, 2));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao enviar mensagens.');
@@ -1105,12 +1140,85 @@ export function WhatsAppBatchTemplatePage() {
                         Inválidos/Bloqueados: {(preview?.invalidCount ?? 0) + (preview?.blockedCount ?? 0)}
                       </span>
                     </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <label className="space-y-1">
+                        <span className="block text-[12px] font-medium text-[#374151]">Destino das conversas</span>
+                        <select
+                          value={conversationType}
+                          onChange={(e) => setConversationType(e.target.value === 'ADMIN' ? 'ADMIN' : 'CLIENT')}
+                          className="w-full border border-[#D1D5DB] rounded-[10px] px-3 py-2 text-[13px] bg-white"
+                        >
+                          <option value="CLIENT">Clientes</option>
+                          <option value="ADMIN">Interno</option>
+                        </select>
+                      </label>
+                      <label className="space-y-1">
+                        <span className="block text-[12px] font-medium text-[#374151]">Atendimento após o disparo</span>
+                        <select
+                          value={postSendMode}
+                          onChange={(e) => setPostSendMode(e.target.value === 'HANDOFF' ? 'HANDOFF' : 'ANA')}
+                          className="w-full border border-[#D1D5DB] rounded-[10px] px-3 py-2 text-[13px] bg-white"
+                        >
+                          <option value="ANA">Ana atende automaticamente</option>
+                          <option value="HANDOFF">Handoff / atendimento humano</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="space-y-2">
+                      <span className="block text-[12px] font-medium text-[#374151]">Envio</span>
+                      <div className="flex flex-wrap gap-4 text-[13px] text-[#111827]">
+                        <label className="inline-flex items-center gap-2">
+                          <input
+                            type="radio"
+                            name="batch-send-mode"
+                            checked={sendMode === 'NOW'}
+                            onChange={() => setSendMode('NOW')}
+                          />
+                          <span>Enviar agora</span>
+                        </label>
+                        <label className="inline-flex items-center gap-2">
+                          <input
+                            type="radio"
+                            name="batch-send-mode"
+                            checked={sendMode === 'SCHEDULED'}
+                            onChange={() => setSendMode('SCHEDULED')}
+                          />
+                          <span>Agendar envio</span>
+                        </label>
+                      </div>
+                      {sendMode === 'SCHEDULED' && (
+                        <div className="space-y-1">
+                          <input
+                            type="datetime-local"
+                            value={scheduledAtLocal}
+                            onChange={(e) => setScheduledAtLocal(e.target.value)}
+                            className="w-full md:w-[320px] border border-[#D1D5DB] rounded-[10px] px-3 py-2 text-[13px] bg-white"
+                          />
+                          {scheduleValidationError && (
+                            <p className="text-[12px] text-red-700">{scheduleValidationError}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="rounded-[10px] border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-3 text-[12px] text-[#334155] space-y-1">
+                      <p><strong>Destino:</strong> {destinationLabel}</p>
+                      <p><strong>Atendimento:</strong> {postSendModeLabel}</p>
+                      <p><strong>Envio:</strong> {sendModeLabel}</p>
+                    </div>
                     <button
                       onClick={handleSend}
-                      disabled={loadingSend || (preview?.validCount ?? 0) === 0 || !selectedTemplateKey || !!actionBlockedReason}
+                      disabled={
+                        loadingSend ||
+                        (preview?.validCount ?? 0) === 0 ||
+                        !selectedTemplateKey ||
+                        !!actionBlockedReason ||
+                        !!scheduleValidationError
+                      }
                       className="w-full bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
                     >
-                      {loadingSend ? 'Enviando...' : `Enviar ${preview?.validCount ?? 0} mensagens`}
+                      {loadingSend
+                        ? (sendMode === 'SCHEDULED' ? 'Agendando...' : 'Enviando...')
+                        : (sendMode === 'SCHEDULED' ? 'Agendar disparo' : 'Enviar disparo')}
                     </button>
                     {sendResult && (
                       <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px] p-4">
