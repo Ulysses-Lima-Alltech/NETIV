@@ -43,7 +43,7 @@ export const ANA_COMMERCIAL_RULES = {
     ],
     entrega_empreendimento: [
       'Vou confirmar para você a previsão de entrega com base nos dados atualizados do empreendimento.',
-      'Quer que eu te ajude a agendar uma visita para conhecer o andamento pessoalmente?',
+      'Quer saber também como está a infraestrutura prevista?',
     ],
     valor_condominio: [
       'O valor de condomínio vai depender das definições feitas pelos próprios moradores e associação do condomínio, mas temos uma estimativa entre R$400,00 e R$700,00.',

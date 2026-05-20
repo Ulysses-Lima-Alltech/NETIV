@@ -29,6 +29,21 @@ function normalizeCompare(value: string | null | undefined): string {
   return normalizeText(value).replace(/[.!?,;:()"'`´]/g, '').trim();
 }
 
+const EXPLICIT_VISIT_CTA_PATTERNS: RegExp[] = [
+  /agendar uma visita/,
+  /marcar uma visita/,
+  /conhecer pessoalmente/,
+  /conhecer o stand/,
+  /visitar o lote/,
+  /conhecer o andamento pessoalmente/,
+  /que tal marcarmos uma visita/,
+];
+
+export function hasRecentExplicitVisitCta(recentAssistantReplies: string[]): boolean {
+  const recent = recentAssistantReplies.slice(-4).map((msg) => normalizeText(msg));
+  return recent.some((msg) => EXPLICIT_VISIT_CTA_PATTERNS.some((re) => re.test(msg)));
+}
+
 function isEvoraEnterprise(enterpriseName: string | null | undefined): boolean {
   const n = normalizeText(enterpriseName);
   return n === 'evora' || n.includes('evora');

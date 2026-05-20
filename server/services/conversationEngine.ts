@@ -169,6 +169,7 @@ import {
   applyAnaNoRepeatMessageGuard,
   applyAnaVisitOfferGuard,
   applyEvoraLocationGuard,
+  hasRecentExplicitVisitCta,
 } from '../utils/anaEvoraCommercialGuards.js';
 import { applyAnaVisitSchedulingGuard } from '../utils/anaVisitSchedulingGuard.js';
 import {
@@ -2955,7 +2956,34 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         knownNameFromConversation || knownNameFromWhatsApp || knownNameFromContact || knownNameFromCurrentTurn
       );
 
+      const recentAssistantForCtaPolicy = [...rows]
+        .filter((m) => m.role === 'assistant')
+        .map((m) => (m.content || '').trim())
+        .filter((msg) => msg.length > 0)
+        .slice(-8);
+      const hasRecentVisitCta = hasRecentExplicitVisitCta(recentAssistantForCtaPolicy);
+
       const commercialMessagesToSend = [...commercialRule.messages];
+      if (commercialRule.ruleId === 'entrada') {
+        const answer = commercialRule.messages[0] ?? '';
+        const defaultCta =
+          'O corretor consegue simular certinho com as opções disponíveis. Quer que eu te ajude a agendar uma visita?';
+        const alternateCta = 'Quer que eu te explique as opções de parcelamento?';
+        const cta = hasRecentVisitCta ? alternateCta : defaultCta;
+        commercialMessagesToSend.length = 0;
+        commercialMessagesToSend.push(answer);
+        if (!hasKnownCustomerName) commercialMessagesToSend.push('Qual é o seu nome? Assim eu consigo te atender melhor por aqui.');
+        commercialMessagesToSend.push(cta);
+      } else if (commercialRule.ruleId === 'formas_pagamento') {
+        const answer = commercialRule.messages[0] ?? '';
+        const defaultCta = 'Você quer que eu te ajude a simular com um corretor ou prefere agendar uma visita?';
+        const alternateCta = 'Quer que eu te explique melhor a diferença entre essas opções?';
+        const cta = hasRecentVisitCta ? alternateCta : defaultCta;
+        commercialMessagesToSend.length = 0;
+        commercialMessagesToSend.push(answer);
+        if (!hasKnownCustomerName) commercialMessagesToSend.push(ANA_COMMERCIAL_RULES.askNameMessage);
+        commercialMessagesToSend.push(cta);
+      }
       if (commercialRule.ruleId === 'entrega_empreendimento') {
         const operational = resolveOperationalFactAnswer(trimmed, knowledgeText, vars, {
           enterpriseName: ent?.name ?? null,
@@ -2970,11 +2998,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         commercialMessagesToSend.push(
           resolvedEntrega.replace(/\[DATA\/PRAZO DA BASE\]/gi, '').replace(/\s{2,}/g, ' ').trim()
         );
-        commercialMessagesToSend.push('Quer que eu te ajude a agendar uma visita para conhecer o andamento pessoalmente?');
+        commercialMessagesToSend.push('Quer saber também como está a infraestrutura prevista?');
       }
 
       const shouldAskNameAfterCommercialReply =
-        !hasKnownCustomerName && commercialRule.ruleId !== 'visita_agendamento';
+        !hasKnownCustomerName &&
+        commercialRule.ruleId !== 'visita_agendamento' &&
+        commercialRule.ruleId !== 'entrada' &&
+        commercialRule.ruleId !== 'formas_pagamento';
       if (shouldAskNameAfterCommercialReply) {
         commercialMessagesToSend.push(ANA_COMMERCIAL_RULES.askNameMessage);
       }
