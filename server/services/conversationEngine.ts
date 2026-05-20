@@ -4720,7 +4720,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         branch,
         outboundBlocked: true,
       });
-      // REGRA DESATIVADA EMERGENCIALMENTE: não bloquear outbound da Ana após resposta válida.
+      return;
     } else {
       replyText =
         anaDecision.responseMode === 'structured'
@@ -5151,7 +5151,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         outboundStatus: anaTurnAuditOutcome,
         blockedReason: finalOutboundEval.reason,
       });
-      // REGRA DESATIVADA EMERGENCIALMENTE: não bloquear outbound da Ana após resposta válida.
+      // EMERGENCIAL: bypass do bloqueio final para não travar resposta da Ana em produção.
     }
     replyText = finalOutboundEval.text;
     anaTurnAuditGuardsApplied.outboundReason = finalOutboundEval.reason;
@@ -5825,7 +5825,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         outboundStatus: anaTurnAuditOutcome,
         blockedReason: anaTurnAuditBlockedReason,
       });
-      // REGRA DESATIVADA EMERGENCIALMENTE: não bloquear outbound da Ana após resposta válida.
+      return;
     }
 
     const shouldForceEvoraLocationTriplet = isEvoraLocationQuestion(trimmed);
