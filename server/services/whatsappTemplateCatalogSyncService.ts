@@ -247,12 +247,30 @@ export async function createMetaTemplate(input: MetaTemplateCreateInput): Promis
     body: JSON.stringify({
       name: input.name.trim(),
       category: input.category,
+      allow_category_change: true,
       language: input.language || 'pt_BR',
       components,
     }),
   });
-  const payload = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
-  if (!response.ok) throw new Error(payload.error?.message || `Meta create failed (${response.status}).`);
+  const payload = (await response.json().catch(() => ({}))) as {
+    error?: {
+      message?: string;
+      error_user_title?: string;
+      error_user_msg?: string;
+    };
+  };
+  if (!response.ok) {
+    console.error('[META_TEMPLATE_CREATE_FULL_ERROR]', JSON.stringify(payload, null, 2));
+    const errorUserMsg = String(payload.error?.error_user_msg ?? '').trim();
+    const errorUserTitle = String(payload.error?.error_user_title ?? '').trim();
+    const errorMessage = String(payload.error?.message ?? '').trim();
+    const detailedError =
+      errorUserMsg ||
+      (errorUserTitle && errorUserMsg ? `${errorUserTitle}: ${errorUserMsg}` : '') ||
+      errorMessage ||
+      `Meta create failed (${response.status})`;
+    throw new Error(detailedError);
+  }
   cacheEntry = null;
   return payload;
 }
