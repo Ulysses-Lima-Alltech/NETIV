@@ -3,7 +3,7 @@ import { getActiveEnterpriseById } from './enterpriseRepository.js';
 import { getCorretorById } from './corretorRepository.js';
 import { assignBrokerForHandoffConversation } from '../services/handoffQueueService.js';
 import { notifyDjango, buildLeadPayload } from '../services/djangoWebhook.js';
-import { isAutoHandoffEnabled, logAutoHandoffBlocked } from '../utils/autoHandoffPolicy.js';
+import { logAutoHandoffBlocked } from '../utils/autoHandoffPolicy.js';
 import type { LeadOriginInput } from '../services/leadOriginResolver.js';
 import { resolveEnterpriseFromLeadSource } from '../services/leadOriginResolver.js';
 import { parseCommercialFlowState, type CommercialFlowState } from '../utils/commercialFlowState.js';
@@ -1128,24 +1128,19 @@ export async function applyAnaConversationUpdate(
   const conv = await getConversationById(conversationId);
   if (!conv) return;
   let classification = toValidClassification(meta.classification?.trim() || conv.classification);
-
   const requestedAutoHandoff = !!meta.handoff || classification === 'Handoff';
-  const autoHandoffEnabled = isAutoHandoffEnabled();
-  if (requestedAutoHandoff && !autoHandoffEnabled) {
+  if (requestedAutoHandoff) {
     logAutoHandoffBlocked({
       origin: 'applyAnaConversationUpdate',
       conversationId,
-      reason: 'ana_automatic_update_requested_handoff',
+      reason: 'ana_automatic_handoff_removed',
       requestedClassification: meta.classification ?? null,
       requestedHandoff: meta.handoff ?? null,
     });
   }
-
-  // Handoff automático vindo da Ana/modelo temporariamente desativado.
-  // Handoff manual pela tela continua preservado via updateClassification().
-  const handoff = autoHandoffEnabled ? !!meta.handoff : false;
-
-  if (!autoHandoffEnabled && classification === 'Handoff') {
+  // Regra definitiva: updates automáticos da Ana nunca podem ativar handoff.
+  const handoff = false;
+  if (classification === 'Handoff') {
     const restored = toValidClassification(conv.classification);
     classification = restored === 'Handoff' ? 'Novo' : restored;
   }
@@ -1183,18 +1178,7 @@ export async function applyAnaConversationUpdate(
      updated_at = NOW() WHERE id = $5`,
     [classification, lead_temperature, handoff, cn ?? null, conversationId, saveBeforeHandoff ?? null]
   );
-  if (handoff) {
-    const updatedConv = await getConversationById(conversationId);
-    if (updatedConv) {
-      const contact = updatedConv.contact_id != null ? await findContactById(updatedConv.contact_id) : null;
-      notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(updatedConv, {
-        whatsappDisplayName: updatedConv.whatsapp_display_name ?? null,
-        contactFullName: contact?.full_name ?? null,
-        contactFirstName: contact?.first_name ?? null,
-      }));
-    }
-    await assignBrokerForHandoffConversation(conversationId);
-  }
+  // Sem ações automáticas de handoff neste fluxo.
 }
 
 /** Persiste o JSON de estado comercial (objeto completo vindo de `computeNextCommercialFlowState`). */

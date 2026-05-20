@@ -1718,20 +1718,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     console.log('[ANA DEBUG] handoff check passed');
 
     if (hasExplicitHandoffIntent(trimmed)) {
-      const mergedLeadOnHandoff = maxLeadTemperature(
-        effectiveConv.lead_temperature,
-        detectStrongPurchaseIntentForLeadTemperature(trimmed) ? 'quente' : null
-      );
-      console.warn('auto_handoff_blocked_by_temporary_policy', {
+      console.warn('explicit_handoff_intent_detected_no_auto_handoff', {
         origin: 'conversationEngine.hasExplicitHandoffIntent',
         conversationId,
-        reason: 'explicit_human_handoff_intent_detected',
-        requestedHandoff: true,
-      });
-      await applyAnaConversationUpdate(conversationId, {
-        classification: 'Handoff',
-        ...(mergedLeadOnHandoff != null ? { lead_temperature: mergedLeadOnHandoff } : {}),
-        handoff: true,
       });
     }
 
@@ -2155,10 +2144,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         anaTurnAuditBlockedReason = `material_flow_${materialTurnResult.status.toLowerCase()}_handoff`;
       }
       if (materialTurnResult.status !== 'MATERIAL_SENT') {
-        await applyAnaConversationUpdate(conversationId, {
-          classification: 'Handoff',
-          handoff: true,
-        });
         console.log('[ANA_MATERIAL_FLOW_BLOCKED]', {
           conversationId,
           status: materialTurnResult.status,
@@ -3889,12 +3874,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           fallbackReason: traceReason,
           usedFallback: false,
         });
-        if (!isRateLimitBlock) {
-          await applyAnaConversationUpdate(conversationId, {
-            classification: 'Handoff',
-            handoff: true,
-          });
-        } else {
+        if (isRateLimitBlock) {
           console.log('[ANA_RATE_LIMIT_ABORT_NO_FALLBACK]', {
             conversationId,
             messageId: inboundMetaMessageId,
@@ -3985,8 +3965,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         structured = {
           ...structured,
           reply: ANA_PROVIDER_FAILURE_HANDOFF_REPLY,
-          classification: 'Handoff',
-          handoff: true,
+          classification: 'Qualificado',
+          handoff: false,
         };
       }
 
@@ -4025,7 +4005,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
       structured = deterministicFallbackReply.trim()
   ? { ...structured, reply: deterministicFallbackReply }
-  : { ...structured, reply: '', shouldSend: false, handoffToHuman: true, handoffReason: 'generic_fallback_blocked' };
+  : {
+      ...structured,
+      reply: 'Não tenho essa informação exata liberada por aqui, mas posso te ajudar com valores, localização ou formas de pagamento.',
+      shouldSend: true,
+      handoffToHuman: false,
+      handoffReason: null,
+    };
       console.log('[ANA_DETERMINISTIC_REPLY]', {
         conversationId,
         reason:
@@ -4157,12 +4143,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         anaTurnAuditBlockedReason = 'material_policy_blocked_handoff';
         anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
         anaTurnDiagnostics.finalResponse.replySource = null;
-        anaTurnDiagnostics.finalResponse.handoffUsed = true;
+        anaTurnDiagnostics.finalResponse.handoffUsed = false;
         anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-        await applyAnaConversationUpdate(conversationId, {
-          classification: 'Handoff',
-          handoff: true,
-        });
         console.log('[ANA_DOC_SEND_BLOCKED_NO_FALLBACK]', {
           conversationId,
           reason: anaTurnAuditBlockedReason,
@@ -4275,10 +4257,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       detectStrongPurchaseIntentForLeadTemperature(trimmed) ? 'quente' : null
     );
     await applyAnaConversationUpdate(conversationId, {
-      classification: structured.classification,
+      classification: structured.classification === 'Handoff' ? 'Qualificado' : structured.classification,
       ...(mergedLeadForAna != null ? { lead_temperature: mergedLeadForAna } : {}),
       ...(trustedCustomerName ? { customer_name: trustedCustomerName } : {}),
-      handoff: structured.handoff,
+      handoff: false,
     });
 
     let replyBody = structured.reply;
@@ -4731,12 +4713,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       anaTurnAuditBlockedReason = `material_send_blocked_${branch}`;
       anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
       anaTurnDiagnostics.finalResponse.replySource = null;
-      anaTurnDiagnostics.finalResponse.handoffUsed = true;
+      anaTurnDiagnostics.finalResponse.handoffUsed = false;
       anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-      await applyAnaConversationUpdate(conversationId, {
-        classification: 'Handoff',
-        handoff: true,
-      });
       console.log('[ANA_DOC_HARD_FAIL_NO_FALLBACK]', {
         conversationId,
         branch,
@@ -5429,23 +5407,28 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           postPolicyReason: postPolicyGuardAfterSanitize.reason,
         };
         anaTurnDiagnostics.finalResponse.replySource = null;
-        anaTurnDiagnostics.finalResponse.handoffUsed = true;
+        anaTurnDiagnostics.finalResponse.handoffUsed = false;
         anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
         markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
           replySource: null,
           outboundStatus: anaTurnAuditOutcome,
           blockedReason: anaTurnAuditBlockedReason,
         });
-        await applyAnaConversationUpdate(conversationId, {
-          classification: 'Handoff',
-          handoff: true,
+        replyText =
+          'Não tenho essa informação exata liberada por aqui, mas posso te ajudar com valores, localização ou formas de pagamento.';
+        anaTurnAuditOutcome = 'sent';
+        anaTurnDiagnostics.finalResponse.replySource = 'deterministic_fallback';
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
+          replySource: 'deterministic_fallback',
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: anaTurnAuditBlockedReason,
         });
         console.log('[ANA_EMPTY_FALLBACK_BLOCKED_AFTER_POST_POLICY]', {
           conversationId,
           reason: postPolicyGuardAfterSanitize.reason,
           replyPreview: replyText.slice(0, 220),
         });
-        return;
       }
       }
     }
@@ -5506,16 +5489,24 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         fallbackReason,
         usedFallback: false,
       });
-      await applyAnaConversationUpdate(conversationId, {
-        classification: 'Handoff',
-        handoff: true,
+      replyText =
+        'Não tenho essa informação exata liberada por aqui, mas posso te ajudar com valores, localização ou formas de pagamento.';
+      anaTurnAuditOutcome = 'sent';
+      anaTurnDiagnostics.finalResponse.replySource = 'deterministic_fallback';
+      anaTurnDiagnostics.finalResponse.handoffUsed = false;
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
+        replySource: 'deterministic_fallback',
+        outboundStatus: anaTurnAuditOutcome,
+        blockedReason: anaTurnAuditBlockedReason,
+        fallbackReason,
+        usedFallback: true,
       });
       console.log('[ANA_TECHNICAL_FALLBACK_PHRASE_BLOCKED]', {
         conversationId,
         fallbackReason,
         blockedReason: anaTurnAuditBlockedReason,
       });
-      return;
       }
     }
 
