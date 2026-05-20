@@ -200,6 +200,7 @@ import {
   isVisitSchedulingRefusal,
   resolveAnaCommercialRule,
 } from './anaCommercialRulesService.js';
+import { ANA_COMMERCIAL_RULES } from '../config/anaCommercialRules.js';
 
 /** Desligado para rastrear o fluxo real com [ANA_ENGINE_TRACE]. */
 const ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY = false;
@@ -890,6 +891,13 @@ const HANDOFF_INTENT_PATTERNS = [
 
 function normText(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim();
+}
+
+function toFirstName(value: string | null | undefined): string | null {
+  const raw = (value || '').trim();
+  if (!raw) return null;
+  const first = raw.split(/\s+/)[0]?.trim() || '';
+  return first.length >= 2 ? first : null;
 }
 
 const ANA_INTERNAL_LEAK_PATTERNS: RegExp[] = [
@@ -2879,7 +2887,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           messagesCount: commercialRule.messages.length,
         }
       );
-      if (commercialRule.ruleId === 'detalhes_lotes') {
+      if (commercialRule.ruleId === 'disponibilidade_simulacao_desconto') {
         console.log('[ANA_COMMERCIAL_RULE_LOT_DETAILS]', {
           conversationId,
           enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
@@ -2905,7 +2913,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
 
       const commercialRuleVisitOfferDecision =
-        commercialRule.ruleId === 'oferta_visita'
+        commercialRule.ruleId === 'visita_agendamento'
           ? {
               appendedVisitOfferMessages: [] as string[],
               appendedVisitOffer: false,
@@ -2938,8 +2946,46 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         return;
       }
 
+      const knownNameFromConversation = toFirstName(effectiveConv.customer_name || null);
+      const knownNameFromWhatsApp = toFirstName(effectiveConv.whatsapp_display_name || null);
+      const knownNameFromContact =
+        toFirstName(linkedContact?.first_name || null) || toFirstName(linkedContact?.full_name || null);
+      const knownNameFromCurrentTurn = toFirstName(trustedCustomerName || null);
+      const hasKnownCustomerName = Boolean(
+        knownNameFromConversation || knownNameFromWhatsApp || knownNameFromContact || knownNameFromCurrentTurn
+      );
+
+      const commercialMessagesToSend = [...commercialRule.messages];
+      if (commercialRule.ruleId === 'entrega_empreendimento') {
+        const operational = resolveOperationalFactAnswer(trimmed, knowledgeText, vars, {
+          enterpriseName: ent?.name ?? null,
+          hintedTopic: 'entrega_prazo',
+        });
+        const fallbackEntrega =
+          'Ainda não tenho a previsão exata liberada por aqui. O corretor confirma certinho para você no atendimento.';
+        const resolvedEntrega = operational?.dataFound
+          ? operational.answer
+          : fallbackEntrega;
+        commercialMessagesToSend.length = 0;
+        commercialMessagesToSend.push(
+          resolvedEntrega.replace(/\[DATA\/PRAZO DA BASE\]/gi, '').replace(/\s{2,}/g, ' ').trim()
+        );
+        commercialMessagesToSend.push('Quer que eu te ajude a agendar uma visita para conhecer o andamento pessoalmente?');
+      }
+
+      const shouldAskNameAfterCommercialReply =
+        !hasKnownCustomerName && commercialRule.ruleId !== 'visita_agendamento';
+      if (shouldAskNameAfterCommercialReply) {
+        commercialMessagesToSend.push(ANA_COMMERCIAL_RULES.askNameMessage);
+      }
+
       let lastCommercialRuleMetaMessageId: string | null = null;
-      for (const [index, commercialRuleMessage] of commercialRule.messages.entries()) {
+      const recentAssistantForNoRepeat = [...rows]
+        .filter((m) => m.role === 'assistant')
+        .map((m) => (m.content || '').trim())
+        .filter((msg) => msg.length > 0)
+        .slice(-8);
+      for (const [index, commercialRuleMessageRaw] of commercialMessagesToSend.entries()) {
         if (index > 0) await sleepMs(900);
         if (isPipelineStale(conversationId, replyPipelineToken)) {
           anaTurnAuditOutcome = 'silent';
@@ -2947,6 +2993,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           anaTurnDiagnostics.finalResponse.replySource = commercialRule.replySource;
           anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
           return;
+        }
+        let commercialRuleMessage = commercialRuleMessageRaw;
+        const noRepeatForCommercialRule = applyAnaNoRepeatMessageGuard({
+          conversationId,
+          enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+          enterpriseName: ent?.name ?? null,
+          userMessage: trimmed,
+          answer: commercialRuleMessage,
+          recentAssistantReplies: recentAssistantForNoRepeat,
+          semanticallySimilar: repliesSemanticallySimilar,
+        });
+        if (noRepeatForCommercialRule.changed) {
+          commercialRuleMessage = noRepeatForCommercialRule.text;
         }
         const sendResult = await sendTextMessage({
           conversationId,
@@ -2975,11 +3034,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
         lastCommercialRuleMetaMessageId = sendResult.metaMessageId;
         await insertMessage(conversationId, 'assistant', commercialRuleMessage, sendResult.metaMessageId);
+        recentAssistantForNoRepeat.push(commercialRuleMessage);
         console.log('[ANA_COMMERCIAL_RULE_MESSAGE_SENT]', {
           conversationId,
           ruleId: commercialRule.ruleId,
           messageIndex: index + 1,
-          messagesCount: commercialRule.messages.length,
+          messagesCount: commercialMessagesToSend.length,
           outboundMetaMessageId: sendResult.metaMessageId,
         });
       }
@@ -5543,6 +5603,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       conversationId,
       enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
       enterpriseName: ent?.name ?? null,
+      userMessage: trimmed,
       answer: replyText,
       recentAssistantReplies: recentAssistantRepliesForDeterministicGuard,
       semanticallySimilar: repliesSemanticallySimilar,
@@ -5623,14 +5684,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         if (schedulingAlreadyScheduled) {
           replyText = 'Perfeito. Se quiser, posso te ajudar com valores, pagamento, localização ou detalhes dos lotes.';
         } else {
-          anaTurnAuditOutcome = 'blocked';
-          anaTurnAuditBlockedReason = 'repeated_response_guard';
-          anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
-          await applyAnaConversationUpdate(conversationId, {
-            classification: 'Handoff',
-            handoff: true,
-          });
-          return;
+          replyText =
+            'Posso te ajudar com esse ponto de forma objetiva. Você quer ver valores, entrada, pagamento, localização ou visita?';
         }
       }
     }

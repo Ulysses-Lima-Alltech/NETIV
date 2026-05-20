@@ -1,63 +1,58 @@
 ﻿export type AnaCommercialIntent =
   | 'first_contact'
-  | 'valor_metro_quadrado'
-  | 'detalhes_lotes'
-  | 'oferta_visita'
+  | 'preco_valor_lote'
+  | 'entrada'
   | 'formas_pagamento'
-  | 'localizacao_regiao'
-  | 'endereco'
-  | 'seguranca'
-  | 'investimento'
+  | 'financiamento'
+  | 'localizacao_endereco'
+  | 'visita_agendamento'
+  | 'entrega_empreendimento'
   | 'valor_condominio'
-  | 'areas_lazer';
+  | 'disponibilidade_simulacao_desconto'
+  | 'materiais';
 
 export const ANA_COMMERCIAL_RULES = {
   enterpriseKey: 'evora',
+  askNameMessage: 'Ah, e qual é o seu nome? Assim já te atendo melhor por aqui.',
   firstContactMessages: [
     'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas.',
-    'Fácil acesso pela Rodovia Dom Pedro I, perto da área da Pedreira, a aproximadamente 50 minutos de Sao Paulo.',
+    'Fica com fácil acesso pela Rodovia Dom Pedro I, perto da região da Pedreira, a aproximadamente 50 minutos de São Paulo.',
     'Me conta, quais são suas dúvidas? Vou responder todas.',
   ],
   byIntent: {
-    valor_metro_quadrado: [
-      'O nosso metro quadrado é o mais atrativo da região, a partir de R$775,00',
-      'O que mais eu posso te ajudar neste momento?',
+    preco_valor_lote: [
+      'O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.',
     ],
-    detalhes_lotes: [
-      'O Évora tem lotes a partir de 360 m², com opções para diferentes perfis de projeto. Temos lotes próximos à área de lazer, opções com fundos para área verde e metragens maiores para quem busca mais privacidade.',
-      'Você prefere um lote mais prático, a partir de 360 m², ou uma opção maior, com mais privacidade?',
-    ],
-    oferta_visita: [
-      'Que tal você marcar uma visita ?',
-      'Aproveita pra conhecer nosso stand que fica localizado no próprio empreendimento, assim você conhece o loteamento e já pode até visitar o seu lote.',
-      'Estamos com 55% de obras executadas, vale a pena a visita, vamos marcar?',
+    entrada: [
+      'A entrada mínima é de 20% do valor do lote. O valor exato depende da unidade escolhida.',
+      'O corretor consegue simular certinho com as opções disponíveis. Quer que eu te ajude a agendar uma visita?',
     ],
     formas_pagamento: [
-      'Temos diversas formas de pagamento que podem se encaixar na sua realidade. Para parcelas mais baixas temos planos estendidos em ate 120x e para parcelamento sem juros temos planos em ate 48x. Essas condições são únicas no mercado, isso voce so encontra aqui no Evora',
-      'O financiamento é facilitado por ser direto com a construtora, menos burocracia e mais facilidade pra você.',
+      'Temos algumas formas de pagamento que podem se encaixar na sua realidade. Para parcelas mais baixas, existem planos estendidos em até 120x. Para parcelamento sem juros, há opções em até 48x.',
+      'Você quer que eu te ajude a simular com um corretor ou prefere agendar uma visita?',
     ],
-    localizacao_regiao: [
-      'Atibaia faz parte da região bragantina, que é uma das regiões mais valorizadas e desenvolvidas do estado. Fica a 50 minutos de São Paulo, tornando o Évora um condomínio para casas de veraneio ou até mesmo moradia.',
-      'A cidade de Atibaia é rica em gastronomia, contendo os melhores restaurantes da região, sem contar com a avenida Lucas Nogueira Garces, que além de ser um verdadeiro centro gastronômico contém também as principais grifes, bares renomados se tornando um charmoso shopping a céu aberto.',
-      'Não podemos deixar de destacar que Atibaia foi considerada a cidade com o segundo melhor clima do mundo pela ONU.',
+    financiamento: [
+      'O financiamento é facilitado por ser direto com a construtora, com menos burocracia e mais facilidade pra você.',
+      'Quer que eu te ajude a simular com um corretor?',
     ],
-    endereco: [
-      'Fica na Região da pedreira, no bairro do Rio Abaixo. Um bairro já conceituado com diversos condomínios de médio e alto padrão.',
+    localizacao_endereco: [
+      'O Évora fica na Estrada dos Pires, s/n, bairro Rio Abaixo, em Atibaia. Fica próximo à região da Pedreira, com acesso pela Rodovia Dom Pedro I.',
     ],
-    seguranca: [
-      'O Évora conta com portaria 24 horas com controle de acesso, pensado para trazer mais tranquilidade aos moradores.',
+    visita_agendamento: [
+      'Perfeito! Pra agendarmos sua visita, só preciso saber seu nome, dia e horário que prefere.',
     ],
-    investimento: [
-      'Show! O Évora tem um ótimo potencial de valorização, viu? Agora me diz: você prefere terrenos menores e práticos ou maiores com mais privacidade? Temos opções de 360m² até 1.000m².',
-      'Perfeito! Os terrenos abaixo de [X] são práticos pra quem quer investir e manter custos mais controlados. Você faz questão de uma vista específica, tipo pra área verde ou pra região das piscinas?',
+    entrega_empreendimento: [
+      'Vou confirmar para você a previsão de entrega com base nos dados atualizados do empreendimento.',
+      'Quer que eu te ajude a agendar uma visita para conhecer o andamento pessoalmente?',
     ],
     valor_condominio: [
-      'O valor de condomínio vai depender das definições feitas pelos próprios moradores e associação do condomínio, mas temos uma estimativa entre R$400,00 e R$700,00',
+      'O valor de condomínio vai depender das definições feitas pelos próprios moradores e associação do condomínio, mas temos uma estimativa entre R$400,00 e R$700,00.',
     ],
-    areas_lazer: [
-      'Não posso deixar de comentar que o Évora é um verdadeiro paraíso onde voce contempla vistas deslumbrantes, com muita natureza e área verde nos 4 cantos do empreendimento, e nossas areas de lazer são bem completas, veja:',
-      '- Piscina adulto\n- Academia\n- Salão de festas\n- Playground\n- Coworking\n- Espaço zen\n- Fireplace\n- Quadra de beach tennis\n- Campo society',
-      'Além da área de lazer, temos estação de carregamento para carros elétricos, portaria 24 horas com controle de acesso.',
+    disponibilidade_simulacao_desconto: [
+      'Esses detalhes variam conforme as opções disponíveis. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?',
+    ],
+    materiais: [
+      'Não tenho esse material liberado para envio por aqui. Tem algum detalhe específico que você gostaria de tratar?',
     ],
   } satisfies Record<Exclude<AnaCommercialIntent, 'first_contact'>, string[]>,
   followupWhileNoResponseMessages: [

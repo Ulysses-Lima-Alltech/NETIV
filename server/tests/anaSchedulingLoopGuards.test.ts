@@ -7,17 +7,17 @@ test('recusa de agendamento cancela fluxo e evita pedir horario', () => {
   assert.match(source, /APPOINTMENT_FLOW_CANCELLED_BY_USER/);
   assert.match(source, /isVisitSchedulingRefusal\(trimmed\) \|\| isVisitSchedulingRefusalMessage\(trimmed\)/);
   assert.match(source, /pendingVisitScheduling:\s*false/);
-  assert.match(source, /directVisitSchedulingIntent && !userRefusedScheduling/);
 });
 
-test('regras comerciais cobrem lotes planos e tem plano', () => {
+test('regras comerciais cobrem entrada e pagamento', () => {
   const cfg = readFileSync(new URL('../config/anaCommercialRules.ts', import.meta.url), 'utf8');
   const svc = readFileSync(new URL('../services/anaCommercialRulesService.ts', import.meta.url), 'utf8');
-  assert.match(cfg, /detalhes_lotes/);
-  assert.match(cfg, /lotes a partir de 360 m²/);
-  assert.match(cfg, /planos estendidos em ate 120x|planos estendidos em até 120x/);
-  assert.match(svc, /lotes planos|lote plano|tipo de lote/);
-  assert.match(svc, /tem plano|planos/);
+  assert.match(cfg, /entrada/);
+  assert.match(cfg, /20% do valor do lote/);
+  assert.match(cfg, /120x/);
+  assert.match(cfg, /48x/);
+  assert.match(svc, /entrega_empreendimento/);
+  assert.match(svc, /valor_condominio/);
 });
 
 test('resposta repetida de agendamento e bloqueada', () => {
@@ -27,35 +27,14 @@ test('resposta repetida de agendamento e bloqueada', () => {
   assert.match(source, /repeated_response_guard/);
 });
 
-test('cliente irritado recebe reparo curto sem insistir em agendamento', () => {
-  const source = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
-  assert.match(source, /Desculpa, você tem razão\. Sem agendar visita agora\. Vou te passar os detalhes por aqui\./);
-});
-
 test('logs de regra comercial obrigatoria existem', () => {
   const source = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
-  assert.match(source, /ANA_COMMERCIAL_RULE_LOT_DETAILS/);
   assert.match(source, /ANA_COMMERCIAL_RULE_PAYMENT_PLANS/);
+  assert.match(source, /ANA_COMMERCIAL_RULE_LOT_DETAILS/);
 });
 
-test('heranca contextual de pagamento existe e registra log', () => {
-  const svc = readFileSync(new URL('../services/anaCommercialRulesService.ts', import.meta.url), 'utf8');
-  const eng = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
-  assert.match(svc, /isPaymentContextFromAssistant/);
-  assert.match(svc, /isPaymentContextContinuationRequest/);
-  assert.match(svc, /inheritedIntent:\s*'payment_terms'/);
-  assert.match(eng, /ANA_PAYMENT_INTENT_CONTEXT_GUARD/);
-});
-
-test('oferta de visita e enviada em mensagens separadas', () => {
+test('mensagem de nome separada no fluxo comercial existe', () => {
   const source = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
-  assert.match(source, /appendedVisitOfferMessagesForFinalSend/);
-  assert.match(source, /phase:\s*'ana_main_reply_visit_offer'/);
-  assert.match(source, /ANA_COMMERCIAL_RULE_VISIT_OFFER_MESSAGE_SENT/);
-});
-
-test('agendamento confirmado nao força handoff automatico por repeticao', () => {
-  const source = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
-  assert.match(source, /Visita agendada/);
-  assert.match(source, /schedulingAlreadyScheduled/);
+  assert.match(source, /askNameMessage/);
+  assert.match(source, /commercialMessagesToSend\.push\(ANA_COMMERCIAL_RULES\.askNameMessage\)/);
 });

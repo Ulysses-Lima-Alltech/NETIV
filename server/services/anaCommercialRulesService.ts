@@ -9,65 +9,76 @@ function normalizeText(value: string | null | undefined): string {
     .trim();
 }
 
-function isPaymentIntentDirect(userMessage: string): boolean {
+function hasAny(n: string, patterns: RegExp[]): boolean {
+  return patterns.some((re) => re.test(n));
+}
+
+function isGreetingInitialInterest(userMessage: string): boolean {
   const n = normalizeText(userMessage);
-  return /\b(tem plano|planos|pagamento|parcelamento|parcelas|financiamento|juros|120x|48x|entrada|condicao sem juros|condicao sem juro|parcelas mais baixas|as mais baixas|como funciona)\b/.test(
-    n
-  );
+  if (!n) return false;
+  const greeting = [
+    /\b(gostaria de saber sobre|quero saber mais|tenho interesse|me fala sobre o empreendimento)\b/,
+    /\b(ol[ae]|oi)\b.*\b(interesse|evora|empreendimento)\b/,
+  ];
+  return hasAny(n, greeting);
 }
 
-function isPaymentContextFromAssistant(previousAssistantMessage: string | null | undefined): boolean {
-  const n = normalizeText(previousAssistantMessage);
-  return /\b(formas de pagamento|pagamento|parcelamento|parcelas|financiamento|posso te explicar como funciona|te explicar como funciona)\b/.test(
-    n
-  );
+function isEntregaEmpreendimentoIntent(n: string): boolean {
+  const hasCondo = /\bcondomin/.test(n);
+  const hasEntregaTerm = /\b(quando|entrega|entregue|previsao|prazo|pronto|obra|obras|libera|liberacao|lotes|construir|construcao|andamento)\b/.test(n);
+  if (hasCondo && hasEntregaTerm) return true;
+  return hasAny(n, [
+    /\b(quando sera entregue|quando entrega|previsao de entrega|prazo de entrega|quando ficam prontos os lotes|quando libera os lotes|quando posso construir|andamento das obras|como estao as obras|esta com quanto de obra|ja esta pronto|quando posso usar o lote)\b/,
+  ]);
 }
 
-function isPaymentContextContinuationRequest(userMessage: string): boolean {
-  const n = normalizeText(userMessage);
-  return /\b(me explique|explica|quero entender|sim|pode explicar|como funciona|as mais baixas|me detalha)\b/.test(n);
-}
-
-export function splitCommercialRuleMessages(lines: readonly string[]): string[] {
-  return lines
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-export function isEvoraEnterpriseName(enterpriseName: string | null | undefined): boolean {
-  const n = normalizeText(enterpriseName);
-  return n === ANA_COMMERCIAL_RULES.enterpriseKey || n.includes(ANA_COMMERCIAL_RULES.enterpriseKey);
-}
-
-export function isVisitSchedulingRefusal(userMessage: string): boolean {
-  const n = normalizeText(userMessage);
-  return /\b(nao quero agendar|nao quero visita|nao quero marcar|nao quero horario|nao quero isso|ja falei|so quero detalhes|quero detalhes|me passa os detalhes|quero saber dos lotes|quero lote plano|lotes planos)\b/.test(n);
-}
-
-export function isUserIrritated(userMessage: string): boolean {
-  const n = normalizeText(userMessage);
-  return /\b(ta doida|caramba|ja falei|nao e isso|vc nao entendeu|voce nao entendeu)\b/.test(n);
-}
-
-export function shouldUseShortRecoveryPrompt(userMessage: string): boolean {
-  const n = normalizeText(userMessage);
-  return n.length <= 5 || /\b(ta|oi|ok|hm|aff)\b/.test(n);
+function isValorCondominioIntent(n: string): boolean {
+  if (isEntregaEmpreendimentoIntent(n)) return false;
+  return hasAny(n, [
+    /\b(valor do condomin|taxa condominial|custo mensal do condomin|mensalidade do condomin)\b/,
+    /\bquanto\b[\s\S]{0,30}\bcondomin/,
+    /\b(tem taxa de condomin|tem taxa condominial)\b/,
+  ]);
 }
 
 function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_contact'> | null {
   const n = normalizeText(userMessage);
   if (!n) return null;
 
-  if (/\b(metro quadrado|m2|m\u00b2|valor do metro|preco do metro)\b/.test(n)) return 'valor_metro_quadrado';
-  if (/\b(tipo de lote|tipos de lote|lotes planos|lote plano|detalhes do lote|detalhes de lote|opcoes de lote|opcoes de lotes|metragem|quero detalhes|quero mais detalhes)\b/.test(n)) return 'detalhes_lotes';
-  if (/\b(visita|visitar|stand|conhecer o empreendimento)\b/.test(n)) return 'oferta_visita';
-  if (isPaymentIntentDirect(n)) return 'formas_pagamento';
-  if (/\b(localizacao|regiao|atibaia|bragantina|sao paulo|dom pedro|lucas nogueira)\b/.test(n)) return 'localizacao_regiao';
-  if (/\b(endereco|onde fica|bairro|rio abaixo|pedreira)\b/.test(n)) return 'endereco';
-  if (/\b(seguranca|portaria|controle de acesso|tranquilidade|monitoramento|cameras)\b/.test(n)) return 'seguranca';
-  if (/\b(invest|valorizacao|rentabilidade|retorno)\b/.test(n)) return 'investimento';
-  if (/\b(condominio|valor do condominio|taxa condominial)\b/.test(n)) return 'valor_condominio';
-  if (/\b(lazer|piscina|academia|playground|coworking|beach tennis|campo society|fireplace|espaco zen)\b/.test(n)) return 'areas_lazer';
+  if (isEntregaEmpreendimentoIntent(n)) return 'entrega_empreendimento';
+  if (isValorCondominioIntent(n)) return 'valor_condominio';
+
+  if (hasAny(n, [/\b(qual o preco|quero saber preco|queria saber preco|quanto custa|qual o valor|valor dos lotes|quanto e o lote|a partir de quanto)\b/])) {
+    return 'preco_valor_lote';
+  }
+
+  if (hasAny(n, [/\b(entrada minima|quanto .* entrada|qual a entrada|quanto paga no comeco|quanto preciso dar de entrada|tenho que dar quanto de entrada)\b/])) {
+    return 'entrada';
+  }
+
+  if (hasAny(n, [/\b(formas de pagamento|como posso pagar|tem parcelamento|quais as condicoes|condicoes de pagamento|como funciona o pagamento)\b/])) {
+    return 'formas_pagamento';
+  }
+
+  if (hasAny(n, [/\b(tem financiamento|como funciona o financiamento|financia|direto com banco|e pela construtora|financiamento e como)\b/])) {
+    return 'financiamento';
+  }
+
+  if (hasAny(n, [/\b(onde fica|qual a localizacao|como chegar|me passa o endereco|me enviar a localizacao|me manda a localizacao|fica onde)\b/])) {
+    return 'localizacao_endereco';
+  }
+
+  if (hasAny(n, [/\b(quero visitar|pode agendar|quero conhecer|vamos agendar|tenho interesse em visitar|quero marcar|pode marcar)\b/]) || /^(sim|pode ser)$/i.test(userMessage.trim())) {
+    return 'visita_agendamento';
+  }
+
+  if (hasAny(n, [/\b(quais lotes disponiveis|tem desconto|qual parcela fica|faz simulacao|tem lote de quanto|qual unidade disponivel|qual lote tem|tem algum lote disponivel)\b/])) {
+    return 'disponibilidade_simulacao_desconto';
+  }
+
+  if (hasAny(n, [/\b(tabela|planta|book|video|fotos|imagens|material|apresentacao|pdf)\b/])) {
+    return 'materiais';
+  }
 
   return null;
 }
@@ -79,6 +90,30 @@ export type ResolvedAnaCommercialRule = {
   inheritedIntent: 'payment_terms' | null;
 };
 
+export function splitCommercialRuleMessages(lines: readonly string[]): string[] {
+  return lines.map((line) => line.trim()).filter(Boolean);
+}
+
+export function isEvoraEnterpriseName(enterpriseName: string | null | undefined): boolean {
+  const n = normalizeText(enterpriseName);
+  return n === ANA_COMMERCIAL_RULES.enterpriseKey || n.includes(ANA_COMMERCIAL_RULES.enterpriseKey);
+}
+
+export function isVisitSchedulingRefusal(userMessage: string): boolean {
+  const n = normalizeText(userMessage);
+  return /\b(nao quero agendar|nao quero visita|nao quero marcar|nao quero horario|nao quero isso|ja falei|so quero detalhes|quero detalhes)\b/.test(n);
+}
+
+export function isUserIrritated(userMessage: string): boolean {
+  const n = normalizeText(userMessage);
+  return /\b(ta doida|caramba|ja falei|nao e isso|vc nao entendeu|voce nao entendeu|quis dizer)\b/.test(n);
+}
+
+export function shouldUseShortRecoveryPrompt(userMessage: string): boolean {
+  const n = normalizeText(userMessage);
+  return n.length <= 5 || /\b(ta|oi|ok|hm|aff)\b/.test(n);
+}
+
 export function resolveAnaCommercialRule(params: {
   enterpriseName: string | null | undefined;
   userMessage: string;
@@ -87,7 +122,7 @@ export function resolveAnaCommercialRule(params: {
 }): ResolvedAnaCommercialRule | null {
   if (!isEvoraEnterpriseName(params.enterpriseName)) return null;
 
-  if (params.isFirstAnaReply) {
+  if (params.isFirstAnaReply && isGreetingInitialInterest(params.userMessage)) {
     return {
       ruleId: 'first_contact',
       messages: splitCommercialRuleMessages(ANA_COMMERCIAL_RULES.firstContactMessages),
@@ -96,19 +131,14 @@ export function resolveAnaCommercialRule(params: {
     };
   }
 
-  let intent = detectIntent(params.userMessage);
-  let inheritedIntent: 'payment_terms' | null = null;
-  if (!intent && isPaymentContextFromAssistant(params.previousAssistantMessage) && isPaymentContextContinuationRequest(params.userMessage)) {
-    intent = 'formas_pagamento';
-    inheritedIntent = 'payment_terms';
-  }
+  const intent = detectIntent(params.userMessage);
   if (!intent) return null;
 
   return {
     ruleId: intent,
     messages: splitCommercialRuleMessages(ANA_COMMERCIAL_RULES.byIntent[intent]),
     replySource: 'commercial_rules_intent',
-    inheritedIntent,
+    inheritedIntent: null,
   };
 }
 

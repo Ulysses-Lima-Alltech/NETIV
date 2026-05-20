@@ -1,66 +1,64 @@
 ﻿import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { resolveAnaCommercialRule } from '../services/anaCommercialRulesService.js';
+import { ANA_COMMERCIAL_RULES } from '../config/anaCommercialRules.js';
 
-test('primeiro contato Evora gera exatamente 3 mensagens exatas e separadas', () => {
-  const source = readFileSync(new URL('../config/anaCommercialRules.ts', import.meta.url), 'utf8');
-  assert.match(source, /firstContactMessages:\s*\[/);
-  assert.match(source, /O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas\./);
-  assert.match(source, /Fácil acesso pela Rodovia Dom Pedro I, perto da área da Pedreira, a aproximadamente 50 minutos de Sao Paulo\./);
-  assert.match(source, /Me conta, quais são suas dúvidas\? Vou responder todas\./);
+function resolve(userMessage: string) {
+  return resolveAnaCommercialRule({
+    enterpriseName: 'Évora',
+    userMessage,
+    isFirstAnaReply: false,
+    previousAssistantMessage: null,
+  });
+}
+
+test('primeiro contato só dispara para interesse inicial no empreendimento', () => {
+  const first = resolveAnaCommercialRule({
+    enterpriseName: 'Évora',
+    userMessage: 'Gostaria de saber sobre o Évora',
+    isFirstAnaReply: true,
+    previousAssistantMessage: null,
+  });
+  assert.equal(first?.ruleId, 'first_contact');
+  assert.deepEqual(first?.messages, ANA_COMMERCIAL_RULES.firstContactMessages);
+
+  const firstWithPrice = resolveAnaCommercialRule({
+    enterpriseName: 'Évora',
+    userMessage: 'Queria saber preço',
+    isFirstAnaReply: true,
+    previousAssistantMessage: null,
+  });
+  assert.equal(firstWithPrice?.ruleId, 'preco_valor_lote');
 });
 
-test('valor do metro quadrado retorna regra correta', () => {
-  const source = readFileSync(new URL('../config/anaCommercialRules.ts', import.meta.url), 'utf8');
-  assert.match(source, /valor_metro_quadrado/);
-  assert.match(source, /R\$775,00/);
+test('desambiguação: "quando será entregue o condomínio" cai em entrega_empreendimento', () => {
+  const rule = resolve('Quando será entregue o condomínio?');
+  assert.equal(rule?.ruleId, 'entrega_empreendimento');
 });
 
-test('formas de pagamento usa bloco oficial sem esquiva', () => {
-  const source = readFileSync(new URL('../config/anaCommercialRules.ts', import.meta.url), 'utf8');
-  assert.match(source, /planos estendidos em ate 120x/);
-  assert.match(source, /planos em ate 48x/);
-  assert.match(source, /financiamento é facilitado por ser direto com a construtora|financiamento e facilitado por ser direto com a construtora/i);
-  assert.doesNotMatch(source, /Você prefere parcelas mais baixas ou uma condição sem juros\?/);
+test('desambiguação: pergunta de taxa cai em valor_condominio', () => {
+  const rule = resolve('Quanto vai ser o condomínio?');
+  assert.equal(rule?.ruleId, 'valor_condominio');
 });
 
-test('condominio retorna regra correta', () => {
-  const source = readFileSync(new URL('../config/anaCommercialRules.ts', import.meta.url), 'utf8');
-  assert.match(source, /valor_condominio/);
-  assert.match(source, /R\$400,00/);
-  assert.match(source, /R\$700,00/);
+test('entrada não cai em formas de pagamento', () => {
+  const rule = resolve('Quero saber quanto tenho que pagar de entrada');
+  assert.equal(rule?.ruleId, 'entrada');
+  assert.match((rule?.messages[0] ?? ''), /20%/);
 });
 
-test('lazer retorna lista correta', () => {
-  const source = readFileSync(new URL('../config/anaCommercialRules.ts', import.meta.url), 'utf8');
-  for (const token of ['Piscina adulto', 'Academia', 'Salão de festas', 'Playground', 'Coworking', 'Espaço zen', 'Fireplace', 'Quadra de beach tennis', 'Campo society']) {
-    assert.match(source, new RegExp(token.replace(/[.*+?^${}()|[\\]\\]/g, '\\\\$&')));
-  }
-  assert.match(source, /Não posso deixar de comentar que o Évora é um verdadeiro paraíso/);
+test('formas de pagamento mantém 120x e 48x', () => {
+  const rule = resolve('Formas de pagamento');
+  assert.equal(rule?.ruleId, 'formas_pagamento');
+  const all = (rule?.messages ?? []).join(' ');
+  assert.match(all, /120x/);
+  assert.match(all, /48x/);
 });
 
-test('localizacao retorna regra correta', () => {
-  const source = readFileSync(new URL('../config/anaCommercialRules.ts', import.meta.url), 'utf8');
-  assert.match(source, /localizacao_regiao/);
-  assert.match(source, /região bragantina|regiao bragantina/);
-  assert.doesNotMatch(source, /acesso é facilitado.*Lucas Nogueira Garces/i);
-});
-
-test('seguranca retorna regra oficial', () => {
-  const source = readFileSync(new URL('../config/anaCommercialRules.ts', import.meta.url), 'utf8');
-  assert.match(source, /seguranca/);
-  assert.match(source, /portaria 24 horas com controle de acesso/);
-});
-
-test('conversationEngine remove deterministic_direct_interest e mantém commercial_rules', () => {
-  const source = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
-  assert.doesNotMatch(source, /detectAnaDirectBatchInterestMessage/);
-  assert.doesNotMatch(source, /buildAnaDirectBatchInterestReply/);
-  assert.doesNotMatch(source, /buildAnaDirectBatchInterestReplies/);
-  assert.doesNotMatch(source, /deterministic_direct_interest/);
-  assert.match(source, /ANA_COMMERCIAL_RULE_FIRST_CONTACT_START/);
-  assert.match(source, /resolveAnaCommercialRule\(\{/);
-  const idxRule = source.indexOf('resolveAnaCommercialRule({');
-  const idxOpenAi = source.indexOf('generateChatCompletion(');
-  assert.ok(idxRule >= 0 && idxOpenAi > idxRule, 'commercial rule should be checked before OpenAI');
+test('preço responde valor inicial e metro quadrado', () => {
+  const rule = resolve('Queria saber preço');
+  assert.equal(rule?.ruleId, 'preco_valor_lote');
+  const text = (rule?.messages ?? []).join(' ');
+  assert.match(text, /R\$279\.000,00/);
+  assert.match(text, /R\$775,00/);
 });

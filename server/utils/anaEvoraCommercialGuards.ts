@@ -16,9 +16,6 @@ export const EVORA_VISIT_OFFER_MESSAGES = [
   'Estamos com 55% de obras executadas, vale a pena a visita, vamos marcar?',
 ] as const;
 
-const NO_REPEAT_FALLBACK =
-  'Posso te ajudar com valores, formas de pagamento ou já marcamos uma visita para você conhecer o Évora de perto?';
-
 function normalizeText(value: string | null | undefined): string {
   return String(value ?? '')
     .normalize('NFD')
@@ -252,6 +249,7 @@ export function applyAnaNoRepeatMessageGuard(params: {
   conversationId: number;
   enterpriseId: number | null;
   enterpriseName: string | null | undefined;
+  userMessage?: string;
   answer: string;
   recentAssistantReplies: string[];
   semanticallySimilar: (a: string, b: string) => boolean;
@@ -265,12 +263,19 @@ export function applyAnaNoRepeatMessageGuard(params: {
     return { text: params.answer, changed: false, reason: null };
   }
 
-  const fallback = NO_REPEAT_FALLBACK;
-  const fallbackNorm = normalizeCompare(fallback);
-  const fallbackAlreadyUsed = params.recentAssistantReplies.some((msg) => normalizeCompare(msg) === fallbackNorm);
-  const text = fallbackAlreadyUsed
-    ? 'Se você quiser, eu te explico esse ponto de outro jeito ou já deixo uma visita pré-agendada para facilitar sua análise.'
-    : fallback;
+  const nUser = normalizeText(params.userMessage ?? '');
+  let text = 'Isso mesmo. Se quiser, eu detalho esse ponto de forma objetiva.';
+  if (/(entrega|obra|prazo|lotes|construir|libera)/.test(nUser)) {
+    text = 'Quer que eu te ajude a agendar uma visita para conhecer o andamento pessoalmente?';
+  } else if (/(entrada)/.test(nUser)) {
+    text = 'Isso mesmo. A entrada mínima é 20%. O valor exato depende do lote escolhido.';
+  } else if (/(preco|valor|quanto custa|lote)/.test(nUser)) {
+    text = 'Esses detalhes variam conforme as opções disponíveis. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?';
+  } else if (/(condominio|taxa condominial)/.test(nUser)) {
+    text = 'Essa estimativa pode variar conforme as definições da associação. Se quiser, o corretor te explica no detalhe.';
+  } else if (/(localizacao|endereco|onde fica|como chegar)/.test(nUser)) {
+    text = 'Se quiser, te passo a referência de acesso de forma mais direta para sua rota.';
+  }
 
   const reason = alreadyExact ? 'exact_duplicate_blocked' : 'semantic_duplicate_blocked';
   console.log('[ANA_NO_REPEAT_MESSAGE_GUARD]', {
@@ -282,3 +287,4 @@ export function applyAnaNoRepeatMessageGuard(params: {
   });
   return { text, changed: true, reason };
 }
+
