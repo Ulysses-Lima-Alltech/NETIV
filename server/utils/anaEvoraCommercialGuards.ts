@@ -1,0 +1,214 @@
+﻿const EVORA_REGION_BLOCK = `Atibaia faz parte da região bragantina, que é uma das regiões mais valorizadas e desenvolvidas do estado. Fica a 50 minutos de São Paulo, tornando o Évora um condomínio para casas de veraneio ou até mesmo moradia.
+
+A cidade de Atibaia é rica em gastronomia, contendo os melhores restaurantes da região, sem contar com a avenida Lucas Nogueira Garces, que além de ser um verdadeiro centro gastronômico contém também as principais grifes, bares renomados se tornando um charmoso shopping a céu aberto.
+
+Não podemos deixar de destacar que Atibaia foi considerada a cidade com o segundo melhor clima do mundo pela ONU.`;
+
+const EVORA_ADDRESS_BLOCK =
+  'Fica na Região da Pedreira, no bairro do Rio Abaixo. Um bairro já conceituado com diversos condomínios de médio e alto padrão.';
+
+const EVORA_ACCESS_BLOCK =
+  'Fica perto da área da Pedreira, com fácil acesso pela Rodovia Dom Pedro I.';
+
+const VISIT_OFFER_SHORT =
+  'Que tal marcarmos uma visita? Assim você conhece o empreendimento, o stand e já pode ver os lotes de perto.';
+
+const VISIT_OFFER_ADVANCED =
+  'Vale muito a pena conhecer pessoalmente. Estamos com 55% das obras executadas. Que tal marcarmos uma visita?';
+
+const NO_REPEAT_FALLBACK =
+  'Posso te ajudar com valores, formas de pagamento ou já marcamos uma visita para você conhecer o Évora de perto?';
+
+function normalizeText(value: string | null | undefined): string {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeCompare(value: string | null | undefined): string {
+  return normalizeText(value).replace(/[.!?,;:()"'`´]/g, '').trim();
+}
+
+function isEvoraEnterprise(enterpriseName: string | null | undefined): boolean {
+  const n = normalizeText(enterpriseName);
+  return n === 'evora' || n.includes('evora') || n.includes('evora');
+}
+
+function isAddressIntent(userMessage: string): boolean {
+  const n = normalizeText(userMessage);
+  return /(onde fica|endereco|bairro|localizacao exata|ponto de referencia|como chegar|entrada|acesso|rota|caminho)/.test(n);
+}
+
+function isAccessIntent(userMessage: string): boolean {
+  const n = normalizeText(userMessage);
+  return /(como e o acesso|como eh o acesso|acesso|como chegar|rota|entrada|caminho)/.test(n);
+}
+
+function isRegionIntent(userMessage: string): boolean {
+  const n = normalizeText(userMessage);
+  return /(regiao|atibaia|cidade|gastronomia|qualidade de vida|pontos positivos|clima)/.test(n);
+}
+
+function hasLucasAsAccessLeak(answer: string): boolean {
+  const n = normalizeText(answer);
+  return (
+    n.includes('lucas nogueira garces') &&
+    /(acesso|acessar|rota|entrada|caminho|endereco|chegar|localizacao exata|acesso facilitado)/.test(n)
+  );
+}
+
+function hasVisitOffer(text: string): boolean {
+  const n = normalizeText(text);
+  return /(marcar uma visita|marcarmos uma visita|vamos marcar|vale muito a pena conhecer pessoalmente|55% das obras executadas)/.test(n);
+}
+
+function isCommercialInterestQuestion(userMessage: string): boolean {
+  const n = normalizeText(userMessage);
+  return /(localizacao|regiao|endereco|acesso|valor|metro quadrado|pagamento|lote|lazer|condominio|obra|disponibilidade|investimento|moradia|book|foto|estrutura)/.test(n);
+}
+
+function countCommercialUserQuestions(rows: Array<{ role: string; content?: string | null }>): number {
+  return rows.filter((r) => r.role === 'user' && isCommercialInterestQuestion(r.content ?? '')).length;
+}
+
+export function applyEvoraLocationGuard(params: {
+  conversationId: number;
+  enterpriseId: number | null;
+  enterpriseName: string | null | undefined;
+  userMessage: string;
+  answer: string;
+}): { text: string; changed: boolean; reason: string | null } {
+  if (!isEvoraEnterprise(params.enterpriseName)) {
+    return { text: params.answer, changed: false, reason: null };
+  }
+
+  let text = params.answer.trim();
+  let reason: string | null = null;
+
+  if (hasLucasAsAccessLeak(text)) {
+    text = EVORA_ADDRESS_BLOCK;
+    reason = 'lucas_garces_used_as_access';
+  } else if (isAccessIntent(params.userMessage)) {
+    text = EVORA_ACCESS_BLOCK;
+    reason = 'access_intent_forced_access_block';
+  } else if (isAddressIntent(params.userMessage)) {
+    text = EVORA_ADDRESS_BLOCK;
+    reason = 'address_intent_forced_address_block';
+  } else if (isRegionIntent(params.userMessage)) {
+    text = EVORA_REGION_BLOCK;
+    reason = 'region_intent_forced_region_block';
+  }
+
+  if (reason) {
+    console.log('[ANA_EVORA_LOCATION_GUARD]', {
+      conversationId: params.conversationId,
+      enterpriseId: params.enterpriseId,
+      reason,
+      originalAnswer: params.answer,
+      finalAnswer: text,
+    });
+    return { text, changed: true, reason };
+  }
+
+  return { text: params.answer, changed: false, reason: null };
+}
+
+export function applyAnaVisitOfferGuard(params: {
+  conversationId: number;
+  enterpriseId: number | null;
+  enterpriseName: string | null | undefined;
+  userMessage: string;
+  answer: string;
+  rowsBeforeSend: Array<{ role: string; content?: string | null }>;
+  isSchedulingFlow: boolean;
+  isHandoff: boolean;
+  isMaterialOnlyFlow: boolean;
+}): { text: string; changed: boolean; reason: string | null; appendedVisitOffer: boolean } {
+  if (!isEvoraEnterprise(params.enterpriseName)) {
+    return { text: params.answer, changed: false, reason: null, appendedVisitOffer: false };
+  }
+
+  const alreadyOfferedVisit = params.rowsBeforeSend
+    .filter((row) => row.role === 'assistant')
+    .some((row) => hasVisitOffer(row.content ?? ''));
+
+  const hasCurrentVisitOffer = hasVisitOffer(params.answer);
+  const commercialCount = countCommercialUserQuestions(params.rowsBeforeSend);
+  const hasCurrentCommercialInterest = isCommercialInterestQuestion(params.userMessage);
+  const hasInterest = hasCurrentCommercialInterest || commercialCount >= 1;
+
+  const canAppend =
+    hasInterest &&
+    !alreadyOfferedVisit &&
+    !hasCurrentVisitOffer &&
+    !params.isSchedulingFlow &&
+    !params.isHandoff &&
+    !params.isMaterialOnlyFlow;
+
+  if (!canAppend) {
+    return {
+      text: params.answer,
+      changed: false,
+      reason: null,
+      appendedVisitOffer: false,
+    };
+  }
+
+  const offer = commercialCount >= 2 ? VISIT_OFFER_ADVANCED : VISIT_OFFER_SHORT;
+  const sep = params.answer.trim().length > 0 ? '\n\n' : '';
+  const text = `${params.answer.trim()}${sep}${offer}`.trim();
+
+  console.log('[ANA_VISIT_OFFER_GUARD]', {
+    conversationId: params.conversationId,
+    enterpriseId: params.enterpriseId,
+    reason: 'commercial_interest_without_visit_offer',
+    alreadyOfferedVisit,
+    appendedVisitOffer: true,
+    finalAnswer: text,
+  });
+
+  return {
+    text,
+    changed: true,
+    reason: 'commercial_interest_without_visit_offer',
+    appendedVisitOffer: true,
+  };
+}
+
+export function applyAnaNoRepeatMessageGuard(params: {
+  conversationId: number;
+  enterpriseId: number | null;
+  enterpriseName: string | null | undefined;
+  answer: string;
+  recentAssistantReplies: string[];
+  semanticallySimilar: (a: string, b: string) => boolean;
+}): { text: string; changed: boolean; reason: string | null } {
+  const targetNorm = normalizeCompare(params.answer);
+  const alreadyExact = params.recentAssistantReplies.some((msg) => normalizeCompare(msg) === targetNorm);
+  const alreadySimilar =
+    !alreadyExact && params.recentAssistantReplies.some((msg) => params.semanticallySimilar(msg, params.answer));
+
+  if (!alreadyExact && !alreadySimilar) {
+    return { text: params.answer, changed: false, reason: null };
+  }
+
+  const fallback = NO_REPEAT_FALLBACK;
+  const fallbackNorm = normalizeCompare(fallback);
+  const fallbackAlreadyUsed = params.recentAssistantReplies.some((msg) => normalizeCompare(msg) === fallbackNorm);
+  const text = fallbackAlreadyUsed
+    ? 'Se você quiser, eu te explico esse ponto de outro jeito ou já deixo uma visita pré-agendada para facilitar sua análise.'
+    : fallback;
+
+  const reason = alreadyExact ? 'exact_duplicate_blocked' : 'semantic_duplicate_blocked';
+  console.log('[ANA_NO_REPEAT_MESSAGE_GUARD]', {
+    conversationId: params.conversationId,
+    enterpriseId: params.enterpriseId,
+    reason,
+    originalAnswer: params.answer,
+    finalAnswer: text,
+  });
+  return { text, changed: true, reason };
+}

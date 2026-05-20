@@ -164,6 +164,11 @@ import {
   type OperationalTopic,
 } from '../utils/anaOperationalFactResolver.js';
 import {
+  applyAnaNoRepeatMessageGuard,
+  applyAnaVisitOfferGuard,
+  applyEvoraLocationGuard,
+} from '../utils/anaEvoraCommercialGuards.js';
+import {
   createAnaTurnAudit,
   getLastAnaTurnAuditByConversation,
   updateAnaTurnAuditOutcome,
@@ -5294,6 +5299,63 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         anaTurnAuditGuardsApplied.emptyFallbackGuard !== null,
       finalResponse: replyText,
     });
+
+    const recentAssistantRepliesForDeterministicGuard = [...rowsBeforeSend]
+      .filter((m) => m.role === 'assistant')
+      .map((m) => (m.content || '').trim())
+      .filter((content) => content.length > 0)
+      .slice(-12);
+
+    const evoraLocationGuardResult = applyEvoraLocationGuard({
+      conversationId,
+      enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+      enterpriseName: ent?.name ?? null,
+      userMessage: trimmed,
+      answer: replyText,
+    });
+    if (evoraLocationGuardResult.changed) {
+      replyText = evoraLocationGuardResult.text;
+      anaTurnAuditGuardsApplied.evoraLocationGuard = {
+        changed: true,
+        reason: evoraLocationGuardResult.reason,
+      };
+    }
+
+    const visitOfferGuardResult = applyAnaVisitOfferGuard({
+      conversationId,
+      enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+      enterpriseName: ent?.name ?? null,
+      userMessage: trimmed,
+      answer: replyText,
+      rowsBeforeSend,
+      isSchedulingFlow: appointmentPreflight.active || flowStateParsed.pendingVisitScheduling === true,
+      isHandoff: Boolean(structured.handoff || effectiveConv.handoff),
+      isMaterialOnlyFlow: Boolean(shouldAttemptDocSend),
+    });
+    if (visitOfferGuardResult.changed) {
+      replyText = visitOfferGuardResult.text;
+      anaTurnAuditGuardsApplied.visitOfferGuard = {
+        changed: true,
+        reason: visitOfferGuardResult.reason,
+        appendedVisitOffer: visitOfferGuardResult.appendedVisitOffer,
+      };
+    }
+
+    const noRepeatGuardResult = applyAnaNoRepeatMessageGuard({
+      conversationId,
+      enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+      enterpriseName: ent?.name ?? null,
+      answer: replyText,
+      recentAssistantReplies: recentAssistantRepliesForDeterministicGuard,
+      semanticallySimilar: repliesSemanticallySimilar,
+    });
+    if (noRepeatGuardResult.changed) {
+      replyText = noRepeatGuardResult.text;
+      anaTurnAuditGuardsApplied.noRepeatMessageGuard = {
+        changed: true,
+        reason: noRepeatGuardResult.reason,
+      };
+    }
 
     anaEngineTrace('final_reply_choice_after', {
       conversationId,
