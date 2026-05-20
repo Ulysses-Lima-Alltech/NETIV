@@ -76,6 +76,25 @@ function statusBadgeClass(status: string): string {
   return map[status] ?? 'bg-slate-100 text-slate-700';
 }
 
+function extractBodyVariableIdsFromText(text: string): number[] {
+  const ids = new Set<number>();
+  const matches = text.matchAll(/\{\{(\d+)\}\}/g);
+  for (const match of matches) {
+    const value = Number(match[1]);
+    if (Number.isFinite(value) && value > 0) ids.add(value);
+  }
+  return [...ids].sort((a, b) => a - b);
+}
+
+function defaultMetaTemplateExampleValue(variableId: number): string {
+  if (variableId === 1) return 'João';
+  if (variableId === 2) return 'Maria Silva';
+  if (variableId === 3) return 'Residencial Évora';
+  if (variableId === 4) return '25/05/2026';
+  if (variableId === 5) return '10:00';
+  return `Exemplo ${variableId}`;
+}
+
 function isTemplateUsableForBatch(
   template: BatchTemplateCatalogItem,
   catalogSource: 'meta_sync' | 'local_fallback' | 'unknown',
@@ -135,6 +154,7 @@ export function WhatsAppBatchTemplatePage() {
   const [metaTemplateCategory, setMetaTemplateCategory] = useState<'MARKETING' | 'UTILITY' | 'AUTHENTICATION'>('MARKETING');
   const [metaTemplateLanguage, setMetaTemplateLanguage] = useState('pt_BR');
   const [metaTemplateBody, setMetaTemplateBody] = useState('');
+  const [metaTemplateBodyExamples, setMetaTemplateBodyExamples] = useState<Record<string, string>>({});
   const [metaTemplateHeader, setMetaTemplateHeader] = useState('');
   const [metaTemplateFooter, setMetaTemplateFooter] = useState('');
   const [metaSearch, setMetaSearch] = useState('');
@@ -211,6 +231,16 @@ export function WhatsAppBatchTemplatePage() {
     }
     setMetaActionLoading(true);
     try {
+      const bodyExamplesPayload =
+        metaTemplateVariableIds.length > 0
+          ? Object.fromEntries(
+              metaTemplateVariableIds.map((id) => {
+                const key = String(id);
+                const value = metaTemplateBodyExamples[key]?.trim() || defaultMetaTemplateExampleValue(id);
+                return [key, value];
+              }),
+            )
+          : undefined;
       await whatsappApi.createTemplate({
         name: metaTemplateName.trim(),
         category: metaTemplateCategory,
@@ -218,10 +248,12 @@ export function WhatsAppBatchTemplatePage() {
         body: metaTemplateBody.trim(),
         headerText: metaTemplateHeader.trim() || undefined,
         footerText: metaTemplateFooter.trim() || undefined,
+        bodyExamples: bodyExamplesPayload,
       });
       setMetaActionFeedback('Solicitação enviada para a Meta. Acompanhe o status na lista de templates.');
       setMetaTemplateName('');
       setMetaTemplateBody('');
+      setMetaTemplateBodyExamples({});
       setMetaTemplateHeader('');
       setMetaTemplateFooter('');
       await loadMetaTemplates();
@@ -309,13 +341,31 @@ export function WhatsAppBatchTemplatePage() {
     return matchesSearch && matchesStatus && matchesCategory;
   });
 
+  const metaTemplateVariableIds = useMemo(() => extractBodyVariableIdsFromText(metaTemplateBody), [metaTemplateBody]);
+
+  useEffect(() => {
+    setMetaTemplateBodyExamples((prev) => {
+      if (metaTemplateVariableIds.length === 0) return {};
+      const next: Record<string, string> = {};
+      for (const id of metaTemplateVariableIds) {
+        const key = String(id);
+        const previousValue = typeof prev[key] === 'string' ? prev[key].trim() : '';
+        next[key] = previousValue.length > 0 ? prev[key]! : defaultMetaTemplateExampleValue(id);
+      }
+      return next;
+    });
+  }, [metaTemplateVariableIds]);
+
   const previewMessage = useMemo(() => {
     if (!metaTemplateBody.trim()) return '';
-    return metaTemplateBody
-      .replaceAll('{{1}}', 'Maria')
-      .replaceAll('{{2}}', 'Residencial Évora')
-      .replaceAll('{{3}}', 'João, corretor responsável');
-  }, [metaTemplateBody]);
+    let preview = metaTemplateBody;
+    for (const id of metaTemplateVariableIds) {
+      const token = new RegExp(`\\{\\{${id}\\}\\}`, 'g');
+      const value = metaTemplateBodyExamples[String(id)]?.trim() || defaultMetaTemplateExampleValue(id);
+      preview = preview.replace(token, value);
+    }
+    return preview;
+  }, [metaTemplateBody, metaTemplateBodyExamples, metaTemplateVariableIds]);
 
   const variableValidation = useMemo(() => {
     const text = metaTemplateBody;
@@ -765,6 +815,39 @@ export function WhatsAppBatchTemplatePage() {
                             Use variáveis no formato {`{{1}}`}, {`{{2}}`}, {`{{3}}`}. Evite nomes ou espaços dentro das chaves.
                           </p>
                         )}
+                      </div>
+                    )}
+                    {metaTemplateVariableIds.length > 0 && (
+                      <div className="mt-2 rounded-[10px] border border-[#E5E7EB] bg-white px-3 py-3 space-y-2">
+                        <p className="text-[12px] font-semibold text-[#111827]">
+                          Exemplos para aprovação da Meta
+                        </p>
+                        <p className="text-[11px] text-[#6B7280]">
+                          Esses exemplos são enviados no campo <code>example.body_text</code> do BODY.
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          {metaTemplateVariableIds.map((id) => {
+                            const key = String(id);
+                            return (
+                              <label key={key} className="space-y-1">
+                                <span className="block text-[11px] text-[#374151]">
+                                  Variável {`{{${id}}}`}
+                                </span>
+                                <input
+                                  className="w-full border border-[#E5E7EB] rounded-[8px] px-2.5 py-1.5 text-[12px]"
+                                  value={metaTemplateBodyExamples[key] ?? ''}
+                                  onChange={(e) =>
+                                    setMetaTemplateBodyExamples((prev) => ({
+                                      ...prev,
+                                      [key]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder={defaultMetaTemplateExampleValue(id)}
+                                />
+                              </label>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                     <div className="mt-2 rounded-[10px] border border-[#E5E7EB] bg-white px-3 py-2">

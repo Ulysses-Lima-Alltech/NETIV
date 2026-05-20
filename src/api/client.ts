@@ -484,6 +484,7 @@ export const whatsappApi = {
     body: string;
     headerText?: string;
     footerText?: string;
+    bodyExamples?: Record<string, string>;
   }) =>
     request<{ success: boolean; result?: unknown; error?: string }>('/whatsapp/templates', {
       method: 'POST',

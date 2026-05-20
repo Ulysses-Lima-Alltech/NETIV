@@ -199,6 +199,7 @@ const createTemplateSchema = z.object({
   body: z.string().min(1),
   headerText: z.string().optional(),
   footerText: z.string().optional(),
+  bodyExamples: z.record(z.string(), z.string()).optional(),
 });
 
 router.post('/templates', async (req, res) => {

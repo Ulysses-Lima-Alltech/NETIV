@@ -35,6 +35,7 @@ export type MetaTemplateCreateInput = {
   body: string;
   headerText?: string;
   footerText?: string;
+  bodyExamples?: Record<string, string>;
 };
 
 type CacheEntry = {
@@ -74,12 +75,32 @@ function toFriendlyName(templateName: string): string {
 function extractBodyVariableIds(text: string | undefined): number[] {
   if (!text) return [];
   const ids = new Set<number>();
-  const matches = text.matchAll(/\{\{\s*(\d+)\s*\}\}/g);
+  const matches = text.matchAll(/\{\{(\d+)\}\}/g);
   for (const match of matches) {
     const n = Number.parseInt(match[1] ?? '', 10);
     if (Number.isFinite(n) && n > 0) ids.add(n);
   }
   return Array.from(ids).sort((a, b) => a - b);
+}
+
+function getDefaultBodyExampleValue(variableId: number): string {
+  if (variableId === 1) return 'João';
+  if (variableId === 2) return 'Maria Silva';
+  if (variableId === 3) return 'Residencial Évora';
+  if (variableId === 4) return '25/05/2026';
+  if (variableId === 5) return '10:00';
+  return `Exemplo ${variableId}`;
+}
+
+function buildBodyExampleValues(bodyText: string, providedExamples?: Record<string, string>): string[] {
+  const variableIds = extractBodyVariableIds(bodyText);
+  if (variableIds.length === 0) return [];
+  return variableIds.map((id) => {
+    const provided = providedExamples?.[String(id)];
+    const normalized = typeof provided === 'string' ? provided.trim() : '';
+    if (normalized.length > 0) return normalized;
+    return getDefaultBodyExampleValue(id);
+  });
 }
 
 function buildVariablesFromBody(components: MetaTemplateComponent[]): WhatsAppTemplateVariableDef[] {
@@ -204,9 +225,17 @@ function mergeWithLocalHeaderMedia(templates: WhatsAppTemplateCatalogItem[]): Wh
 
 export async function createMetaTemplate(input: MetaTemplateCreateInput): Promise<unknown> {
   const { token, apiVersion, wabaId } = await getMetaCredentialsOrThrow();
-  const components: Array<Record<string, string>> = [];
+  const components: Array<Record<string, unknown>> = [];
   if (input.headerText?.trim()) components.push({ type: 'HEADER', format: 'TEXT', text: input.headerText.trim() });
-  components.push({ type: 'BODY', text: input.body.trim() });
+  const bodyText = input.body.trim();
+  const bodyExampleValues = buildBodyExampleValues(bodyText, input.bodyExamples);
+  const bodyComponent: Record<string, unknown> = { type: 'BODY', text: bodyText };
+  if (bodyExampleValues.length > 0) {
+    bodyComponent.example = {
+      body_text: [bodyExampleValues],
+    };
+  }
+  components.push(bodyComponent);
   if (input.footerText?.trim()) components.push({ type: 'FOOTER', text: input.footerText.trim() });
   const url = `${META_GRAPH_BASE}/${apiVersion}/${wabaId}/message_templates`;
   const response = await fetch(url, {
