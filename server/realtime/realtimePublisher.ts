@@ -79,7 +79,7 @@ interface ConversationRealtimeRow {
   reserve_commercial_notes: string | null;
   assigned_broker_id: number | null;
   assigned_broker_name: string | null;
-  contact_type: string | null;
+  conversation_type: string | null;
   manual_closed_at: Date | null;
   manual_closed_by_user_id: number | null;
   manual_closed_reason: string | null;
@@ -129,7 +129,7 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
        c.reserve_commercial_notes,
        c.assigned_broker_id,
        b.full_name AS assigned_broker_name,
-       COALESCE(ct.contact_type, 'CLIENT') AS contact_type,
+       COALESCE(c.conversation_type, 'CLIENT') AS conversation_type,
        c.manual_closed_at,
        c.manual_closed_by_user_id,
        c.manual_closed_reason,
@@ -179,7 +179,7 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
     reserveCommercialNotes: row.reserve_commercial_notes ?? null,
     assignedBrokerId: row.assigned_broker_id ?? null,
     assignedBrokerName: row.assigned_broker_name ?? null,
-    conversationType: row.contact_type ?? 'CLIENT',
+    conversationType: row.conversation_type ?? 'CLIENT',
     manualClosedAt: row.manual_closed_at?.toISOString() ?? null,
     manualClosedByUserId: row.manual_closed_by_user_id ?? null,
     manualClosedReason: row.manual_closed_reason ?? null,

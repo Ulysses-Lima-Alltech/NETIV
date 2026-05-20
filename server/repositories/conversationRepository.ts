@@ -683,7 +683,7 @@ export interface ConversationWithPreview extends ConversationRow {
   last_message_preview: string | null;
   enterprise_name: string | null;
   assigned_broker_name?: string | null;
-  contact_type?: 'CLIENT' | 'INTERNO' | string | null;
+  conversation_type?: 'CLIENT' | 'CORRETOR' | 'ADMIN' | string | null;
 }
 
 export interface ListConversationsFilters {
@@ -692,7 +692,7 @@ export interface ListConversationsFilters {
   enterpriseId?: number;
   search?: string;
   brokerId?: number;  // NOVO — filtra por assigned_broker_id
-  contactType?: 'CLIENT' | 'INTERNO';
+  conversationTypeFilter?: 'CLIENT' | 'INTERNO';
 }
 
 export async function listConversationsWithPreview(
@@ -739,10 +739,12 @@ export async function listConversationsWithPreview(
     paramIndex += 1;
   }
 
-  if (filters?.contactType) {
-    conditions.push(`COALESCE(ct.contact_type, 'CLIENT') = $${paramIndex}`);
-    params.push(filters.contactType);
+  if (filters?.conversationTypeFilter === 'CLIENT') {
+    conditions.push(`COALESCE(c.conversation_type, 'CLIENT') = $${paramIndex}`);
+    params.push('CLIENT');
     paramIndex += 1;
+  } else if (filters?.conversationTypeFilter === 'INTERNO') {
+    conditions.push(`COALESCE(c.conversation_type, 'CLIENT') IN ('ADMIN', 'CORRETOR')`);
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -753,7 +755,7 @@ export async function listConversationsWithPreview(
       (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_preview,
       e.name AS enterprise_name,
       br.full_name AS assigned_broker_name,
-      ct.contact_type AS contact_type
+      c.conversation_type AS conversation_type
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
      LEFT JOIN corretores br ON br.id = c.assigned_broker_id
@@ -774,7 +776,7 @@ export async function getConversationWithPreviewById(id: number): Promise<Conver
       (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_preview,
       e.name AS enterprise_name,
       br.full_name AS assigned_broker_name,
-      ct.contact_type AS contact_type
+      c.conversation_type AS conversation_type
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
      LEFT JOIN corretores br ON br.id = c.assigned_broker_id

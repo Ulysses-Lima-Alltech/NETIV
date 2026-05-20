@@ -145,7 +145,7 @@ function mapConversationWithPreviewRow(r: ConversationWithPreview) {
     updatedAt: r.updated_at.toISOString(),
     assignedBrokerName: (r as { assigned_broker_name?: string | null }).assigned_broker_name ?? null,
     assignedBrokerId: (r as { assigned_broker_id?: number | null }).assigned_broker_id ?? null,
-    conversationType: (r as { contact_type?: string | null }).contact_type ?? 'CLIENT',
+    conversationType: (r as { conversation_type?: string | null }).conversation_type ?? 'CLIENT',
     manualClosedAt: (r as { manual_closed_at?: Date | null }).manual_closed_at?.toISOString() ?? null,
     manualClosedByUserId: (r as { manual_closed_by_user_id?: number | null }).manual_closed_by_user_id ?? null,
     manualClosedReason: (r as { manual_closed_reason?: string | null }).manual_closed_reason ?? null,
@@ -464,14 +464,14 @@ router.get('/conversations', async (req, res) => {
       enterpriseId?: number;
       search?: string;
       brokerId?: number;
-      contactType?: 'CLIENT' | 'INTERNO';
+      conversationTypeFilter?: 'CLIENT' | 'INTERNO';
     } = {};
     if (mode === 'ANA' || mode === 'handoff') filters.mode = mode;
     if (status && status !== 'all') filters.status = status;
     if (enterpriseId != null && !Number.isNaN(enterpriseId)) filters.enterpriseId = enterpriseId;
     if (search && search.trim() !== '') filters.search = search.trim();
     if (brokerId != null) filters.brokerId = brokerId;
-    filters.contactType = type as 'CLIENT' | 'INTERNO';
+    filters.conversationTypeFilter = type as 'CLIENT' | 'INTERNO';
     const hasFilters = Object.keys(filters).length > 0;
     const rows = await listConversationsWithPreview(channel, limit, hasFilters ? filters : undefined);
     console.log('[INBOX_CONTACT_TYPE_FILTER]', { requestedType: type, returned: rows.length });
