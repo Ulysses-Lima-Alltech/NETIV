@@ -54,3 +54,8 @@ export const updateClassificationSchema = z.object({
   assigned_broker_id: z.number().int().positive().nullable().optional(),
 });
 export type UpdateClassificationDto = z.infer<typeof updateClassificationSchema>;
+
+export const updateConversationTypeSchema = z.object({
+  conversationType: z.enum(['CLIENT', 'INTERNAL']),
+});
+export type UpdateConversationTypeDto = z.infer<typeof updateConversationTypeSchema>;

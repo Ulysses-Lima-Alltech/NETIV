@@ -137,6 +137,7 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     manualClosedByUserId: c.manualClosedByUserId ?? null,
     manualClosedReason: c.manualClosedReason ?? null,
     reengagementCount: c.reengagementCount ?? 0,
+    conversationType: c.conversationType ?? 'CLIENT',
   };
 }
 
@@ -933,6 +934,40 @@ export function InboxPage() {
     [selectedId]
   );
 
+  const handleConversationTypeChange = useCallback(
+    async (nextType: 'CLIENT' | 'INTERNAL') => {
+      if (!selectedId) return;
+      const id = parseInt(selectedId, 10);
+      if (Number.isNaN(id)) return;
+      const updated = await whatsappApi.updateConversationType(id, nextType);
+      const mapped = mapApiConversationToConversation(updated);
+      setConversations((prev) => {
+        const next = prev.map((c) => (c.id === mapped.id ? { ...c, ...mapped } : c));
+        if (activeTab === 'CLIENT' && mapped.conversationType && mapped.conversationType !== 'CLIENT') {
+          if (selectedId === mapped.id) {
+            setSelectedId(null);
+            setMessages([]);
+            setMessagesError(null);
+          }
+          return next.filter((c) => c.id !== mapped.id);
+        }
+        if (
+          activeTab === 'INTERNO' &&
+          (!mapped.conversationType || (mapped.conversationType !== 'ADMIN' && mapped.conversationType !== 'CORRETOR'))
+        ) {
+          if (selectedId === mapped.id) {
+            setSelectedId(null);
+            setMessages([]);
+            setMessagesError(null);
+          }
+          return next.filter((c) => c.id !== mapped.id);
+        }
+        return next;
+      });
+    },
+    [activeTab, selectedId]
+  );
+
   return (
     <div className="h-screen overflow-hidden px-4 pb-4 pt-3 text-[#0f172a] md:p-5">
       <div className="relative flex h-full min-h-0 gap-4">
@@ -1026,6 +1061,7 @@ export function InboxPage() {
             onSendMessage={handleSendMessage}
             isSending={sending}
             onClassificationChange={handleClassificationChange}
+            onConversationTypeChange={handleConversationTypeChange}
             onResetConversation={handleResetConversation}
             onDeleteMessage={handleDeleteMessage}
             onUpdateCustomerName={handleUpdateCustomerName}

@@ -52,6 +52,8 @@ export interface Conversation {
   manualClosedReason?: string | null;
   /** Contador de reengajamentos automáticos (backend). */
   reengagementCount?: number;
+  /** Tipo operacional da conversa no backend. */
+  conversationType?: 'CLIENT' | 'ADMIN' | 'CORRETOR' | string;
 }
 
 export type MessageSender = 'LEAD' | 'AGENT';

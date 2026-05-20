@@ -48,6 +48,7 @@ import {
   deleteConversation,
   deleteAllConversationsByPhone,
   resetConversationState,
+  updateConversationType,
   conversationReserveToPublic,
   setConversationCustomerName,
   closeConversationManual,
@@ -58,7 +59,7 @@ import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { assertCanAccessConversation } from '../middleware/conversationAccess.js';
 import { reprocessLastUserMessage } from '../services/conversationEngine.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
-import { findContactById } from '../repositories/contactsRepository.js';
+import { findContactById, updateContactType } from '../repositories/contactsRepository.js';
 import {
   insertMessage,
   getMessagesByConversationId,
@@ -66,7 +67,11 @@ import {
   type MessageAttachmentPayload,
 } from '../repositories/messageRepository.js';
 import { getCorretorById } from '../repositories/corretorRepository.js';
-import { sendMessageSchema, updateClassificationSchema } from '../validators/whatsapp.js';
+import {
+  sendMessageSchema,
+  updateClassificationSchema,
+  updateConversationTypeSchema,
+} from '../validators/whatsapp.js';
 import { resolveSafeDisplayName } from '../utils/customerNameResolver.js';
 import {
   getConversationWhatsAppWindowStatus,
@@ -635,6 +640,42 @@ router.patch('/conversations/:id/classification', async (req, res) => {
   } catch (e) {
     console.error('[WhatsApp] PATCH classification:', e);
     res.status(500).json({ error: 'Erro ao atualizar.' });
+  }
+});
+
+router.patch('/conversations/:id/type', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (!(await assertCanAccessConversation(req as AuthenticatedRequest, res, id))) return;
+    const parsed = updateConversationTypeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = parsed.error.issues.map((e: { message: string }) => e.message).join('; ') || 'Dados inválidos.';
+      return res.status(400).json({ error: msg });
+    }
+    const convBefore = await getConversationById(id);
+    if (!convBefore) return res.status(404).json({ error: 'Conversa não encontrada.' });
+
+    const newConversationType = parsed.data.conversationType === 'INTERNAL' ? 'ADMIN' : 'CLIENT';
+    const previousType = String(convBefore.conversation_type ?? 'CLIENT').toUpperCase();
+    await updateConversationType(id, newConversationType);
+    if (convBefore.contact_id != null) {
+      await updateContactType(convBefore.contact_id, parsed.data.conversationType === 'INTERNAL' ? 'INTERNO' : 'CLIENT');
+    }
+
+    console.log('[MANUAL_CONVERSATION_TYPE_CHANGED]', {
+      conversationId: id,
+      previousType,
+      newType: newConversationType,
+    });
+
+    const row = await getConversationWithPreviewById(id);
+    if (!row) return res.status(404).json({ error: 'Conversa não encontrada.' });
+    void publishConversationUpdated(id);
+    return res.json(mapConversationWithPreviewRow(row));
+  } catch (e) {
+    console.error('[WhatsApp] PATCH conversation type:', e);
+    return res.status(500).json({ error: 'Erro ao atualizar tipo da conversa.' });
   }
 });
 

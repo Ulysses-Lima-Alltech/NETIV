@@ -14,6 +14,7 @@ import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { sendTemplateMessage } from './whatsappMetaService.js';
 import { getCorretorById } from '../repositories/corretorRepository.js';
 import { findOrCreateContactByPhone, updateContactType } from '../repositories/contactsRepository.js';
+import { isProtectedClientPhone } from '../utils/protectedClientPhone.js';
 
 export interface BatchPreviewRow {
   rowIndex: number;
@@ -443,7 +444,15 @@ export async function sendBatchTemplate(params: {
       phoneDisplay: normalizedPhone,
       source: 'whatsapp',
     });
-    if (template.category === 'CORRETOR' || template.category === 'ADMIN') {
+    const shouldAutoClassifyAsInternal = template.category === 'CORRETOR' || template.category === 'ADMIN';
+    const protectedPhone = isProtectedClientPhone(normalizedPhone);
+    if (shouldAutoClassifyAsInternal && protectedPhone) {
+      console.warn('[INTERNAL_CLASSIFICATION_BLOCKED_FOR_PROTECTED_PHONE]', {
+        phoneTail: normalizedPhone.slice(-4),
+        templateKey: template.key,
+        category: template.category,
+      });
+    } else if (shouldAutoClassifyAsInternal) {
       await updateContactType(contact.id, 'INTERNO');
     }
 
@@ -456,7 +465,7 @@ export async function sendBatchTemplate(params: {
         null,
         null
       );
-      if (template.category === 'CORRETOR') {
+      if (template.category === 'CORRETOR' && !protectedPhone) {
         await updateConversationType(conversation.id, 'CORRETOR');
       }
       if (result.metaMessageId) {

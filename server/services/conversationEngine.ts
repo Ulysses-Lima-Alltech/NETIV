@@ -1500,8 +1500,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     replyPipelineToken,
     inboundMetaMessageId: inboundMetaFromCtx,
   } = ctx;
-  const blockCorretorConversation = (conversationType: unknown): boolean => {
-    return String(conversationType ?? 'CLIENT').toUpperCase() === 'CORRETOR';
+  const blockInternalConversation = (conversationType: unknown): boolean => {
+    const normalized = String(conversationType ?? 'CLIENT').toUpperCase();
+    return normalized === 'CORRETOR' || normalized === 'ADMIN';
   };
 
   console.log('[ANA DEBUG] handleIncomingMessage start', { conversationId, toPhoneNumber });
@@ -1644,10 +1645,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     // Revalidacao imediata antes do bloqueio: sempre buscar estado mais recente (evita race: usuario muda Handoff->ANA durante processamento)
     const latestConv = await getConversationById(conversationId);
     let effectiveConv = latestConv ?? conv;
-    if (blockCorretorConversation(effectiveConv.conversation_type)) {
-      logger.info('Ana bloqueada para conversa tipo CORRETOR', {
+    if (blockInternalConversation(effectiveConv.conversation_type)) {
+      logger.info('Ana bloqueada para conversa interna', {
         conversationId: effectiveConv.id,
-        reason: 'conversation_type_corretor',
+        reason: 'conversation_type_internal',
+        conversationType: String(effectiveConv.conversation_type ?? 'CLIENT').toUpperCase(),
       });
       return;
     }

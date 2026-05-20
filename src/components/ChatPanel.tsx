@@ -120,6 +120,7 @@ export interface ChatPanelProps {
     reserve?: ReserveSegmentationPatchBody;
     assignedBrokerId?: number | null;
   }) => void | Promise<void>;
+  onConversationTypeChange?: (type: 'CLIENT' | 'INTERNAL') => void | Promise<void>;
   onResetConversation?: (conversationId: string) => void | Promise<void>;
   onCloseConversation?: () => void | Promise<void>;
   onReopenConversation?: () => void | Promise<void>;
@@ -141,6 +142,7 @@ export function ChatPanel({
   loadError,
   onSendMessage,
   onClassificationChange,
+  onConversationTypeChange,
   onResetConversation,
   onCloseConversation,
   onReopenConversation,
@@ -163,6 +165,8 @@ export function ChatPanel({
   const [nameSaving, setNameSaving] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState<boolean>(() => getStoredDetailsOpen());
+  const [typeSaving, setTypeSaving] = useState(false);
+  const [typeFeedback, setTypeFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -534,6 +538,41 @@ export function ChatPanel({
                       </button>
                     </div>
                   </div>
+
+                  {onConversationTypeChange && (
+                    <label className="block">
+                      <span className={labelSm}>Tipo da conversa</span>
+                      <select
+                        aria-label="Tipo da conversa"
+                        disabled={typeSaving}
+                        value={
+                          conversation.conversationType === 'ADMIN' || conversation.conversationType === 'CORRETOR'
+                            ? 'INTERNAL'
+                            : 'CLIENT'
+                        }
+                        onChange={async (e) => {
+                          const nextType = e.target.value === 'INTERNAL' ? 'INTERNAL' : 'CLIENT';
+                          setTypeSaving(true);
+                          setTypeFeedback(null);
+                          try {
+                            await Promise.resolve(onConversationTypeChange(nextType));
+                            setTypeFeedback('Tipo da conversa atualizado.');
+                          } catch (error) {
+                            setTypeFeedback(error instanceof Error ? error.message : 'Falha ao atualizar tipo.');
+                          } finally {
+                            setTypeSaving(false);
+                          }
+                        }}
+                        className={`${selectField} w-full`}
+                      >
+                        <option value="CLIENT">Cliente</option>
+                        <option value="INTERNAL">Interno</option>
+                      </select>
+                      {typeFeedback && (
+                        <p className="mt-1 text-[11px] text-[#64748b]">{typeFeedback}</p>
+                      )}
+                    </label>
+                  )}
 
                   <label className="block">
                     <span className={labelSm}>Temperatura</span>

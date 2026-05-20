@@ -557,6 +557,11 @@ export const whatsappApi = {
       reserveFollowUpMoment?: string | null;
       reserveCommercialNotes?: string | null;
     }>(`/whatsapp/conversations/${conversationId}/classification`, { method: 'PATCH', body }),
+  updateConversationType: (conversationId: number, conversationType: 'CLIENT' | 'INTERNAL') =>
+    request<ConversationListItem>(`/whatsapp/conversations/${conversationId}/type`, {
+      method: 'PATCH',
+      body: { conversationType },
+    }),
   sendToConversation: (conversationId: number, message: string, file?: File | null) => {
     if (file) {
       const fd = new FormData();
