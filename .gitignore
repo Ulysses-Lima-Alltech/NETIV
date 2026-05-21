@@ -32,3 +32,23 @@ server/data
 network-config.json
 run-report-enterprise-overrides.json
 run-report-overrides.json
+
+# Temporary local files
+tmp*/
+tmp-*
+tmp_*
+*.bak
+*.bak-*
+*.backup
+taskdef-*.json
+tmp-taskdef-*.json
+new-taskdef-*.json
+ecs-*.json
+ecs-migration-*.json
+ecs-network-*.json
+DISPARO*.csv
+mover_*_para_interno*.ps1
+
+# Backup files with underscore suffix
+*.bak_*
+*.bak_**
