@@ -80,13 +80,16 @@ type ChatCompletionUsage = {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  completion_tokens_details?: {
+    reasoning_tokens?: number;
+  };
   prompt_tokens_details?: {
     cached_tokens?: number;
   };
 };
 
 type ChatCompletionApiResponse = {
-  choices?: Array<{ message?: { content?: string } }>;
+  choices?: Array<{ message?: { content?: string }; finish_reason?: string | null }>;
   usage?: ChatCompletionUsage;
   error?: { message?: string; code?: string; type?: string; param?: string };
 };
@@ -189,8 +192,13 @@ export async function generateChatCompletion(params: GenerateCompletionParams): 
   if (responseFormatJson) {
     body.response_format = { type: 'json_object' };
   }
+  let reasoningEffort: 'minimal' | null = null;
   if (usesMaxCompletionTokensOnly) {
     body.max_completion_tokens = maxTokens;
+    if (String(model || '').trim().toLowerCase().startsWith('gpt-5')) {
+      body.reasoning_effort = 'minimal';
+      reasoningEffort = 'minimal';
+    }
   } else {
     body.temperature = temperature;
     body.max_tokens = maxTokens;
@@ -198,6 +206,9 @@ export async function generateChatCompletion(params: GenerateCompletionParams): 
   console.log('[OPENAI_REQUEST_PARAMS]', {
     model,
     tokenParam: usesMaxCompletionTokensOnly ? 'max_completion_tokens' : 'max_tokens',
+    reasoningEffort,
+    maxTokens,
+    messagesCount: messages.length,
   });
 
   try {
@@ -269,7 +280,18 @@ export async function generateChatCompletion(params: GenerateCompletionParams): 
     const content = data.choices?.[0]?.message?.content?.trim();
     if (!content) {
       const preview = JSON.stringify(data).slice(0, 600);
-      console.error('[OpenAI] resposta sem content (choices vazio ou null)', { model, preview });
+      const finishReason = data.choices?.[0]?.finish_reason ?? null;
+      const reasoningTokens = numberOrZero(data.usage?.completion_tokens_details?.reasoning_tokens);
+      console.error('[OpenAI] empty_response', {
+        model,
+        provider,
+        finishReason,
+        reasoningTokens,
+        promptTokens: usage.inputTokens,
+        completionTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
+        preview,
+      });
       await recordLlmUsage({
         tracking: params.costTracking,
         provider,
@@ -289,6 +311,7 @@ export async function generateChatCompletion(params: GenerateCompletionParams): 
         error: sanitizeProviderErrorMessage(`Resposta vazia da API. preview=${preview.slice(0, 280)}`),
         provider,
         model,
+        errorCode: 'EMPTY_RESPONSE',
         classifiedError: 'UNKNOWN_LLM_ERROR',
         usage,
         estimatedCostUsd: cost.estimatedCostUsd,

@@ -187,6 +187,13 @@ import {
   type LlmProvider,
 } from '../utils/llmProviderDiagnostics.js';
 import {
+  extractRetryAfterMs,
+  isRetryableLlmError,
+  mapRetryReason,
+  sanitizeRetryErrorMessage,
+} from '../utils/llmRetry.js';
+import { scheduleAnaRetry } from './anaRetrySchedulerService.js';
+import {
   createAnaTurnDiagnostics,
   markAnaTurnStage,
   type AnaTurnDiagnostics,
@@ -3839,6 +3846,45 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         anaTurnDiagnostics.fallbackUsed = false;
         anaTurnDiagnostics.finalResponse.replySource = null;
         const isRateLimitBlock = anaTurnDiagnostics.classifiedError === 'OPENAI_RATE_LIMIT';
+        const retryableFailure =
+          blockingLatestFailure != null &&
+          isRetryableLlmError({
+            httpStatus: blockingLatestFailure.httpStatus ?? null,
+            errorCode: blockingLatestFailure.errorCode ?? null,
+            errorType: blockingLatestFailure.errorType ?? null,
+            message: blockingLatestFailure.error ?? null,
+          });
+        if (retryableFailure) {
+          const retryErrorPayload = {
+            httpStatus: blockingLatestFailure?.httpStatus ?? null,
+            errorCode: blockingLatestFailure?.errorCode ?? null,
+            errorType: blockingLatestFailure?.errorType ?? null,
+            message: blockingLatestFailure?.error ?? fallbackReason ?? 'retryable_llm_error',
+          };
+          const retryAfterMs = extractRetryAfterMs(retryErrorPayload);
+          await scheduleAnaRetry({
+            conversationId,
+            triggerMessageId: lastUserRowForLog?.id ?? null,
+            error: retryErrorPayload,
+          });
+          anaTurnAuditOutcome = 'silent';
+          anaTurnAuditBlockedReason = 'llm_retry_scheduled';
+          anaTurnAuditGuardsApplied.retryScheduled = {
+            reason: mapRetryReason(retryErrorPayload),
+            retryAfterMs,
+            triggerMessageId: lastUserRowForLog?.id ?? null,
+          };
+          console.log('[ANA_RETRY] llm_retryable_error', {
+            conversationId,
+            triggerMessageId: lastUserRowForLog?.id ?? null,
+            attemptCount: anaTurnDiagnostics.llm.attempts.length,
+            reason: mapRetryReason(retryErrorPayload),
+            retryAfterMs,
+            model,
+            error: sanitizeRetryErrorMessage(retryErrorPayload),
+          });
+          return;
+        }
         anaTurnDiagnostics.finalResponse.handoffUsed = !isRateLimitBlock;
         anaTurnDiagnostics.finalResponse.outboundStatus = 'blocked';
         anaTurnAuditOutcome = 'blocked';

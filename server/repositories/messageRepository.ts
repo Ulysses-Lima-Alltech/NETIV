@@ -213,6 +213,24 @@ export async function getLastUserMessageRow(conversationId: number): Promise<Mes
   return rows[0] ?? null;
 }
 
+export async function hasAssistantMessageAfterMessageId(
+  conversationId: number,
+  inboundMessageId: number
+): Promise<boolean> {
+  const { rows } = await query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM messages
+       WHERE conversation_id = $1
+         AND role = 'assistant'
+         AND deleted_at IS NULL
+         AND id > $2
+     ) AS exists`,
+    [conversationId, inboundMessageId]
+  );
+  return rows[0]?.exists === true;
+}
+
 /**
  * Última mensagem do usuário que ainda precisa de resposta da IA.
  * Lógica: compara última mensagem do usuário vs última da IA.

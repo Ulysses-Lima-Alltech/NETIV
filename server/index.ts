@@ -16,6 +16,7 @@ import { syncAllConversationOwnersFromContacts } from './repositories/contactsRe
 import { runDjangoSyncWorker } from './services/djangoSyncWorker.js';
 import { processDueScheduledBatchSends } from './services/whatsappBatchTemplateService.js';
 import { initSocketServer, setRealtimeEnabled } from './realtime/socketServer.js';
+import { processAnaRetryJobsTick } from './services/anaRetryWorkerService.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -100,6 +101,9 @@ initPostgres()
     setInterval(() => {
       void runDjangoSyncWorker().catch((err) => console.error('[django sync]', err));
     }, 10_000);
+    setInterval(() => {
+      void processAnaRetryJobsTick().catch((err) => console.error('[ana retry worker]', err));
+    }, 5_000);
   })
   .catch((e) => {
     console.error('[startup]', e);

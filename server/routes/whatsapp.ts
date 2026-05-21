@@ -64,8 +64,10 @@ import {
   insertMessage,
   getMessagesByConversationId,
   softDeleteMessage,
+  getLastUserMessageRow,
   type MessageAttachmentPayload,
 } from '../repositories/messageRepository.js';
+import { scheduleAnaRetry } from '../services/anaRetrySchedulerService.js';
 import { getCorretorById } from '../repositories/corretorRepository.js';
 import {
   sendMessageSchema,
@@ -641,6 +643,27 @@ router.patch('/conversations/:id/classification', async (req, res) => {
   } catch (e) {
     console.error('[WhatsApp] PATCH classification:', e);
     res.status(500).json({ error: 'Erro ao atualizar.' });
+  }
+});
+
+router.post('/conversations/:id/ana-retry', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (!(await assertCanAccessConversation(req as AuthenticatedRequest, res, id))) return;
+    const conv = await getConversationById(id);
+    if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
+    const lastInbound = await getLastUserMessageRow(id);
+    await scheduleAnaRetry({
+      conversationId: id,
+      triggerMessageId: lastInbound?.id ?? null,
+      error: { message: 'manual_retry' },
+      reasonOverride: 'manual_retry',
+    });
+    return res.json({ success: true, conversationId: id, scheduled: true });
+  } catch (e) {
+    console.error('[WhatsApp] POST ana-retry:', e);
+    return res.status(500).json({ error: 'Erro ao agendar retry da Ana.' });
   }
 });
 
