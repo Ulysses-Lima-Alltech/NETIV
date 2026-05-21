@@ -1,4 +1,4 @@
-﻿import { FlatList, StyleSheet, Text, View } from "react-native";
+import { FlatList, StyleSheet, Text, View } from "react-native";
 
 const visits = [
   { id: "1", time: "14:30", clientName: "Carlos Silva", enterpriseName: "Évora", status: "Confirmada" },

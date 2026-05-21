@@ -1,4 +1,4 @@
-﻿import { router } from "expo-router";
+import { router } from "expo-router";
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 
 const conversations = [

@@ -1,18 +1,44 @@
-﻿import { router } from "expo-router";
+import { router } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useAuthStore } from "../src/stores/auth.store";
 
-const cards = [
-  { label: "Conversas aguardando", value: "3" },
-  { label: "Visitas hoje", value: "2" },
-  { label: "Precisa de humano", value: "1" },
-  { label: "Leads ativos", value: "12" },
-];
+function getCardsByRole(role?: string) {
+  if (role === "GESTOR") {
+    return [
+      { label: "Leads nos empreendimentos", value: "41" },
+      { label: "Conversas sem responsável", value: "6" },
+      { label: "Visitas hoje", value: "5" },
+      { label: "Corretores ativos", value: "8" },
+    ];
+  }
+
+  if (role === "ADM") {
+    return [
+      { label: "Empreendimentos", value: "4" },
+      { label: "Leads abertos", value: "130" },
+      { label: "Conversas totais", value: "820" },
+      { label: "Usuários", value: "24" },
+    ];
+  }
+
+  return [
+    { label: "Conversas aguardando", value: "3" },
+    { label: "Visitas hoje", value: "2" },
+    { label: "Precisa de humano", value: "1" },
+    { label: "Leads ativos", value: "12" },
+  ];
+}
 
 export default function HomeScreen() {
+  const user = useAuthStore((state) => state.user);
+  const cards = getCardsByRole(user?.role);
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Resumo</Text>
-      <Text style={styles.subtitle}>Painel simples com os dados do usuário logado.</Text>
+      <Text style={styles.subtitle}>
+        {user?.name ?? "Usuário"} {"•"} {user?.role ?? "SEM PERFIL"}
+      </Text>
 
       <View style={styles.grid}>
         {cards.map((card) => (
@@ -30,6 +56,24 @@ export default function HomeScreen() {
       <Pressable style={styles.secondaryAction} onPress={() => router.push("/visitas")}>
         <Text style={styles.secondaryActionText}>Ver visitas</Text>
       </Pressable>
+
+      {user?.role !== "CORRETOR" ? (
+        <Pressable style={styles.secondaryAction}>
+          <Text style={styles.secondaryActionText}>Corretores</Text>
+        </Pressable>
+      ) : null}
+
+      {user?.role === "ADM" ? (
+        <>
+          <Pressable style={styles.secondaryAction}>
+            <Text style={styles.secondaryActionText}>Templates</Text>
+          </Pressable>
+
+          <Pressable style={styles.secondaryAction}>
+            <Text style={styles.secondaryActionText}>Configurações</Text>
+          </Pressable>
+        </>
+      ) : null}
 
       <Pressable style={styles.secondaryAction} onPress={() => router.push("/perfil")}>
         <Text style={styles.secondaryActionText}>Meu perfil</Text>

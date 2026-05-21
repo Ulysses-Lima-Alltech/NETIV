@@ -1,8 +1,13 @@
-﻿import { router } from "expo-router";
+import { router } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useAuthStore } from "../src/stores/auth.store";
 
 export default function ProfileScreen() {
+  const user = useAuthStore((state) => state.user);
+  const logoutStore = useAuthStore((state) => state.logout);
+
   function logout() {
+    logoutStore();
     router.replace("/login");
   }
 
@@ -10,8 +15,9 @@ export default function ProfileScreen() {
     <View style={styles.container}>
       <View style={styles.card}>
         <Text style={styles.title}>Meu perfil</Text>
-        <Text style={styles.line}>Nome: Usuário de teste</Text>
-        <Text style={styles.line}>Perfil: CORRETOR</Text>
+        <Text style={styles.line}>Nome: {user?.name ?? "-"}</Text>
+        <Text style={styles.line}>Usuário: {user?.username ?? "-"}</Text>
+        <Text style={styles.line}>Perfil: {user?.role ?? "-"}</Text>
         <Text style={styles.line}>Acesso: Mobile MVP</Text>
 
         <Pressable style={styles.button} onPress={logout}>

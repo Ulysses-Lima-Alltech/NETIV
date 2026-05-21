@@ -1,4 +1,4 @@
-﻿import { router } from "expo-router";
+import { router } from "expo-router";
 import { useState } from "react";
 import {
   Alert,
@@ -10,10 +10,12 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useAuthStore } from "../src/stores/auth.store";
 
 export default function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const login = useAuthStore((state) => state.login);
 
   function handleLogin() {
     if (!username.trim() || !password.trim()) {
@@ -21,7 +23,13 @@ export default function LoginScreen() {
       return;
     }
 
-    // Temporário: login fake até conectar no backend /api/mobile/auth/login.
+    const result = login(username, password);
+
+    if (!result.ok) {
+      Alert.alert("Acesso negado", result.message ?? "Usuário ou senha inválidos.");
+      return;
+    }
+
     router.replace("/home");
   }
 
@@ -33,6 +41,13 @@ export default function LoginScreen() {
       <View style={styles.card}>
         <Text style={styles.title}>NETIV</Text>
         <Text style={styles.subtitle}>Acesso comercial</Text>
+
+        <View style={styles.mockBox}>
+          <Text style={styles.mockTitle}>Acessos de teste</Text>
+          <Text style={styles.mockText}>corretor / corretor</Text>
+          <Text style={styles.mockText}>gestor / gestor</Text>
+          <Text style={styles.mockText}>admin / admin</Text>
+        </View>
 
         <Text style={styles.label}>Usuário</Text>
         <TextInput
@@ -87,7 +102,26 @@ const styles = StyleSheet.create({
     color: "#64748B",
     textAlign: "center",
     marginTop: 4,
-    marginBottom: 24,
+    marginBottom: 18,
+  },
+  mockBox: {
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 18,
+  },
+  mockTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0F172A",
+    marginBottom: 4,
+  },
+  mockText: {
+    fontSize: 12,
+    color: "#475569",
+    marginTop: 2,
   },
   label: {
     fontSize: 14,
