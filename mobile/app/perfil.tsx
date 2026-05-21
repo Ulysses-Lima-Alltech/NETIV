@@ -1,5 +1,6 @@
 import { router } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { AppShell } from "../src/components/AppShell";
 import { useAuthStore } from "../src/stores/auth.store";
 
 export default function ProfileScreen() {
@@ -12,19 +13,21 @@ export default function ProfileScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.title}>Meu perfil</Text>
-        <Text style={styles.line}>Nome: {user?.name ?? "-"}</Text>
-        <Text style={styles.line}>Usuário: {user?.username ?? "-"}</Text>
-        <Text style={styles.line}>Perfil: {user?.role ?? "-"}</Text>
-        <Text style={styles.line}>Acesso: Mobile MVP</Text>
+    <AppShell>
+      <View style={styles.container}>
+        <View style={styles.card}>
+          <Text style={styles.title}>Meu perfil</Text>
+          <Text style={styles.line}>Nome: {user?.name ?? "-"}</Text>
+          <Text style={styles.line}>Usuário: {user?.username ?? "-"}</Text>
+          <Text style={styles.line}>Perfil: {user?.role ?? "-"}</Text>
+          <Text style={styles.line}>Acesso: Mobile MVP</Text>
 
-        <Pressable style={styles.button} onPress={logout}>
-          <Text style={styles.buttonText}>Sair</Text>
-        </Pressable>
+          <Pressable style={styles.button} onPress={logout}>
+            <Text style={styles.buttonText}>Sair</Text>
+          </Pressable>
+        </View>
       </View>
-    </View>
+    </AppShell>
   );
 }
 

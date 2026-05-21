@@ -1,5 +1,6 @@
 import { router } from "expo-router";
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { AppShell } from "../../src/components/AppShell";
 
 const conversations = [
   {
@@ -22,30 +23,32 @@ const conversations = [
 
 export default function ConversationsScreen() {
   return (
-    <FlatList
-      contentContainerStyle={styles.container}
-      data={conversations}
-      keyExtractor={(item) => item.id}
-      ListHeaderComponent={
-        <>
-          <Text style={styles.title}>Conversas</Text>
-          <Text style={styles.subtitle}>Clientes atribuídos conforme seu perfil.</Text>
-        </>
-      }
-      renderItem={({ item }) => (
-        <Pressable style={styles.card} onPress={() => router.push(`/conversas/${item.id}`)}>
-          <View style={styles.row}>
-            <Text style={styles.client}>{item.clientName}</Text>
-            {item.unread ? <View style={styles.dot} /> : null}
-          </View>
-          <Text style={styles.enterprise}>{item.enterpriseName}</Text>
-          <Text style={styles.message}>{item.lastMessage}</Text>
-          <Text style={item.status === "Precisa humano" ? styles.statusWarning : styles.status}>
-            {item.status}
-          </Text>
-        </Pressable>
-      )}
-    />
+    <AppShell>
+      <FlatList
+        contentContainerStyle={styles.container}
+        data={conversations}
+        keyExtractor={(item) => item.id}
+        ListHeaderComponent={
+          <>
+            <Text style={styles.title}>Conversas</Text>
+            <Text style={styles.subtitle}>Clientes atribuídos conforme seu perfil.</Text>
+          </>
+        }
+        renderItem={({ item }) => (
+          <Pressable style={styles.card} onPress={() => router.push(`/conversas/${item.id}`)}>
+            <View style={styles.row}>
+              <Text style={styles.client}>{item.clientName}</Text>
+              {item.unread ? <View style={styles.dot} /> : null}
+            </View>
+            <Text style={styles.enterprise}>{item.enterpriseName}</Text>
+            <Text style={styles.message}>{item.lastMessage}</Text>
+            <Text style={item.status === "Precisa humano" ? styles.statusWarning : styles.status}>
+              {item.status}
+            </Text>
+          </Pressable>
+        )}
+      />
+    </AppShell>
   );
 }
 
@@ -53,6 +56,7 @@ const styles = StyleSheet.create({
   container: {
     padding: 18,
     gap: 12,
+    paddingBottom: 28,
   },
   title: {
     fontSize: 28,

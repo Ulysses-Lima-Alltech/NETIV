@@ -1,4 +1,5 @@
 import { FlatList, StyleSheet, Text, View } from "react-native";
+import { AppShell } from "../../src/components/AppShell";
 
 const visits = [
   { id: "1", time: "14:30", clientName: "Carlos Silva", enterpriseName: "Évora", status: "Confirmada" },
@@ -7,25 +8,27 @@ const visits = [
 
 export default function VisitsScreen() {
   return (
-    <FlatList
-      contentContainerStyle={styles.container}
-      data={visits}
-      keyExtractor={(item) => item.id}
-      ListHeaderComponent={
-        <>
-          <Text style={styles.title}>Visitas</Text>
-          <Text style={styles.subtitle}>Agenda conforme seu perfil de acesso.</Text>
-        </>
-      }
-      renderItem={({ item }) => (
-        <View style={styles.card}>
-          <Text style={styles.time}>{item.time}</Text>
-          <Text style={styles.client}>{item.clientName}</Text>
-          <Text style={styles.enterprise}>{item.enterpriseName}</Text>
-          <Text style={styles.status}>{item.status}</Text>
-        </View>
-      )}
-    />
+    <AppShell>
+      <FlatList
+        contentContainerStyle={styles.container}
+        data={visits}
+        keyExtractor={(item) => item.id}
+        ListHeaderComponent={
+          <>
+            <Text style={styles.title}>Visitas</Text>
+            <Text style={styles.subtitle}>Agenda conforme seu perfil de acesso.</Text>
+          </>
+        }
+        renderItem={({ item }) => (
+          <View style={styles.card}>
+            <Text style={styles.time}>{item.time}</Text>
+            <Text style={styles.client}>{item.clientName}</Text>
+            <Text style={styles.enterprise}>{item.enterpriseName}</Text>
+            <Text style={styles.status}>{item.status}</Text>
+          </View>
+        )}
+      />
+    </AppShell>
   );
 }
 
@@ -33,6 +36,7 @@ const styles = StyleSheet.create({
   container: {
     padding: 18,
     gap: 12,
+    paddingBottom: 28,
   },
   title: {
     fontSize: 28,

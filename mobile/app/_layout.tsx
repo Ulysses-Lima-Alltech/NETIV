@@ -22,6 +22,12 @@ export default function RootLayout() {
         <Stack.Screen name="conversas/index" options={{ title: "Conversas" }} />
         <Stack.Screen name="conversas/[id]" options={{ title: "Conversa" }} />
         <Stack.Screen name="visitas/index" options={{ title: "Visitas" }} />
+        <Stack.Screen name="corretores/index" options={{ title: "Corretores" }} />
+        <Stack.Screen name="gestores/index" options={{ title: "Gestores" }} />
+        <Stack.Screen name="empreendimentos/index" options={{ title: "Empreendimentos" }} />
+        <Stack.Screen name="templates/index" options={{ title: "Templates" }} />
+        <Stack.Screen name="configuracoes/index" options={{ title: "Configurações" }} />
+        <Stack.Screen name="usuarios/index" options={{ title: "Usuários" }} />
         <Stack.Screen name="perfil" options={{ title: "Perfil" }} />
       </Stack>
     </QueryClientProvider>

@@ -1,5 +1,6 @@
 import { router } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { AppShell } from "../src/components/AppShell";
 import { useAuthStore } from "../src/stores/auth.store";
 
 function getCardsByRole(role?: string) {
@@ -29,56 +30,69 @@ function getCardsByRole(role?: string) {
   ];
 }
 
+function getDescriptionByRole(role?: string) {
+  if (role === "GESTOR") {
+    return "Resumo dos empreendimentos atribuídos ao gestor.";
+  }
+
+  if (role === "ADM") {
+    return "Visão geral administrativa da operação.";
+  }
+
+  return "Resumo individual do corretor.";
+}
+
 export default function HomeScreen() {
   const user = useAuthStore((state) => state.user);
   const cards = getCardsByRole(user?.role);
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Resumo</Text>
-      <Text style={styles.subtitle}>
-        {user?.name ?? "Usuário"} {"•"} {user?.role ?? "SEM PERFIL"}
-      </Text>
+    <AppShell>
+      <ScrollView contentContainerStyle={styles.container}>
+        <Text style={styles.title}>Resumo</Text>
+        <Text style={styles.subtitle}>
+          {user?.name ?? "Usuário"} • {user?.role ?? "SEM PERFIL"}
+        </Text>
+        <Text style={styles.description}>{getDescriptionByRole(user?.role)}</Text>
 
-      <View style={styles.grid}>
-        {cards.map((card) => (
-          <View key={card.label} style={styles.card}>
-            <Text style={styles.value}>{card.value}</Text>
-            <Text style={styles.label}>{card.label}</Text>
-          </View>
-        ))}
-      </View>
+        <View style={styles.grid}>
+          {cards.map((card) => (
+            <View key={card.label} style={styles.card}>
+              <Text style={styles.value}>{card.value}</Text>
+              <Text style={styles.label}>{card.label}</Text>
+            </View>
+          ))}
+        </View>
 
-      <Pressable style={styles.action} onPress={() => router.push("/conversas")}>
-        <Text style={styles.actionText}>Abrir conversas</Text>
-      </Pressable>
+        <Text style={styles.sectionTitle}>Ações rápidas</Text>
 
-      <Pressable style={styles.secondaryAction} onPress={() => router.push("/visitas")}>
-        <Text style={styles.secondaryActionText}>Ver visitas</Text>
-      </Pressable>
-
-      {user?.role !== "CORRETOR" ? (
-        <Pressable style={styles.secondaryAction}>
-          <Text style={styles.secondaryActionText}>Corretores</Text>
+        <Pressable style={styles.action} onPress={() => router.push("/conversas")}>
+          <Text style={styles.actionText}>Abrir conversas</Text>
         </Pressable>
-      ) : null}
 
-      {user?.role === "ADM" ? (
-        <>
-          <Pressable style={styles.secondaryAction}>
-            <Text style={styles.secondaryActionText}>Templates</Text>
+        <Pressable style={styles.secondaryAction} onPress={() => router.push("/visitas")}>
+          <Text style={styles.secondaryActionText}>Ver visitas</Text>
+        </Pressable>
+
+        {user?.role !== "CORRETOR" ? (
+          <Pressable style={styles.secondaryAction} onPress={() => router.push("/corretores")}>
+            <Text style={styles.secondaryActionText}>Ver corretores</Text>
           </Pressable>
+        ) : null}
 
-          <Pressable style={styles.secondaryAction}>
-            <Text style={styles.secondaryActionText}>Configurações</Text>
-          </Pressable>
-        </>
-      ) : null}
+        {user?.role === "ADM" ? (
+          <>
+            <Pressable style={styles.secondaryAction} onPress={() => router.push("/templates")}>
+              <Text style={styles.secondaryActionText}>Templates</Text>
+            </Pressable>
 
-      <Pressable style={styles.secondaryAction} onPress={() => router.push("/perfil")}>
-        <Text style={styles.secondaryActionText}>Meu perfil</Text>
-      </Pressable>
-    </ScrollView>
+            <Pressable style={styles.secondaryAction} onPress={() => router.push("/configuracoes")}>
+              <Text style={styles.secondaryActionText}>Configurações</Text>
+            </Pressable>
+          </>
+        ) : null}
+      </ScrollView>
+    </AppShell>
   );
 }
 
@@ -86,6 +100,7 @@ const styles = StyleSheet.create({
   container: {
     padding: 18,
     gap: 14,
+    paddingBottom: 28,
   },
   title: {
     fontSize: 28,
@@ -95,6 +110,10 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 15,
     color: "#64748B",
+  },
+  description: {
+    fontSize: 14,
+    color: "#475569",
     marginBottom: 4,
   },
   grid: {
@@ -120,11 +139,16 @@ const styles = StyleSheet.create({
     color: "#64748B",
     marginTop: 4,
   },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: "#0F172A",
+    marginTop: 8,
+  },
   action: {
     backgroundColor: "#0F172A",
     borderRadius: 14,
     paddingVertical: 15,
-    marginTop: 8,
   },
   actionText: {
     color: "#FFFFFF",
