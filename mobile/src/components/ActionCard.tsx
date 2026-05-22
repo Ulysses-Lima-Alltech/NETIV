@@ -56,23 +56,24 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
     borderWidth: 1,
-    padding: spacing.md,
+    paddingVertical: 14,
+    paddingHorizontal: spacing.md,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
     ...shadows.card,
   },
   cardPrimary: {
-    backgroundColor: colors.navy,
-    borderColor: colors.navy,
+    backgroundColor: colors.navySoft,
+    borderColor: colors.navySoft,
   },
   cardSecondary: {
     backgroundColor: colors.card,
     borderColor: colors.border,
   },
   iconWrap: {
-    width: 42,
-    height: 42,
+    width: 38,
+    height: 38,
     borderRadius: radius.md,
     alignItems: "center",
     justifyContent: "center",
@@ -97,7 +98,7 @@ const styles = StyleSheet.create({
   },
   description: {
     ...typography.caption,
-    marginTop: 2,
+    marginTop: 1,
   },
   descriptionPrimary: {
     color: "#E2E8F0",
@@ -106,4 +107,3 @@ const styles = StyleSheet.create({
     color: colors.muted,
   },
 });
-

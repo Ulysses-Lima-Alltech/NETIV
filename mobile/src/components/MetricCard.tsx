@@ -25,17 +25,22 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 14,
     ...shadows.card,
   },
   value: {
     ...typography.metric,
+    fontSize: 28,
+    lineHeight: 32,
     color: colors.navy,
   },
   label: {
     ...typography.body,
+    fontSize: 13,
+    lineHeight: 18,
     color: colors.text,
-    marginTop: spacing.xs,
+    marginTop: 6,
   },
   footnote: {
     ...typography.caption,
@@ -43,4 +48,3 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
 });
-

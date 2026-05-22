@@ -54,7 +54,6 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const user = useAuthStore((state) => state.user);
   const [menuOpen, setMenuOpen] = useState(false);
-
   const role = user?.role ?? "CORRETOR";
 
   const menuItems = useMemo(() => TOP_MENU_ITEMS[role], [role]);
@@ -98,3 +97,4 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 });
+

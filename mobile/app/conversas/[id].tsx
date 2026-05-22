@@ -53,11 +53,8 @@ export default function ConversationDetailScreen() {
   const role = user?.role ?? "CORRETOR";
   const canSeeOperationalDetails = role === "GESTOR" || role === "ADM";
   const conversationId = parseConversationId(id);
-
   const statusLabel = handoff ? "Atendimento humano" : "Ana atendendo";
-
   const handoffButtonLabel = handoff ? "Voltar para Ana" : "Ativar handoff";
-
   const handoffTone = handoff ? "danger" : "info";
 
   const detailData = useMemo(
@@ -89,7 +86,7 @@ export default function ConversationDetailScreen() {
           <View style={styles.topTitleRow}>
             <View style={styles.topTextBlock}>
               <Text style={styles.topTitle}>Conversa #{conversationId}</Text>
-              <Text style={styles.topSubtitle}>Cliente: Carlos Silva • Évora</Text>
+              <Text style={styles.topSubtitle}>Cliente: Carlos Silva · Évora</Text>
             </View>
             <StatusBadge label={statusLabel} tone={handoffTone} />
           </View>
@@ -98,7 +95,7 @@ export default function ConversationDetailScreen() {
             style={[styles.handoffButton, handoff ? styles.handoffButtonDanger : null]}
             onPress={toggleHandoff}
           >
-            <MaterialCommunityIcons name="account-switch-outline" size={18} color="#FFFFFF" />
+            <MaterialCommunityIcons name="account-switch-outline" size={16} color="#FFFFFF" />
             <Text style={styles.handoffButtonText}>{handoffButtonLabel}</Text>
           </Pressable>
         </View>
@@ -126,6 +123,7 @@ export default function ConversationDetailScreen() {
           contentContainerStyle={styles.messages}
           renderItem={({ item }) => {
             const mine = item.from === "eu";
+
             return (
               <View style={[styles.messageBubble, mine ? styles.messageMine : styles.messageTheirs]}>
                 <Text style={[styles.messageText, mine ? styles.messageTextMine : null]}>
@@ -187,7 +185,7 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   handoffButton: {
-    minHeight: 36,
+    minHeight: 34,
     borderRadius: radius.md,
     backgroundColor: colors.orange,
     alignItems: "center",
@@ -300,3 +298,4 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 });
+

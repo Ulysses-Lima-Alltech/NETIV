@@ -28,7 +28,7 @@ const conversations = [
     id: "3",
     clientName: "Rafael Gomes",
     enterpriseName: "Montaresa",
-    lastMessage: "Recebi a proposta. Quero validar a tabela final.",
+    lastMessage: "Recebi a proposta e quero validar a tabela final.",
     anaStatus: "Ana atendendo" as const,
     needsHuman: false,
     unread: false,
@@ -50,7 +50,7 @@ export default function ConversationsScreen() {
             <Text style={styles.subtitle}>
               {user?.role === "CORRETOR"
                 ? "Leads atribuídos ao seu atendimento."
-                : "Conversas exibidas conforme escopo do seu perfil."}
+                : "Conversas exibidas conforme o escopo do seu perfil."}
             </Text>
           </View>
         }
@@ -83,6 +83,8 @@ const styles = StyleSheet.create({
   title: {
     ...typography.title,
     color: colors.navy,
+    fontSize: 26,
+    lineHeight: 31,
   },
   subtitle: {
     ...typography.body,
@@ -95,3 +97,4 @@ const styles = StyleSheet.create({
     height: 8,
   },
 });
+

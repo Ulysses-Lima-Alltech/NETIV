@@ -34,8 +34,8 @@ export function BottomNavigation({ items, currentPath, onNavigate }: BottomNavig
             >
               <MaterialCommunityIcons
                 name={item.icon}
-                size={22}
-                color={active ? "#FFFFFF" : colors.muted}
+                size={20}
+                color={active ? colors.navy : colors.muted}
               />
               <Text style={[styles.label, active ? styles.labelActive : null]}>{item.label}</Text>
             </Pressable>
@@ -50,7 +50,7 @@ const styles = StyleSheet.create({
   outer: {
     backgroundColor: colors.background,
     paddingHorizontal: spacing.sm,
-    paddingTop: spacing.xs,
+    paddingTop: 6,
     paddingBottom: spacing.xs,
   },
   container: {
@@ -59,26 +59,29 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.card,
-    padding: 6,
-    ...shadows.strong,
+    padding: 4,
+    ...shadows.card,
   },
   item: {
     flex: 1,
-    minHeight: 64,
+    minHeight: 56,
     borderRadius: radius.lg,
     alignItems: "center",
     justifyContent: "center",
-    gap: 4,
+    gap: 2,
   },
   itemActive: {
-    backgroundColor: colors.navy,
+    backgroundColor: colors.backgroundAlt,
   },
   label: {
     ...typography.caption,
+    fontSize: 10,
+    lineHeight: 13,
     color: colors.muted,
   },
   labelActive: {
-    color: "#FFFFFF",
+    color: colors.navy,
+    fontWeight: "700",
   },
 });
 
