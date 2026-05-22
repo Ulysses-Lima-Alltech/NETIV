@@ -8,7 +8,7 @@ export type Conversation = {
   status: ConversationStatus;
   needsHuman: boolean;
   unread: boolean;
-  assignedBrokerName: string;
+  assignedBrokerName: string | null;
 };
 
 export type ConversationMessage = {
@@ -24,7 +24,7 @@ export type ConversationDetail = {
   commercialDetails: {
     leadTemperature: string;
     enterpriseName: string;
-    brokerName: string;
+    brokerName: string | null;
     visitInfo: string;
     statusLabel: string;
   };

@@ -11,6 +11,7 @@ import {
   ConversationMessage,
   ConversationStatus,
 } from "../types/conversation.types";
+import { requestJson } from "./api";
 
 function cloneConversation(conversation: Conversation): Conversation {
   return { ...conversation };
@@ -47,6 +48,55 @@ function getConversationById(conversationId: string): Conversation {
 
 export function getConversationsByRole(_user: AuthUser | null | undefined): Promise<Conversation[]> {
   return Promise.resolve(conversationsState.map(cloneConversation));
+}
+
+type MobileConversationsResponse = {
+  conversations: Conversation[];
+};
+
+function isConversationStatus(value: unknown): value is ConversationStatus {
+  return value === "ANA" || value === "HUMAN";
+}
+
+function normalizeConversation(raw: unknown): Conversation | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Partial<Conversation>;
+  if (typeof value.id !== "string") return null;
+  if (typeof value.clientName !== "string") return null;
+  if (typeof value.enterpriseName !== "string") return null;
+  if (typeof value.lastMessage !== "string") return null;
+  if (!isConversationStatus(value.status)) return null;
+  if (typeof value.needsHuman !== "boolean") return null;
+  if (typeof value.unread !== "boolean") return null;
+  if (value.assignedBrokerName !== null && typeof value.assignedBrokerName !== "string") return null;
+
+  return {
+    id: value.id,
+    clientName: value.clientName,
+    enterpriseName: value.enterpriseName,
+    lastMessage: value.lastMessage,
+    status: value.status,
+    needsHuman: value.needsHuman,
+    unread: value.unread,
+    assignedBrokerName: value.assignedBrokerName ?? null,
+  };
+}
+
+export async function getConversationsWithApi(token: string): Promise<Conversation[]> {
+  const response = await requestJson<MobileConversationsResponse>("/api/mobile/conversations", {
+    method: "GET",
+    token,
+  });
+
+  if (!Array.isArray(response?.conversations)) {
+    throw new Error("INVALID_CONVERSATIONS_PAYLOAD");
+  }
+
+  const normalized = response.conversations
+    .map((item) => normalizeConversation(item))
+    .filter((item): item is Conversation => item !== null);
+
+  return normalized;
 }
 
 export function getConversationDetailById(

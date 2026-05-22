@@ -8,7 +8,7 @@ type ConversationCardProps = {
   lastMessage: string;
   anaStatus: "Ana atendendo" | "Atendimento humano";
   needsHuman: boolean;
-  assignedBrokerName?: string;
+  assignedBrokerName?: string | null;
   showAssignedBroker?: boolean;
   unread: boolean;
   onPress: () => void;
