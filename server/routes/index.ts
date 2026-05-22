@@ -3,6 +3,7 @@ import authRouter from './auth.js';
 import mobileAuthRouter from './mobileAuth.js';
 import mobileHomeRouter from './mobileHome.js';
 import mobileConversationsRouter from './mobileConversations.js';
+import mobileVisitsRouter from './mobileVisits.js';
 import ssoRouter from './sso.js';
 import usersRouter from './users.js';
 import settingsRouter from './settings.js';
@@ -32,6 +33,7 @@ router.use('/auth', authRouter);
 router.use('/mobile/auth', mobileAuthRouter);
 router.use('/mobile/home', mobileHomeRouter);
 router.use('/mobile/conversations', mobileConversationsRouter);
+router.use('/mobile/visits', mobileVisitsRouter);
 // SSO: chamado pelo Django, protegido pelo JWT assinado (não precisa de auth)
 router.use('/auth/sso', ssoRouter);
 
