@@ -12,6 +12,7 @@
     "seed:mobile-users": "tsx scripts/seed-mobile-users.ts",
     "seed:mobile-conversations:dev": "tsx scripts/seed-mobile-conversations-dev.ts",
     "seed:mobile-visits:dev": "tsx scripts/seed-mobile-visits-dev.ts",
+    "seed:mobile-team:dev": "tsx scripts/seed-mobile-team-dev.ts",
     "costs:sync": "tsx scripts/syncOpenAiCosts.ts",
     "start:prod": "node dist/db/migrate.js && node dist/index.js",
     "kb:ingest": "tsx scripts/ingestEnterpriseKnowledge.ts",
