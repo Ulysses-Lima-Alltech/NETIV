@@ -1,7 +1,7 @@
-{
+﻿{
   "expo": {
-    "name": "mobile",
-    "slug": "mobile",
+    "name": "NETIV",
+    "slug": "netiv-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -29,3 +29,4 @@
     "scheme": "netiv"
   }
 }
+
