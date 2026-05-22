@@ -60,6 +60,24 @@ type MobileConversationDetailResponse = {
   messages: ConversationMessage[];
 };
 
+type MobileHandoffResponse = {
+  conversation: {
+    id: string;
+    status: ConversationStatus;
+    needsHuman: boolean;
+    assignedBrokerName: string | null;
+  };
+};
+
+type MobileSendMessageResponse = {
+  message: {
+    id: string;
+    from: "me";
+    text: string;
+    createdAt: string;
+  };
+};
+
 function isConversationStatus(value: unknown): value is ConversationStatus {
   return value === "ANA" || value === "HUMAN";
 }
@@ -173,6 +191,63 @@ export async function getConversationDetailWithApi(
   }
 
   return normalized;
+}
+
+export async function toggleHandoffWithApi(
+  conversationId: string,
+  handoff: boolean,
+  token: string
+): Promise<Conversation | null> {
+  const response = await requestJson<MobileHandoffResponse>(
+    `/api/mobile/conversations/${conversationId}/handoff`,
+    {
+      method: "PATCH",
+      token,
+      body: { handoff },
+    }
+  );
+
+  if (!response?.conversation?.id || !isConversationStatus(response.conversation.status)) {
+    throw new Error("INVALID_HANDOFF_PAYLOAD");
+  }
+
+  const current = getConversationById(conversationId);
+  return {
+    ...current,
+    id: response.conversation.id,
+    status: response.conversation.status,
+    needsHuman: response.conversation.needsHuman === true,
+    assignedBrokerName: response.conversation.assignedBrokerName ?? null,
+  };
+}
+
+export async function sendMessageWithApi(
+  conversationId: string,
+  text: string,
+  token: string
+): Promise<ConversationMessage | null> {
+  const normalizedText = text.trim();
+  if (!normalizedText) return null;
+
+  const response = await requestJson<MobileSendMessageResponse>(
+    `/api/mobile/conversations/${conversationId}/messages`,
+    {
+      method: "POST",
+      token,
+      body: { text: normalizedText },
+    }
+  );
+
+  if (!response?.message?.id || response.message.from !== "me" || typeof response.message.text !== "string") {
+    throw new Error("INVALID_SEND_MESSAGE_PAYLOAD");
+  }
+
+  return {
+    id: response.message.id,
+    from: "me",
+    text: response.message.text,
+    createdAt: response.message.createdAt,
+  };
 }
 
 export function getConversationDetailById(

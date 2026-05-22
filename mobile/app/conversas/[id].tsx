@@ -2,6 +2,7 @@ import { useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -19,7 +20,9 @@ import {
   getConversationDetailWithApi,
   getConversationDetailById,
   getConversationStatusLabel,
+  sendMessageWithApi,
   sendMockMessage,
+  toggleHandoffWithApi,
   toggleMockHandoff,
 } from "../../src/services/conversations.service";
 import { useAuthStore } from "../../src/stores/auth.store";
@@ -61,6 +64,8 @@ export default function ConversationDetailScreen() {
   const [handoff, setHandoff] = useState(false);
   const [isLoadingDetail, setIsLoadingDetail] = useState(true);
   const [isDeniedOrMissing, setIsDeniedOrMissing] = useState(false);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [isUpdatingHandoff, setIsUpdatingHandoff] = useState(false);
 
   const role = user?.role ?? "CORRETOR";
   const canSeeOperationalDetails = role === "GESTOR" || role === "ADM";
@@ -131,27 +136,89 @@ export default function ConversationDetailScreen() {
 
   async function handleSendMessage() {
     if (isDeniedOrMissing) return;
-    if (!message.trim()) return;
+    if (!message.trim() || isSendingMessage) return;
 
-    const sentMessage = await sendMockMessage(conversationId, message);
-    if (!sentMessage) return;
+    setIsSendingMessage(true);
+    try {
+      let sentMessage = null;
+      const draft = message;
 
-    setDetail((current) => ({
-      ...current,
-      conversation: {
-        ...current.conversation,
-        lastMessage: sentMessage.text,
-        unread: false,
-      },
-      messages: [...current.messages, sentMessage],
-    }));
+      try {
+        if (token) {
+          sentMessage = await sendMessageWithApi(conversationId, draft, token);
+        }
+      } catch (error) {
+        const unavailable =
+          error instanceof ApiRequestError &&
+          (error.message === "NETWORK_ERROR" || error.status == null || error.status >= 500);
 
-    setMessage("");
+        if (unavailable) {
+          sentMessage = await sendMockMessage(conversationId, draft);
+          Alert.alert(
+            "Servidor indisponível",
+            "Sua mensagem foi registrada localmente temporariamente."
+          );
+        } else {
+          Alert.alert("Não foi possível enviar", "Verifique sua permissão ou tente novamente.");
+          return;
+        }
+      }
+
+      if (!sentMessage) {
+        sentMessage = await sendMockMessage(conversationId, draft);
+      }
+      if (!sentMessage) return;
+
+      setDetail((current) => ({
+        ...current,
+        conversation: {
+          ...current.conversation,
+          lastMessage: sentMessage!.text,
+          unread: false,
+        },
+        messages: [...current.messages, sentMessage!],
+      }));
+      setMessage("");
+    } finally {
+      setIsSendingMessage(false);
+    }
   }
 
   async function handleToggleHandoff() {
     if (isDeniedOrMissing) return;
-    const updatedConversation = await toggleMockHandoff(conversationId);
+    if (isUpdatingHandoff) return;
+
+    setIsUpdatingHandoff(true);
+    let updatedConversation = null;
+    const nextHandoff = !handoff;
+
+    try {
+      try {
+        if (token) {
+          updatedConversation = await toggleHandoffWithApi(conversationId, nextHandoff, token);
+        }
+      } catch (error) {
+        const unavailable =
+          error instanceof ApiRequestError &&
+          (error.message === "NETWORK_ERROR" || error.status == null || error.status >= 500);
+        if (unavailable) {
+          updatedConversation = await toggleMockHandoff(conversationId);
+          Alert.alert(
+            "Servidor indisponível",
+            "Alteração aplicada localmente temporariamente."
+          );
+        } else {
+          Alert.alert("Não foi possível alterar handoff", "Verifique sua permissão ou tente novamente.");
+          return;
+        }
+      }
+
+      if (!updatedConversation) {
+        updatedConversation = await toggleMockHandoff(conversationId);
+      }
+    } finally {
+      setIsUpdatingHandoff(false);
+    }
 
     if (!updatedConversation) {
       setHandoff((current) => !current);
@@ -215,9 +282,16 @@ export default function ConversationDetailScreen() {
             <Pressable
               style={[styles.handoffButton, handoff ? styles.handoffButtonDanger : null]}
               onPress={handleToggleHandoff}
+              disabled={isUpdatingHandoff}
             >
-              <AppIcon name="account-switch-outline" size={14} color="#FFFFFF" />
-              <Text style={styles.handoffButtonText}>{handoffButtonLabel}</Text>
+              {isUpdatingHandoff ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <AppIcon name="account-switch-outline" size={14} color="#FFFFFF" />
+                  <Text style={styles.handoffButtonText}>{handoffButtonLabel}</Text>
+                </>
+              )}
             </Pressable>
           ) : null}
         </View>
@@ -281,9 +355,14 @@ export default function ConversationDetailScreen() {
             placeholder="Digite sua resposta"
             placeholderTextColor="#98A2B3"
             style={styles.input}
+            editable={!isSendingMessage}
           />
-          <Pressable style={styles.sendButton} onPress={handleSendMessage}>
-            <AppIcon name="send" size={15} color="#FFFFFF" />
+          <Pressable style={styles.sendButton} onPress={handleSendMessage} disabled={isSendingMessage}>
+            {isSendingMessage ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <AppIcon name="send" size={15} color="#FFFFFF" />
+            )}
           </Pressable>
         </View>
           </>
