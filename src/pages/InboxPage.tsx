@@ -13,6 +13,7 @@ import { ConversationList } from '../components/ConversationList';
 import { ChatPanel } from '../components/ChatPanel';
 import { NewMessageModal } from '../components/NewMessageModal';
 import { InboxFilterBar } from '../components/InboxFilterBar';
+import { ScopeBanner } from '../components/ScopeBanner';
 import {
   DEFAULT_INBOX_FILTERS,
   hasActiveInboxFilters,
@@ -20,6 +21,7 @@ import {
   type InboxFilters,
 } from '../components/inboxFilters';
 import { useRealtimeInbox } from '../hooks/useRealtimeInbox';
+import { useAuth } from '../contexts/AuthContext';
 
 const INBOX_READ_STATE_KEY = 'inbox_read_state_v1';
 const INBOX_CONVERSATION_PANEL_COLLAPSED_KEY = 'inbox_conversation_panel_collapsed_v1';
@@ -195,6 +197,7 @@ function upsertMessageList(prev: Message[], incoming: Message): Message[] {
 }
 
 export function InboxPage() {
+  const { sessionScope, isBrokerScoped } = useAuth();
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<'CLIENT' | 'INTERNO'>('CLIENT');
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -236,6 +239,16 @@ export function InboxPage() {
     const n = parseInt(rawConversationParam, 10);
     return Number.isFinite(n) && n > 0 ? n : null;
   }, [rawConversationParam]);
+
+  // ── Calculate emptyVariant for broker scope ──
+  const emptyVariant = useMemo<'default' | 'broker_portfolio_empty' | 'broker_portfolio_gap'>(() => {
+    if (!isBrokerScoped || !sessionScope) return 'default';
+    if (conversations.length === 0) {
+      // Se scopeTotal é 0, carteira vazia. Se > 0, gap temporário.
+      return sessionScope.scopeTotal === 0 ? 'broker_portfolio_empty' : 'broker_portfolio_gap';
+    }
+    return 'default';
+  }, [isBrokerScoped, sessionScope, conversations.length]);
 
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounced(filters.search), 400);
@@ -630,9 +643,19 @@ export function InboxPage() {
         });
         setSelectedId(mapped.id);
         deepLinkConsumedParamRef.current = rawConversationParam;
-      } catch {
+      } catch (e) {
         if (cancelled) return;
         deepLinkConsumedParamRef.current = rawConversationParam;
+        // ── Toast para out_of_scope vs not_found ──
+        if (e instanceof ApiError && e.status === 404) {
+          if (e.message === 'out_of_scope') {
+            // TODO: Adicionar toast notification para "Conversa fora do seu escopo"
+            console.warn('[InboxPage] Conversa fora do escopo do usuário');
+          } else if (e.message === 'not_found') {
+            // TODO: Adicionar toast notification para "Conversa não encontrada"
+            console.warn('[InboxPage] Conversa não encontrada');
+          }
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -1024,6 +1047,7 @@ export function InboxPage() {
                 onClear={clearFilters}
                 hasActiveFilters={hasActiveInboxFilters(filters)}
               />
+              <ScopeBanner sessionScope={sessionScope} />
             </>
           )}
           <ConversationList
@@ -1048,6 +1072,7 @@ export function InboxPage() {
             onDelete={handleDeleteConversation}
             isLoading={conversationsLoading}
             onNewMessage={() => setNewMessageOpen(true)}
+            emptyVariant={emptyVariant}
           />
         </aside>
         <main className="min-w-0 min-h-0 flex-1 overflow-hidden rounded-[22px] border border-[#e2e8f0] bg-white/92 shadow-[0_8px_24px_rgba(15,23,42,0.08)]">

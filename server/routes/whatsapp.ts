@@ -457,13 +457,20 @@ router.get('/conversations', async (req, res) => {
     const search = req.query.search as string | undefined;
     const typeRaw = String(req.query.type || 'CLIENT').toUpperCase();
     const type = typeRaw === 'INTERNO' ? 'INTERNO' : 'CLIENT';
-    
-    // NOVO: Filtrar por broker_id se for COLLABORATOR
-    let brokerId: number | undefined;
-    if ((req as any).user?.role === 'COLLABORATOR' && (req as any).user?.broker_id) {
-      brokerId = (req as any).user.broker_id;
+
+    // ── Scope filtering (broker_portfolio) ──
+    const user = (req as AuthenticatedRequest).user;
+    let scopeConvIds: number[] | undefined;
+    if (user?.sessionScope?.kind === 'broker_portfolio' && user.sessionScope.convIds.length > 0) {
+      scopeConvIds = user.sessionScope.convIds;
     }
-    
+
+    // ── Legacy broker_id filter (COLLABORATOR) ──
+    let brokerId: number | undefined;
+    if (user?.role === 'COLLABORATOR' && user?.broker_id) {
+      brokerId = user.broker_id;
+    }
+
     const filters: {
       mode?: 'ANA' | 'handoff';
       status?: string;
@@ -471,16 +478,18 @@ router.get('/conversations', async (req, res) => {
       search?: string;
       brokerId?: number;
       conversationTypeFilter?: 'CLIENT' | 'INTERNO';
+      scopeConvIds?: number[];
     } = {};
     if (mode === 'ANA' || mode === 'handoff') filters.mode = mode;
     if (status && status !== 'all') filters.status = status;
     if (enterpriseId != null && !Number.isNaN(enterpriseId)) filters.enterpriseId = enterpriseId;
     if (search && search.trim() !== '') filters.search = search.trim();
     if (brokerId != null) filters.brokerId = brokerId;
+    if (scopeConvIds) filters.scopeConvIds = scopeConvIds;
     filters.conversationTypeFilter = type as 'CLIENT' | 'INTERNO';
     const hasFilters = Object.keys(filters).length > 0;
     const rows = await listConversationsWithPreview(channel, limit, hasFilters ? filters : undefined);
-    console.log('[INBOX_CONTACT_TYPE_FILTER]', { requestedType: type, returned: rows.length });
+    console.log('[INBOX_CONTACT_TYPE_FILTER]', { requestedType: type, returned: rows.length, scopeSize: scopeConvIds?.length });
     res.json({
       conversations: rows.map((r) => mapConversationWithPreviewRow(r)),
     });

@@ -7,6 +7,7 @@ import {
   updateUser,
   createSession,
   type AppUser,
+  type SessionScope,
 } from '../repositories/userRepository.js';
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { isUserRole, type UserRole } from '../constants/roles.js';
@@ -204,16 +205,34 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // ── PASSO 6: Criar sessão (token) ──
+    // ── PASSO 6: Ler e validar a whitelist do JWT ──
+    const rawIds = payload.allowed_conversation_ids;
+    const scopeKind = typeof payload.scope_kind === 'string' ? payload.scope_kind : null;
+    const totalPortfolioSize = typeof payload.total_portfolio_size === 'number' ? payload.total_portfolio_size : null;
+
+    let scope: SessionScope | null = null;
+    if (Array.isArray(rawIds) && scopeKind) {
+      const convIds = rawIds
+        .map((n) => Number(n))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      scope = {
+        kind: scopeKind,
+        convIds,
+        totalSize: totalPortfolioSize ?? undefined,
+      };
+      console.log(`[SSO] scope=${scopeKind} size=${convIds.length} total=${totalPortfolioSize} user=${email}`);
+    }
+
+    // ── PASSO 7: Criar sessão (token) ──
     // Isso é a mesma função que o login normal usa.
     // O token gerado funciona exatamente como se o usuário tivesse digitado email+senha.
     // É um randomBytes(32) = 256 bits de entropia → impossível adivinhar (anti-IDOR)
-    const sessionToken = await createSession(user.id);
+    const sessionToken = await createSession(user.id, scope);
 
     // ── Commit da transação ──
     await client.query('COMMIT');
 
-    // ── PASSO 7: Retornar o session token para o Django ──
+    // ── PASSO 8: Retornar o session token para o Django ──
     res.json({ sessionToken });
 
   } catch (e) {

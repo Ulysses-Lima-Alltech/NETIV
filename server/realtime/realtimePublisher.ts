@@ -187,11 +187,32 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
   };
 }
 
-function emitSocketEvent<T>(event: string, payload: T): void {
+function emitSocketEvent<T>(event: string, payload: T, conversationId?: number): void {
   try {
     const io = getSocketServer();
     if (!io) return;
-    io.to(getInboxGlobalRoom()).emit(event, payload);
+
+    const room = getInboxGlobalRoom();
+    const sockets = io.sockets.adapter.rooms.get(room);
+    if (!sockets) return;
+
+    // ── Scope filtering para eventos de conversa ──
+    if (conversationId != null) {
+      for (const socketId of sockets) {
+        const socket = io.sockets.sockets.get(socketId);
+        if (!socket) continue;
+
+        const scope = socket.data.sessionScope;
+        if (scope && scope.kind === 'broker_portfolio' && scope.convIds.length > 0) {
+          // Só envia se a conversa estiver na whitelist
+          if (!scope.convIds.includes(conversationId)) continue;
+        }
+        socket.emit(event, payload);
+      }
+    } else {
+      // Sem ID de conversa → broadcast global (ex: mensagens genéricas)
+      io.to(room).emit(event, payload);
+    }
   } catch (error) {
     console.warn('[Realtime] publish_emit_failed', {
       event,
@@ -205,7 +226,7 @@ export async function publishConversationCreated(conversationId: number): Promis
     const payload = await buildConversationPayload(conversationId);
     if (!payload) return;
     console.info('[Realtime] publish conversation.created', { conversationId });
-    emitSocketEvent('conversation.created', payload);
+    emitSocketEvent('conversation.created', payload, conversationId);
   } catch (error) {
     console.warn('[Realtime] publishConversationCreated_failed', {
       conversationId,
@@ -219,7 +240,7 @@ export async function publishConversationUpdated(conversationId: number): Promis
     const payload = await buildConversationPayload(conversationId);
     if (!payload) return;
     console.info('[Realtime] publish conversation.updated', { conversationId });
-    emitSocketEvent('conversation.updated', payload);
+    emitSocketEvent('conversation.updated', payload, conversationId);
   } catch (error) {
     console.warn('[Realtime] publishConversationUpdated_failed', {
       conversationId,
@@ -236,7 +257,7 @@ export function publishMessageCreated(message: RealtimeMessagePayload): void {
       messageId: message.id,
       direction,
     });
-    emitSocketEvent('message.created', message);
+    emitSocketEvent('message.created', message, message.conversationId);
   } catch (error) {
     console.warn('[Realtime] publishMessageCreated_failed', {
       conversationId: message.conversationId,
