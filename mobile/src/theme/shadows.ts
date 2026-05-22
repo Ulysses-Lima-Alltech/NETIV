@@ -1,18 +1,18 @@
-import { ViewStyle } from "react-native";
+﻿import { ViewStyle } from "react-native";
 
 const cardBase: ViewStyle = {
-  shadowColor: "#02111F",
-  shadowOpacity: 0.05,
-  shadowRadius: 10,
-  shadowOffset: { width: 0, height: 4 },
-  elevation: 2,
+  shadowColor: "#061D33",
+  shadowOpacity: 0.04,
+  shadowRadius: 8,
+  shadowOffset: { width: 0, height: 3 },
+  elevation: 1,
 };
 
 const strongBase: ViewStyle = {
-  shadowColor: "#02111F",
-  shadowOpacity: 0.09,
-  shadowRadius: 14,
-  shadowOffset: { width: 0, height: 6 },
+  shadowColor: "#061D33",
+  shadowOpacity: 0.08,
+  shadowRadius: 16,
+  shadowOffset: { width: 0, height: 8 },
   elevation: 4,
 };
 

@@ -1,8 +1,9 @@
-import { router, usePathname } from "expo-router";
-import { ReactNode, useMemo, useState } from "react";
+﻿import { router, usePathname } from "expo-router";
+import { ReactNode, useEffect, useMemo, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuthStore, UserRole } from "../stores/auth.store";
+import { useUiStore } from "../stores/ui.store";
 import { colors } from "../theme";
 import { AppMenu, AppMenuItem } from "./AppMenu";
 import { BottomNavigation, BottomNavItem } from "./BottomNavigation";
@@ -20,14 +21,14 @@ const TOP_MENU_ITEMS: Record<UserRole, AppMenuItem[]> = {
   GESTOR: [],
   ADM: [
     {
-      label: "Equipe e usuários",
-      description: "Corretores, gestores e administradores da operação.",
+      label: "Equipe e usuarios",
+      description: "Corretores, gestores e administradores da operacao.",
       path: "/equipe",
       icon: "account-multiple-outline",
     },
     {
       label: "Empreendimentos",
-      description: "Gestão dos empreendimentos e responsáveis.",
+      description: "Gestao dos empreendimentos e responsaveis.",
       path: "/empreendimentos",
       icon: "office-building-outline",
     },
@@ -38,12 +39,18 @@ const TOP_MENU_ITEMS: Record<UserRole, AppMenuItem[]> = {
       icon: "file-document-multiple-outline",
     },
     {
-      label: "Configurações",
-      description: "Parâmetros administrativos e de operação.",
+      label: "Configuracoes",
+      description: "Parametros administrativos e de operacao.",
       path: "/configuracoes",
       icon: "cog-outline",
     },
   ],
+};
+
+const roleLabelByRole: Record<UserRole, string> = {
+  CORRETOR: "Corretor",
+  GESTOR: "Gestor",
+  ADM: "Administrador",
 };
 
 type AppShellProps = {
@@ -54,10 +61,22 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const user = useAuthStore((state) => state.user);
   const [menuOpen, setMenuOpen] = useState(false);
+  const shouldOpenAdminMenu = useUiStore((state) => state.shouldOpenAdminMenu);
+  const consumeAdminMenuRequest = useUiStore((state) => state.consumeAdminMenuRequest);
   const role = user?.role ?? "CORRETOR";
 
   const menuItems = useMemo(() => TOP_MENU_ITEMS[role], [role]);
-  const showMenuButton = menuItems.length > 0;
+  const showMenuButton = role === "ADM" && menuItems.length > 0;
+
+  useEffect(() => {
+    if (!shouldOpenAdminMenu) return;
+
+    if (showMenuButton) {
+      setMenuOpen(true);
+    }
+
+    consumeAdminMenuRequest();
+  }, [consumeAdminMenuRequest, shouldOpenAdminMenu, showMenuButton]);
 
   function navigate(path: string) {
     setMenuOpen(false);
@@ -67,8 +86,8 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <SafeAreaView style={styles.root} edges={["top", "bottom"]}>
       <Header
-        userName={user?.name ?? "Usuário"}
-        role={role}
+        userName={user?.name ?? "Usuario"}
+        role={roleLabelByRole[role]}
         showMenuButton={showMenuButton}
         onOpenMenu={() => setMenuOpen(true)}
       />
@@ -79,7 +98,7 @@ export function AppShell({ children }: AppShellProps) {
 
       <AppMenu
         visible={menuOpen}
-        roleLabel={role}
+        roleLabel={roleLabelByRole[role]}
         items={menuItems}
         onClose={() => setMenuOpen(false)}
         onSelectItem={navigate}
@@ -97,4 +116,3 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 });
-

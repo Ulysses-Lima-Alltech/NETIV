@@ -1,4 +1,4 @@
-import { router } from "expo-router";
+﻿import { router } from "expo-router";
 import { useState } from "react";
 import {
   Alert,
@@ -13,11 +13,7 @@ import {
 import { useAuthStore } from "../src/stores/auth.store";
 import { brand, colors, radius, shadows, spacing, typography } from "../src/theme";
 
-const MOCK_ACCESS = [
-  "corretor / corretor",
-  "gestor / gestor",
-  "admin / admin",
-];
+const MOCK_ACCESS = ["corretor / corretor", "gestor / gestor", "admin / admin"];
 
 export default function LoginScreen() {
   const [username, setUsername] = useState("");
@@ -26,14 +22,14 @@ export default function LoginScreen() {
 
   function handleLogin() {
     if (!username.trim() || !password.trim()) {
-      Alert.alert("Atenção", "Informe usuário e senha.");
+      Alert.alert("Atencao", "Informe usuario e senha.");
       return;
     }
 
     const result = login(username, password);
 
     if (!result.ok) {
-      Alert.alert("Acesso negado", result.message ?? "Usuário ou senha inválidos.");
+      Alert.alert("Acesso negado", result.message ?? "Usuario ou senha invalidos.");
       return;
     }
 
@@ -63,11 +59,11 @@ export default function LoginScreen() {
           ))}
         </View>
 
-        <Text style={styles.label}>Usuário</Text>
+        <Text style={styles.label}>Usuario</Text>
         <TextInput
           value={username}
           onChangeText={setUsername}
-          placeholder="Digite seu usuário"
+          placeholder="Digite seu usuario"
           autoCapitalize="none"
           placeholderTextColor="#98A2B3"
           style={styles.input}
@@ -102,10 +98,10 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   brand: {
-    fontSize: 38,
-    lineHeight: 42,
+    fontSize: 40,
+    lineHeight: 44,
     fontWeight: "900",
-    letterSpacing: 1.3,
+    letterSpacing: 1.2,
     color: colors.navy,
   },
   tagline: {
@@ -113,6 +109,8 @@ const styles = StyleSheet.create({
     color: colors.muted,
     marginTop: spacing.xs,
     maxWidth: 320,
+    fontSize: 13,
+    lineHeight: 18,
   },
   card: {
     backgroundColor: colors.card,
@@ -144,10 +142,13 @@ const styles = StyleSheet.create({
     ...typography.cardTitle,
     color: colors.navy,
     marginBottom: spacing.xxs,
+    fontSize: 14,
   },
   mockLine: {
     ...typography.body,
     color: colors.text,
+    fontSize: 13,
+    lineHeight: 18,
   },
   label: {
     ...typography.caption,
@@ -177,4 +178,3 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
   },
 });
-

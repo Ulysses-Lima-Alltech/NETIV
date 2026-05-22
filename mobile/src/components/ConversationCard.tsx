@@ -8,6 +8,8 @@ type ConversationCardProps = {
   lastMessage: string;
   anaStatus: "Ana atendendo" | "Atendimento humano";
   needsHuman: boolean;
+  assignedBrokerName?: string;
+  showAssignedBroker?: boolean;
   unread: boolean;
   onPress: () => void;
 };
@@ -18,9 +20,14 @@ export function ConversationCard({
   lastMessage,
   anaStatus,
   needsHuman,
+  assignedBrokerName,
+  showAssignedBroker = false,
   unread,
   onPress,
 }: ConversationCardProps) {
+  const shouldShowAssignment =
+    showAssignedBroker && Boolean(assignedBrokerName) && (anaStatus === "Atendimento humano" || needsHuman);
+
   return (
     <Pressable onPress={onPress} style={styles.card}>
       <View style={styles.topRow}>
@@ -36,12 +43,17 @@ export function ConversationCard({
       </Text>
 
       <View style={styles.bottomRow}>
-        <StatusBadge
-          label={anaStatus}
-          tone={anaStatus === "Ana atendendo" ? "info" : "warning"}
-        />
+        <StatusBadge label={anaStatus} tone={anaStatus === "Ana atendendo" ? "info" : "warning"} />
         {needsHuman ? <StatusBadge label="Precisa humano" tone="danger" /> : null}
       </View>
+
+      {shouldShowAssignment ? (
+        <View style={styles.assignmentChip}>
+          <Text numberOfLines={1} style={styles.assignmentText}>
+            {`${assignedBrokerName}`}
+          </Text>
+        </View>
+      ) : null}
     </Pressable>
   );
 }
@@ -53,7 +65,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: 10,
     gap: 6,
     ...shadows.card,
   },
@@ -68,22 +80,22 @@ const styles = StyleSheet.create({
   },
   clientName: {
     ...typography.cardTitle,
-    fontSize: 15,
-    lineHeight: 20,
     color: colors.navy,
+    fontSize: 15,
+    lineHeight: 19,
   },
   enterpriseName: {
     ...typography.caption,
-    fontSize: 11,
-    lineHeight: 14,
     color: colors.muted,
     marginTop: 1,
+    fontSize: 11,
+    lineHeight: 14,
   },
   message: {
     ...typography.body,
-    fontSize: 13,
-    lineHeight: 18,
     color: colors.text,
+    fontSize: 12,
+    lineHeight: 16,
   },
   bottomRow: {
     flexDirection: "row",
@@ -91,11 +103,28 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     flexWrap: "wrap",
   },
+  assignmentChip: {
+    alignSelf: "flex-start",
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#D5E3FF",
+    backgroundColor: colors.blueSoft,
+    paddingHorizontal: 9,
+    paddingVertical: 2,
+    maxWidth: "100%",
+  },
+  assignmentText: {
+    ...typography.caption,
+    color: colors.navy,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "700",
+  },
   unreadDot: {
     width: 9,
     height: 9,
     borderRadius: radius.pill,
-    backgroundColor: colors.green,
+    backgroundColor: colors.orange,
     marginTop: 2,
   },
 });

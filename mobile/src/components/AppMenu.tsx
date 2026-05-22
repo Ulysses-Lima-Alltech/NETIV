@@ -1,12 +1,12 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { colors, radius, spacing, typography } from "../theme";
+﻿import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { colors, radius, shadows, spacing, typography } from "../theme";
+import { AppIcon, AppIconName } from "./AppIcon";
 
 export type AppMenuItem = {
   label: string;
   description: string;
   path: string;
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: AppIconName;
 };
 
 type AppMenuProps = {
@@ -24,18 +24,14 @@ export function AppMenu({ visible, roleLabel, items, onClose, onSelectItem }: Ap
         <Pressable style={styles.panel}>
           <View style={styles.handle} />
 
-          <Text style={styles.title}>Menu</Text>
-          <Text style={styles.subtitle}>Acessos disponíveis para {roleLabel}</Text>
+          <Text style={styles.title}>Menu administrativo</Text>
+          <Text style={styles.subtitle}>Acessos disponiveis para {roleLabel}</Text>
 
           <ScrollView contentContainerStyle={styles.items}>
             {items.map((item) => (
-              <Pressable
-                key={item.path}
-                style={styles.item}
-                onPress={() => onSelectItem(item.path)}
-              >
+              <Pressable key={item.path} style={styles.item} onPress={() => onSelectItem(item.path)}>
                 <View style={styles.iconBox}>
-                  <MaterialCommunityIcons name={item.icon} size={20} color={colors.orange} />
+                  <AppIcon name={item.icon} size={17} color={colors.orange} />
                 </View>
 
                 <View style={styles.textBlock}>
@@ -43,13 +39,13 @@ export function AppMenu({ visible, roleLabel, items, onClose, onSelectItem }: Ap
                   <Text style={styles.itemDescription}>{item.description}</Text>
                 </View>
 
-                <MaterialCommunityIcons name="chevron-right" size={22} color={colors.orange} />
+                <AppIcon name="chevron-right" size={19} color={colors.muted} />
               </Pressable>
             ))}
           </ScrollView>
 
           <Pressable style={styles.closeButton} onPress={onClose}>
-            <Text style={styles.closeButtonText}>Fechar</Text>
+            <Text style={styles.closeButtonText}>Fechar menu</Text>
           </Pressable>
         </Pressable>
       </Pressable>
@@ -73,7 +69,7 @@ const styles = StyleSheet.create({
     maxHeight: "80%",
   },
   handle: {
-    width: 44,
+    width: 42,
     height: 4,
     borderRadius: radius.pill,
     backgroundColor: "#CBD5E1",
@@ -81,16 +77,18 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   title: {
-    ...typography.title,
+    ...typography.sectionTitle,
     color: colors.navy,
-    fontSize: 30,
-    lineHeight: 35,
+    fontSize: 22,
+    lineHeight: 27,
   },
   subtitle: {
     ...typography.body,
     color: colors.muted,
     marginTop: 4,
     marginBottom: spacing.md,
+    fontSize: 13,
+    lineHeight: 18,
   },
   items: {
     gap: spacing.sm,
@@ -100,16 +98,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.lg,
-    padding: spacing.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
+    ...shadows.card,
   },
   iconBox: {
-    width: 42,
-    height: 42,
+    width: 36,
+    height: 36,
     borderRadius: radius.md,
-    backgroundColor: colors.warningSoft,
+    backgroundColor: colors.orangeSoft,
+    borderWidth: 1,
+    borderColor: "#FFD8BD",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -119,15 +121,19 @@ const styles = StyleSheet.create({
   itemTitle: {
     ...typography.cardTitle,
     color: colors.text,
+    fontSize: 14,
+    lineHeight: 19,
   },
   itemDescription: {
     ...typography.caption,
     color: colors.muted,
-    marginTop: 2,
+    marginTop: 1,
+    fontSize: 10,
+    lineHeight: 14,
   },
   closeButton: {
     marginTop: spacing.lg,
-    minHeight: 48,
+    minHeight: 46,
     borderRadius: radius.md,
     alignItems: "center",
     justifyContent: "center",
@@ -136,6 +142,6 @@ const styles = StyleSheet.create({
   closeButtonText: {
     ...typography.cardTitle,
     color: "#FFFFFF",
+    fontSize: 15,
   },
 });
-

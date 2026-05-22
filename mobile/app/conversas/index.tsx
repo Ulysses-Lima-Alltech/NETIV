@@ -3,40 +3,54 @@ import { FlatList, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
 import { ConversationCard } from "../../src/components/ConversationCard";
 import { useAuthStore } from "../../src/stores/auth.store";
-import { colors, spacing, typography } from "../../src/theme";
+import { colors, radius, shadows, spacing, typography } from "../../src/theme";
 
 const conversations = [
   {
     id: "1",
     clientName: "Carlos Silva",
-    enterpriseName: "Évora",
-    lastMessage: "Gostaria de saber sobre as unidades com entrada facilitada.",
+    enterpriseName: "Evora",
+    lastMessage: "Quero entender as condicoes de entrada para fechar ainda hoje.",
     anaStatus: "Ana atendendo" as const,
     needsHuman: false,
+    assignedBrokerName: "Joao Corretor",
     unread: true,
   },
   {
     id: "2",
     clientName: "Mariana Costa",
-    enterpriseName: "Évora",
-    lastMessage: "Podemos agendar uma visita amanhã no fim da tarde?",
+    enterpriseName: "Evora",
+    lastMessage: "Podemos confirmar a visita para amanha no fim da tarde?",
     anaStatus: "Atendimento humano" as const,
     needsHuman: true,
+    assignedBrokerName: "Mariana Corretora",
     unread: false,
   },
   {
     id: "3",
     clientName: "Rafael Gomes",
     enterpriseName: "Montaresa",
-    lastMessage: "Recebi a proposta e quero validar a tabela final.",
+    lastMessage: "Recebi a proposta e preciso validar a tabela final com minha familia.",
     anaStatus: "Ana atendendo" as const,
     needsHuman: false,
+    assignedBrokerName: "Lucas Corretor",
     unread: false,
+  },
+  {
+    id: "4",
+    clientName: "Aline Souza",
+    enterpriseName: "Altis",
+    lastMessage: "Tenho interesse no financiamento e queria os proximos passos.",
+    anaStatus: "Atendimento humano" as const,
+    needsHuman: false,
+    assignedBrokerName: "Joao Corretor",
+    unread: true,
   },
 ];
 
 export default function ConversationsScreen() {
   const user = useAuthStore((state) => state.user);
+  const showAssignedBroker = user?.role === "GESTOR" || user?.role === "ADM";
 
   return (
     <AppShell>
@@ -45,12 +59,12 @@ export default function ConversationsScreen() {
         data={conversations}
         keyExtractor={(item) => item.id}
         ListHeaderComponent={
-          <View style={styles.header}>
+          <View style={styles.headerCard}>
             <Text style={styles.title}>Inbox de conversas</Text>
             <Text style={styles.subtitle}>
               {user?.role === "CORRETOR"
-                ? "Leads atribuídos ao seu atendimento."
-                : "Conversas exibidas conforme o escopo do seu perfil."}
+                ? "Leads atribuidos ao seu atendimento."
+                : "Visao organizada das conversas conforme seu perfil."}
             </Text>
           </View>
         }
@@ -61,6 +75,8 @@ export default function ConversationsScreen() {
             lastMessage={item.lastMessage}
             anaStatus={item.anaStatus}
             needsHuman={item.needsHuman}
+            assignedBrokerName={item.assignedBrokerName}
+            showAssignedBroker={showAssignedBroker}
             unread={item.unread}
             onPress={() => router.push(`/conversas/${item.id}`)}
           />
@@ -74,17 +90,24 @@ export default function ConversationsScreen() {
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingTop: spacing.sm,
     paddingBottom: spacing.xxl,
   },
-  header: {
+  headerCard: {
     marginBottom: spacing.sm,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    ...shadows.card,
   },
   title: {
-    ...typography.title,
+    ...typography.sectionTitle,
     color: colors.navy,
-    fontSize: 26,
-    lineHeight: 31,
+    fontSize: 22,
+    lineHeight: 27,
   },
   subtitle: {
     ...typography.body,
@@ -97,4 +120,3 @@ const styles = StyleSheet.create({
     height: 8,
   },
 });
-

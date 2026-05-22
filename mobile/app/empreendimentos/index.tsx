@@ -1,14 +1,14 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+﻿import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
 import { StatusBadge } from "../../src/components/StatusBadge";
 import { useAuthStore } from "../../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../../src/theme";
 
 const allEnterprises = [
-  { name: "Évora", stage: "Lançamento", owner: "Gestor Évora" },
-  { name: "Montaresa", stage: "Vendas", owner: "Gestor Évora" },
-  { name: "Altis", stage: "Pré-lançamento", owner: "Gestor Altis" },
-  { name: "Reserva Azul", stage: "Pós-venda", owner: "Gestor Geral" },
+  { name: "Evora", stage: "Lancamento", owner: "Gestor Evora" },
+  { name: "Montaresa", stage: "Vendas", owner: "Gestor Evora" },
+  { name: "Altis", stage: "Pre-lancamento", owner: "Gestor Altis" },
+  { name: "Reserva Azul", stage: "Pos-venda", owner: "Gestor Geral" },
 ];
 
 export default function EnterprisesScreen() {
@@ -17,7 +17,7 @@ export default function EnterprisesScreen() {
 
   const visibleEnterprises =
     role === "GESTOR"
-      ? allEnterprises.filter((enterprise) => enterprise.owner === "Gestor Évora")
+      ? allEnterprises.filter((enterprise) => enterprise.owner === "Gestor Evora")
       : allEnterprises;
 
   return (
@@ -26,8 +26,8 @@ export default function EnterprisesScreen() {
         <Text style={styles.title}>Empreendimentos</Text>
         <Text style={styles.subtitle}>
           {role === "GESTOR"
-            ? "Você visualiza somente os empreendimentos atribuídos ao seu perfil."
-            : "Visão consolidada dos empreendimentos da operação."}
+            ? "Voce visualiza somente os empreendimentos atribuidos ao seu perfil."
+            : "Visao consolidada dos empreendimentos da operacao."}
         </Text>
 
         <View style={styles.list}>
@@ -37,7 +37,7 @@ export default function EnterprisesScreen() {
                 <Text style={styles.name}>{item.name}</Text>
                 <StatusBadge label={item.stage} tone="info" />
               </View>
-              <Text style={styles.owner}>Responsável: {item.owner}</Text>
+              <Text style={styles.owner}>Responsavel: {item.owner}</Text>
             </View>
           ))}
         </View>
@@ -52,13 +52,17 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxl,
   },
   title: {
-    ...typography.title,
+    ...typography.sectionTitle,
     color: colors.navy,
+    fontSize: 24,
+    lineHeight: 29,
   },
   subtitle: {
     ...typography.body,
     color: colors.muted,
     marginTop: spacing.xs,
+    fontSize: 13,
+    lineHeight: 18,
   },
   list: {
     marginTop: spacing.md,
@@ -82,11 +86,14 @@ const styles = StyleSheet.create({
     ...typography.cardTitle,
     color: colors.navy,
     flex: 1,
+    fontSize: 15,
+    lineHeight: 20,
   },
   owner: {
     ...typography.caption,
     color: colors.muted,
     marginTop: spacing.xs,
+    fontSize: 11,
+    lineHeight: 15,
   },
 });
-

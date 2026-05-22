@@ -1,11 +1,11 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+﻿import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, radius, shadows, spacing, typography } from "../theme";
+import { AppIcon, AppIconName } from "./AppIcon";
 
 type ActionCardProps = {
   title: string;
   description: string;
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: AppIconName;
   onPress: () => void;
   variant?: "primary" | "secondary";
 };
@@ -22,23 +22,14 @@ export function ActionCard({
   return (
     <Pressable
       onPress={onPress}
-      style={[
-        styles.card,
-        primary ? styles.cardPrimary : styles.cardSecondary,
-      ]}
+      style={[styles.card, primary ? styles.cardPrimary : styles.cardSecondary]}
     >
       <View style={[styles.iconWrap, primary ? styles.iconWrapPrimary : styles.iconWrapSecondary]}>
-        <MaterialCommunityIcons
-          name={icon}
-          size={20}
-          color={primary ? colors.orange : colors.navy}
-        />
+        <AppIcon name={icon} size={16} color={primary ? colors.orange : colors.navy} />
       </View>
 
       <View style={styles.textWrap}>
-        <Text style={[styles.title, primary ? styles.titlePrimary : styles.titleSecondary]}>
-          {title}
-        </Text>
+        <Text style={[styles.title, primary ? styles.titlePrimary : styles.titleSecondary]}>{title}</Text>
         <Text
           style={[
             styles.description,
@@ -48,6 +39,8 @@ export function ActionCard({
           {description}
         </Text>
       </View>
+
+      <AppIcon name="chevron-right" size={18} color={primary ? "#FFFFFF" : colors.muted} />
     </Pressable>
   );
 }
@@ -56,7 +49,7 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
     borderWidth: 1,
-    paddingVertical: 14,
+    paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     flexDirection: "row",
     alignItems: "center",
@@ -64,31 +57,35 @@ const styles = StyleSheet.create({
     ...shadows.card,
   },
   cardPrimary: {
-    backgroundColor: colors.navySoft,
-    borderColor: colors.navySoft,
+    backgroundColor: colors.navy,
+    borderColor: colors.navy,
   },
   cardSecondary: {
     backgroundColor: colors.card,
     borderColor: colors.border,
   },
   iconWrap: {
-    width: 38,
-    height: 38,
+    width: 34,
+    height: 34,
     borderRadius: radius.md,
     alignItems: "center",
     justifyContent: "center",
   },
   iconWrapPrimary: {
-    backgroundColor: "rgba(255, 255, 255, 0.14)",
+    backgroundColor: "rgba(255, 255, 255, 0.13)",
   },
   iconWrapSecondary: {
-    backgroundColor: colors.warningSoft,
+    backgroundColor: colors.orangeSoft,
+    borderWidth: 1,
+    borderColor: "#FFD6B7",
   },
   textWrap: {
     flex: 1,
   },
   title: {
     ...typography.cardTitle,
+    fontSize: 15,
+    lineHeight: 20,
   },
   titlePrimary: {
     color: "#FFFFFF",
@@ -98,10 +95,12 @@ const styles = StyleSheet.create({
   },
   description: {
     ...typography.caption,
-    marginTop: 1,
+    marginTop: 2,
+    fontSize: 11,
+    lineHeight: 15,
   },
   descriptionPrimary: {
-    color: "#E2E8F0",
+    color: "#D7E0EA",
   },
   descriptionSecondary: {
     color: colors.muted,

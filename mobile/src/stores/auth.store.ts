@@ -1,4 +1,4 @@
-import { create } from "zustand";
+﻿import { create } from "zustand";
 
 export type UserRole = "CORRETOR" | "GESTOR" | "ADM";
 
@@ -46,15 +46,13 @@ export const useAuthStore = create<AuthState>((set) => ({
     const normalizedPassword = password.trim();
 
     const foundUser = MOCK_USERS.find(
-      (item) =>
-        item.username === normalizedUsername &&
-        item.password === normalizedPassword
+      (item) => item.username === normalizedUsername && item.password === normalizedPassword
     );
 
     if (!foundUser) {
       return {
         ok: false,
-        message: "Usuário ou senha inválidos.",
+        message: "Usuario ou senha invalidos.",
       };
     }
 
@@ -65,4 +63,3 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
   logout: () => set({ user: null }),
 }));
-

@@ -1,9 +1,9 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { StyleSheet, Text, View } from "react-native";
-import { colors, radius, spacing, typography } from "../theme";
+﻿import { StyleSheet, Text, View } from "react-native";
+import { colors, radius, shadows, spacing, typography } from "../theme";
+import { AppIcon, AppIconName } from "./AppIcon";
 
 type EmptyStateProps = {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: AppIconName;
   title: string;
   description: string;
 };
@@ -12,7 +12,7 @@ export function EmptyState({ icon, title, description }: EmptyStateProps) {
   return (
     <View style={styles.container}>
       <View style={styles.iconBox}>
-        <MaterialCommunityIcons name={icon} size={28} color={colors.orange} />
+        <AppIcon name={icon} size={24} color={colors.orange} />
       </View>
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.description}>{description}</Text>
@@ -28,26 +28,32 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     padding: spacing.lg,
     alignItems: "center",
+    ...shadows.card,
   },
   iconBox: {
-    width: 56,
-    height: 56,
+    width: 54,
+    height: 54,
     borderRadius: radius.xl,
-    backgroundColor: colors.warningSoft,
+    backgroundColor: colors.orangeSoft,
+    borderWidth: 1,
+    borderColor: "#FFD8BD",
     alignItems: "center",
     justifyContent: "center",
   },
   title: {
     ...typography.sectionTitle,
     color: colors.navy,
-    marginTop: spacing.md,
+    marginTop: spacing.sm,
     textAlign: "center",
+    fontSize: 18,
+    lineHeight: 23,
   },
   description: {
     ...typography.body,
     color: colors.muted,
     marginTop: spacing.xs,
     textAlign: "center",
+    fontSize: 13,
+    lineHeight: 18,
   },
 });
-

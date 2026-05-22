@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from "react-native";
+﻿import { StyleSheet, Text, View } from "react-native";
 import { colors, radius, shadows, spacing, typography } from "../theme";
 
 type MetricCardProps = {
@@ -20,31 +20,31 @@ export function MetricCard({ label, value, footnote }: MetricCardProps) {
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    minWidth: "46%",
+    minWidth: "47%",
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
     paddingHorizontal: spacing.md,
-    paddingVertical: 14,
+    paddingVertical: spacing.sm,
     ...shadows.card,
   },
   value: {
     ...typography.metric,
-    fontSize: 28,
-    lineHeight: 32,
+    fontSize: 30,
+    lineHeight: 34,
     color: colors.navy,
   },
   label: {
     ...typography.body,
-    fontSize: 13,
-    lineHeight: 18,
     color: colors.text,
-    marginTop: 6,
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 16,
   },
   footnote: {
     ...typography.caption,
     color: colors.muted,
-    marginTop: spacing.xs,
+    marginTop: 6,
   },
 });

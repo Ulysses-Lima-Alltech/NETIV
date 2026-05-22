@@ -1,4 +1,4 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+﻿import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
 import { EmptyState } from "../../src/components/EmptyState";
 import { StatusBadge } from "../../src/components/StatusBadge";
@@ -7,24 +7,24 @@ import { colors, radius, shadows, spacing, typography } from "../../src/theme";
 const configGroups = [
   {
     title: "Atendimento da Ana",
-    description: "Regras de handoff, horários e prioridade de encaminhamento humano.",
+    description: "Regras de handoff, janelas de atendimento e prioridade de encaminhamento humano.",
     status: "Ativo",
   },
   {
-    title: "Permissões de acesso",
-    description: "Controle de perfis e visibilidade de módulos administrativos.",
-    status: "Revisão",
+    title: "Permissoes de acesso",
+    description: "Controle de perfis e visibilidade dos modulos administrativos.",
+    status: "Revisao",
   },
   {
-    title: "Integrações comerciais",
-    description: "Conectores e automações de CRM para sincronização de leads.",
+    title: "Integracoes comerciais",
+    description: "Mapa de conectores de CRM para sincronizacao de leads e historico.",
     status: "Planejado",
   },
 ];
 
 function getTone(status: string): "success" | "warning" | "info" {
   if (status === "Ativo") return "success";
-  if (status === "Revisão") return "warning";
+  if (status === "Revisao") return "warning";
   return "info";
 }
 
@@ -32,9 +32,9 @@ export default function SettingsScreen() {
   return (
     <AppShell>
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Configurações</Text>
+        <Text style={styles.title}>Configuracoes</Text>
         <Text style={styles.subtitle}>
-          Área administrativa para governança da operação e evolução do app.
+          Painel administrativo com visao de governanca da operacao e evolucao do produto.
         </Text>
 
         <View style={styles.list}>
@@ -51,8 +51,8 @@ export default function SettingsScreen() {
 
         <EmptyState
           icon="cog-refresh-outline"
-          title="Painel de ajustes em evolução"
-          description="A próxima entrega trará permissões avançadas, histórico de mudanças e auditoria."
+          title="Centro de ajustes em evolucao"
+          description="As proximas entregas incluirao trilha de auditoria, historico de alteracoes e politicas avancadas de permissao."
         />
       </ScrollView>
     </AppShell>
@@ -66,12 +66,16 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   title: {
-    ...typography.title,
+    ...typography.sectionTitle,
     color: colors.navy,
+    fontSize: 24,
+    lineHeight: 29,
   },
   subtitle: {
     ...typography.body,
     color: colors.muted,
+    fontSize: 13,
+    lineHeight: 18,
   },
   list: {
     gap: spacing.sm,
@@ -94,11 +98,14 @@ const styles = StyleSheet.create({
     ...typography.cardTitle,
     color: colors.text,
     flex: 1,
+    fontSize: 15,
+    lineHeight: 20,
   },
   cardDescription: {
     ...typography.body,
     color: colors.muted,
     marginTop: spacing.xs,
+    fontSize: 12,
+    lineHeight: 16,
   },
 });
-

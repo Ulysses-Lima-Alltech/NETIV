@@ -1,6 +1,7 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+﻿import { Pressable, StyleSheet, Text, View } from "react-native";
 import { brand, colors, radius, spacing, typography } from "../theme";
+import { AppIcon } from "./AppIcon";
+import { ProfileAvatar } from "./ProfileAvatar";
 
 type HeaderProps = {
   userName: string;
@@ -14,16 +15,26 @@ export function Header({ userName, role, showMenuButton, onOpenMenu }: HeaderPro
     <View style={styles.container}>
       <View style={styles.leftBlock}>
         <Text style={styles.brand}>{brand.name}</Text>
-        <Text style={styles.subtitle}>
-          {userName} · {role}
-        </Text>
+        <Text style={styles.subtitle}>Operacao mobile</Text>
       </View>
 
-      {showMenuButton ? (
-        <Pressable style={styles.menuButton} onPress={onOpenMenu}>
-          <MaterialCommunityIcons name="menu" size={17} color="#FFFFFF" />
-        </Pressable>
-      ) : null}
+      <View style={styles.rightBlock}>
+        <View style={styles.userChip}>
+          <ProfileAvatar name={userName} subtle size={28} />
+          <View style={styles.userTextWrap}>
+            <Text numberOfLines={1} style={styles.userName}>
+              {userName}
+            </Text>
+            <Text style={styles.userRole}>{role}</Text>
+          </View>
+        </View>
+
+        {showMenuButton ? (
+          <Pressable style={styles.menuButton} onPress={onOpenMenu}>
+            <AppIcon name="menu" size={16} color={colors.navy} />
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -34,37 +45,73 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
     paddingHorizontal: spacing.md,
-    paddingTop: 6,
+    paddingTop: 4,
     paddingBottom: 8,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: spacing.xs,
   },
   leftBlock: {
     flex: 1,
-    paddingRight: spacing.sm,
+    paddingRight: spacing.xs,
   },
   brand: {
     color: colors.navy,
-    fontSize: 18,
-    lineHeight: 22,
+    fontSize: 17,
+    lineHeight: 21,
     fontWeight: "900",
-    letterSpacing: 0.7,
+    letterSpacing: 0.8,
   },
   subtitle: {
     ...typography.caption,
-    color: colors.navyMuted,
+    color: colors.muted,
+    marginTop: 1,
+    fontSize: 10,
+    lineHeight: 13,
+  },
+  rightBlock: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  userChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.pill,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    maxWidth: 168,
+  },
+  userTextWrap: {
+    minWidth: 0,
+  },
+  userName: {
+    ...typography.caption,
+    color: colors.text,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "700",
+  },
+  userRole: {
+    ...typography.caption,
+    color: colors.muted,
+    fontSize: 9,
+    lineHeight: 12,
     marginTop: 1,
   },
   menuButton: {
-    width: 34,
-    height: 34,
+    width: 32,
+    height: 32,
     borderRadius: radius.pill,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.navy,
+    backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: colors.navySoft,
+    borderColor: colors.border,
   },
 });
-

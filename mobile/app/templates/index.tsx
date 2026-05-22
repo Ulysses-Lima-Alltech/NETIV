@@ -1,16 +1,20 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+﻿import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
 import { EmptyState } from "../../src/components/EmptyState";
 import { colors, radius, shadows, spacing, typography } from "../../src/theme";
 
 const templateCards = [
   {
-    title: "Boas-vindas",
-    description: "Mensagem inicial para novos leads com qualificação automática.",
+    title: "Boas-vindas comercial",
+    description: "Mensagem inicial com qualificacao de interesse e faixa de investimento.",
   },
   {
     title: "Agendamento de visita",
-    description: "Confirmação de disponibilidade com opção de reagendamento rápido.",
+    description: "Fluxo padrao para confirmar horario, local e lembrete automatico.",
+  },
+  {
+    title: "Retomada de lead",
+    description: "Sequencia para reativar contatos frios com linguagem consultiva.",
   },
 ];
 
@@ -20,7 +24,7 @@ export default function TemplatesScreen() {
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Templates</Text>
         <Text style={styles.subtitle}>
-          Biblioteca de mensagens para padronizar atendimento e acelerar conversão.
+          Biblioteca de mensagens preparada para acelerar atendimento e manter padrao premium.
         </Text>
 
         <View style={styles.list}>
@@ -34,8 +38,8 @@ export default function TemplatesScreen() {
 
         <EmptyState
           icon="file-plus-outline"
-          title="Novos templates em breve"
-          description="A área já está preparada para edição, versionamento e ativação por perfil."
+          title="Editor visual em preparacao"
+          description="Esta area sera conectada ao fluxo de versoes, aprovacoes e ativacao por perfil sem impacto no atendimento atual."
         />
       </ScrollView>
     </AppShell>
@@ -49,12 +53,16 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   title: {
-    ...typography.title,
+    ...typography.sectionTitle,
     color: colors.navy,
+    fontSize: 24,
+    lineHeight: 29,
   },
   subtitle: {
     ...typography.body,
     color: colors.muted,
+    fontSize: 13,
+    lineHeight: 18,
   },
   list: {
     gap: spacing.sm,
@@ -64,17 +72,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.lg,
-    padding: spacing.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
     ...shadows.card,
   },
   cardTitle: {
     ...typography.cardTitle,
     color: colors.text,
+    fontSize: 15,
+    lineHeight: 20,
   },
   cardText: {
     ...typography.body,
     color: colors.muted,
     marginTop: spacing.xs,
+    fontSize: 12,
+    lineHeight: 16,
   },
 });
-

@@ -1,20 +1,21 @@
-import { router } from "expo-router";
+﻿import { router } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../src/components/AppShell";
+import { ProfileAvatar } from "../src/components/ProfileAvatar";
 import { StatusBadge } from "../src/components/StatusBadge";
 import { useAuthStore } from "../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../src/theme";
 
-function getInitials(name?: string) {
-  if (!name) return "N";
-  const parts = name.split(" ").filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
-  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-}
+const profileLabelByRole = {
+  CORRETOR: "Corretor",
+  GESTOR: "Gestor",
+  ADM: "Administrador",
+} as const;
 
 export default function ProfileScreen() {
   const user = useAuthStore((state) => state.user);
   const logoutStore = useAuthStore((state) => state.logout);
+  const role = user?.role ?? "CORRETOR";
 
   function handleLogout() {
     logoutStore();
@@ -26,27 +27,32 @@ export default function ProfileScreen() {
       <View style={styles.container}>
         <View style={styles.card}>
           <View style={styles.header}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{getInitials(user?.name)}</Text>
-            </View>
+            <ProfileAvatar name={user?.name} size={64} />
             <View style={styles.nameWrap}>
-              <Text style={styles.name}>{user?.name ?? "Usuário"}</Text>
+              <Text style={styles.name}>{user?.name ?? "Usuario"}</Text>
               <Text style={styles.username}>@{user?.username ?? "usuario"}</Text>
             </View>
           </View>
 
           <View style={styles.rows}>
             <View style={styles.row}>
-              <Text style={styles.rowLabel}>Perfil</Text>
-              <StatusBadge label={user?.role ?? "-"} tone="info" />
+              <Text style={styles.rowLabel}>Nome</Text>
+              <Text style={styles.rowValue}>{user?.name ?? "Usuario"}</Text>
             </View>
+
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>Usuario</Text>
+              <Text style={styles.rowValue}>@{user?.username ?? "usuario"}</Text>
+            </View>
+
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>Perfil</Text>
+              <StatusBadge label={profileLabelByRole[role]} tone="info" />
+            </View>
+
             <View style={styles.row}>
               <Text style={styles.rowLabel}>Acesso</Text>
-              <Text style={styles.rowValue}>Mobile NETIV</Text>
-            </View>
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Permissão</Text>
-              <Text style={styles.rowValue}>Operação comercial</Text>
+              <StatusBadge label="NETIV Mobile" tone="inverse" />
             </View>
           </View>
 
@@ -70,24 +76,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     padding: spacing.lg,
-    ...shadows.strong,
+    ...shadows.card,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
-  },
-  avatar: {
-    width: 64,
-    height: 64,
-    borderRadius: radius.pill,
-    backgroundColor: colors.navy,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: {
-    ...typography.sectionTitle,
-    color: "#FFFFFF",
   },
   nameWrap: {
     flex: 1,
@@ -95,6 +89,8 @@ const styles = StyleSheet.create({
   name: {
     ...typography.sectionTitle,
     color: colors.navy,
+    fontSize: 22,
+    lineHeight: 27,
   },
   username: {
     ...typography.body,
@@ -106,25 +102,29 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
     paddingTop: spacing.md,
-    gap: spacing.md,
+    gap: spacing.sm,
   },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     gap: spacing.sm,
+    minHeight: 36,
   },
   rowLabel: {
     ...typography.body,
     color: colors.muted,
+    fontSize: 13,
   },
   rowValue: {
     ...typography.cardTitle,
     color: colors.text,
+    fontSize: 14,
+    lineHeight: 19,
   },
   logoutButton: {
     marginTop: spacing.xl,
-    minHeight: 48,
+    minHeight: 46,
     borderRadius: radius.md,
     backgroundColor: colors.red,
     alignItems: "center",
@@ -133,6 +133,6 @@ const styles = StyleSheet.create({
   logoutButtonText: {
     ...typography.cardTitle,
     color: "#FFFFFF",
+    fontSize: 15,
   },
 });
-

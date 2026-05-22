@@ -1,6 +1,5 @@
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -11,10 +10,11 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { AppIcon } from "../../src/components/AppIcon";
 import { AppShell } from "../../src/components/AppShell";
 import { StatusBadge } from "../../src/components/StatusBadge";
 import { useAuthStore } from "../../src/stores/auth.store";
-import { colors, radius, spacing, typography } from "../../src/theme";
+import { colors, radius, shadows, spacing, typography } from "../../src/theme";
 
 type Message = {
   id: string;
@@ -22,25 +22,87 @@ type Message = {
   text: string;
 };
 
+type ConversationMock = {
+  id: string;
+  clientName: string;
+  enterpriseName: string;
+  lead: string;
+  assignedBrokerName: string;
+  visitLabel: string;
+  anaStatus: "Ana atendendo" | "Atendimento humano";
+  needsHuman: boolean;
+};
+
 const initialMessages: Message[] = [
-  { id: "1", from: "cliente", text: "Olá, tenho interesse no Évora." },
+  { id: "1", from: "cliente", text: "Ola, tenho interesse no Evora." },
   {
     id: "2",
     from: "ana",
-    text: "Perfeito! Posso te mostrar opções de pagamento e agendar uma visita.",
+    text: "Perfeito. Posso mostrar as opcoes de pagamento e agendar uma visita ainda hoje.",
   },
 ];
 
-const detailRows = [
-  { label: "Lead", value: "Quente" },
-  { label: "Empreendimento", value: "Évora" },
-  { label: "Corretor", value: "João Corretor" },
-  { label: "Visita", value: "Hoje, 16:00" },
-];
+const conversationMocks: Record<string, ConversationMock> = {
+  "1": {
+    id: "1",
+    clientName: "Carlos Silva",
+    enterpriseName: "Evora",
+    lead: "Quente",
+    assignedBrokerName: "Joao Corretor",
+    visitLabel: "Hoje, 16:00",
+    anaStatus: "Ana atendendo",
+    needsHuman: false,
+  },
+  "2": {
+    id: "2",
+    clientName: "Mariana Costa",
+    enterpriseName: "Evora",
+    lead: "Quente",
+    assignedBrokerName: "Mariana Corretora",
+    visitLabel: "Amanha, 17:30",
+    anaStatus: "Atendimento humano",
+    needsHuman: true,
+  },
+  "3": {
+    id: "3",
+    clientName: "Rafael Gomes",
+    enterpriseName: "Montaresa",
+    lead: "Em negociacao",
+    assignedBrokerName: "Lucas Corretor",
+    visitLabel: "Sexta, 11:00",
+    anaStatus: "Ana atendendo",
+    needsHuman: false,
+  },
+  "4": {
+    id: "4",
+    clientName: "Aline Souza",
+    enterpriseName: "Altis",
+    lead: "Quente",
+    assignedBrokerName: "Joao Corretor",
+    visitLabel: "Sem visita",
+    anaStatus: "Atendimento humano",
+    needsHuman: false,
+  },
+};
+
+const fallbackConversation: ConversationMock = {
+  id: "-",
+  clientName: "Cliente",
+  enterpriseName: "Empreendimento",
+  lead: "Em analise",
+  assignedBrokerName: "Corretor",
+  visitLabel: "Sem agenda",
+  anaStatus: "Ana atendendo",
+  needsHuman: false,
+};
 
 function parseConversationId(rawId: string | string[] | undefined) {
   if (Array.isArray(rawId)) return rawId[0] ?? "-";
   return rawId ?? "-";
+}
+
+function getConversationMock(conversationId: string) {
+  return conversationMocks[conversationId] ?? { ...fallbackConversation, id: conversationId };
 }
 
 export default function ConversationDetailScreen() {
@@ -48,27 +110,37 @@ export default function ConversationDetailScreen() {
   const user = useAuthStore((state) => state.user);
   const [messages, setMessages] = useState(initialMessages);
   const [message, setMessage] = useState("");
-  const [handoff, setHandoff] = useState(false);
 
   const role = user?.role ?? "CORRETOR";
   const canSeeOperationalDetails = role === "GESTOR" || role === "ADM";
+  const canManageHandoff = role === "CORRETOR";
   const conversationId = parseConversationId(id);
+  const conversation = useMemo(() => getConversationMock(conversationId), [conversationId]);
+  const [handoff, setHandoff] = useState(conversation.anaStatus === "Atendimento humano");
+
+  useEffect(() => {
+    setHandoff(conversation.anaStatus === "Atendimento humano");
+  }, [conversation.anaStatus]);
+
   const statusLabel = handoff ? "Atendimento humano" : "Ana atendendo";
   const handoffButtonLabel = handoff ? "Voltar para Ana" : "Ativar handoff";
-  const handoffTone = handoff ? "danger" : "info";
+  const shouldShowHumanAssignment = canSeeOperationalDetails && (handoff || conversation.needsHuman);
 
-  const detailData = useMemo(
-    () => [...detailRows, { label: "Status", value: statusLabel }],
-    [statusLabel]
+  const detailRows = useMemo(
+    () => [
+      { label: "Lead", value: conversation.lead },
+      { label: "Empreendimento", value: conversation.enterpriseName },
+      { label: "Corretor", value: conversation.assignedBrokerName },
+      { label: "Visita", value: conversation.visitLabel },
+      { label: "Status", value: statusLabel },
+    ],
+    [conversation.assignedBrokerName, conversation.enterpriseName, conversation.lead, conversation.visitLabel, statusLabel]
   );
 
   function sendMessage() {
     if (!message.trim()) return;
 
-    setMessages((current) => [
-      ...current,
-      { id: `${Date.now()}`, from: "eu", text: message.trim() },
-    ]);
+    setMessages((current) => [...current, { id: `${Date.now()}`, from: "eu", text: message.trim() }]);
     setMessage("");
   }
 
@@ -83,67 +155,87 @@ export default function ConversationDetailScreen() {
         behavior={Platform.select({ ios: "padding", android: undefined })}
       >
         <View style={styles.topPanel}>
-          <View style={styles.topTitleRow}>
+          <View style={styles.topRow}>
             <View style={styles.topTextBlock}>
               <Text style={styles.topTitle}>Conversa #{conversationId}</Text>
-              <Text style={styles.topSubtitle}>Cliente: Carlos Silva · Évora</Text>
+              <Text style={styles.topSubtitle}>{`${conversation.clientName} - ${conversation.enterpriseName}`}</Text>
             </View>
-            <StatusBadge label={statusLabel} tone={handoffTone} />
+            <StatusBadge label={statusLabel} tone={handoff ? "danger" : "info"} />
           </View>
 
-          <Pressable
-            style={[styles.handoffButton, handoff ? styles.handoffButtonDanger : null]}
-            onPress={toggleHandoff}
-          >
-            <MaterialCommunityIcons name="account-switch-outline" size={16} color="#FFFFFF" />
-            <Text style={styles.handoffButtonText}>{handoffButtonLabel}</Text>
-          </Pressable>
+          {canManageHandoff ? (
+            <Pressable
+              style={[styles.handoffButton, handoff ? styles.handoffButtonDanger : null]}
+              onPress={toggleHandoff}
+            >
+              <AppIcon name="account-switch-outline" size={14} color="#FFFFFF" />
+              <Text style={styles.handoffButtonText}>{handoffButtonLabel}</Text>
+            </Pressable>
+          ) : null}
         </View>
 
-        {canSeeOperationalDetails ? (
-          <View style={styles.detailsPanel}>
-            <View style={styles.detailsHeaderRow}>
-              <Text style={styles.detailsTitle}>Detalhes comerciais e operacionais</Text>
-              {role === "ADM" ? <StatusBadge label="Acesso total" tone="inverse" /> : null}
-            </View>
-            <View style={styles.detailsGrid}>
-              {detailData.map((item) => (
-                <View key={item.label} style={styles.detailCard}>
-                  <Text style={styles.detailLabel}>{item.label}</Text>
-                  <Text style={styles.detailValue}>{item.value}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        ) : null}
-
-        <FlatList
-          data={messages}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.messages}
-          renderItem={({ item }) => {
-            const mine = item.from === "eu";
-
-            return (
-              <View style={[styles.messageBubble, mine ? styles.messageMine : styles.messageTheirs]}>
-                <Text style={[styles.messageText, mine ? styles.messageTextMine : null]}>
-                  {item.text}
-                </Text>
+        <View style={styles.content}>
+          {canSeeOperationalDetails ? (
+            <View style={styles.detailsSection}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Detalhes comerciais e operacionais</Text>
+                {role === "ADM" ? <StatusBadge label="Acesso total" tone="inverse" /> : null}
               </View>
-            );
-          }}
-        />
+
+              <View style={styles.detailsPanel}>
+                <View style={styles.detailsGrid}>
+                  {detailRows.map((item) => (
+                    <View key={item.label} style={styles.detailCard}>
+                      <Text style={styles.detailLabel}>{item.label}</Text>
+                      <Text style={styles.detailValue}>{item.value}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                {shouldShowHumanAssignment ? (
+                  <View style={styles.assignmentBanner}>
+                    <Text numberOfLines={1} style={styles.assignmentText}>
+                      {`Atribuida para ${conversation.assignedBrokerName}`}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            </View>
+          ) : null}
+
+          <View style={styles.messagesSection}>
+            <View style={styles.messagesHeader}>
+              <Text style={styles.messagesTitle}>Mensagens</Text>
+            </View>
+
+            <FlatList
+              style={styles.messagesList}
+              data={messages}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.messagesContent}
+              renderItem={({ item }) => {
+                const mine = item.from === "eu";
+
+                return (
+                  <View style={[styles.messageBubble, mine ? styles.messageMine : styles.messageTheirs]}>
+                    <Text style={[styles.messageText, mine ? styles.messageTextMine : null]}>{item.text}</Text>
+                  </View>
+                );
+              }}
+            />
+          </View>
+        </View>
 
         <View style={styles.composer}>
           <TextInput
             value={message}
             onChangeText={setMessage}
-            placeholder="Digite sua resposta..."
+            placeholder="Digite sua resposta"
             placeholderTextColor="#98A2B3"
             style={styles.input}
           />
           <Pressable style={styles.sendButton} onPress={sendMessage}>
-            <MaterialCommunityIcons name="send" size={18} color="#FFFFFF" />
+            <AppIcon name="send" size={15} color="#FFFFFF" />
           </Pressable>
         </View>
       </KeyboardAvoidingView>
@@ -160,21 +252,23 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    gap: 6,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xs,
+    gap: 7,
   },
-  topTitleRow: {
+  topRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     gap: spacing.sm,
+    alignItems: "center",
   },
   topTextBlock: {
     flex: 1,
   },
   topTitle: {
-    ...typography.sectionTitle,
-    fontSize: 17,
-    lineHeight: 22,
+    ...typography.cardTitle,
+    fontSize: 16,
+    lineHeight: 21,
     color: colors.navy,
   },
   topSubtitle: {
@@ -201,22 +295,37 @@ const styles = StyleSheet.create({
   handoffButtonText: {
     ...typography.caption,
     color: "#FFFFFF",
+    fontSize: 11,
   },
-  detailsPanel: {
+  content: {
+    flex: 1,
+  },
+  detailsSection: {
     paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    gap: 6,
+    paddingTop: spacing.sm,
+    gap: spacing.xs,
   },
-  detailsHeaderRow: {
+  sectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    gap: spacing.sm,
+    gap: spacing.xs,
   },
-  detailsTitle: {
+  sectionTitle: {
     ...typography.cardTitle,
     color: colors.navy,
+    fontSize: 14,
+    lineHeight: 19,
     flex: 1,
+  },
+  detailsPanel: {
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.sm,
+    gap: spacing.xs,
+    ...shadows.card,
   },
   detailsGrid: {
     flexDirection: "row",
@@ -225,7 +334,7 @@ const styles = StyleSheet.create({
   },
   detailCard: {
     width: "48%",
-    backgroundColor: colors.card,
+    backgroundColor: colors.backgroundAlt,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
@@ -234,19 +343,60 @@ const styles = StyleSheet.create({
   detailLabel: {
     ...typography.caption,
     color: colors.muted,
+    fontSize: 10,
+    lineHeight: 13,
   },
   detailValue: {
     ...typography.body,
     color: colors.text,
     marginTop: 2,
+    fontSize: 12,
+    lineHeight: 16,
   },
-  messages: {
-    padding: spacing.sm,
+  assignmentBanner: {
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#FFD7BC",
+    backgroundColor: colors.warningSoft,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+  },
+  assignmentText: {
+    ...typography.caption,
+    color: colors.navy,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "700",
+  },
+  messagesSection: {
+    flex: 1,
+    marginTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  messagesHeader: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs,
+  },
+  messagesTitle: {
+    ...typography.cardTitle,
+    color: colors.navy,
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  messagesList: {
+    flex: 1,
+  },
+  messagesContent: {
+    paddingHorizontal: spacing.sm,
+    paddingBottom: spacing.md,
     gap: 6,
-    paddingBottom: spacing.lg,
   },
   messageBubble: {
-    maxWidth: "82%",
+    maxWidth: "84%",
     borderRadius: radius.lg,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
@@ -265,6 +415,8 @@ const styles = StyleSheet.create({
   messageText: {
     ...typography.body,
     color: colors.text,
+    fontSize: 13,
+    lineHeight: 18,
   },
   messageTextMine: {
     color: "#FFFFFF",
@@ -277,11 +429,11 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
     paddingHorizontal: spacing.md,
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
   input: {
     flex: 1,
-    minHeight: 44,
+    minHeight: 42,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
@@ -290,12 +442,11 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   sendButton: {
-    width: 44,
-    height: 44,
+    width: 42,
+    height: 42,
     borderRadius: radius.pill,
     backgroundColor: colors.orange,
     alignItems: "center",
     justifyContent: "center",
   },
 });
-
