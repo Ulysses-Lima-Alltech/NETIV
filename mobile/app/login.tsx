@@ -1,4 +1,4 @@
-﻿import { router } from "expo-router";
+import { router } from "expo-router";
 import { useState } from "react";
 import {
   Alert,
@@ -18,14 +18,17 @@ export default function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const login = useAuthStore((state) => state.login);
+  const isLoading = useAuthStore((state) => state.isLoading);
 
-  function handleLogin() {
+  async function handleLogin() {
+    if (isLoading) return;
+
     if (!username.trim() || !password.trim()) {
       Alert.alert("Atencao", "Informe usuario e senha.");
       return;
     }
 
-    const result = login(username, password);
+    const result = await login(username, password);
 
     if (!result.ok) {
       Alert.alert("Acesso negado", result.message ?? "Usuario ou senha invalidos.");
@@ -78,8 +81,12 @@ export default function LoginScreen() {
           style={styles.input}
         />
 
-        <Pressable style={styles.button} onPress={handleLogin}>
-          <Text style={styles.buttonText}>Entrar</Text>
+        <Pressable
+          style={[styles.button, isLoading ? styles.buttonDisabled : null]}
+          onPress={handleLogin}
+          disabled={isLoading}
+        >
+          <Text style={styles.buttonText}>{isLoading ? "Entrando..." : "Entrar"}</Text>
         </Pressable>
       </View>
     </KeyboardAvoidingView>
@@ -171,6 +178,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.orange,
+  },
+  buttonDisabled: {
+    opacity: 0.7,
   },
   buttonText: {
     ...typography.cardTitle,

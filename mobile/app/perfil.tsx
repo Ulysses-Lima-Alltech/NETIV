@@ -17,8 +17,8 @@ export default function ProfileScreen() {
   const logoutStore = useAuthStore((state) => state.logout);
   const role = user?.role ?? "CORRETOR";
 
-  function handleLogout() {
-    logoutStore();
+  async function handleLogout() {
+    await logoutStore();
     router.replace("/login");
   }
 
