@@ -9,6 +9,7 @@
     "test": "node --test dist/tests/**/*.test.js",
     "migrate": "tsx db/migrate.ts",
     "migrate:deploy": "node dist/db/migrate.js",
+    "seed:mobile-users": "tsx scripts/seed-mobile-users.ts",
     "costs:sync": "tsx scripts/syncOpenAiCosts.ts",
     "start:prod": "node dist/db/migrate.js && node dist/index.js",
     "kb:ingest": "tsx scripts/ingestEnterpriseKnowledge.ts",
