@@ -1,30 +1,69 @@
 import { useEffect, useState } from "react";
-import { FlatList, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, FlatList, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
+import { EmptyState } from "../../src/components/EmptyState";
 import { VisitCard } from "../../src/components/VisitCard";
-import { getVisitsByRole } from "../../src/services/visits.service";
+import { ApiRequestError } from "../../src/services/api";
+import { getVisitsByRole, getVisitsWithApi } from "../../src/services/visits.service";
 import { useAuthStore } from "../../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../../src/theme";
 import { Visit } from "../../src/types/visit.types";
 
 export default function VisitsScreen() {
   const user = useAuthStore((state) => state.user);
+  const token = useAuthStore((state) => state.token);
   const role = user?.role ?? "CORRETOR";
   const [visits, setVisits] = useState<Visit[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   useEffect(() => {
     let active = true;
 
-    getVisitsByRole(user).then((items) => {
+    async function loadVisits() {
+      setIsLoading(true);
+
+      try {
+        if (token) {
+          const apiVisits = await getVisitsWithApi(token);
+          if (active) {
+            setVisits(apiVisits);
+          }
+          return;
+        }
+      } catch (error) {
+        const isConnectionError =
+          error instanceof ApiRequestError &&
+          (error.message === "NETWORK_ERROR" || error.status == null || error.status >= 500);
+        if (!isConnectionError) {
+          if (active) {
+            setVisits([]);
+          }
+          return;
+        }
+
+        const fallbackVisits = await getVisitsByRole(user);
+        if (active) {
+          setVisits(fallbackVisits);
+        }
+        return;
+      }
+
+      const fallbackVisits = await getVisitsByRole(user);
       if (active) {
-        setVisits(items);
+        setVisits(fallbackVisits);
+      }
+    }
+
+    loadVisits().finally(() => {
+      if (active) {
+        setIsLoading(false);
       }
     });
 
     return () => {
       active = false;
     };
-  }, [user]);
+  }, [token, user]);
 
   const subtitle =
     role === "ADM"
@@ -44,6 +83,20 @@ export default function VisitsScreen() {
             <Text style={styles.title}>Agenda de visitas</Text>
             <Text style={styles.subtitle}>{subtitle}</Text>
           </View>
+        }
+        ListEmptyComponent={
+          isLoading ? (
+            <View style={styles.loadingCard}>
+              <ActivityIndicator size="small" color={colors.orange} />
+              <Text style={styles.loadingText}>Carregando visitas</Text>
+            </View>
+          ) : (
+            <EmptyState
+              icon="calendar-check-outline"
+              title="Nenhuma visita disponível"
+              description="Quando houver visitas dentro do seu acesso, elas aparecerão aqui."
+            />
+          )
         }
         renderItem={({ item }) => (
           <VisitCard
@@ -91,5 +144,20 @@ const styles = StyleSheet.create({
   },
   separator: {
     height: spacing.xs,
+  },
+  loadingCard: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    paddingVertical: spacing.md,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    ...shadows.card,
+  },
+  loadingText: {
+    ...typography.caption,
+    color: colors.muted,
   },
 });

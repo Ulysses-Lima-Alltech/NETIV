@@ -6,5 +6,5 @@ export type Visit = {
   clientName: string;
   enterpriseName: string;
   status: VisitStatus;
-  assignedBrokerName: string;
+  assignedBrokerName: string | null;
 };

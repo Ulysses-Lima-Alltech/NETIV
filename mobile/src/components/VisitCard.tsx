@@ -10,7 +10,7 @@ type VisitCardProps = {
   clientName: string;
   enterpriseName: string;
   status: VisitStatus;
-  brokerName: string;
+  brokerName: string | null;
 };
 
 const toneByStatus: Record<VisitStatus, "success" | "info" | "warning"> = {
@@ -33,7 +33,7 @@ export function VisitCard({ time, clientName, enterpriseName, status, brokerName
 
       <Text style={styles.clientName}>{clientName}</Text>
       <Text style={styles.enterpriseName}>{enterpriseName}</Text>
-      <Text style={styles.brokerLabel}>Corretor: {brokerName}</Text>
+      <Text style={styles.brokerLabel}>Corretor: {brokerName ?? "Nao atribuido"}</Text>
     </View>
   );
 }
