@@ -1,123 +1,136 @@
-import {
-  ALL_ENTERPRISE_NAMES_MOCK,
-  MANAGED_ENTERPRISES_BY_GESTOR_MOCK,
-  TEAM_MEMBERS_MOCK,
-} from "../mocks/team.mock";
-import { AuthUser } from "../types/auth.types";
-import { EnterpriseLink, TeamMember, TeamMemberRole } from "../types/team.types";
+import { ApiRequestError, requestJson } from "./api";
+import { TEAM_MEMBERS_MOCK } from "../mocks/team.mock";
+import { TeamEnterprise, TeamMember, TeamMemberRole } from "../types/team.types";
 
-const EDITED_SUFFIX = " (editado)";
-const ALTERNATE_PHONE = "(11) 90000-0000";
-const DEFAULT_EDITED_PHONE = "(11) 98888-1000";
+type MobileTeamEnterpriseResponse = {
+  enterpriseId: string;
+  enterpriseName: string;
+  manageable: boolean;
+  label: string | null;
+};
 
-let teamState: TeamMember[] = TEAM_MEMBERS_MOCK.map((member) => ({ ...member }));
+type MobileTeamMemberResponse = {
+  id: string;
+  name: string;
+  phone: string | null;
+  role: TeamMemberRole;
+  active: boolean;
+  enterprises: MobileTeamEnterpriseResponse[];
+};
 
-function cloneTeamMember(member: TeamMember): TeamMember {
-  return { ...member, enterprises: [...member.enterprises] };
-}
+type MobileTeamListResponse = {
+  members: MobileTeamMemberResponse[];
+};
 
-function getNextEnterprise(current: string[]): string {
-  const missingEnterprise = ALL_ENTERPRISE_NAMES_MOCK.find((enterprise) => !current.includes(enterprise));
-  return missingEnterprise ?? ALL_ENTERPRISE_NAMES_MOCK[0];
-}
+type MobileTeamMemberEnvelope = {
+  member: MobileTeamMemberResponse;
+};
 
-function updateTeamState(memberId: string, updater: (member: TeamMember) => TeamMember): TeamMember | null {
-  let updatedMember: TeamMember | null = null;
-
-  teamState = teamState.map((member) => {
-    if (member.id !== memberId) {
-      return member;
-    }
-
-    updatedMember = updater(member);
-    return updatedMember;
-  });
-
-  return updatedMember;
-}
-
-export function canManageEnterprise(userRole: TeamMemberRole, enterpriseName: string): boolean {
-  if (userRole === "ADM") {
-    return true;
-  }
-
-  if (userRole === "GESTOR") {
-    return MANAGED_ENTERPRISES_BY_GESTOR_MOCK.includes(enterpriseName);
-  }
-
-  return false;
-}
-
-export function getEnterpriseLink(enterpriseName: string, userRole: TeamMemberRole): EnterpriseLink {
-  const manageable = canManageEnterprise(userRole, enterpriseName);
-
+function normalizeEnterprise(enterprise: MobileTeamEnterpriseResponse): TeamEnterprise {
+  const manageable = enterprise.manageable === true;
   return {
-    enterpriseName,
+    enterpriseId: String(enterprise.enterpriseId ?? ""),
+    enterpriseName:
+      typeof enterprise.enterpriseName === "string" && enterprise.enterpriseName.trim()
+        ? enterprise.enterpriseName
+        : "Sem empreendimento",
     manageable,
-    label: manageable ? "Gerenciavel" : "Somente visualizacao",
+    label:
+      typeof enterprise.label === "string" && enterprise.label.trim()
+        ? enterprise.label
+        : manageable
+          ? "Gerenciavel"
+          : "Somente visualizacao",
   };
 }
 
-export function getTeamByRole(user: AuthUser | null | undefined): Promise<TeamMember[]> {
-  const role = user?.role ?? "CORRETOR";
-
-  if (role === "ADM") {
-    return Promise.resolve(teamState.map(cloneTeamMember));
-  }
-
-  if (role === "GESTOR") {
-    return Promise.resolve(
-      teamState
-        .filter(
-          (member) =>
-            member.role === "CORRETOR" &&
-            member.enterprises.some((enterprise) => MANAGED_ENTERPRISES_BY_GESTOR_MOCK.includes(enterprise))
-        )
-        .map(cloneTeamMember)
-    );
-  }
-
-  return Promise.resolve([]);
+function normalizeTeamMember(member: MobileTeamMemberResponse): TeamMember {
+  return {
+    id: String(member.id ?? ""),
+    name: typeof member.name === "string" && member.name.trim() ? member.name : "Sem nome",
+    phone: typeof member.phone === "string" ? member.phone : null,
+    role: member.role,
+    active: member.active === true,
+    enterprises: Array.isArray(member.enterprises) ? member.enterprises.map(normalizeEnterprise) : [],
+  };
 }
 
-export function updateMockTeamMember(memberId: string): Promise<TeamMember | null> {
-  const updatedMember = updateTeamState(memberId, (member) => {
-    const alreadyEdited = member.name.includes(EDITED_SUFFIX);
-    const nextName = alreadyEdited ? member.name.replace(EDITED_SUFFIX, "") : `${member.name}${EDITED_SUFFIX}`;
-    const nextPhone = member.phone === ALTERNATE_PHONE ? DEFAULT_EDITED_PHONE : ALTERNATE_PHONE;
+export function isTeamApiFallbackAllowed(error: unknown): boolean {
+  return (
+    error instanceof ApiRequestError &&
+    (error.message === "NETWORK_ERROR" || error.status == null || error.status >= 500)
+  );
+}
 
-    return {
-      ...member,
-      name: nextName,
-      phone: nextPhone,
-    };
+export async function getTeamWithApi(token: string): Promise<TeamMember[]> {
+  const response = await requestJson<MobileTeamListResponse>("/api/mobile/team", {
+    method: "GET",
+    token,
   });
 
-  return Promise.resolve(updatedMember ? cloneTeamMember(updatedMember) : null);
+  if (!response || !Array.isArray(response.members)) {
+    throw new Error("INVALID_TEAM_PAYLOAD");
+  }
+
+  return response.members
+    .filter((member) => member && typeof member === "object" && typeof member.id === "string")
+    .map(normalizeTeamMember);
 }
 
-export function toggleMockTeamMemberActive(memberId: string): Promise<TeamMember | null> {
-  const updatedMember = updateTeamState(memberId, (member) => ({
+export async function updateTeamMemberWithApi(
+  memberId: string,
+  token: string,
+  payload: { name?: string; phone?: string; active?: boolean }
+): Promise<TeamMember> {
+  const body: Record<string, unknown> = {};
+  if (payload.name !== undefined) body.name = payload.name;
+  if (payload.phone !== undefined) body.phone = payload.phone;
+  if (payload.active !== undefined) body.active = payload.active;
+
+  const response = await requestJson<MobileTeamMemberEnvelope>(`/api/mobile/team/${memberId}`, {
+    method: "PATCH",
+    token,
+    body,
+  });
+
+  if (!response?.member || typeof response.member !== "object") {
+    throw new Error("INVALID_TEAM_MEMBER_PAYLOAD");
+  }
+
+  return normalizeTeamMember(response.member);
+}
+
+export async function addEnterpriseToTeamMemberWithApi(
+  memberId: string,
+  enterpriseId: string,
+  token: string
+): Promise<TeamMember> {
+  const response = await requestJson<MobileTeamMemberEnvelope>(`/api/mobile/team/${memberId}/enterprises`, {
+    method: "POST",
+    token,
+    body: { enterpriseId },
+  });
+
+  if (!response?.member || typeof response.member !== "object") {
+    throw new Error("INVALID_TEAM_MEMBER_PAYLOAD");
+  }
+
+  return normalizeTeamMember(response.member);
+}
+
+export async function getTeamByRoleFallback(role: TeamMemberRole): Promise<TeamMember[]> {
+  if (role === "CORRETOR") {
+    return [];
+  }
+
+  return TEAM_MEMBERS_MOCK.map((member) => ({
     ...member,
-    active: !member.active,
+    phone: member.phone ?? null,
+    enterprises: member.enterprises.map((enterprise) => ({
+      enterpriseId: enterprise.enterpriseId,
+      enterpriseName: enterprise.enterpriseName,
+      manageable: enterprise.manageable,
+      label: enterprise.label ?? null,
+    })),
   }));
-
-  return Promise.resolve(updatedMember ? cloneTeamMember(updatedMember) : null);
-}
-
-export function addMockEnterpriseToMember(memberId: string): Promise<TeamMember | null> {
-  const updatedMember = updateTeamState(memberId, (member) => {
-    const enterprise = getNextEnterprise(member.enterprises);
-
-    if (member.enterprises.includes(enterprise)) {
-      return member;
-    }
-
-    return {
-      ...member,
-      enterprises: [...member.enterprises, enterprise],
-    };
-  });
-
-  return Promise.resolve(updatedMember ? cloneTeamMember(updatedMember) : null);
 }

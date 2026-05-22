@@ -1,61 +1,197 @@
 import { useEffect, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
 import { EmptyState } from "../../src/components/EmptyState";
 import { StatusBadge } from "../../src/components/StatusBadge";
 import {
-  addMockEnterpriseToMember,
-  getEnterpriseLink,
-  getTeamByRole,
-  toggleMockTeamMemberActive,
-  updateMockTeamMember,
+  addEnterpriseToTeamMemberWithApi,
+  getTeamByRoleFallback,
+  getTeamWithApi,
+  isTeamApiFallbackAllowed,
+  updateTeamMemberWithApi,
 } from "../../src/services/team.service";
+import { ApiRequestError } from "../../src/services/api";
 import { useAuthStore } from "../../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../../src/theme";
 import { TeamMember } from "../../src/types/team.types";
 
 export default function TeamScreen() {
   const user = useAuthStore((state) => state.user);
+  const token = useAuthStore((state) => state.token);
   const role = user?.role ?? "CORRETOR";
   const [team, setTeam] = useState<TeamMember[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
 
-    getTeamByRole(user).then((items) => {
+    async function loadTeam() {
+      setIsLoading(true);
+      setErrorMessage(null);
+
+      try {
+        if (token) {
+          const members = await getTeamWithApi(token);
+          if (active) {
+            setTeam(members);
+          }
+          return;
+        }
+      } catch (error) {
+        if (!isTeamApiFallbackAllowed(error)) {
+          if (active) {
+            setTeam([]);
+            if (error instanceof ApiRequestError && error.status === 403) {
+              setErrorMessage("Sem permissao para visualizar equipe.");
+            } else {
+              setErrorMessage("Nao foi possivel carregar a equipe.");
+            }
+          }
+          return;
+        }
+
+        const fallbackItems = await getTeamByRoleFallback(role);
+        if (active) {
+          setTeam(fallbackItems);
+          setErrorMessage("Conexao indisponivel. Exibindo dados locais temporarios.");
+        }
+        return;
+      }
+
+      const fallbackItems = await getTeamByRoleFallback(role);
       if (active) {
-        setTeam(items);
+        setTeam(fallbackItems);
+        setErrorMessage("Sessao sem token. Exibindo dados locais temporarios.");
+      }
+    }
+
+    loadTeam().finally(() => {
+      if (active) {
+        setIsLoading(false);
       }
     });
 
     return () => {
       active = false;
     };
-  }, [user]);
+  }, [role, token]);
 
-  function mergeUpdatedMember(updatedMember: TeamMember | null) {
-    if (!updatedMember) return;
-
-    setTeam((current) =>
-      current.map((member) => (member.id === updatedMember.id ? updatedMember : member))
-    );
+  async function reloadTeam() {
+    if (!token) return;
+    try {
+      setIsLoading(true);
+      setErrorMessage(null);
+      const members = await getTeamWithApi(token);
+      setTeam(members);
+    } catch (error) {
+      if (isTeamApiFallbackAllowed(error)) {
+        const fallbackItems = await getTeamByRoleFallback(role);
+        setTeam(fallbackItems);
+        setErrorMessage("Conexao indisponivel. Exibindo dados locais temporarios.");
+      } else {
+        setErrorMessage("Nao foi possivel atualizar a equipe.");
+      }
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   async function handleEdit(memberId: string) {
-    const updatedMember = await updateMockTeamMember(memberId);
-    mergeUpdatedMember(updatedMember);
-    Alert.alert("Edicao mockada", "Nome e telefone atualizados localmente.");
+    if (!token) {
+      Alert.alert("Sessao invalida", "Faca login novamente para editar membros.");
+      return;
+    }
+    const current = team.find((member) => member.id === memberId);
+    if (!current) return;
+
+    setIsSubmitting(true);
+    try {
+      const updatedMember = await updateTeamMemberWithApi(memberId, token, {
+        name: `${current.name} (editado)`,
+        phone: current.phone ?? "",
+      });
+      setTeam((items) => items.map((item) => (item.id === updatedMember.id ? updatedMember : item)));
+      await reloadTeam();
+      Alert.alert("Sucesso", "Membro atualizado.");
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        Alert.alert("Falha na edicao", error.message || "Nao foi possivel editar o membro.");
+        return;
+      }
+      Alert.alert("Falha na edicao", "Nao foi possivel editar o membro.");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   async function handleToggleActive(memberId: string) {
-    const updatedMember = await toggleMockTeamMemberActive(memberId);
-    mergeUpdatedMember(updatedMember);
+    if (!token) {
+      Alert.alert("Sessao invalida", "Faca login novamente para editar membros.");
+      return;
+    }
+    const current = team.find((member) => member.id === memberId);
+    if (!current) return;
+
+    setIsSubmitting(true);
+    try {
+      const updatedMember = await updateTeamMemberWithApi(memberId, token, {
+        active: !current.active,
+      });
+      setTeam((items) => items.map((item) => (item.id === updatedMember.id ? updatedMember : item)));
+      await reloadTeam();
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        Alert.alert("Falha na edicao", error.message || "Nao foi possivel alterar o status.");
+        return;
+      }
+      Alert.alert("Falha na edicao", "Nao foi possivel alterar o status.");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   async function handleAddEnterprise(memberId: string) {
-    const updatedMember = await addMockEnterpriseToMember(memberId);
-    mergeUpdatedMember(updatedMember);
-    Alert.alert("Vinculo adicionado", "Empreendimento vinculado ao corretor no mock local.");
+    if (!token) {
+      Alert.alert("Sessao invalida", "Faca login novamente para vincular empreendimentos.");
+      return;
+    }
+
+    const enterpriseOptions = Array.from(
+      new Map(
+        team
+          .flatMap((member) => member.enterprises)
+          .map((enterprise) => [enterprise.enterpriseId, enterprise])
+      ).values()
+    ).sort((a, b) => a.enterpriseName.localeCompare(b.enterpriseName, "pt-BR"));
+
+    if (enterpriseOptions.length === 0) {
+      Alert.alert("Sem empreendimentos", "Nao ha empreendimentos disponiveis para vincular.");
+      return;
+    }
+
+    const member = team.find((item) => item.id === memberId);
+    if (!member) return;
+    const available = enterpriseOptions.filter(
+      (enterprise) => !member.enterprises.some((current) => current.enterpriseId === enterprise.enterpriseId)
+    );
+    const selected = available[0] ?? enterpriseOptions[0];
+
+    setIsSubmitting(true);
+    try {
+      await addEnterpriseToTeamMemberWithApi(memberId, selected.enterpriseId, token);
+      await reloadTeam();
+      Alert.alert("Vinculo adicionado", `Empreendimento ${selected.enterpriseName} vinculado com sucesso.`);
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        Alert.alert("Falha no vinculo", error.message || "Nao foi possivel vincular empreendimento.");
+        return;
+      }
+      Alert.alert("Falha no vinculo", "Nao foi possivel vincular empreendimento.");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   if (role === "CORRETOR") {
@@ -81,9 +217,22 @@ export default function TeamScreen() {
             ? "Acesso completo a corretores, gestores e administradores."
             : "Corretores vinculados aos empreendimentos sob sua gestao."}
         </Text>
+        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
         <View style={styles.list}>
-          {team.map((member) => {
+          {isLoading ? (
+            <View style={styles.loadingCard}>
+              <ActivityIndicator size="small" color={colors.orange} />
+              <Text style={styles.loadingText}>Carregando equipe</Text>
+            </View>
+          ) : team.length === 0 ? (
+            <EmptyState
+              icon="account-group-outline"
+              title="Nenhum membro encontrado"
+              description="Quando houver membros no seu escopo de acesso, eles aparecerao aqui."
+            />
+          ) : (
+            team.map((member) => {
             const isAdminView = role === "ADM";
 
             return (
@@ -91,7 +240,7 @@ export default function TeamScreen() {
                 <View style={styles.cardHeader}>
                   <View style={styles.nameWrap}>
                     <Text style={styles.name}>{member.name}</Text>
-                    <Text style={styles.phone}>{member.phone}</Text>
+                    <Text style={styles.phone}>{member.phone ?? "-"}</Text>
                   </View>
                   <View style={styles.headerBadges}>
                     <StatusBadge
@@ -109,26 +258,34 @@ export default function TeamScreen() {
 
                 <View style={styles.enterpriseList}>
                   {member.enterprises.map((enterprise) => {
-                    const enterpriseLink = getEnterpriseLink(enterprise, role);
-                    const tone = enterpriseLink.manageable ? "success" : "neutral";
+                    const tone = enterprise.manageable ? "success" : "neutral";
 
                     return (
-                      <View key={`${member.id}-${enterprise}`} style={styles.enterpriseRow}>
-                        <Text style={styles.enterpriseName}>{enterpriseLink.enterpriseName}</Text>
-                        <StatusBadge label={enterpriseLink.label ?? "Sem status"} tone={tone} />
+                      <View key={`${member.id}-${enterprise.enterpriseId}`} style={styles.enterpriseRow}>
+                        <Text style={styles.enterpriseName}>{enterprise.enterpriseName}</Text>
+                        <StatusBadge label={enterprise.label ?? "Sem status"} tone={tone} />
                       </View>
                     );
                   })}
                 </View>
 
                 <View style={styles.actionsRow}>
-                  <Pressable style={styles.actionButton} onPress={() => handleEdit(member.id)}>
+                  <Pressable
+                    style={[styles.actionButton, isSubmitting && styles.actionButtonDisabled]}
+                    onPress={() => handleEdit(member.id)}
+                    disabled={isSubmitting}
+                  >
                     <Text style={styles.actionButtonText}>Editar</Text>
                   </Pressable>
 
                   <Pressable
-                    style={[styles.actionButton, styles.actionButtonSecondary]}
+                    style={[
+                      styles.actionButton,
+                      styles.actionButtonSecondary,
+                      isSubmitting && styles.actionButtonDisabled,
+                    ]}
                     onPress={() => handleToggleActive(member.id)}
+                    disabled={isSubmitting}
                   >
                     <Text style={[styles.actionButtonText, styles.actionButtonTextSecondary]}>
                       {member.active ? "Inativar" : "Ativar"}
@@ -136,8 +293,13 @@ export default function TeamScreen() {
                   </Pressable>
 
                   <Pressable
-                    style={[styles.actionButton, styles.actionButtonOutline]}
+                    style={[
+                      styles.actionButton,
+                      styles.actionButtonOutline,
+                      isSubmitting && styles.actionButtonDisabled,
+                    ]}
                     onPress={() => handleAddEnterprise(member.id)}
+                    disabled={isSubmitting}
                   >
                     <Text style={[styles.actionButtonText, styles.actionButtonTextOutline]}>
                       Adicionar empreendimento
@@ -152,7 +314,8 @@ export default function TeamScreen() {
                 ) : null}
               </View>
             );
-          })}
+          })
+          )}
         </View>
       </ScrollView>
     </AppShell>
@@ -185,6 +348,21 @@ const styles = StyleSheet.create({
   list: {
     marginTop: spacing.md,
     gap: spacing.sm,
+  },
+  loadingCard: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    paddingVertical: spacing.md,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    ...shadows.card,
+  },
+  loadingText: {
+    ...typography.caption,
+    color: colors.muted,
   },
   card: {
     backgroundColor: colors.card,
@@ -256,6 +434,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  actionButtonDisabled: {
+    opacity: 0.6,
+  },
   actionButtonSecondary: {
     backgroundColor: colors.orange,
   },
@@ -282,5 +463,12 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 14,
     marginTop: 2,
+  },
+  errorText: {
+    ...typography.caption,
+    color: colors.red,
+    marginTop: spacing.xs,
+    fontSize: 11,
+    lineHeight: 15,
   },
 });

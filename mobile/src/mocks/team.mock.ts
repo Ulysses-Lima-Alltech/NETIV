@@ -1,48 +1,55 @@
 import { TeamMember } from "../types/team.types";
 
-export const ALL_ENTERPRISE_NAMES_MOCK = ["Evora", "Montaresa", "Altis", "Reserva Azul"];
-
-export const MANAGED_ENTERPRISES_BY_GESTOR_MOCK = ["Evora", "Montaresa"];
-
 export const TEAM_MEMBERS_MOCK: TeamMember[] = [
   {
-    id: "c-1",
+    id: "corretor:1",
     name: "Joao Corretor",
     phone: "(11) 98888-1001",
     role: "CORRETOR",
     active: true,
-    enterprises: ["Evora", "Montaresa"],
+    enterprises: [
+      { enterpriseId: "1", enterpriseName: "Evora", manageable: true, label: "Gerenciavel" },
+      { enterpriseId: "2", enterpriseName: "Montaresa", manageable: true, label: "Gerenciavel" },
+    ],
   },
   {
-    id: "c-2",
+    id: "corretor:2",
     name: "Mariana Corretora",
     phone: "(11) 98888-1002",
     role: "CORRETOR",
     active: true,
-    enterprises: ["Montaresa"],
+    enterprises: [{ enterpriseId: "2", enterpriseName: "Montaresa", manageable: true, label: "Gerenciavel" }],
   },
   {
-    id: "c-3",
+    id: "corretor:3",
     name: "Lucas Corretor",
     phone: "(11) 98888-1003",
     role: "CORRETOR",
     active: false,
-    enterprises: ["Altis"],
+    enterprises: [{ enterpriseId: "3", enterpriseName: "Altis", manageable: false, label: "Somente visualizacao" }],
   },
   {
-    id: "g-1",
+    id: "mobile:2",
     name: "Gestor Evora",
     phone: "(11) 97777-2001",
     role: "GESTOR",
     active: true,
-    enterprises: ["Evora", "Montaresa"],
+    enterprises: [
+      { enterpriseId: "1", enterpriseName: "Evora", manageable: true, label: "Gerenciavel" },
+      { enterpriseId: "2", enterpriseName: "Montaresa", manageable: true, label: "Gerenciavel" },
+    ],
   },
   {
-    id: "a-1",
+    id: "mobile:3",
     name: "Administrador NETIV",
     phone: "(11) 96666-3001",
     role: "ADM",
     active: true,
-    enterprises: ["Evora", "Montaresa", "Altis", "Reserva Azul"],
+    enterprises: [
+      { enterpriseId: "1", enterpriseName: "Evora", manageable: true, label: "Gerenciavel" },
+      { enterpriseId: "2", enterpriseName: "Montaresa", manageable: true, label: "Gerenciavel" },
+      { enterpriseId: "3", enterpriseName: "Altis", manageable: true, label: "Gerenciavel" },
+      { enterpriseId: "4", enterpriseName: "Reserva Azul", manageable: true, label: "Gerenciavel" },
+    ],
   },
 ];
