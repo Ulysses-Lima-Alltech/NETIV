@@ -25,7 +25,7 @@ export type ConversationDetail = {
     leadTemperature: string;
     enterpriseName: string;
     brokerName: string | null;
-    visitInfo: string;
+    visitInfo: string | null;
     statusLabel: string;
   };
 };

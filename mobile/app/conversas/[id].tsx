@@ -1,6 +1,7 @@
 import { useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -13,7 +14,9 @@ import {
 import { AppIcon } from "../../src/components/AppIcon";
 import { AppShell } from "../../src/components/AppShell";
 import { StatusBadge } from "../../src/components/StatusBadge";
+import { ApiRequestError } from "../../src/services/api";
 import {
+  getConversationDetailWithApi,
   getConversationDetailById,
   getConversationStatusLabel,
   sendMockMessage,
@@ -52,9 +55,12 @@ function parseConversationId(rawId: string | string[] | undefined) {
 export default function ConversationDetailScreen() {
   const { id } = useLocalSearchParams();
   const user = useAuthStore((state) => state.user);
+  const token = useAuthStore((state) => state.token);
   const [detail, setDetail] = useState<ConversationDetail>(INITIAL_CONVERSATION_DETAIL);
   const [message, setMessage] = useState("");
   const [handoff, setHandoff] = useState(false);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(true);
+  const [isDeniedOrMissing, setIsDeniedOrMissing] = useState(false);
 
   const role = user?.role ?? "CORRETOR";
   const canSeeOperationalDetails = role === "GESTOR" || role === "ADM";
@@ -64,17 +70,43 @@ export default function ConversationDetailScreen() {
   useEffect(() => {
     let active = true;
 
-    getConversationDetailById(conversationId, user).then((conversationDetail) => {
-      if (!active) return;
+    async function loadConversationDetail() {
+      setIsLoadingDetail(true);
+      setIsDeniedOrMissing(false);
 
-      setDetail(conversationDetail);
-      setHandoff(conversationDetail.conversation.status === "HUMAN");
+      try {
+        if (token) {
+          const apiDetail = await getConversationDetailWithApi(conversationId, token);
+          if (!active) return;
+          setDetail(apiDetail);
+          setHandoff(apiDetail.conversation.status === "HUMAN");
+          return;
+        }
+      } catch (error) {
+        if (error instanceof ApiRequestError && (error.status === 403 || error.status === 404)) {
+          if (!active) return;
+          setIsDeniedOrMissing(true);
+          return;
+        }
+        // Falha de conexao/instabilidade: usa fallback mockado
+      }
+
+      const fallbackDetail = await getConversationDetailById(conversationId, user);
+      if (!active) return;
+      setDetail(fallbackDetail);
+      setHandoff(fallbackDetail.conversation.status === "HUMAN");
+    }
+
+    loadConversationDetail().finally(() => {
+      if (active) {
+        setIsLoadingDetail(false);
+      }
     });
 
     return () => {
       active = false;
     };
-  }, [conversationId, user]);
+  }, [conversationId, token, user]);
 
   const statusLabel = handoff ? "Atendimento humano" : "Ana atendendo";
   const handoffButtonLabel = handoff ? "Voltar para Ana" : "Ativar handoff";
@@ -98,6 +130,7 @@ export default function ConversationDetailScreen() {
   );
 
   async function handleSendMessage() {
+    if (isDeniedOrMissing) return;
     if (!message.trim()) return;
 
     const sentMessage = await sendMockMessage(conversationId, message);
@@ -117,6 +150,7 @@ export default function ConversationDetailScreen() {
   }
 
   async function handleToggleHandoff() {
+    if (isDeniedOrMissing) return;
     const updatedConversation = await toggleMockHandoff(conversationId);
 
     if (!updatedConversation) {
@@ -141,6 +175,31 @@ export default function ConversationDetailScreen() {
         style={styles.root}
         behavior={Platform.select({ ios: "padding", android: undefined })}
       >
+        {isLoadingDetail ? (
+          <View style={styles.loadingWrapper}>
+            <View style={styles.loadingCard}>
+              <ActivityIndicator size="small" color={colors.orange} />
+              <Text style={styles.loadingText}>Carregando conversa</Text>
+            </View>
+          </View>
+        ) : null}
+
+        {!isLoadingDetail && isDeniedOrMissing ? (
+          <View style={styles.blockedWrapper}>
+            <View style={styles.blockedCard}>
+              <View style={styles.blockedIcon}>
+                <AppIcon name="shield-crown-outline" size={24} color={colors.orange} />
+              </View>
+              <Text style={styles.blockedTitle}>Conversa não encontrada ou sem acesso</Text>
+              <Text style={styles.blockedDescription}>
+                Verifique suas permissões ou selecione outra conversa da lista.
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        {!isLoadingDetail && !isDeniedOrMissing ? (
+          <>
         <View style={styles.topPanel}>
           <View style={styles.topRow}>
             <View style={styles.topTextBlock}>
@@ -227,6 +286,8 @@ export default function ConversationDetailScreen() {
             <AppIcon name="send" size={15} color="#FFFFFF" />
           </Pressable>
         </View>
+          </>
+        ) : null}
       </KeyboardAvoidingView>
     </AppShell>
   );
@@ -437,5 +498,69 @@ const styles = StyleSheet.create({
     backgroundColor: colors.orange,
     alignItems: "center",
     justifyContent: "center",
+  },
+  loadingWrapper: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+  },
+  loadingCard: {
+    minWidth: 220,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    alignItems: "center",
+    gap: spacing.xs,
+    ...shadows.card,
+  },
+  loadingText: {
+    ...typography.caption,
+    color: colors.muted,
+  },
+  blockedWrapper: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+  },
+  blockedCard: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+    alignItems: "center",
+    ...shadows.card,
+  },
+  blockedIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: "#FFD8BD",
+    backgroundColor: colors.orangeSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  blockedTitle: {
+    ...typography.sectionTitle,
+    color: colors.navy,
+    textAlign: "center",
+    marginTop: spacing.sm,
+    fontSize: 18,
+    lineHeight: 23,
+  },
+  blockedDescription: {
+    ...typography.body,
+    color: colors.muted,
+    textAlign: "center",
+    marginTop: spacing.xs,
+    fontSize: 13,
+    lineHeight: 18,
   },
 });

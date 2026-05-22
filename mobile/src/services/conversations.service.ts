@@ -54,6 +54,12 @@ type MobileConversationsResponse = {
   conversations: Conversation[];
 };
 
+type MobileConversationDetailResponse = {
+  conversation: Conversation;
+  commercialDetails: ConversationDetail["commercialDetails"];
+  messages: ConversationMessage[];
+};
+
 function isConversationStatus(value: unknown): value is ConversationStatus {
   return value === "ANA" || value === "HUMAN";
 }
@@ -82,6 +88,56 @@ function normalizeConversation(raw: unknown): Conversation | null {
   };
 }
 
+function normalizeConversationMessage(raw: unknown): ConversationMessage | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Partial<ConversationMessage>;
+  if (typeof value.id !== "string") return null;
+  if (value.from !== "client" && value.from !== "ana" && value.from !== "me") return null;
+  if (typeof value.text !== "string") return null;
+  if (value.createdAt !== undefined && value.createdAt !== null && typeof value.createdAt !== "string") return null;
+
+  return {
+    id: value.id,
+    from: value.from,
+    text: value.text,
+    createdAt: value.createdAt ?? undefined,
+  };
+}
+
+function normalizeConversationDetail(raw: unknown): ConversationDetail | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Partial<MobileConversationDetailResponse>;
+  const conversation = normalizeConversation(value.conversation);
+  if (!conversation) return null;
+
+  const commercial = value.commercialDetails;
+  if (!commercial || typeof commercial !== "object") return null;
+
+  const commercialDetails = commercial as Partial<ConversationDetail["commercialDetails"]>;
+  if (typeof commercialDetails.leadTemperature !== "string") return null;
+  if (typeof commercialDetails.enterpriseName !== "string") return null;
+  if (commercialDetails.brokerName !== null && typeof commercialDetails.brokerName !== "string") return null;
+  if (commercialDetails.visitInfo !== null && commercialDetails.visitInfo !== undefined && typeof commercialDetails.visitInfo !== "string") return null;
+  if (typeof commercialDetails.statusLabel !== "string") return null;
+
+  if (!Array.isArray(value.messages)) return null;
+  const messages = value.messages
+    .map((item) => normalizeConversationMessage(item))
+    .filter((item): item is ConversationMessage => item !== null);
+
+  return {
+    conversation,
+    commercialDetails: {
+      leadTemperature: commercialDetails.leadTemperature,
+      enterpriseName: commercialDetails.enterpriseName,
+      brokerName: commercialDetails.brokerName ?? null,
+      visitInfo: commercialDetails.visitInfo ?? null,
+      statusLabel: commercialDetails.statusLabel,
+    },
+    messages,
+  };
+}
+
 export async function getConversationsWithApi(token: string): Promise<Conversation[]> {
   const response = await requestJson<MobileConversationsResponse>("/api/mobile/conversations", {
     method: "GET",
@@ -95,6 +151,26 @@ export async function getConversationsWithApi(token: string): Promise<Conversati
   const normalized = response.conversations
     .map((item) => normalizeConversation(item))
     .filter((item): item is Conversation => item !== null);
+
+  return normalized;
+}
+
+export async function getConversationDetailWithApi(
+  conversationId: string,
+  token: string
+): Promise<ConversationDetail> {
+  const response = await requestJson<MobileConversationDetailResponse>(
+    `/api/mobile/conversations/${conversationId}`,
+    {
+      method: "GET",
+      token,
+    }
+  );
+
+  const normalized = normalizeConversationDetail(response);
+  if (!normalized) {
+    throw new Error("INVALID_CONVERSATION_DETAIL_PAYLOAD");
+  }
 
   return normalized;
 }
