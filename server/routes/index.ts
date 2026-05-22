@@ -1,6 +1,7 @@
 ﻿import { Router } from 'express';
 import authRouter from './auth.js';
 import mobileAuthRouter from './mobileAuth.js';
+import mobileHomeRouter from './mobileHome.js';
 import ssoRouter from './sso.js';
 import usersRouter from './users.js';
 import settingsRouter from './settings.js';
@@ -28,6 +29,7 @@ const router = Router();
 
 router.use('/auth', authRouter);
 router.use('/mobile/auth', mobileAuthRouter);
+router.use('/mobile/home', mobileHomeRouter);
 // SSO: chamado pelo Django, protegido pelo JWT assinado (não precisa de auth)
 router.use('/auth/sso', ssoRouter);
 
