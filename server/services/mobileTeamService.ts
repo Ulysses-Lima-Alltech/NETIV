@@ -33,6 +33,10 @@ type UpdateMobileTeamMemberResult =
   | { ok: true; member: MobileTeamMember }
   | { ok: false; code: 'FORBIDDEN' | 'NOT_FOUND' | 'BAD_REQUEST'; message: string };
 
+type AddEnterpriseToMobileTeamMemberResult =
+  | { ok: true; member: MobileTeamMember }
+  | { ok: false; code: 'FORBIDDEN' | 'NOT_FOUND' | 'BAD_REQUEST'; message: string };
+
 type CorretorEnterpriseRow = {
   corretor_id: number;
   corretor_name: string;
@@ -252,6 +256,17 @@ async function canGestorManageCorretor(gestorId: number, corretorId: number): Pr
   return result.rows[0]?.allowed === true;
 }
 
+async function enterpriseExists(enterpriseId: number): Promise<boolean> {
+  const result = await query<{ id: number }>(
+    `SELECT id
+     FROM enterprises
+     WHERE id = $1
+     LIMIT 1`,
+    [enterpriseId]
+  );
+  return result.rows.length > 0;
+}
+
 async function getCorretorMemberForUser(user: MobileAuthUser, corretorId: number): Promise<MobileTeamMember | null> {
   const scopeEnterpriseIds = user.role === 'GESTOR' ? await getManagedEnterpriseIds(user.id) : [];
   if (user.role === 'GESTOR' && scopeEnterpriseIds.length === 0) return null;
@@ -385,6 +400,70 @@ export async function updateMobileTeamMember(
   if (updateResult.rows.length === 0) {
     return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
   }
+
+  const member = await getCorretorMemberForUser(user, corretorId);
+  if (!member) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+  }
+
+  return { ok: true, member };
+}
+
+export async function addEnterpriseToMobileTeamMember(
+  user: MobileAuthUser,
+  memberId: string,
+  enterpriseId: number
+): Promise<AddEnterpriseToMobileTeamMemberResult> {
+  if (user.role === 'CORRETOR') {
+    return { ok: false, code: 'FORBIDDEN', message: 'Sem permissao para vincular equipe.' };
+  }
+
+  if (memberId.startsWith('mobile:')) {
+    return {
+      ok: false,
+      code: 'BAD_REQUEST',
+      message: 'Vinculo para membros mobile:* ainda nao suportado nesta etapa.',
+    };
+  }
+
+  const corretorId = parseCorretorMemberId(memberId);
+  if (!corretorId) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'ID de membro invalido.' };
+  }
+
+  if (!Number.isInteger(enterpriseId) || enterpriseId <= 0) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'enterpriseId invalido.' };
+  }
+
+  if (user.role === 'GESTOR') {
+    const allowed = await canGestorManageCorretor(user.id, corretorId);
+    if (!allowed) {
+      return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+    }
+  }
+
+  const exists = await enterpriseExists(enterpriseId);
+  if (!exists) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Empreendimento nao encontrado.' };
+  }
+
+  const brokerExists = await query<{ id: number }>(
+    `SELECT id
+     FROM corretores
+     WHERE id = $1
+     LIMIT 1`,
+    [corretorId]
+  );
+  if (brokerExists.rows.length === 0) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+  }
+
+  await query(
+    `INSERT INTO corretor_empreendimentos (corretor_id, enterprise_id)
+     VALUES ($1, $2)
+     ON CONFLICT (corretor_id, enterprise_id) DO NOTHING`,
+    [corretorId, enterpriseId]
+  );
 
   const member = await getCorretorMemberForUser(user, corretorId);
   if (!member) {

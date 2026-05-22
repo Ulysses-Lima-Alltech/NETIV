@@ -1,6 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { requireMobileAuth } from '../middleware/mobileAuthMiddleware.js';
-import { getMobileTeam, updateMobileTeamMember, type UpdateMobileTeamMemberPayload } from '../services/mobileTeamService.js';
+import {
+  addEnterpriseToMobileTeamMember,
+  getMobileTeam,
+  updateMobileTeamMember,
+  type UpdateMobileTeamMemberPayload,
+} from '../services/mobileTeamService.js';
 
 const router = Router();
 
@@ -95,6 +100,68 @@ router.patch('/:id', requireMobileAuth, async (req: Request, res: Response): Pro
   } catch (error) {
     console.error('[mobile-team] PATCH /:id', error);
     res.status(500).json({ error: 'Erro ao atualizar membro da equipe mobile.' });
+  }
+});
+
+router.post('/:id/enterprises', requireMobileAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user = req.mobileUser;
+    if (!user) {
+      res.status(401).json({ error: 'Nao autenticado.' });
+      return;
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const allowedFields = new Set(['enterpriseId']);
+    const keys = Object.keys(body);
+
+    if (keys.length === 0 || !('enterpriseId' in body)) {
+      res.status(400).json({ error: 'Campo enterpriseId e obrigatorio.' });
+      return;
+    }
+
+    const hasForbiddenField = keys.some((key) => !allowedFields.has(key));
+    if (hasForbiddenField || 'can_manage' in body || 'canManage' in body || 'role' in body) {
+      res.status(400).json({ error: 'Payload contem campos nao permitidos.' });
+      return;
+    }
+
+    let enterpriseIdNumber: number | null = null;
+    if (typeof body.enterpriseId === 'string') {
+      const parsed = Number(body.enterpriseId.trim());
+      enterpriseIdNumber = Number.isInteger(parsed) ? parsed : null;
+    } else if (typeof body.enterpriseId === 'number' && Number.isInteger(body.enterpriseId)) {
+      enterpriseIdNumber = body.enterpriseId;
+    }
+
+    if (!enterpriseIdNumber || enterpriseIdNumber <= 0) {
+      res.status(400).json({ error: 'Campo enterpriseId invalido.' });
+      return;
+    }
+
+    const result = await addEnterpriseToMobileTeamMember(
+      user,
+      String(req.params.id ?? ''),
+      enterpriseIdNumber
+    );
+
+    if (!result.ok) {
+      if (result.code === 'FORBIDDEN') {
+        res.status(403).json({ error: result.message });
+        return;
+      }
+      if (result.code === 'NOT_FOUND') {
+        res.status(404).json({ error: result.message });
+        return;
+      }
+      res.status(400).json({ error: result.message });
+      return;
+    }
+
+    res.json({ member: result.member });
+  } catch (error) {
+    console.error('[mobile-team] POST /:id/enterprises', error);
+    res.status(500).json({ error: 'Erro ao vincular empreendimento ao membro da equipe mobile.' });
   }
 });
 
