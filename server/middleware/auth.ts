@@ -4,10 +4,11 @@ import {
   getSessionUser,
   type AppUser,
   type UserRole,
+  type SessionScope,
 } from '../repositories/userRepository.js';
 
 /** Requisição já autenticada (`user` garantido pelos middlewares `requireAuth` + `requireRole`). */
-export type AuthenticatedRequest = Request & { user: AppUser };
+export type AuthenticatedRequest = Request & { user: AppUser & { sessionScope?: SessionScope | null } };
 
 function isAuthBypassEnabled(): boolean {
   const raw = String(process.env.AUTH_BYPASS_ENABLED ?? '').trim().toLowerCase();
@@ -54,7 +55,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   if (token) {
     const user = await getSessionUser(token);
     if (user) {
-      req.user = user;
+      req.user = user as AppUser & { sessionScope?: SessionScope | null };
       next();
       return;
     }
@@ -72,7 +73,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       });
       return;
     }
-    req.user = embeddedUser;
+    req.user = embeddedUser as AppUser & { sessionScope?: SessionScope | null };
     next();
     return;
   }

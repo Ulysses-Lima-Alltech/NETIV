@@ -693,6 +693,7 @@ export interface ListConversationsFilters {
   search?: string;
   brokerId?: number;  // NOVO — filtra por assigned_broker_id
   conversationTypeFilter?: 'CLIENT' | 'INTERNO';
+  scopeConvIds?: number[];  // NOVO — filtra por whitelist de IDs de conversa (broker scope)
 }
 
 export async function listConversationsWithPreview(
@@ -745,6 +746,13 @@ export async function listConversationsWithPreview(
     paramIndex += 1;
   } else if (filters?.conversationTypeFilter === 'INTERNO') {
     conditions.push(`COALESCE(c.conversation_type, 'CLIENT') IN ('ADMIN', 'CORRETOR')`);
+  }
+
+  // ── Scope filtering (broker portfolio) ──
+  if (filters?.scopeConvIds && filters.scopeConvIds.length > 0) {
+    conditions.push(`c.id = ANY($${paramIndex})`);
+    params.push(filters.scopeConvIds);
+    paramIndex += 1;
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

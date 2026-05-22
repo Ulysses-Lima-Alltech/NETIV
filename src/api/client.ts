@@ -127,9 +127,13 @@ export const AUTH_BYPASS_MOCK_USER: AuthUser = {
 
 export const authApi = {
   login: (_email: string, _password: string) =>
-    Promise.resolve({ token: '', user: AUTH_BYPASS_MOCK_USER }),
-  me: () => Promise.resolve({ user: AUTH_BYPASS_MOCK_USER }),
-  logout: () => Promise.resolve({ ok: true as const }),
+    request<{ token: string; user: AuthUser }>('/auth/login', {
+      method: 'POST',
+      body: { email: _email, password: _password },
+    }),
+  me: () =>
+    request<{ user: AuthUser; session: { scopeKind: string | null; scopeSize: number | null; scopeTotal: number | null } | null }>('/auth/me'),
+  logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
 };
 
 export interface WhatsAppConfigPublic {

@@ -260,13 +260,30 @@ export async function updatePassword(id: number, newPassword: string): Promise<b
   return (result.rowCount ?? 0) > 0;
 }
 
-export async function createSession(userId: number): Promise<string> {
+export interface SessionScope {
+  kind: string;
+  convIds: number[];
+  totalSize?: number;
+}
+
+export async function createSession(
+  userId: number,
+  scope?: SessionScope | null
+): Promise<string> {
   const token = randomBytes(TOKEN_BYTES).toString('hex');
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + SESSION_DAYS);
   await query(
-    `INSERT INTO app_sessions (user_id, token, expires_at) VALUES ($1, $2, $3)`,
-    [userId, token, expiresAt]
+    `INSERT INTO app_sessions (user_id, token, expires_at, scope_kind, scope_conv_ids, scope_total_size)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      userId,
+      token,
+      expiresAt,
+      scope?.kind ?? null,
+      scope?.convIds ?? null,
+      scope?.totalSize ?? null,
+    ]
   );
   return token;
 }
@@ -282,15 +299,31 @@ export async function getSessionUser(token: string): Promise<AppUser | null> {
     django_user_id: number | null;
     created_at: Date;
     updated_at: Date;
+    scope_kind: string | null;
+    scope_conv_ids: number[] | null;
+    scope_total_size: number | null;
   }>(
-    `SELECT u.id, u.name, u.email, u.role, u.active, u.broker_id, u.django_user_id, u.created_at, u.updated_at
+    `SELECT u.id, u.name, u.email, u.role, u.active, u.broker_id, u.django_user_id, u.created_at, u.updated_at,
+            s.scope_kind, s.scope_conv_ids, s.scope_total_size
      FROM app_sessions s
      JOIN app_users u ON u.id = s.user_id AND u.active = true
      WHERE s.token = $1 AND s.expires_at > NOW()`,
     [token]
   );
   const row = result.rows[0];
-  return row ? { ...row, role: parseStoredUserRole(row.role) } : null;
+  if (!row) return null;
+
+  const user = { ...row, role: parseStoredUserRole(row.role) };
+  // Attach scope to user object for middleware to use
+  (user as any).sessionScope = row.scope_kind
+    ? {
+        kind: row.scope_kind,
+        convIds: row.scope_conv_ids ?? [],
+        totalSize: row.scope_total_size ?? null,
+      }
+    : null;
+
+  return user;
 }
 
 export async function deleteSession(token: string): Promise<void> {

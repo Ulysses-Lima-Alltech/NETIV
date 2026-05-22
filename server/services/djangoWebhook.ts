@@ -107,6 +107,13 @@ export function buildLeadPayload(
     phone,
     fallbackLabel: 'Cliente',
   });
+
+  // ── Montar URL da conversa no frontend NETIV ──
+  const frontendUrl = (process.env.NETIV_FRONTEND_URL || '').replace(/\/$/, '');
+  const netiv_conversation_url = frontendUrl
+    ? `${frontendUrl}/inbox?conversationId=${conv.id}`
+    : null;
+
   return {
     phone,
     name,
@@ -116,6 +123,7 @@ export function buildLeadPayload(
     temperature: conv.lead_temperature,
     netiv_conversation_id: conv.id,
     contact_id: conv.contact_id,
+    netiv_conversation_url,
   };
 }
 
