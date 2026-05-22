@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireMobileAuth } from '../middleware/mobileAuthMiddleware.js';
-import { getMobileTeam } from '../services/mobileTeamService.js';
+import { getMobileTeam, updateMobileTeamMember, type UpdateMobileTeamMemberPayload } from '../services/mobileTeamService.js';
 
 const router = Router();
 
@@ -17,6 +17,84 @@ router.get('/', requireMobileAuth, async (req: Request, res: Response): Promise<
   } catch (error) {
     console.error('[mobile-team] GET /', error);
     res.status(500).json({ error: 'Erro ao carregar equipe mobile.' });
+  }
+});
+
+router.patch('/:id', requireMobileAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user = req.mobileUser;
+    if (!user) {
+      res.status(401).json({ error: 'Nao autenticado.' });
+      return;
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const allowedFields = new Set(['name', 'phone', 'active']);
+    const keys = Object.keys(body);
+    if (keys.length === 0) {
+      res.status(400).json({ error: 'Informe ao menos um campo para atualizar.' });
+      return;
+    }
+
+    const hasForbiddenField = keys.some((key) => !allowedFields.has(key));
+    if (hasForbiddenField || 'role' in body) {
+      res.status(400).json({ error: 'Payload contem campos nao permitidos.' });
+      return;
+    }
+
+    const payload: UpdateMobileTeamMemberPayload = {};
+
+    if ('name' in body) {
+      if (typeof body.name !== 'string' || body.name.trim().length === 0) {
+        res.status(400).json({ error: 'Campo name invalido.' });
+        return;
+      }
+      payload.name = body.name.trim();
+    }
+
+    if ('phone' in body) {
+      if (typeof body.phone !== 'string') {
+        res.status(400).json({ error: 'Campo phone invalido.' });
+        return;
+      }
+      payload.phone = body.phone;
+    }
+
+    if ('active' in body) {
+      if (typeof body.active !== 'boolean') {
+        res.status(400).json({ error: 'Campo active invalido.' });
+        return;
+      }
+      payload.active = body.active;
+    }
+
+    if (
+      payload.name === undefined &&
+      payload.phone === undefined &&
+      payload.active === undefined
+    ) {
+      res.status(400).json({ error: 'Informe ao menos um campo para atualizar.' });
+      return;
+    }
+
+    const result = await updateMobileTeamMember(user, String(req.params.id ?? ''), payload);
+    if (!result.ok) {
+      if (result.code === 'FORBIDDEN') {
+        res.status(403).json({ error: result.message });
+        return;
+      }
+      if (result.code === 'NOT_FOUND') {
+        res.status(404).json({ error: result.message });
+        return;
+      }
+      res.status(400).json({ error: result.message });
+      return;
+    }
+
+    res.json({ member: result.member });
+  } catch (error) {
+    console.error('[mobile-team] PATCH /:id', error);
+    res.status(500).json({ error: 'Erro ao atualizar membro da equipe mobile.' });
   }
 });
 

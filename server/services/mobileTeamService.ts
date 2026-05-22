@@ -23,6 +23,16 @@ export type MobileTeamResponse = {
   members: MobileTeamMember[];
 };
 
+export type UpdateMobileTeamMemberPayload = {
+  name?: string;
+  phone?: string;
+  active?: boolean;
+};
+
+type UpdateMobileTeamMemberResult =
+  | { ok: true; member: MobileTeamMember }
+  | { ok: false; code: 'FORBIDDEN' | 'NOT_FOUND' | 'BAD_REQUEST'; message: string };
+
 type CorretorEnterpriseRow = {
   corretor_id: number;
   corretor_name: string;
@@ -213,6 +223,84 @@ async function getAdmMobileManagerMembers(): Promise<MobileTeamMember[]> {
   return Array.from(members.values());
 }
 
+function digits(value: string): string {
+  return value.replace(/\D/g, '');
+}
+
+function parseCorretorMemberId(memberId: string): number | null {
+  const normalized = memberId.trim();
+  if (!normalized.startsWith('corretor:')) return null;
+  const idPart = normalized.slice('corretor:'.length);
+  const parsed = Number(idPart);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+async function canGestorManageCorretor(gestorId: number, corretorId: number): Promise<boolean> {
+  const result = await query<{ allowed: boolean }>(
+    `SELECT EXISTS(
+       SELECT 1
+       FROM corretor_empreendimentos ce
+       INNER JOIN mobile_user_enterprises mue
+         ON mue.enterprise_id = ce.enterprise_id
+       WHERE ce.corretor_id = $1
+         AND mue.user_id = $2
+         AND mue.can_manage = true
+     ) AS allowed`,
+    [corretorId, gestorId]
+  );
+  return result.rows[0]?.allowed === true;
+}
+
+async function getCorretorMemberForUser(user: MobileAuthUser, corretorId: number): Promise<MobileTeamMember | null> {
+  const scopeEnterpriseIds = user.role === 'GESTOR' ? await getManagedEnterpriseIds(user.id) : [];
+  if (user.role === 'GESTOR' && scopeEnterpriseIds.length === 0) return null;
+
+  const rows = await query<CorretorEnterpriseRow>(
+    `SELECT
+       c.id AS corretor_id,
+       c.full_name AS corretor_name,
+       c.phone AS corretor_phone,
+       c.active AS corretor_active,
+       ce.enterprise_id,
+       e.name AS enterprise_name
+     FROM corretores c
+     LEFT JOIN corretor_empreendimentos ce ON ce.corretor_id = c.id
+     LEFT JOIN enterprises e ON e.id = ce.enterprise_id
+     WHERE c.id = $1
+     ORDER BY e.name ASC`,
+    [corretorId]
+  );
+
+  if (rows.rows.length === 0) return null;
+
+  const managedSet = new Set<number>(scopeEnterpriseIds);
+  const memberKey = `corretor:${corretorId}`;
+  const members = new Map<string, MobileTeamMember>();
+
+  for (const row of rows.rows) {
+    const manageable = user.role === 'GESTOR'
+      ? (row.enterprise_id != null ? managedSet.has(row.enterprise_id) : false)
+      : true;
+    pushEnterpriseLink(
+      members,
+      memberKey,
+      {
+        id: memberKey,
+        name: row.corretor_name,
+        phone: row.corretor_phone ?? null,
+        role: 'CORRETOR',
+        active: row.corretor_active === true,
+      },
+      row.enterprise_id,
+      row.enterprise_name,
+      manageable
+    );
+  }
+
+  return members.get(memberKey) ?? null;
+}
+
 export async function getMobileTeam(user: MobileAuthUser): Promise<MobileTeamResponse> {
   if (user.role === 'CORRETOR') {
     return { members: [] };
@@ -231,4 +319,77 @@ export async function getMobileTeam(user: MobileAuthUser): Promise<MobileTeamRes
   return {
     members: [...corretorMembers, ...managerMembers],
   };
+}
+
+export async function updateMobileTeamMember(
+  user: MobileAuthUser,
+  memberId: string,
+  payload: UpdateMobileTeamMemberPayload
+): Promise<UpdateMobileTeamMemberResult> {
+  if (user.role === 'CORRETOR') {
+    return { ok: false, code: 'FORBIDDEN', message: 'Sem permissao para editar equipe.' };
+  }
+
+  if (memberId.startsWith('mobile:')) {
+    return {
+      ok: false,
+      code: 'BAD_REQUEST',
+      message: 'Edicao de membros mobile:* ainda nao suportada nesta etapa.',
+    };
+  }
+
+  const corretorId = parseCorretorMemberId(memberId);
+  if (!corretorId) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'ID de membro invalido.' };
+  }
+
+  if (user.role === 'GESTOR') {
+    const allowed = await canGestorManageCorretor(user.id, corretorId);
+    if (!allowed) {
+      return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+    }
+  }
+
+  const updates: string[] = [];
+  const values: Array<string | boolean | number> = [];
+  let index = 1;
+
+  if (payload.name !== undefined) {
+    updates.push(`full_name = $${index++}`);
+    values.push(payload.name.trim());
+  }
+  if (payload.phone !== undefined) {
+    updates.push(`phone = $${index++}`);
+    values.push(digits(payload.phone));
+  }
+  if (payload.active !== undefined) {
+    updates.push(`active = $${index++}`);
+    values.push(payload.active);
+  }
+
+  if (updates.length === 0) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'Nenhum campo valido para atualizar.' };
+  }
+
+  updates.push('updated_at = NOW()');
+  values.push(corretorId);
+
+  const updateResult = await query<{ id: number }>(
+    `UPDATE corretores
+     SET ${updates.join(', ')}
+     WHERE id = $${index}
+     RETURNING id`,
+    values
+  );
+
+  if (updateResult.rows.length === 0) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+  }
+
+  const member = await getCorretorMemberForUser(user, corretorId);
+  if (!member) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+  }
+
+  return { ok: true, member };
 }
