@@ -1,24 +1,30 @@
-﻿import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
 import { StatusBadge } from "../../src/components/StatusBadge";
+import { getEnterprisesByRole } from "../../src/services/enterprises.service";
 import { useAuthStore } from "../../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../../src/theme";
-
-const allEnterprises = [
-  { name: "Evora", stage: "Lancamento", owner: "Gestor Evora" },
-  { name: "Montaresa", stage: "Vendas", owner: "Gestor Evora" },
-  { name: "Altis", stage: "Pre-lancamento", owner: "Gestor Altis" },
-  { name: "Reserva Azul", stage: "Pos-venda", owner: "Gestor Geral" },
-];
+import { Enterprise } from "../../src/types/enterprise.types";
 
 export default function EnterprisesScreen() {
   const user = useAuthStore((state) => state.user);
   const role = user?.role ?? "CORRETOR";
+  const [enterprises, setEnterprises] = useState<Enterprise[]>([]);
 
-  const visibleEnterprises =
-    role === "GESTOR"
-      ? allEnterprises.filter((enterprise) => enterprise.owner === "Gestor Evora")
-      : allEnterprises;
+  useEffect(() => {
+    let active = true;
+
+    getEnterprisesByRole(user).then((items) => {
+      if (active) {
+        setEnterprises(items);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [user]);
 
   return (
     <AppShell>
@@ -31,13 +37,13 @@ export default function EnterprisesScreen() {
         </Text>
 
         <View style={styles.list}>
-          {visibleEnterprises.map((item) => (
-            <View key={item.name} style={styles.card}>
+          {enterprises.map((item) => (
+            <View key={item.id} style={styles.card}>
               <View style={styles.row}>
                 <Text style={styles.name}>{item.name}</Text>
-                <StatusBadge label={item.stage} tone="info" />
+                <StatusBadge label={item.active ? "Ativo" : "Inativo"} tone={item.active ? "success" : "warning"} />
               </View>
-              <Text style={styles.owner}>Responsavel: {item.owner}</Text>
+              <Text style={styles.owner}>Cidade: {item.city}</Text>
             </View>
           ))}
         </View>

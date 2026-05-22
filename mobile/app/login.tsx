@@ -10,10 +10,9 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { AUTH_MOCK_ACCESS_LIST } from "../src/mocks/auth.mock";
 import { useAuthStore } from "../src/stores/auth.store";
 import { brand, colors, radius, shadows, spacing, typography } from "../src/theme";
-
-const MOCK_ACCESS = ["corretor / corretor", "gestor / gestor", "admin / admin"];
 
 export default function LoginScreen() {
   const [username, setUsername] = useState("");
@@ -52,7 +51,7 @@ export default function LoginScreen() {
 
         <View style={styles.mockBox}>
           <Text style={styles.mockTitle}>Credenciais de teste</Text>
-          {MOCK_ACCESS.map((item) => (
+          {AUTH_MOCK_ACCESS_LIST.map((item) => (
             <Text key={item} style={styles.mockLine}>
               {item}
             </Text>

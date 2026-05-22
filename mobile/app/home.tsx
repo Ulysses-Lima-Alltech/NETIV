@@ -1,74 +1,42 @@
-﻿import { router } from "expo-router";
+import { router } from "expo-router";
+import { useEffect, useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { ActionCard } from "../src/components/ActionCard";
 import { AppShell } from "../src/components/AppShell";
 import { MetricCard } from "../src/components/MetricCard";
-import { useAuthStore, UserRole } from "../src/stores/auth.store";
+import { getHomeSummaryByRole } from "../src/services/home.service";
+import { useAuthStore } from "../src/stores/auth.store";
 import { useUiStore } from "../src/stores/ui.store";
 import { colors, radius, shadows, spacing, typography } from "../src/theme";
+import { HomeSummary } from "../src/types/home.types";
 
-type HomeMetric = {
-  label: string;
-  value: string;
+const INITIAL_HOME_SUMMARY: HomeSummary = {
+  title: "Carregando painel",
+  subtitle: "Usuario",
+  description: "Aguarde enquanto carregamos os indicadores do seu perfil.",
+  nextActionText: "Carregando proxima acao.",
+  metrics: [],
 };
-
-type HomeContent = {
-  title: string;
-  description: string;
-  nextAction: string;
-  metrics: HomeMetric[];
-};
-
-function getHomeContent(role: UserRole): HomeContent {
-  if (role === "GESTOR") {
-    return {
-      title: "Visao do gestor",
-      description: "Acompanhe apenas os empreendimentos atribuidos ao seu perfil.",
-      nextAction:
-        "Priorize as conversas sem responsavel e mantenha o ritmo comercial da equipe.",
-      metrics: [
-        { label: "Leads nos empreendimentos", value: "41" },
-        { label: "Conversas sem responsavel", value: "6" },
-        { label: "Visitas hoje", value: "5" },
-        { label: "Corretores ativos", value: "8" },
-      ],
-    };
-  }
-
-  if (role === "ADM") {
-    return {
-      title: "Painel administrativo",
-      description: "Visao completa para governanca e performance da operacao.",
-      nextAction:
-        "Monitore os indicadores criticos e use o menu administrativo para ajustes rapidos.",
-      metrics: [
-        { label: "Empreendimentos", value: "4" },
-        { label: "Leads abertos", value: "130" },
-        { label: "Conversas totais", value: "820" },
-        { label: "Usuarios", value: "24" },
-      ],
-    };
-  }
-
-  return {
-    title: "Bom trabalho hoje",
-    description: "Seu painel destaca conversas e visitas que pedem acao imediata.",
-    nextAction:
-      "Atenda os leads prioritarios e acompanhe os casos que ja precisam de atendimento humano.",
-    metrics: [
-      { label: "Conversas aguardando", value: "3" },
-      { label: "Visitas hoje", value: "2" },
-      { label: "Precisa de humano", value: "1" },
-      { label: "Leads ativos", value: "12" },
-    ],
-  };
-}
 
 export default function HomeScreen() {
   const user = useAuthStore((state) => state.user);
   const requestAdminMenu = useUiStore((state) => state.requestAdminMenu);
   const role = user?.role ?? "CORRETOR";
-  const content = getHomeContent(role);
+  const [content, setContent] = useState<HomeSummary>(INITIAL_HOME_SUMMARY);
+
+  useEffect(() => {
+    let active = true;
+
+    getHomeSummaryByRole(user).then((summary) => {
+      if (active) {
+        setContent(summary);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [user]);
 
   return (
     <AppShell>
@@ -78,7 +46,7 @@ export default function HomeScreen() {
             <Text style={styles.heroPillText}>NETIV</Text>
           </View>
           <Text style={styles.title}>{content.title}</Text>
-          <Text style={styles.subtitle}>{user?.name ?? "Usuario"}</Text>
+          <Text style={styles.subtitle}>{content.subtitle}</Text>
           <Text style={styles.description}>{content.description}</Text>
         </View>
 
@@ -90,7 +58,7 @@ export default function HomeScreen() {
 
         <View style={styles.nextAction}>
           <Text style={styles.nextActionLabel}>Proxima acao</Text>
-          <Text style={styles.nextActionText}>{content.nextAction}</Text>
+          <Text style={styles.nextActionText}>{content.nextActionText}</Text>
         </View>
 
         <View style={styles.actionList}>

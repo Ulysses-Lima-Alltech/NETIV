@@ -1,13 +1,8 @@
-﻿import { create } from "zustand";
+import { create } from "zustand";
+import { loginWithMock } from "../services/auth.service";
+import { AuthUser } from "../types/auth.types";
 
-export type UserRole = "CORRETOR" | "GESTOR" | "ADM";
-
-export type AuthUser = {
-  id: string;
-  username: string;
-  name: string;
-  role: UserRole;
-};
+export type { AuthUser, UserRole } from "../types/auth.types";
 
 type AuthState = {
   user: AuthUser | null;
@@ -15,50 +10,19 @@ type AuthState = {
   logout: () => void;
 };
 
-const MOCK_USERS: Array<AuthUser & { password: string }> = [
-  {
-    id: "mock-corretor",
-    username: "corretor",
-    password: "corretor",
-    name: "Corretor Teste",
-    role: "CORRETOR",
-  },
-  {
-    id: "mock-gestor",
-    username: "gestor",
-    password: "gestor",
-    name: "Gestor Teste",
-    role: "GESTOR",
-  },
-  {
-    id: "mock-admin",
-    username: "admin",
-    password: "admin",
-    name: "Administrador Teste",
-    role: "ADM",
-  },
-];
-
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   login: (username, password) => {
-    const normalizedUsername = username.trim().toLowerCase();
-    const normalizedPassword = password.trim();
+    const result = loginWithMock(username, password);
 
-    const foundUser = MOCK_USERS.find(
-      (item) => item.username === normalizedUsername && item.password === normalizedPassword
-    );
-
-    if (!foundUser) {
+    if (!result.ok) {
       return {
         ok: false,
-        message: "Usuario ou senha invalidos.",
+        message: result.message,
       };
     }
 
-    const { password: _, ...safeUser } = foundUser;
-    set({ user: safeUser });
-
+    set({ user: result.user });
     return { ok: true };
   },
   logout: () => set({ user: null }),

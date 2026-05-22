@@ -1,56 +1,34 @@
 import { router } from "expo-router";
+import { useEffect, useState } from "react";
 import { FlatList, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
 import { ConversationCard } from "../../src/components/ConversationCard";
+import {
+  getConversationsByRole,
+  getConversationStatusLabel,
+} from "../../src/services/conversations.service";
 import { useAuthStore } from "../../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../../src/theme";
-
-const conversations = [
-  {
-    id: "1",
-    clientName: "Carlos Silva",
-    enterpriseName: "Evora",
-    lastMessage: "Quero entender as condicoes de entrada para fechar ainda hoje.",
-    anaStatus: "Ana atendendo" as const,
-    needsHuman: false,
-    assignedBrokerName: "Joao Corretor",
-    unread: true,
-  },
-  {
-    id: "2",
-    clientName: "Mariana Costa",
-    enterpriseName: "Evora",
-    lastMessage: "Podemos confirmar a visita para amanha no fim da tarde?",
-    anaStatus: "Atendimento humano" as const,
-    needsHuman: true,
-    assignedBrokerName: "Mariana Corretora",
-    unread: false,
-  },
-  {
-    id: "3",
-    clientName: "Rafael Gomes",
-    enterpriseName: "Montaresa",
-    lastMessage: "Recebi a proposta e preciso validar a tabela final com minha familia.",
-    anaStatus: "Ana atendendo" as const,
-    needsHuman: false,
-    assignedBrokerName: "Lucas Corretor",
-    unread: false,
-  },
-  {
-    id: "4",
-    clientName: "Aline Souza",
-    enterpriseName: "Altis",
-    lastMessage: "Tenho interesse no financiamento e queria os proximos passos.",
-    anaStatus: "Atendimento humano" as const,
-    needsHuman: false,
-    assignedBrokerName: "Joao Corretor",
-    unread: true,
-  },
-];
+import { Conversation } from "../../src/types/conversation.types";
 
 export default function ConversationsScreen() {
   const user = useAuthStore((state) => state.user);
   const showAssignedBroker = user?.role === "GESTOR" || user?.role === "ADM";
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+
+  useEffect(() => {
+    let active = true;
+
+    getConversationsByRole(user).then((items) => {
+      if (active) {
+        setConversations(items);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [user]);
 
   return (
     <AppShell>
@@ -73,7 +51,7 @@ export default function ConversationsScreen() {
             clientName={item.clientName}
             enterpriseName={item.enterpriseName}
             lastMessage={item.lastMessage}
-            anaStatus={item.anaStatus}
+            anaStatus={getConversationStatusLabel(item.status)}
             needsHuman={item.needsHuman}
             assignedBrokerName={item.assignedBrokerName}
             showAssignedBroker={showAssignedBroker}

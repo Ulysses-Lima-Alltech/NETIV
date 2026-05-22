@@ -1,69 +1,30 @@
-﻿import { useMemo } from "react";
+import { useEffect, useState } from "react";
 import { FlatList, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
 import { VisitCard } from "../../src/components/VisitCard";
+import { getVisitsByRole } from "../../src/services/visits.service";
 import { useAuthStore } from "../../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../../src/theme";
-
-type VisitItem = {
-  id: string;
-  time: string;
-  clientName: string;
-  enterpriseName: string;
-  status: "Confirmada" | "Agendada" | "Reagendada";
-  brokerName: string;
-};
-
-const MANAGED_BY_GESTOR = ["Evora", "Montaresa"];
-
-const visits: VisitItem[] = [
-  {
-    id: "1",
-    time: "09:30",
-    clientName: "Carlos Silva",
-    enterpriseName: "Evora",
-    status: "Confirmada",
-    brokerName: "Joao Corretor",
-  },
-  {
-    id: "2",
-    time: "14:00",
-    clientName: "Mariana Costa",
-    enterpriseName: "Montaresa",
-    status: "Agendada",
-    brokerName: "Mariana Corretora",
-  },
-  {
-    id: "3",
-    time: "17:15",
-    clientName: "Rafael Gomes",
-    enterpriseName: "Altis",
-    status: "Reagendada",
-    brokerName: "Lucas Corretor",
-  },
-];
-
-function getBrokerForCorretor(username?: string) {
-  if (username === "corretor") return "Joao Corretor";
-  return "Joao Corretor";
-}
+import { Visit } from "../../src/types/visit.types";
 
 export default function VisitsScreen() {
   const user = useAuthStore((state) => state.user);
   const role = user?.role ?? "CORRETOR";
+  const [visits, setVisits] = useState<Visit[]>([]);
 
-  const filteredVisits = useMemo(() => {
-    if (role === "ADM") {
-      return visits;
-    }
+  useEffect(() => {
+    let active = true;
 
-    if (role === "GESTOR") {
-      return visits.filter((visit) => MANAGED_BY_GESTOR.includes(visit.enterpriseName));
-    }
+    getVisitsByRole(user).then((items) => {
+      if (active) {
+        setVisits(items);
+      }
+    });
 
-    const myBroker = getBrokerForCorretor(user?.username);
-    return visits.filter((visit) => visit.brokerName === myBroker);
-  }, [role, user?.username]);
+    return () => {
+      active = false;
+    };
+  }, [user]);
 
   const subtitle =
     role === "ADM"
@@ -76,7 +37,7 @@ export default function VisitsScreen() {
     <AppShell>
       <FlatList
         contentContainerStyle={styles.container}
-        data={filteredVisits}
+        data={visits}
         keyExtractor={(item) => item.id}
         ListHeaderComponent={
           <View style={styles.headerCard}>
@@ -90,7 +51,7 @@ export default function VisitsScreen() {
             clientName={item.clientName}
             enterpriseName={item.enterpriseName}
             status={item.status}
-            brokerName={item.brokerName}
+            brokerName={item.assignedBrokerName}
           />
         )}
         ItemSeparatorComponent={() => <View style={styles.separator} />}

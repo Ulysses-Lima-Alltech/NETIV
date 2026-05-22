@@ -1,140 +1,60 @@
-﻿import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
 import { EmptyState } from "../../src/components/EmptyState";
 import { StatusBadge } from "../../src/components/StatusBadge";
+import {
+  addMockEnterpriseToMember,
+  getEnterpriseLink,
+  getTeamByRole,
+  toggleMockTeamMemberActive,
+  updateMockTeamMember,
+} from "../../src/services/team.service";
 import { useAuthStore } from "../../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../../src/theme";
-
-type TeamRole = "CORRETOR" | "GESTOR" | "ADM";
-
-type TeamMember = {
-  id: string;
-  name: string;
-  phone: string;
-  role: TeamRole;
-  active: boolean;
-  enterprises: string[];
-};
-
-const ALL_ENTERPRISES = ["Evora", "Montaresa", "Altis", "Reserva Azul"];
-const MANAGED_BY_GESTOR = ["Evora", "Montaresa"];
-
-const INITIAL_TEAM: TeamMember[] = [
-  {
-    id: "c-1",
-    name: "Joao Corretor",
-    phone: "(11) 98888-1001",
-    role: "CORRETOR",
-    active: true,
-    enterprises: ["Evora", "Montaresa"],
-  },
-  {
-    id: "c-2",
-    name: "Mariana Corretora",
-    phone: "(11) 98888-1002",
-    role: "CORRETOR",
-    active: true,
-    enterprises: ["Montaresa"],
-  },
-  {
-    id: "c-3",
-    name: "Lucas Corretor",
-    phone: "(11) 98888-1003",
-    role: "CORRETOR",
-    active: false,
-    enterprises: ["Altis"],
-  },
-  {
-    id: "g-1",
-    name: "Gestor Evora",
-    phone: "(11) 97777-2001",
-    role: "GESTOR",
-    active: true,
-    enterprises: ["Evora", "Montaresa"],
-  },
-  {
-    id: "a-1",
-    name: "Administrador NETIV",
-    phone: "(11) 96666-3001",
-    role: "ADM",
-    active: true,
-    enterprises: ["Evora", "Montaresa", "Altis", "Reserva Azul"],
-  },
-];
-
-function canManageEnterprise(userRole: TeamRole, enterprise: string) {
-  if (userRole === "ADM") return true;
-  if (userRole === "GESTOR") return MANAGED_BY_GESTOR.includes(enterprise);
-  return false;
-}
-
-function nextEnterprise(current: string[]) {
-  const missing = ALL_ENTERPRISES.find((enterprise) => !current.includes(enterprise));
-  return missing ?? ALL_ENTERPRISES[0];
-}
+import { TeamMember } from "../../src/types/team.types";
 
 export default function TeamScreen() {
   const user = useAuthStore((state) => state.user);
   const role = user?.role ?? "CORRETOR";
-  const [team, setTeam] = useState(INITIAL_TEAM);
+  const [team, setTeam] = useState<TeamMember[]>([]);
 
-  const visibleTeam = useMemo(() => {
-    if (role === "ADM") {
-      return team;
-    }
+  useEffect(() => {
+    let active = true;
 
-    if (role === "GESTOR") {
-      return team.filter(
-        (member) =>
-          member.role === "CORRETOR" &&
-          member.enterprises.some((enterprise) => MANAGED_BY_GESTOR.includes(enterprise))
-      );
-    }
+    getTeamByRole(user).then((items) => {
+      if (active) {
+        setTeam(items);
+      }
+    });
 
-    return [];
-  }, [role, team]);
+    return () => {
+      active = false;
+    };
+  }, [user]);
 
-  function handleEdit(memberId: string) {
+  function mergeUpdatedMember(updatedMember: TeamMember | null) {
+    if (!updatedMember) return;
+
     setTeam((current) =>
-      current.map((member) => {
-        if (member.id !== memberId) return member;
-
-        const alreadyEdited = member.name.includes(" (editado)");
-        return {
-          ...member,
-          name: alreadyEdited ? member.name.replace(" (editado)", "") : `${member.name} (editado)`,
-          phone: member.phone === "(11) 90000-0000" ? "(11) 98888-1000" : "(11) 90000-0000",
-        };
-      })
+      current.map((member) => (member.id === updatedMember.id ? updatedMember : member))
     );
+  }
 
+  async function handleEdit(memberId: string) {
+    const updatedMember = await updateMockTeamMember(memberId);
+    mergeUpdatedMember(updatedMember);
     Alert.alert("Edicao mockada", "Nome e telefone atualizados localmente.");
   }
 
-  function handleToggleActive(memberId: string) {
-    setTeam((current) =>
-      current.map((member) =>
-        member.id === memberId ? { ...member, active: !member.active } : member
-      )
-    );
+  async function handleToggleActive(memberId: string) {
+    const updatedMember = await toggleMockTeamMemberActive(memberId);
+    mergeUpdatedMember(updatedMember);
   }
 
-  function handleAddEnterprise(memberId: string) {
-    setTeam((current) =>
-      current.map((member) => {
-        if (member.id !== memberId) return member;
-
-        const enterprise = nextEnterprise(member.enterprises);
-        if (member.enterprises.includes(enterprise)) return member;
-
-        return {
-          ...member,
-          enterprises: [...member.enterprises, enterprise],
-        };
-      })
-    );
-
+  async function handleAddEnterprise(memberId: string) {
+    const updatedMember = await addMockEnterpriseToMember(memberId);
+    mergeUpdatedMember(updatedMember);
     Alert.alert("Vinculo adicionado", "Empreendimento vinculado ao corretor no mock local.");
   }
 
@@ -163,7 +83,7 @@ export default function TeamScreen() {
         </Text>
 
         <View style={styles.list}>
-          {visibleTeam.map((member) => {
+          {team.map((member) => {
             const isAdminView = role === "ADM";
 
             return (
@@ -174,21 +94,28 @@ export default function TeamScreen() {
                     <Text style={styles.phone}>{member.phone}</Text>
                   </View>
                   <View style={styles.headerBadges}>
-                    <StatusBadge label={member.role} tone={member.role === "ADM" ? "inverse" : member.role === "GESTOR" ? "warning" : "info"} />
-                    <StatusBadge label={member.active ? "Ativo" : "Inativo"} tone={member.active ? "success" : "warning"} />
+                    <StatusBadge
+                      label={member.role}
+                      tone={
+                        member.role === "ADM" ? "inverse" : member.role === "GESTOR" ? "warning" : "info"
+                      }
+                    />
+                    <StatusBadge
+                      label={member.active ? "Ativo" : "Inativo"}
+                      tone={member.active ? "success" : "warning"}
+                    />
                   </View>
                 </View>
 
                 <View style={styles.enterpriseList}>
                   {member.enterprises.map((enterprise) => {
-                    const manageable = canManageEnterprise(role, enterprise);
-                    const label = manageable ? "Gerenciavel" : "Somente visualizacao";
-                    const tone = manageable ? "success" : "neutral";
+                    const enterpriseLink = getEnterpriseLink(enterprise, role);
+                    const tone = enterpriseLink.manageable ? "success" : "neutral";
 
                     return (
                       <View key={`${member.id}-${enterprise}`} style={styles.enterpriseRow}>
-                        <Text style={styles.enterpriseName}>{enterprise}</Text>
-                        <StatusBadge label={label} tone={tone} />
+                        <Text style={styles.enterpriseName}>{enterpriseLink.enterpriseName}</Text>
+                        <StatusBadge label={enterpriseLink.label ?? "Sem status"} tone={tone} />
                       </View>
                     );
                   })}

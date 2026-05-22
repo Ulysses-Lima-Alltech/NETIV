@@ -13,87 +13,35 @@ import {
 import { AppIcon } from "../../src/components/AppIcon";
 import { AppShell } from "../../src/components/AppShell";
 import { StatusBadge } from "../../src/components/StatusBadge";
+import {
+  getConversationDetailById,
+  getConversationStatusLabel,
+  sendMockMessage,
+  toggleMockHandoff,
+} from "../../src/services/conversations.service";
 import { useAuthStore } from "../../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../../src/theme";
+import { ConversationDetail } from "../../src/types/conversation.types";
 
-type Message = {
-  id: string;
-  from: "cliente" | "ana" | "eu";
-  text: string;
-};
-
-type ConversationMock = {
-  id: string;
-  clientName: string;
-  enterpriseName: string;
-  lead: string;
-  assignedBrokerName: string;
-  visitLabel: string;
-  anaStatus: "Ana atendendo" | "Atendimento humano";
-  needsHuman: boolean;
-};
-
-const initialMessages: Message[] = [
-  { id: "1", from: "cliente", text: "Ola, tenho interesse no Evora." },
-  {
-    id: "2",
-    from: "ana",
-    text: "Perfeito. Posso mostrar as opcoes de pagamento e agendar uma visita ainda hoje.",
-  },
-];
-
-const conversationMocks: Record<string, ConversationMock> = {
-  "1": {
-    id: "1",
-    clientName: "Carlos Silva",
-    enterpriseName: "Evora",
-    lead: "Quente",
-    assignedBrokerName: "Joao Corretor",
-    visitLabel: "Hoje, 16:00",
-    anaStatus: "Ana atendendo",
+const INITIAL_CONVERSATION_DETAIL: ConversationDetail = {
+  conversation: {
+    id: "-",
+    clientName: "Cliente",
+    enterpriseName: "Empreendimento",
+    lastMessage: "Sem mensagem recente.",
+    status: "ANA",
     needsHuman: false,
+    unread: false,
+    assignedBrokerName: "Corretor",
   },
-  "2": {
-    id: "2",
-    clientName: "Mariana Costa",
-    enterpriseName: "Evora",
-    lead: "Quente",
-    assignedBrokerName: "Mariana Corretora",
-    visitLabel: "Amanha, 17:30",
-    anaStatus: "Atendimento humano",
-    needsHuman: true,
+  messages: [],
+  commercialDetails: {
+    leadTemperature: "Em analise",
+    enterpriseName: "Empreendimento",
+    brokerName: "Corretor",
+    visitInfo: "Sem agenda",
+    statusLabel: "Ana atendendo",
   },
-  "3": {
-    id: "3",
-    clientName: "Rafael Gomes",
-    enterpriseName: "Montaresa",
-    lead: "Em negociacao",
-    assignedBrokerName: "Lucas Corretor",
-    visitLabel: "Sexta, 11:00",
-    anaStatus: "Ana atendendo",
-    needsHuman: false,
-  },
-  "4": {
-    id: "4",
-    clientName: "Aline Souza",
-    enterpriseName: "Altis",
-    lead: "Quente",
-    assignedBrokerName: "Joao Corretor",
-    visitLabel: "Sem visita",
-    anaStatus: "Atendimento humano",
-    needsHuman: false,
-  },
-};
-
-const fallbackConversation: ConversationMock = {
-  id: "-",
-  clientName: "Cliente",
-  enterpriseName: "Empreendimento",
-  lead: "Em analise",
-  assignedBrokerName: "Corretor",
-  visitLabel: "Sem agenda",
-  anaStatus: "Ana atendendo",
-  needsHuman: false,
 };
 
 function parseConversationId(rawId: string | string[] | undefined) {
@@ -101,51 +49,90 @@ function parseConversationId(rawId: string | string[] | undefined) {
   return rawId ?? "-";
 }
 
-function getConversationMock(conversationId: string) {
-  return conversationMocks[conversationId] ?? { ...fallbackConversation, id: conversationId };
-}
-
 export default function ConversationDetailScreen() {
   const { id } = useLocalSearchParams();
   const user = useAuthStore((state) => state.user);
-  const [messages, setMessages] = useState(initialMessages);
+  const [detail, setDetail] = useState<ConversationDetail>(INITIAL_CONVERSATION_DETAIL);
   const [message, setMessage] = useState("");
+  const [handoff, setHandoff] = useState(false);
 
   const role = user?.role ?? "CORRETOR";
   const canSeeOperationalDetails = role === "GESTOR" || role === "ADM";
   const canManageHandoff = role === "CORRETOR";
   const conversationId = parseConversationId(id);
-  const conversation = useMemo(() => getConversationMock(conversationId), [conversationId]);
-  const [handoff, setHandoff] = useState(conversation.anaStatus === "Atendimento humano");
 
   useEffect(() => {
-    setHandoff(conversation.anaStatus === "Atendimento humano");
-  }, [conversation.anaStatus]);
+    let active = true;
+
+    getConversationDetailById(conversationId, user).then((conversationDetail) => {
+      if (!active) return;
+
+      setDetail(conversationDetail);
+      setHandoff(conversationDetail.conversation.status === "HUMAN");
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [conversationId, user]);
 
   const statusLabel = handoff ? "Atendimento humano" : "Ana atendendo";
   const handoffButtonLabel = handoff ? "Voltar para Ana" : "Ativar handoff";
-  const shouldShowHumanAssignment = canSeeOperationalDetails && (handoff || conversation.needsHuman);
+  const shouldShowHumanAssignment = canSeeOperationalDetails && (handoff || detail.conversation.needsHuman);
 
   const detailRows = useMemo(
     () => [
-      { label: "Lead", value: conversation.lead },
-      { label: "Empreendimento", value: conversation.enterpriseName },
-      { label: "Corretor", value: conversation.assignedBrokerName },
-      { label: "Visita", value: conversation.visitLabel },
+      { label: "Lead", value: detail.commercialDetails.leadTemperature },
+      { label: "Empreendimento", value: detail.commercialDetails.enterpriseName },
+      { label: "Corretor", value: detail.commercialDetails.brokerName },
+      { label: "Visita", value: detail.commercialDetails.visitInfo },
       { label: "Status", value: statusLabel },
     ],
-    [conversation.assignedBrokerName, conversation.enterpriseName, conversation.lead, conversation.visitLabel, statusLabel]
+    [
+      detail.commercialDetails.brokerName,
+      detail.commercialDetails.enterpriseName,
+      detail.commercialDetails.leadTemperature,
+      detail.commercialDetails.visitInfo,
+      statusLabel,
+    ]
   );
 
-  function sendMessage() {
+  async function handleSendMessage() {
     if (!message.trim()) return;
 
-    setMessages((current) => [...current, { id: `${Date.now()}`, from: "eu", text: message.trim() }]);
+    const sentMessage = await sendMockMessage(conversationId, message);
+    if (!sentMessage) return;
+
+    setDetail((current) => ({
+      ...current,
+      conversation: {
+        ...current.conversation,
+        lastMessage: sentMessage.text,
+        unread: false,
+      },
+      messages: [...current.messages, sentMessage],
+    }));
+
     setMessage("");
   }
 
-  function toggleHandoff() {
-    setHandoff((current) => !current);
+  async function handleToggleHandoff() {
+    const updatedConversation = await toggleMockHandoff(conversationId);
+
+    if (!updatedConversation) {
+      setHandoff((current) => !current);
+      return;
+    }
+
+    setHandoff(updatedConversation.status === "HUMAN");
+    setDetail((current) => ({
+      ...current,
+      conversation: updatedConversation,
+      commercialDetails: {
+        ...current.commercialDetails,
+        statusLabel: getConversationStatusLabel(updatedConversation.status),
+      },
+    }));
   }
 
   return (
@@ -158,7 +145,9 @@ export default function ConversationDetailScreen() {
           <View style={styles.topRow}>
             <View style={styles.topTextBlock}>
               <Text style={styles.topTitle}>Conversa #{conversationId}</Text>
-              <Text style={styles.topSubtitle}>{`${conversation.clientName} - ${conversation.enterpriseName}`}</Text>
+              <Text style={styles.topSubtitle}>
+                {`${detail.conversation.clientName} - ${detail.conversation.enterpriseName}`}
+              </Text>
             </View>
             <StatusBadge label={statusLabel} tone={handoff ? "danger" : "info"} />
           </View>
@@ -166,7 +155,7 @@ export default function ConversationDetailScreen() {
           {canManageHandoff ? (
             <Pressable
               style={[styles.handoffButton, handoff ? styles.handoffButtonDanger : null]}
-              onPress={toggleHandoff}
+              onPress={handleToggleHandoff}
             >
               <AppIcon name="account-switch-outline" size={14} color="#FFFFFF" />
               <Text style={styles.handoffButtonText}>{handoffButtonLabel}</Text>
@@ -195,7 +184,7 @@ export default function ConversationDetailScreen() {
                 {shouldShowHumanAssignment ? (
                   <View style={styles.assignmentBanner}>
                     <Text numberOfLines={1} style={styles.assignmentText}>
-                      {`Atribuida para ${conversation.assignedBrokerName}`}
+                      {`Atribuida para ${detail.conversation.assignedBrokerName}`}
                     </Text>
                   </View>
                 ) : null}
@@ -210,11 +199,11 @@ export default function ConversationDetailScreen() {
 
             <FlatList
               style={styles.messagesList}
-              data={messages}
+              data={detail.messages}
               keyExtractor={(item) => item.id}
               contentContainerStyle={styles.messagesContent}
               renderItem={({ item }) => {
-                const mine = item.from === "eu";
+                const mine = item.from === "me";
 
                 return (
                   <View style={[styles.messageBubble, mine ? styles.messageMine : styles.messageTheirs]}>
@@ -234,7 +223,7 @@ export default function ConversationDetailScreen() {
             placeholderTextColor="#98A2B3"
             style={styles.input}
           />
-          <Pressable style={styles.sendButton} onPress={sendMessage}>
+          <Pressable style={styles.sendButton} onPress={handleSendMessage}>
             <AppIcon name="send" size={15} color="#FFFFFF" />
           </Pressable>
         </View>
