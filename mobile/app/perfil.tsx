@@ -1,13 +1,22 @@
 import { router } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../src/components/AppShell";
+import { StatusBadge } from "../src/components/StatusBadge";
 import { useAuthStore } from "../src/stores/auth.store";
+import { colors, radius, shadows, spacing, typography } from "../src/theme";
+
+function getInitials(name?: string) {
+  if (!name) return "N";
+  const parts = name.split(" ").filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+}
 
 export default function ProfileScreen() {
   const user = useAuthStore((state) => state.user);
   const logoutStore = useAuthStore((state) => state.logout);
 
-  function logout() {
+  function handleLogout() {
     logoutStore();
     router.replace("/login");
   }
@@ -16,14 +25,33 @@ export default function ProfileScreen() {
     <AppShell>
       <View style={styles.container}>
         <View style={styles.card}>
-          <Text style={styles.title}>Meu perfil</Text>
-          <Text style={styles.line}>Nome: {user?.name ?? "-"}</Text>
-          <Text style={styles.line}>Usuário: {user?.username ?? "-"}</Text>
-          <Text style={styles.line}>Perfil: {user?.role ?? "-"}</Text>
-          <Text style={styles.line}>Acesso: Mobile MVP</Text>
+          <View style={styles.header}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{getInitials(user?.name)}</Text>
+            </View>
+            <View style={styles.nameWrap}>
+              <Text style={styles.name}>{user?.name ?? "Usuário"}</Text>
+              <Text style={styles.username}>@{user?.username ?? "usuario"}</Text>
+            </View>
+          </View>
 
-          <Pressable style={styles.button} onPress={logout}>
-            <Text style={styles.buttonText}>Sair</Text>
+          <View style={styles.rows}>
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>Perfil</Text>
+              <StatusBadge label={user?.role ?? "-"} tone="info" />
+            </View>
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>Acesso</Text>
+              <Text style={styles.rowValue}>Mobile NETIV</Text>
+            </View>
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>Permissão</Text>
+              <Text style={styles.rowValue}>Operação comercial</Text>
+            </View>
+          </View>
+
+          <Pressable style={styles.logoutButton} onPress={handleLogout}>
+            <Text style={styles.logoutButtonText}>Sair</Text>
           </Pressable>
         </View>
       </View>
@@ -34,36 +62,77 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 18,
+    padding: spacing.md,
   },
   card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 18,
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: colors.border,
+    padding: spacing.lg,
+    ...shadows.strong,
   },
-  title: {
-    fontSize: 26,
-    fontWeight: "900",
-    color: "#0F172A",
-    marginBottom: 16,
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
   },
-  line: {
-    fontSize: 16,
-    color: "#334155",
-    marginBottom: 8,
+  avatar: {
+    width: 64,
+    height: 64,
+    borderRadius: radius.pill,
+    backgroundColor: colors.navy,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  button: {
-    backgroundColor: "#DC2626",
-    borderRadius: 14,
-    paddingVertical: 14,
-    marginTop: 18,
-  },
-  buttonText: {
+  avatarText: {
+    ...typography.sectionTitle,
     color: "#FFFFFF",
-    fontWeight: "900",
-    textAlign: "center",
-    fontSize: 16,
+  },
+  nameWrap: {
+    flex: 1,
+  },
+  name: {
+    ...typography.sectionTitle,
+    color: colors.navy,
+  },
+  username: {
+    ...typography.body,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  rows: {
+    marginTop: spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.md,
+    gap: spacing.md,
+  },
+  row: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  rowLabel: {
+    ...typography.body,
+    color: colors.muted,
+  },
+  rowValue: {
+    ...typography.cardTitle,
+    color: colors.text,
+  },
+  logoutButton: {
+    marginTop: spacing.xl,
+    minHeight: 48,
+    borderRadius: radius.md,
+    backgroundColor: colors.red,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logoutButtonText: {
+    ...typography.cardTitle,
+    color: "#FFFFFF",
   },
 });
+

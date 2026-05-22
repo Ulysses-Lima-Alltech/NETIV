@@ -11,6 +11,13 @@ import {
   View,
 } from "react-native";
 import { useAuthStore } from "../src/stores/auth.store";
+import { brand, colors, radius, shadows, spacing, typography } from "../src/theme";
+
+const MOCK_ACCESS = [
+  "corretor / corretor",
+  "gestor / gestor",
+  "admin / admin",
+];
 
 export default function LoginScreen() {
   const [username, setUsername] = useState("");
@@ -38,15 +45,22 @@ export default function LoginScreen() {
       style={styles.container}
       behavior={Platform.select({ ios: "padding", android: undefined })}
     >
+      <View style={styles.headerBlock}>
+        <Text style={styles.brand}>{brand.name}</Text>
+        <Text style={styles.tagline}>{brand.tagline}</Text>
+      </View>
+
       <View style={styles.card}>
-        <Text style={styles.title}>NETIV</Text>
-        <Text style={styles.subtitle}>Acesso comercial</Text>
+        <Text style={styles.title}>Acesso ao app mobile</Text>
+        <Text style={styles.subtitle}>Entre com seu perfil para continuar.</Text>
 
         <View style={styles.mockBox}>
-          <Text style={styles.mockTitle}>Acessos de teste</Text>
-          <Text style={styles.mockText}>corretor / corretor</Text>
-          <Text style={styles.mockText}>gestor / gestor</Text>
-          <Text style={styles.mockText}>admin / admin</Text>
+          <Text style={styles.mockTitle}>Credenciais de teste</Text>
+          {MOCK_ACCESS.map((item) => (
+            <Text key={item} style={styles.mockLine}>
+              {item}
+            </Text>
+          ))}
         </View>
 
         <Text style={styles.label}>Usuário</Text>
@@ -55,6 +69,7 @@ export default function LoginScreen() {
           onChangeText={setUsername}
           placeholder="Digite seu usuário"
           autoCapitalize="none"
+          placeholderTextColor="#98A2B3"
           style={styles.input}
         />
 
@@ -64,6 +79,7 @@ export default function LoginScreen() {
           onChangeText={setPassword}
           placeholder="Digite sua senha"
           secureTextEntry
+          placeholderTextColor="#98A2B3"
           style={styles.input}
         />
 
@@ -78,77 +94,87 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0F172A",
     justifyContent: "center",
-    padding: 20,
+    padding: spacing.lg,
+    backgroundColor: colors.background,
+  },
+  headerBlock: {
+    marginBottom: spacing.lg,
+  },
+  brand: {
+    fontSize: 38,
+    lineHeight: 42,
+    fontWeight: "900",
+    letterSpacing: 1.3,
+    color: colors.navy,
+  },
+  tagline: {
+    ...typography.body,
+    color: colors.muted,
+    marginTop: spacing.xs,
+    maxWidth: 320,
   },
   card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    padding: 22,
-    shadowColor: "#000",
-    shadowOpacity: 0.14,
-    shadowRadius: 12,
-    elevation: 4,
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.strong,
   },
   title: {
-    fontSize: 30,
-    fontWeight: "800",
-    color: "#0F172A",
-    textAlign: "center",
+    ...typography.sectionTitle,
+    color: colors.navy,
   },
   subtitle: {
-    fontSize: 15,
-    color: "#64748B",
-    textAlign: "center",
-    marginTop: 4,
-    marginBottom: 18,
+    ...typography.body,
+    color: colors.muted,
+    marginTop: spacing.xs,
+    marginBottom: spacing.md,
   },
   mockBox: {
-    backgroundColor: "#F8FAFC",
+    borderRadius: radius.md,
+    backgroundColor: colors.blueSoft,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 18,
+    borderColor: "#D5E3FF",
+    padding: spacing.md,
+    marginBottom: spacing.md,
   },
   mockTitle: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#0F172A",
-    marginBottom: 4,
+    ...typography.cardTitle,
+    color: colors.navy,
+    marginBottom: spacing.xxs,
   },
-  mockText: {
-    fontSize: 12,
-    color: "#475569",
-    marginTop: 2,
+  mockLine: {
+    ...typography.body,
+    color: colors.text,
   },
   label: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#334155",
-    marginBottom: 6,
+    ...typography.caption,
+    color: colors.text,
+    marginBottom: spacing.xs,
+    marginTop: spacing.xs,
   },
   input: {
+    minHeight: 48,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: "#CBD5E1",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 14,
-    fontSize: 16,
-    backgroundColor: "#F8FAFC",
+    borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    backgroundColor: "#FBFDFF",
+    color: colors.text,
   },
   button: {
-    backgroundColor: "#0F172A",
-    borderRadius: 12,
-    paddingVertical: 14,
-    marginTop: 6,
+    marginTop: spacing.lg,
+    minHeight: 50,
+    borderRadius: radius.md,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.orange,
   },
   buttonText: {
+    ...typography.cardTitle,
     color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "800",
-    textAlign: "center",
   },
 });
+

@@ -1,25 +1,46 @@
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
+import { StatusBadge } from "../../src/components/StatusBadge";
+import { useAuthStore } from "../../src/stores/auth.store";
+import { colors, radius, shadows, spacing, typography } from "../../src/theme";
 
-const items = [
-  "Évora",
-  "Altis",
-  "Montaresa",
+const allEnterprises = [
+  { name: "Évora", stage: "Lançamento", owner: "Gestor Évora" },
+  { name: "Montaresa", stage: "Vendas", owner: "Gestor Évora" },
+  { name: "Altis", stage: "Pré-lançamento", owner: "Gestor Altis" },
+  { name: "Reserva Azul", stage: "Pós-venda", owner: "Gestor Geral" },
 ];
 
-export default function PageScreen() {
+export default function EnterprisesScreen() {
+  const user = useAuthStore((state) => state.user);
+  const role = user?.role ?? "CORRETOR";
+
+  const visibleEnterprises =
+    role === "GESTOR"
+      ? allEnterprises.filter((enterprise) => enterprise.owner === "Gestor Évora")
+      : allEnterprises;
+
   return (
     <AppShell>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Empreendimentos</Text>
-        <Text style={styles.subtitle}>Empreendimentos disponíveis conforme seu perfil.</Text>
+        <Text style={styles.subtitle}>
+          {role === "GESTOR"
+            ? "Você visualiza somente os empreendimentos atribuídos ao seu perfil."
+            : "Visão consolidada dos empreendimentos da operação."}
+        </Text>
 
-        {items.map((item) => (
-          <View key={item} style={styles.card}>
-            <Text style={styles.cardTitle}>{item}</Text>
-            <Text style={styles.cardText}>Dados simulados para validação da navegação mobile.</Text>
-          </View>
-        ))}
+        <View style={styles.list}>
+          {visibleEnterprises.map((item) => (
+            <View key={item.name} style={styles.card}>
+              <View style={styles.row}>
+                <Text style={styles.name}>{item.name}</Text>
+                <StatusBadge label={item.stage} tone="info" />
+              </View>
+              <Text style={styles.owner}>Responsável: {item.owner}</Text>
+            </View>
+          ))}
+        </View>
       </ScrollView>
     </AppShell>
   );
@@ -27,34 +48,45 @@ export default function PageScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 18,
-    gap: 12,
-    paddingBottom: 28,
+    padding: spacing.md,
+    paddingBottom: spacing.xxl,
   },
   title: {
-    fontSize: 28,
-    fontWeight: "800",
-    color: "#0F172A",
+    ...typography.title,
+    color: colors.navy,
   },
   subtitle: {
-    fontSize: 15,
-    color: "#64748B",
-    marginBottom: 8,
+    ...typography.body,
+    color: colors.muted,
+    marginTop: spacing.xs,
+  },
+  list: {
+    marginTop: spacing.md,
+    gap: spacing.sm,
   },
   card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 16,
+    backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    ...shadows.card,
   },
-  cardTitle: {
-    fontSize: 17,
-    fontWeight: "900",
-    color: "#0F172A",
+  row: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.sm,
   },
-  cardText: {
-    color: "#64748B",
-    marginTop: 6,
+  name: {
+    ...typography.cardTitle,
+    color: colors.navy,
+    flex: 1,
+  },
+  owner: {
+    ...typography.caption,
+    color: colors.muted,
+    marginTop: spacing.xs,
   },
 });
+

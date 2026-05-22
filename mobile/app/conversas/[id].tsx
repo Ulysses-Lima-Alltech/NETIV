@@ -1,254 +1,302 @@
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
-  Alert,
   FlatList,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
-import { colors } from "../../src/theme/brand";
+import { AppShell } from "../../src/components/AppShell";
+import { StatusBadge } from "../../src/components/StatusBadge";
 import { useAuthStore } from "../../src/stores/auth.store";
+import { colors, radius, spacing, typography } from "../../src/theme";
 
-const initialMessages = [
-  { id: "1", from: "client", text: "Olá, tenho interesse no Évora." },
-  { id: "2", from: "ana", text: "O Évora é um loteamento fechado em Atibaia. Me conta, quais são suas dúvidas?" },
+type Message = {
+  id: string;
+  from: "cliente" | "ana" | "eu";
+  text: string;
+};
+
+const initialMessages: Message[] = [
+  { id: "1", from: "cliente", text: "Olá, tenho interesse no Évora." },
+  {
+    id: "2",
+    from: "ana",
+    text: "Perfeito! Posso te mostrar opções de pagamento e agendar uma visita.",
+  },
 ];
+
+const detailRows = [
+  { label: "Lead", value: "Quente" },
+  { label: "Empreendimento", value: "Évora" },
+  { label: "Corretor", value: "João Corretor" },
+  { label: "Visita", value: "Hoje, 16:00" },
+];
+
+function parseConversationId(rawId: string | string[] | undefined) {
+  if (Array.isArray(rawId)) return rawId[0] ?? "-";
+  return rawId ?? "-";
+}
 
 export default function ConversationDetailScreen() {
   const { id } = useLocalSearchParams();
   const user = useAuthStore((state) => state.user);
-  const [message, setMessage] = useState("");
   const [messages, setMessages] = useState(initialMessages);
+  const [message, setMessage] = useState("");
   const [handoff, setHandoff] = useState(false);
+
+  const role = user?.role ?? "CORRETOR";
+  const canSeeOperationalDetails = role === "GESTOR" || role === "ADM";
+  const conversationId = parseConversationId(id);
+
+  const statusLabel = handoff ? "Atendimento humano" : "Ana atendendo";
+
+  const handoffButtonLabel = handoff ? "Voltar para Ana" : "Ativar handoff";
+
+  const handoffTone = handoff ? "danger" : "info";
+
+  const detailData = useMemo(
+    () => [...detailRows, { label: "Status", value: statusLabel }],
+    [statusLabel]
+  );
 
   function sendMessage() {
     if (!message.trim()) return;
 
     setMessages((current) => [
       ...current,
-      { id: String(Date.now()), from: "me", text: message.trim() },
+      { id: `${Date.now()}`, from: "eu", text: message.trim() },
     ]);
     setMessage("");
   }
 
   function toggleHandoff() {
     setHandoff((current) => !current);
-    Alert.alert(
-      "Handoff atualizado",
-      handoff ? "A conversa voltou para a Ana." : "A conversa foi marcada para atendimento humano."
-    );
   }
 
-  const canSeeDetails = user?.role === "GESTOR" || user?.role === "ADM";
-  const isAdmin = user?.role === "ADM";
-
   return (
-    <View style={styles.container}>
-      <View style={styles.infoBox}>
-        <View>
-          <Text style={styles.infoTitle}>Conversa #{id}</Text>
-          <Text style={styles.infoText}>
-            Status: {handoff ? "Atendimento humano" : "Ana atendendo"}
-          </Text>
+    <AppShell>
+      <KeyboardAvoidingView
+        style={styles.root}
+        behavior={Platform.select({ ios: "padding", android: undefined })}
+      >
+        <View style={styles.topPanel}>
+          <View style={styles.topTitleRow}>
+            <View style={styles.topTextBlock}>
+              <Text style={styles.topTitle}>Conversa #{conversationId}</Text>
+              <Text style={styles.topSubtitle}>Cliente: Carlos Silva • Évora</Text>
+            </View>
+            <StatusBadge label={statusLabel} tone={handoffTone} />
+          </View>
+
+          <Pressable
+            style={[styles.handoffButton, handoff ? styles.handoffButtonDanger : null]}
+            onPress={toggleHandoff}
+          >
+            <MaterialCommunityIcons name="account-switch-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.handoffButtonText}>{handoffButtonLabel}</Text>
+          </Pressable>
         </View>
 
-        <Pressable
-          style={[styles.handoffButton, handoff ? styles.handoffButtonActive : null]}
-          onPress={toggleHandoff}
-        >
-          <Text style={styles.handoffButtonText}>
-            {handoff ? "Voltar Ana" : "Handoff"}
-          </Text>
-        </Pressable>
-      </View>
-
-      {canSeeDetails ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.detailsStrip}
-        >
-          <View style={styles.detailCard}>
-            <Text style={styles.detailLabel}>Lead</Text>
-            <Text style={styles.detailValue}>Quente</Text>
-          </View>
-          <View style={styles.detailCard}>
-            <Text style={styles.detailLabel}>Empreendimento</Text>
-            <Text style={styles.detailValue}>Évora</Text>
-          </View>
-          <View style={styles.detailCard}>
-            <Text style={styles.detailLabel}>Corretor</Text>
-            <Text style={styles.detailValue}>Carlos</Text>
-          </View>
-          <View style={styles.detailCard}>
-            <Text style={styles.detailLabel}>Visita</Text>
-            <Text style={styles.detailValue}>Agendada</Text>
-          </View>
-          {isAdmin ? (
-            <View style={styles.detailCardAdmin}>
-              <Text style={styles.detailLabelAdmin}>ADM</Text>
-              <Text style={styles.detailValueAdmin}>Acesso total</Text>
+        {canSeeOperationalDetails ? (
+          <View style={styles.detailsPanel}>
+            <View style={styles.detailsHeaderRow}>
+              <Text style={styles.detailsTitle}>Detalhes comerciais e operacionais</Text>
+              {role === "ADM" ? <StatusBadge label="Acesso total" tone="inverse" /> : null}
             </View>
-          ) : null}
-        </ScrollView>
-      ) : null}
-
-      <FlatList
-        data={messages}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.messages}
-        renderItem={({ item }) => (
-          <View style={[styles.bubble, item.from === "me" ? styles.mine : styles.theirs]}>
-            <Text style={item.from === "me" ? styles.mineText : styles.theirsText}>{item.text}</Text>
+            <View style={styles.detailsGrid}>
+              {detailData.map((item) => (
+                <View key={item.label} style={styles.detailCard}>
+                  <Text style={styles.detailLabel}>{item.label}</Text>
+                  <Text style={styles.detailValue}>{item.value}</Text>
+                </View>
+              ))}
+            </View>
           </View>
-        )}
-      />
+        ) : null}
 
-      <View style={styles.composer}>
-        <TextInput
-          value={message}
-          onChangeText={setMessage}
-          placeholder="Digite sua resposta..."
-          style={styles.input}
+        <FlatList
+          data={messages}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.messages}
+          renderItem={({ item }) => {
+            const mine = item.from === "eu";
+            return (
+              <View style={[styles.messageBubble, mine ? styles.messageMine : styles.messageTheirs]}>
+                <Text style={[styles.messageText, mine ? styles.messageTextMine : null]}>
+                  {item.text}
+                </Text>
+              </View>
+            );
+          }}
         />
-        <Pressable style={styles.button} onPress={sendMessage}>
-          <Text style={styles.buttonText}>Enviar</Text>
-        </Pressable>
-      </View>
-    </View>
+
+        <View style={styles.composer}>
+          <TextInput
+            value={message}
+            onChangeText={setMessage}
+            placeholder="Digite sua resposta..."
+            placeholderTextColor="#98A2B3"
+            style={styles.input}
+          />
+          <Pressable style={styles.sendButton} onPress={sendMessage}>
+            <MaterialCommunityIcons name="send" size={18} color="#FFFFFF" />
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
+    </AppShell>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
   },
-  infoBox: {
+  topPanel: {
     backgroundColor: colors.card,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
-    padding: 14,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: 6,
+  },
+  topTitleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+  },
+  topTextBlock: {
+    flex: 1,
+  },
+  topTitle: {
+    ...typography.sectionTitle,
+    fontSize: 17,
+    lineHeight: 22,
+    color: colors.navy,
+  },
+  topSubtitle: {
+    ...typography.caption,
+    fontSize: 11,
+    lineHeight: 14,
+    color: colors.muted,
+    marginTop: 1,
+  },
+  handoffButton: {
+    minHeight: 36,
+    borderRadius: radius.md,
+    backgroundColor: colors.orange,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+    alignSelf: "flex-start",
+    paddingHorizontal: spacing.sm,
+  },
+  handoffButtonDanger: {
+    backgroundColor: colors.red,
+  },
+  handoffButtonText: {
+    ...typography.caption,
+    color: "#FFFFFF",
+  },
+  detailsPanel: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    gap: 6,
+  },
+  detailsHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    gap: spacing.sm,
   },
-  infoTitle: {
-    fontWeight: "900",
+  detailsTitle: {
+    ...typography.cardTitle,
     color: colors.navy,
-    fontSize: 16,
+    flex: 1,
   },
-  infoText: {
-    color: colors.muted,
-    marginTop: 2,
-  },
-  handoffButton: {
-    backgroundColor: colors.orange,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  handoffButtonActive: {
-    backgroundColor: colors.green,
-  },
-  handoffButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-  detailsStrip: {
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    backgroundColor: colors.background,
+  detailsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
   },
   detailCard: {
+    width: "48%",
     backgroundColor: colors.card,
+    borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 14,
-    padding: 12,
-    minWidth: 130,
+    padding: spacing.sm,
   },
   detailLabel: {
+    ...typography.caption,
     color: colors.muted,
-    fontSize: 12,
-    fontWeight: "700",
   },
   detailValue: {
-    color: colors.navy,
-    fontSize: 15,
-    fontWeight: "900",
-    marginTop: 4,
-  },
-  detailCardAdmin: {
-    backgroundColor: colors.navy,
-    borderRadius: 14,
-    padding: 12,
-    minWidth: 130,
-  },
-  detailLabelAdmin: {
-    color: colors.orange,
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  detailValueAdmin: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "900",
-    marginTop: 4,
+    ...typography.body,
+    color: colors.text,
+    marginTop: 2,
   },
   messages: {
-    padding: 14,
-    gap: 10,
+    padding: spacing.sm,
+    gap: 6,
+    paddingBottom: spacing.lg,
   },
-  bubble: {
+  messageBubble: {
     maxWidth: "82%",
-    borderRadius: 16,
-    padding: 12,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
   },
-  mine: {
+  messageMine: {
     alignSelf: "flex-end",
     backgroundColor: colors.navy,
+    borderColor: colors.navy,
   },
-  theirs: {
+  messageTheirs: {
     alignSelf: "flex-start",
     backgroundColor: colors.card,
-    borderWidth: 1,
     borderColor: colors.border,
   },
-  mineText: {
-    color: "#FFFFFF",
+  messageText: {
+    ...typography.body,
+    color: colors.text,
   },
-  theirsText: {
-    color: colors.navy,
+  messageTextMine: {
+    color: "#FFFFFF",
   },
   composer: {
     flexDirection: "row",
-    gap: 8,
-    padding: 12,
+    alignItems: "center",
+    gap: spacing.xs,
     backgroundColor: colors.card,
     borderTopWidth: 1,
     borderTopColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
   },
   input: {
     flex: 1,
+    minHeight: 44,
+    borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    backgroundColor: colors.background,
+    backgroundColor: "#FBFDFF",
+    paddingHorizontal: spacing.sm,
+    color: colors.text,
   },
-  button: {
+  sendButton: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.pill,
     backgroundColor: colors.orange,
-    borderRadius: 14,
-    paddingHorizontal: 16,
+    alignItems: "center",
     justifyContent: "center",
-  },
-  buttonText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
   },
 });

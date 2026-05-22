@@ -41,7 +41,6 @@ const MOCK_USERS: Array<AuthUser & { password: string }> = [
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
-
   login: (username, password) => {
     const normalizedUsername = username.trim().toLowerCase();
     const normalizedPassword = password.trim();
@@ -59,13 +58,11 @@ export const useAuthStore = create<AuthState>((set) => ({
       };
     }
 
-    const { password: _password, ...safeUser } = foundUser;
+    const { password: _, ...safeUser } = foundUser;
     set({ user: safeUser });
 
     return { ok: true };
   },
-
-  logout: () => {
-    set({ user: null });
-  },
+  logout: () => set({ user: null }),
 }));
+

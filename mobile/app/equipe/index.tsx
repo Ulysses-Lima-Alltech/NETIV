@@ -1,48 +1,48 @@
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
-import { colors } from "../../src/theme/brand";
+import { StatusBadge } from "../../src/components/StatusBadge";
 import { useAuthStore } from "../../src/stores/auth.store";
+import { colors, radius, shadows, spacing, typography } from "../../src/theme";
 
 const team = [
-  { name: "João Corretor", role: "CORRETOR", detail: "Évora" },
+  { name: "João Corretor", role: "CORRETOR", detail: "Évora e Montaresa" },
   { name: "Mariana Corretora", role: "CORRETOR", detail: "Évora" },
+  { name: "Lucas Corretor", role: "CORRETOR", detail: "Altis" },
   { name: "Gestor Évora", role: "GESTOR", detail: "Responsável pelo Évora" },
-  { name: "Administrador", role: "ADM", detail: "Acesso total" },
+  { name: "Administrador NETIV", role: "ADM", detail: "Acesso total à operação" },
 ];
 
 export default function TeamScreen() {
   const user = useAuthStore((state) => state.user);
+  const role = user?.role ?? "CORRETOR";
 
   const visibleTeam =
-    user?.role === "GESTOR"
-      ? team.filter((item) => item.role === "CORRETOR")
-      : team;
+    role === "GESTOR" ? team.filter((member) => member.role === "CORRETOR") : team;
 
   return (
     <AppShell>
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>
-          {user?.role === "GESTOR" ? "Equipe" : "Equipe e usuários"}
-        </Text>
-
+        <Text style={styles.title}>{role === "GESTOR" ? "Equipe" : "Equipe e usuários"}</Text>
         <Text style={styles.subtitle}>
-          {user?.role === "GESTOR"
-            ? "Corretores vinculados aos empreendimentos sob sua responsabilidade."
-            : "Corretores, gestores e administradores da operação."}
+          {role === "GESTOR"
+            ? "Visualização dos corretores vinculados aos seus empreendimentos."
+            : "Corretores, gestores e administradores da operação NETIV."}
         </Text>
 
-        {visibleTeam.map((item) => (
-          <View key={`${item.role}-${item.name}`} style={styles.card}>
-            <View style={styles.info}>
-              <Text style={styles.name}>{item.name}</Text>
-              <Text style={styles.detail}>{item.detail}</Text>
+        <View style={styles.list}>
+          {visibleTeam.map((member) => (
+            <View key={`${member.role}-${member.name}`} style={styles.card}>
+              <View style={styles.content}>
+                <Text style={styles.name}>{member.name}</Text>
+                <Text style={styles.detail}>{member.detail}</Text>
+              </View>
+              <StatusBadge
+                label={member.role}
+                tone={member.role === "ADM" ? "inverse" : member.role === "GESTOR" ? "warning" : "info"}
+              />
             </View>
-
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{item.role}</Text>
-            </View>
-          </View>
-        ))}
+          ))}
+        </View>
       </ScrollView>
     </AppShell>
   );
@@ -50,52 +50,45 @@ export default function TeamScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 18,
-    gap: 12,
-    paddingBottom: 28,
+    padding: spacing.md,
+    paddingBottom: spacing.xxl,
   },
   title: {
-    fontSize: 28,
-    fontWeight: "900",
+    ...typography.title,
     color: colors.navy,
   },
   subtitle: {
-    fontSize: 15,
+    ...typography.body,
     color: colors.muted,
-    marginBottom: 8,
+    marginTop: spacing.xs,
+  },
+  list: {
+    marginTop: spacing.md,
+    gap: spacing.sm,
   },
   card: {
     backgroundColor: colors.card,
-    borderRadius: 18,
-    padding: 16,
+    borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
+    padding: spacing.md,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
+    gap: spacing.sm,
+    ...shadows.card,
   },
-  info: {
+  content: {
     flex: 1,
   },
   name: {
-    fontSize: 16,
-    fontWeight: "900",
+    ...typography.cardTitle,
     color: colors.text,
   },
   detail: {
+    ...typography.caption,
     color: colors.muted,
-    marginTop: 4,
-  },
-  badge: {
-    backgroundColor: colors.navy,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  badgeText: {
-    color: "#FFFFFF",
-    fontSize: 11,
-    fontWeight: "900",
+    marginTop: 2,
   },
 });
+

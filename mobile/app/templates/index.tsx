@@ -1,25 +1,42 @@
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
+import { EmptyState } from "../../src/components/EmptyState";
+import { colors, radius, shadows, spacing, typography } from "../../src/theme";
 
-const items = [
-  "Template de saudação",
-  "Template de visita",
-  "Template de retomada",
+const templateCards = [
+  {
+    title: "Boas-vindas",
+    description: "Mensagem inicial para novos leads com qualificação automática.",
+  },
+  {
+    title: "Agendamento de visita",
+    description: "Confirmação de disponibilidade com opção de reagendamento rápido.",
+  },
 ];
 
-export default function PageScreen() {
+export default function TemplatesScreen() {
   return (
     <AppShell>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Templates</Text>
-        <Text style={styles.subtitle}>Modelos de mensagens e respostas para operação.</Text>
+        <Text style={styles.subtitle}>
+          Biblioteca de mensagens para padronizar atendimento e acelerar conversão.
+        </Text>
 
-        {items.map((item) => (
-          <View key={item} style={styles.card}>
-            <Text style={styles.cardTitle}>{item}</Text>
-            <Text style={styles.cardText}>Dados simulados para validação da navegação mobile.</Text>
-          </View>
-        ))}
+        <View style={styles.list}>
+          {templateCards.map((item) => (
+            <View key={item.title} style={styles.card}>
+              <Text style={styles.cardTitle}>{item.title}</Text>
+              <Text style={styles.cardText}>{item.description}</Text>
+            </View>
+          ))}
+        </View>
+
+        <EmptyState
+          icon="file-plus-outline"
+          title="Novos templates em breve"
+          description="A área já está preparada para edição, versionamento e ativação por perfil."
+        />
       </ScrollView>
     </AppShell>
   );
@@ -27,34 +44,37 @@ export default function PageScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 18,
-    gap: 12,
-    paddingBottom: 28,
+    padding: spacing.md,
+    paddingBottom: spacing.xxl,
+    gap: spacing.md,
   },
   title: {
-    fontSize: 28,
-    fontWeight: "800",
-    color: "#0F172A",
+    ...typography.title,
+    color: colors.navy,
   },
   subtitle: {
-    fontSize: 15,
-    color: "#64748B",
-    marginBottom: 8,
+    ...typography.body,
+    color: colors.muted,
+  },
+  list: {
+    gap: spacing.sm,
   },
   card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 16,
+    backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    ...shadows.card,
   },
   cardTitle: {
-    fontSize: 17,
-    fontWeight: "900",
-    color: "#0F172A",
+    ...typography.cardTitle,
+    color: colors.text,
   },
   cardText: {
-    color: "#64748B",
-    marginTop: 6,
+    ...typography.body,
+    color: colors.muted,
+    marginTop: spacing.xs,
   },
 });
+
