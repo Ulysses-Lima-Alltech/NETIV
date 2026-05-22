@@ -18,6 +18,25 @@ export type MobileConversationsResponse = {
   conversations: MobileConversationItem[];
 };
 
+export type MobileConversationDetailMessage = {
+  id: string;
+  from: 'client' | 'ana' | 'me';
+  text: string;
+  createdAt: string | null;
+};
+
+export type MobileConversationDetailResponse = {
+  conversation: MobileConversationItem;
+  commercialDetails: {
+    leadTemperature: string;
+    enterpriseName: string;
+    brokerName: string | null;
+    visitInfo: string | null;
+    statusLabel: string;
+  };
+  messages: MobileConversationDetailMessage[];
+};
+
 type ConversationRow = {
   id: number;
   client_name: string | null;
@@ -26,6 +45,17 @@ type ConversationRow = {
   status: MobileConversationStatus;
   needs_human: boolean;
   assigned_broker_name: string | null;
+};
+
+type ConversationDetailRow = ConversationRow & {
+  lead_temperature: string | null;
+};
+
+type ConversationMessageRow = {
+  id: number;
+  role: string;
+  content: string | null;
+  created_at: Date;
 };
 
 function normalizeDigits(value: string | null | undefined): string {
@@ -40,14 +70,14 @@ async function resolveCorretorIdFromMobileUser(user: MobileAuthUser): Promise<nu
     `SELECT id
      FROM corretores
      WHERE active = true
-       AND regexp_replace(COALESCE(phone, ''), '\D', '', 'g') = $1
+       AND regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') = $1
      ORDER BY id ASC`,
     [phoneDigits]
   );
 
   if (result.rows.length !== 1) {
     if (result.rows.length > 1) {
-      console.warn('[mobile-conversations] corretor mapping ambíguo por telefone', {
+      console.warn('[mobile-conversations] corretor mapping ambiguo por telefone', {
         mobileUserId: user.id,
         phoneSuffix: phoneDigits.slice(-4),
         matches: result.rows.length,
@@ -68,6 +98,46 @@ async function getManagedEnterpriseIds(mobileUserId: number): Promise<number[]> 
     [mobileUserId]
   );
   return result.rows.map((row) => row.enterprise_id);
+}
+
+type ScopeFilter =
+  | { ok: true; conditionSql: string; values: unknown[] }
+  | { ok: false };
+
+async function resolveScopeFilter(user: MobileAuthUser): Promise<ScopeFilter> {
+  if (user.role === 'CORRETOR') {
+    const corretorId = await resolveCorretorIdFromMobileUser(user);
+    if (!corretorId) {
+      console.warn('[mobile-conversations] corretor sem vinculo confiavel', {
+        mobileUserId: user.id,
+      });
+      return { ok: false };
+    }
+    return { ok: true, conditionSql: 'c.assigned_broker_id = $1', values: [corretorId] };
+  }
+
+  if (user.role === 'GESTOR') {
+    const enterpriseIds = await getManagedEnterpriseIds(user.id);
+    if (enterpriseIds.length === 0) {
+      return { ok: false };
+    }
+    return { ok: true, conditionSql: 'c.enterprise_id = ANY($1::int[])', values: [enterpriseIds] };
+  }
+
+  return { ok: true, conditionSql: 'TRUE', values: [] };
+}
+
+function mapConversationRow(row: ConversationRow): MobileConversationItem {
+  return {
+    id: String(row.id),
+    clientName: row.client_name ?? 'Cliente',
+    enterpriseName: row.enterprise_name ?? 'Sem empreendimento',
+    lastMessage: row.last_message ?? 'Sem mensagens recentes',
+    status: row.status,
+    needsHuman: row.needs_human === true,
+    unread: false,
+    assignedBrokerName: row.assigned_broker_name ?? null,
+  };
 }
 
 async function listConversationsByScope(conditionSql: string, values: unknown[]): Promise<MobileConversationItem[]> {
@@ -114,42 +184,103 @@ async function listConversationsByScope(conditionSql: string, values: unknown[])
     values
   );
 
-  return result.rows.map((row) => ({
-    id: String(row.id),
-    clientName: row.client_name ?? 'Cliente',
-    enterpriseName: row.enterprise_name ?? 'Sem empreendimento',
-    lastMessage: row.last_message ?? 'Sem mensagens recentes',
-    status: row.status,
-    needsHuman: row.needs_human === true,
-    unread: false,
-    assignedBrokerName: row.assigned_broker_name ?? null,
-  }));
+  return result.rows.map(mapConversationRow);
 }
 
 export async function getMobileConversations(user: MobileAuthUser): Promise<MobileConversationsResponse> {
-  if (user.role === 'CORRETOR') {
-    const corretorId = await resolveCorretorIdFromMobileUser(user);
-    if (!corretorId) {
-      console.warn('[mobile-conversations] corretor sem vínculo confiável, retorno vazio', {
-        mobileUserId: user.id,
-      });
-      return { conversations: [] };
-    }
+  const scope = await resolveScopeFilter(user);
+  if (!scope.ok) return { conversations: [] };
 
-    const conversations = await listConversationsByScope('c.assigned_broker_id = $1', [corretorId]);
-    return { conversations };
-  }
-
-  if (user.role === 'GESTOR') {
-    const enterpriseIds = await getManagedEnterpriseIds(user.id);
-    if (enterpriseIds.length === 0) {
-      return { conversations: [] };
-    }
-
-    const conversations = await listConversationsByScope('c.enterprise_id = ANY($1::int[])', [enterpriseIds]);
-    return { conversations };
-  }
-
-  const conversations = await listConversationsByScope('TRUE', []);
+  const conversations = await listConversationsByScope(scope.conditionSql, scope.values);
   return { conversations };
+}
+
+export async function getMobileConversationDetail(
+  user: MobileAuthUser,
+  conversationId: number
+): Promise<MobileConversationDetailResponse | null> {
+  if (!Number.isFinite(conversationId) || conversationId <= 0) {
+    return null;
+  }
+
+  const scope = await resolveScopeFilter(user);
+  if (!scope.ok) return null;
+
+  const scopedCondition = `${scope.conditionSql} AND c.id = $${scope.values.length + 1}`;
+  const scopedValues = [...scope.values, conversationId];
+
+  const conversationResult = await query<ConversationDetailRow>(
+    `SELECT
+       c.id,
+       COALESCE(
+         NULLIF(BTRIM(c.customer_name), ''),
+         NULLIF(BTRIM(ct.first_name), ''),
+         NULLIF(BTRIM(ct.full_name), ''),
+         NULLIF(BTRIM(c.whatsapp_display_name), ''),
+         NULLIF(BTRIM(c.contact_phone), ''),
+         NULLIF(BTRIM(c.external_contact_id), '')
+       ) AS client_name,
+       COALESCE(NULLIF(BTRIM(e.name), ''), 'Sem empreendimento') AS enterprise_name,
+       COALESCE(
+         (
+           SELECT m.content
+           FROM messages m
+           WHERE m.conversation_id = c.id
+             AND m.deleted_at IS NULL
+             AND NULLIF(BTRIM(m.content), '') IS NOT NULL
+           ORDER BY m.created_at DESC, m.id DESC
+           LIMIT 1
+         ),
+         'Sem mensagens recentes'
+       ) AS last_message,
+       CASE
+         WHEN c.handoff = true OR c.classification = 'Handoff' THEN 'HUMAN'
+         ELSE 'ANA'
+       END AS status,
+       CASE
+         WHEN c.handoff = true OR c.classification = 'Handoff' THEN true
+         ELSE false
+       END AS needs_human,
+       br.full_name AS assigned_broker_name,
+       c.lead_temperature
+     FROM conversations c
+     LEFT JOIN contacts ct ON ct.id = c.contact_id
+     LEFT JOIN enterprises e ON e.id = c.enterprise_id
+     LEFT JOIN corretores br ON br.id = c.assigned_broker_id
+     WHERE ${scopedCondition}
+     LIMIT 1`,
+    scopedValues
+  );
+
+  const row = conversationResult.rows[0];
+  if (!row) return null;
+
+  const messagesResult = await query<ConversationMessageRow>(
+    `SELECT id, role, content, created_at
+     FROM messages
+     WHERE conversation_id = $1
+       AND deleted_at IS NULL
+     ORDER BY created_at ASC, id ASC`,
+    [conversationId]
+  );
+
+  const statusLabel = row.status === 'HUMAN' ? 'Atendimento humano' : 'Ana atendendo';
+  const messages: MobileConversationDetailMessage[] = messagesResult.rows.map((message) => ({
+    id: String(message.id),
+    from: message.role === 'user' ? 'client' : 'ana',
+    text: (message.content ?? '').trim(),
+    createdAt: message.created_at ? message.created_at.toISOString() : null,
+  }));
+
+  return {
+    conversation: mapConversationRow(row),
+    commercialDetails: {
+      leadTemperature: row.lead_temperature ?? 'Em analise',
+      enterpriseName: row.enterprise_name ?? 'Sem empreendimento',
+      brokerName: row.assigned_broker_name ?? null,
+      visitInfo: null,
+      statusLabel,
+    },
+    messages,
+  };
 }
