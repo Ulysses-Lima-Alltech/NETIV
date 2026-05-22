@@ -1,5 +1,6 @@
 import { query } from '../db/pg.js';
 import type { MobileAuthUser } from './mobileAuthService.js';
+import { insertMessage } from '../repositories/messageRepository.js';
 
 type MobileConversationStatus = 'ANA' | 'HUMAN';
 
@@ -37,6 +38,24 @@ export type MobileConversationDetailResponse = {
   messages: MobileConversationDetailMessage[];
 };
 
+export type MobileConversationHandoffResponse = {
+  conversation: {
+    id: string;
+    status: 'HUMAN' | 'ANA';
+    needsHuman: boolean;
+    assignedBrokerName: string | null;
+  };
+};
+
+export type MobileConversationSendMessageResponse = {
+  message: {
+    id: string;
+    from: 'me';
+    text: string;
+    createdAt: string;
+  };
+};
+
 type ConversationRow = {
   id: number;
   client_name: string | null;
@@ -56,6 +75,11 @@ type ConversationMessageRow = {
   role: string;
   content: string | null;
   created_at: Date;
+};
+
+type ScopedConversationAccessRow = {
+  id: number;
+  assigned_broker_name: string | null;
 };
 
 function normalizeDigits(value: string | null | undefined): string {
@@ -282,5 +306,90 @@ export async function getMobileConversationDetail(
       statusLabel,
     },
     messages,
+  };
+}
+
+async function findScopedConversationAccess(
+  user: MobileAuthUser,
+  conversationId: number
+): Promise<ScopedConversationAccessRow | null> {
+  const scope = await resolveScopeFilter(user);
+  if (!scope.ok) return null;
+
+  const scopedCondition = `${scope.conditionSql} AND c.id = $${scope.values.length + 1}`;
+  const scopedValues = [...scope.values, conversationId];
+
+  const result = await query<ScopedConversationAccessRow>(
+    `SELECT c.id, br.full_name AS assigned_broker_name
+     FROM conversations c
+     LEFT JOIN corretores br ON br.id = c.assigned_broker_id
+     WHERE ${scopedCondition}
+     LIMIT 1`,
+    scopedValues
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function setMobileConversationHandoff(
+  user: MobileAuthUser,
+  conversationId: number,
+  handoff: boolean
+): Promise<MobileConversationHandoffResponse | null> {
+  if (!Number.isFinite(conversationId) || conversationId <= 0) return null;
+
+  const scopedConversation = await findScopedConversationAccess(user, conversationId);
+  if (!scopedConversation) return null;
+
+  const updateResult = await query<{ id: number; handoff: boolean; assigned_broker_name: string | null }>(
+    `UPDATE conversations c
+     SET handoff = $1,
+         classification = CASE
+           WHEN $1 = true THEN 'Handoff'
+           WHEN c.classification = 'Handoff' THEN 'Novo'
+           ELSE c.classification
+         END,
+         updated_at = NOW()
+     FROM conversations c2
+     LEFT JOIN corretores br ON br.id = c2.assigned_broker_id
+     WHERE c.id = c2.id
+       AND c.id = $2
+     RETURNING c.id, c.handoff, br.full_name AS assigned_broker_name`,
+    [handoff, conversationId]
+  );
+
+  const row = updateResult.rows[0];
+  if (!row) return null;
+
+  return {
+    conversation: {
+      id: String(row.id),
+      status: row.handoff ? 'HUMAN' : 'ANA',
+      needsHuman: row.handoff === true,
+      assignedBrokerName: row.assigned_broker_name ?? null,
+    },
+  };
+}
+
+export async function createMobileConversationMessage(
+  user: MobileAuthUser,
+  conversationId: number,
+  text: string
+): Promise<MobileConversationSendMessageResponse | null> {
+  if (!Number.isFinite(conversationId) || conversationId <= 0) return null;
+
+  const scopedConversation = await findScopedConversationAccess(user, conversationId);
+  if (!scopedConversation) return null;
+
+  const normalizedText = text.trim();
+  const inserted = await insertMessage(conversationId, 'assistant', normalizedText, null);
+
+  return {
+    message: {
+      id: String(inserted.id),
+      from: 'me',
+      text: normalizedText,
+      createdAt: inserted.created_at.toISOString(),
+    },
   };
 }
