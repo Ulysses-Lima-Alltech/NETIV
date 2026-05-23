@@ -1,4 +1,4 @@
-﻿{
+{
   "expo": {
     "name": "NETIV",
     "slug": "netiv-mobile",
@@ -16,7 +16,8 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.ulysseslima.netivmobile"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -26,7 +27,12 @@
       "expo-secure-store",
       "expo-font"
     ],
-    "scheme": "netiv"
+    "scheme": "netiv",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "6e34390a-2dcf-4d86-bbba-50ad1d0e66a8"
+      }
+    }
   }
 }
-

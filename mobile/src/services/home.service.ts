@@ -1,11 +1,40 @@
-import { HOME_SUMMARY_BY_ROLE_MOCK } from "../mocks/home.mock";
 import { ApiRequestError, requestJson } from "./api";
-import { AuthUser } from "../types/auth.types";
+import { AuthUser, UserRole } from "../types/auth.types";
 import { HomeSummary } from "../types/home.types";
+
+const FALLBACK_SUMMARY_BY_ROLE: Record<UserRole, Omit<HomeSummary, "subtitle">> = {
+  CORRETOR: {
+    title: "Painel de atendimento",
+    description: "Resumo local temporario enquanto os dados online ficam indisponiveis.",
+    nextActionText: "Abra conversas para continuar seu atendimento.",
+    metrics: [
+      { label: "Conversas ativas", value: "--" },
+      { label: "Visitas hoje", value: "--" },
+    ],
+  },
+  GESTOR: {
+    title: "Painel de gestao",
+    description: "Resumo local temporario enquanto os dados online ficam indisponiveis.",
+    nextActionText: "Revise equipe e agenda para manter a operacao fluida.",
+    metrics: [
+      { label: "Conversas ativas", value: "--" },
+      { label: "Visitas da equipe", value: "--" },
+    ],
+  },
+  ADM: {
+    title: "Painel administrativo",
+    description: "Resumo local temporario enquanto os dados online ficam indisponiveis.",
+    nextActionText: "Use o menu superior para acessar as areas administrativas conectadas.",
+    metrics: [
+      { label: "Conversas ativas", value: "--" },
+      { label: "Visitas em andamento", value: "--" },
+    ],
+  },
+};
 
 export function getHomeSummaryByRole(user: AuthUser | null | undefined): Promise<HomeSummary> {
   const role = user?.role ?? "CORRETOR";
-  const baseSummary = HOME_SUMMARY_BY_ROLE_MOCK[role];
+  const baseSummary = FALLBACK_SUMMARY_BY_ROLE[role];
 
   return Promise.resolve({
     ...baseSummary,
@@ -37,18 +66,14 @@ function isValidSummary(summary: unknown): summary is HomeSummary {
 }
 
 export async function getHomeSummaryWithApi(token: string): Promise<HomeSummary> {
-  try {
-    const response = await requestJson<MobileHomeSummaryResponse>("/api/mobile/home/summary", {
-      method: "GET",
-      token,
-    });
+  const response = await requestJson<MobileHomeSummaryResponse>("/api/mobile/home/summary", {
+    method: "GET",
+    token,
+  });
 
-    if (!isValidSummary(response?.summary)) {
-      throw new ApiRequestError("INVALID_SUMMARY_PAYLOAD", 500, response);
-    }
-
-    return response.summary;
-  } catch (error) {
-    throw error;
+  if (!isValidSummary(response?.summary)) {
+    throw new ApiRequestError("INVALID_SUMMARY_PAYLOAD", 500, response);
   }
+
+  return response.summary;
 }
