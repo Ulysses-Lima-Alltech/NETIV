@@ -172,8 +172,8 @@ async function listConversationsByScope(
 ): Promise<MobileConversationItem[]> {
   const typeConditionSql =
     type === 'INTERNO'
-      ? `COALESCE(NULLIF(BTRIM(UPPER(ct.contact_type)), ''), NULLIF(BTRIM(UPPER(c.conversation_type)), ''), 'CLIENT') IN ('ADMIN', 'CORRETOR', 'INTERNAL', 'INTERNO')`
-      : `COALESCE(NULLIF(BTRIM(UPPER(ct.contact_type)), ''), NULLIF(BTRIM(UPPER(c.conversation_type)), ''), 'CLIENT') = 'CLIENT'`;
+      ? `COALESCE(c.conversation_type, 'CLIENT') IN ('ADMIN', 'CORRETOR')`
+      : `COALESCE(c.conversation_type, 'CLIENT') = 'CLIENT'`;
 
   const result = await query<ConversationRow>(
     `SELECT

@@ -1,14 +1,10 @@
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
 import { ConversationCard } from "../../src/components/ConversationCard";
 import { EmptyState } from "../../src/components/EmptyState";
-import {
-  getConversationsByRole,
-  getConversationsWithApi,
-  getConversationStatusLabel,
-} from "../../src/services/conversations.service";
+import { getConversationsWithApi, getConversationStatusLabel } from "../../src/services/conversations.service";
 import { useAuthStore } from "../../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../../src/theme";
 import { Conversation, ConversationListType } from "../../src/types/conversation.types";
@@ -20,28 +16,36 @@ export default function ConversationsScreen() {
   const [activeType, setActiveType] = useState<ConversationListType>("CLIENT");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
     let active = true;
 
     async function loadConversations() {
+      const requestId = ++requestIdRef.current;
       setIsLoading(true);
+      setErrorMessage(null);
+      setConversations([]);
 
-      try {
-        if (token) {
-          const apiItems = await getConversationsWithApi(token, activeType);
-          if (active) {
-            setConversations(apiItems);
-          }
-          return;
+      if (!token) {
+        if (active && requestId === requestIdRef.current) {
+          setErrorMessage("Sessao sem token. Faca login novamente.");
+          setIsLoading(false);
         }
-      } catch {
-        // fallback para mock quando API falhar
+        return;
       }
 
-      const fallbackItems = await getConversationsByRole(user);
-      if (active) {
-        setConversations(fallbackItems);
+      try {
+        const apiItems = await getConversationsWithApi(token, activeType);
+        if (active && requestId === requestIdRef.current) {
+          setConversations(apiItems);
+        }
+      } catch {
+        if (active && requestId === requestIdRef.current) {
+          setConversations([]);
+          setErrorMessage("Nao foi possivel carregar conversas agora.");
+        }
       }
     }
 
@@ -54,7 +58,7 @@ export default function ConversationsScreen() {
     return () => {
       active = false;
     };
-  }, [activeType, token, user]);
+  }, [activeType, token]);
 
   return (
     <AppShell>
@@ -90,6 +94,7 @@ export default function ConversationsScreen() {
                 </Pressable>
               </View>
             ) : null}
+            {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
           </View>
         }
         ListEmptyComponent={
@@ -101,8 +106,12 @@ export default function ConversationsScreen() {
           ) : (
             <EmptyState
               icon="message-processing-outline"
-              title="Nenhuma conversa disponível"
-              description="Quando houver conversas dentro do seu acesso, elas aparecerão aqui."
+              title={activeType === "INTERNO" ? "Nenhuma conversa interna" : "Nenhuma conversa disponivel"}
+              description={
+                activeType === "INTERNO"
+                  ? "Quando houver conversas internas dentro do seu acesso, elas aparecerao aqui."
+                  : "Quando houver conversas de clientes dentro do seu acesso, elas aparecerao aqui."
+              }
             />
           )
         }
@@ -200,5 +209,12 @@ const styles = StyleSheet.create({
   loadingText: {
     ...typography.caption,
     color: colors.muted,
+  },
+  errorText: {
+    ...typography.caption,
+    marginTop: spacing.xs,
+    color: colors.red,
+    fontSize: 11,
+    lineHeight: 15,
   },
 });
