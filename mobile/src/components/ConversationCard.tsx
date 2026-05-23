@@ -6,7 +6,7 @@ type ConversationCardProps = {
   clientName: string;
   enterpriseName: string;
   lastMessage: string;
-  anaStatus: "Ana atendendo" | "Atendimento humano";
+  anaStatus: "Atendimento Autonomo" | "Atendimento Humano";
   needsHuman: boolean;
   assignedBrokerName?: string | null;
   showAssignedBroker?: boolean;
@@ -26,7 +26,7 @@ export function ConversationCard({
   onPress,
 }: ConversationCardProps) {
   const shouldShowAssignment =
-    showAssignedBroker && Boolean(assignedBrokerName) && (anaStatus === "Atendimento humano" || needsHuman);
+    showAssignedBroker && Boolean(assignedBrokerName) && (anaStatus === "Atendimento Humano" || needsHuman);
 
   return (
     <Pressable onPress={onPress} style={styles.card}>
@@ -43,7 +43,7 @@ export function ConversationCard({
       </Text>
 
       <View style={styles.bottomRow}>
-        <StatusBadge label={anaStatus} tone={anaStatus === "Ana atendendo" ? "info" : "warning"} />
+        <StatusBadge label={anaStatus} tone={anaStatus === "Atendimento Autonomo" ? "info" : "warning"} />
         {needsHuman ? <StatusBadge label="Precisa humano" tone="danger" /> : null}
       </View>
 

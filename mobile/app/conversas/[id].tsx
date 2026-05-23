@@ -1,4 +1,4 @@
-import { useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -46,7 +46,7 @@ const INITIAL_CONVERSATION_DETAIL: ConversationDetail = {
     enterpriseName: "Empreendimento",
     brokerName: "Corretor",
     visitInfo: "Sem agenda",
-    statusLabel: "Ana atendendo",
+    statusLabel: "Atendimento Autonomo",
   },
 };
 
@@ -68,6 +68,7 @@ export default function ConversationDetailScreen() {
   const [isUpdatingHandoff, setIsUpdatingHandoff] = useState(false);
 
   const role = user?.role ?? "CORRETOR";
+  const [detailsExpanded, setDetailsExpanded] = useState(role === "GESTOR" || role === "ADM");
   const canSeeOperationalDetails = role === "GESTOR" || role === "ADM";
   const canManageHandoff = role === "CORRETOR";
   const conversationId = parseConversationId(id);
@@ -113,7 +114,7 @@ export default function ConversationDetailScreen() {
     };
   }, [conversationId, token, user]);
 
-  const statusLabel = handoff ? "Atendimento humano" : "Ana atendendo";
+  const statusLabel = handoff ? "Atendimento Humano" : "Atendimento Autonomo";
   const handoffButtonLabel = handoff ? "Voltar para Ana" : "Ativar handoff";
   const shouldShowHumanAssignment = canSeeOperationalDetails && (handoff || detail.conversation.needsHuman);
 
@@ -268,6 +269,10 @@ export default function ConversationDetailScreen() {
         {!isLoadingDetail && !isDeniedOrMissing ? (
           <>
         <View style={styles.topPanel}>
+          <Pressable style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonArrow}>{"<"}</Text>
+            <Text style={styles.backButtonText}>Voltar</Text>
+          </Pressable>
           <View style={styles.topRow}>
             <View style={styles.topTextBlock}>
               <Text style={styles.topTitle}>Conversa #{conversationId}</Text>
@@ -301,18 +306,51 @@ export default function ConversationDetailScreen() {
             <View style={styles.detailsSection}>
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Detalhes comerciais e operacionais</Text>
-                {role === "ADM" ? <StatusBadge label="Acesso total" tone="inverse" /> : null}
+                <View style={styles.sectionActions}>
+                  <Pressable
+                    style={styles.detailsToggleButton}
+                    onPress={() => setDetailsExpanded((current) => !current)}
+                  >
+                    <Text style={styles.detailsToggleButtonText}>
+                      {detailsExpanded ? "Recolher detalhes" : "Ver detalhes"}
+                    </Text>
+                  </Pressable>
+                  {role === "ADM" ? <StatusBadge label="Acesso total" tone="inverse" /> : null}
+                </View>
               </View>
 
               <View style={styles.detailsPanel}>
-                <View style={styles.detailsGrid}>
-                  {detailRows.map((item) => (
-                    <View key={item.label} style={styles.detailCard}>
-                      <Text style={styles.detailLabel}>{item.label}</Text>
-                      <Text style={styles.detailValue}>{item.value}</Text>
+                {detailsExpanded ? (
+                  <View style={styles.detailsGrid}>
+                    {detailRows.map((item) => (
+                      <View key={item.label} style={styles.detailCard}>
+                        <Text style={styles.detailLabel}>{item.label}</Text>
+                        <Text style={styles.detailValue}>{item.value}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <View style={styles.collapsedSummary}>
+                    <View style={styles.collapsedSummaryItem}>
+                      <Text style={styles.detailLabel}>Lead</Text>
+                      <Text numberOfLines={1} style={styles.detailValue}>
+                        {detail.commercialDetails.leadTemperature}
+                      </Text>
                     </View>
-                  ))}
-                </View>
+                    <View style={styles.collapsedSummaryItem}>
+                      <Text style={styles.detailLabel}>Empreendimento</Text>
+                      <Text numberOfLines={1} style={styles.detailValue}>
+                        {detail.commercialDetails.enterpriseName}
+                      </Text>
+                    </View>
+                    <View style={styles.collapsedSummaryItem}>
+                      <Text style={styles.detailLabel}>Status</Text>
+                      <Text numberOfLines={1} style={styles.detailValue}>
+                        {statusLabel}
+                      </Text>
+                    </View>
+                  </View>
+                )}
 
                 {shouldShowHumanAssignment ? (
                   <View style={styles.assignmentBanner}>
@@ -385,6 +423,26 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xs,
     gap: 7,
   },
+  backButton: {
+    alignSelf: "flex-start",
+    minHeight: 30,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 2,
+  },
+  backButtonText: {
+    ...typography.caption,
+    color: colors.navy,
+    fontWeight: "700",
+  },
+  backButtonArrow: {
+    ...typography.caption,
+    color: colors.navy,
+    fontWeight: "800",
+    fontSize: 16,
+    lineHeight: 16,
+  },
   topRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -440,6 +498,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.xs,
   },
+  sectionActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  detailsToggleButton: {
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.backgroundAlt,
+    paddingHorizontal: spacing.sm,
+    minHeight: 28,
+    justifyContent: "center",
+  },
+  detailsToggleButtonText: {
+    ...typography.caption,
+    color: colors.navy,
+    fontWeight: "700",
+    fontSize: 11,
+  },
   sectionTitle: {
     ...typography.cardTitle,
     color: colors.navy,
@@ -460,6 +538,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: spacing.xs,
+  },
+  collapsedSummary: {
+    flexDirection: "row",
+    gap: spacing.xs,
+  },
+  collapsedSummaryItem: {
+    flex: 1,
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.sm,
   },
   detailCard: {
     width: "48%",
@@ -521,7 +611,7 @@ const styles = StyleSheet.create({
   },
   messagesContent: {
     paddingHorizontal: spacing.sm,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.xl,
     gap: 6,
   },
   messageBubble: {
@@ -559,6 +649,7 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     paddingHorizontal: spacing.md,
     paddingVertical: 8,
+    paddingBottom: spacing.sm,
   },
   input: {
     flex: 1,

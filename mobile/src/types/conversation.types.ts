@@ -11,6 +11,8 @@ export type Conversation = {
   assignedBrokerName: string | null;
 };
 
+export type ConversationListType = "CLIENT" | "INTERNO";
+
 export type ConversationMessage = {
   id: string;
   from: "client" | "ana" | "me";

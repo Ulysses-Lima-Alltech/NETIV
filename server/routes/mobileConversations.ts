@@ -17,7 +17,9 @@ router.get('/', requireMobileAuth, async (req: Request, res: Response): Promise<
       return;
     }
 
-    const payload = await getMobileConversations(user);
+    const typeRaw = String(req.query.type ?? 'CLIENT').toUpperCase();
+    const type = typeRaw === 'INTERNO' ? 'INTERNO' : 'CLIENT';
+    const payload = await getMobileConversations(user, type);
     res.json(payload);
   } catch (error) {
     console.error('[mobile-conversations] GET /', error);

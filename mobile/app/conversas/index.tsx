@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
 import { ConversationCard } from "../../src/components/ConversationCard";
 import { EmptyState } from "../../src/components/EmptyState";
@@ -11,12 +11,13 @@ import {
 } from "../../src/services/conversations.service";
 import { useAuthStore } from "../../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../../src/theme";
-import { Conversation } from "../../src/types/conversation.types";
+import { Conversation, ConversationListType } from "../../src/types/conversation.types";
 
 export default function ConversationsScreen() {
   const user = useAuthStore((state) => state.user);
   const token = useAuthStore((state) => state.token);
   const showAssignedBroker = user?.role === "GESTOR" || user?.role === "ADM";
+  const [activeType, setActiveType] = useState<ConversationListType>("CLIENT");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -28,7 +29,7 @@ export default function ConversationsScreen() {
 
       try {
         if (token) {
-          const apiItems = await getConversationsWithApi(token);
+          const apiItems = await getConversationsWithApi(token, activeType);
           if (active) {
             setConversations(apiItems);
           }
@@ -53,7 +54,7 @@ export default function ConversationsScreen() {
     return () => {
       active = false;
     };
-  }, [token, user]);
+  }, [activeType, token, user]);
 
   return (
     <AppShell>
@@ -69,6 +70,26 @@ export default function ConversationsScreen() {
                 ? "Leads atribuidos ao seu atendimento."
                 : "Visao organizada das conversas conforme seu perfil."}
             </Text>
+            {showAssignedBroker ? (
+              <View style={styles.tabsWrap}>
+                <Pressable
+                  style={[styles.tabButton, activeType === "CLIENT" ? styles.tabButtonActive : null]}
+                  onPress={() => setActiveType("CLIENT")}
+                >
+                  <Text style={[styles.tabText, activeType === "CLIENT" ? styles.tabTextActive : null]}>
+                    Clientes
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.tabButton, activeType === "INTERNO" ? styles.tabButtonActive : null]}
+                  onPress={() => setActiveType("INTERNO")}
+                >
+                  <Text style={[styles.tabText, activeType === "INTERNO" ? styles.tabTextActive : null]}>
+                    Interno
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         }
         ListEmptyComponent={
@@ -132,6 +153,34 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: colors.muted,
     marginTop: 4,
+  },
+  tabsWrap: {
+    marginTop: spacing.sm,
+    flexDirection: "row",
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 3,
+    gap: 4,
+  },
+  tabButton: {
+    flex: 1,
+    minHeight: 32,
+    borderRadius: radius.sm,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tabButtonActive: {
+    backgroundColor: colors.navy,
+  },
+  tabText: {
+    ...typography.caption,
+    color: colors.muted,
+    fontWeight: "700",
+  },
+  tabTextActive: {
+    color: "#FFFFFF",
   },
   separator: {
     height: 8,

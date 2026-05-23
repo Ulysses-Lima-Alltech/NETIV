@@ -10,6 +10,7 @@ import {
   ConversationDetail,
   ConversationMessage,
   ConversationStatus,
+  ConversationListType,
 } from "../types/conversation.types";
 import { requestJson } from "./api";
 
@@ -32,8 +33,8 @@ const messagesState: Record<string, ConversationMessage[]> = Object.entries(
 
 export function getConversationStatusLabel(
   status: ConversationStatus
-): "Ana atendendo" | "Atendimento humano" {
-  return status === "HUMAN" ? "Atendimento humano" : "Ana atendendo";
+): "Atendimento Autonomo" | "Atendimento Humano" {
+  return status === "HUMAN" ? "Atendimento Humano" : "Atendimento Autonomo";
 }
 
 function getConversationById(conversationId: string): Conversation {
@@ -156,8 +157,11 @@ function normalizeConversationDetail(raw: unknown): ConversationDetail | null {
   };
 }
 
-export async function getConversationsWithApi(token: string): Promise<Conversation[]> {
-  const response = await requestJson<MobileConversationsResponse>("/api/mobile/conversations", {
+export async function getConversationsWithApi(
+  token: string,
+  type: ConversationListType
+): Promise<Conversation[]> {
+  const response = await requestJson<MobileConversationsResponse>(`/api/mobile/conversations?type=${type}`, {
     method: "GET",
     token,
   });

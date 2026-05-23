@@ -3,6 +3,7 @@ import type { MobileAuthUser } from './mobileAuthService.js';
 import { insertMessage } from '../repositories/messageRepository.js';
 
 type MobileConversationStatus = 'ANA' | 'HUMAN';
+type MobileConversationFilterType = 'CLIENT' | 'INTERNO';
 
 export type MobileConversationItem = {
   id: string;
@@ -164,15 +165,24 @@ function mapConversationRow(row: ConversationRow): MobileConversationItem {
   };
 }
 
-async function listConversationsByScope(conditionSql: string, values: unknown[]): Promise<MobileConversationItem[]> {
+async function listConversationsByScope(
+  conditionSql: string,
+  values: unknown[],
+  type: MobileConversationFilterType
+): Promise<MobileConversationItem[]> {
+  const typeConditionSql =
+    type === 'INTERNO'
+      ? `COALESCE(NULLIF(BTRIM(UPPER(ct.contact_type)), ''), NULLIF(BTRIM(UPPER(c.conversation_type)), ''), 'CLIENT') IN ('ADMIN', 'CORRETOR', 'INTERNAL', 'INTERNO')`
+      : `COALESCE(NULLIF(BTRIM(UPPER(ct.contact_type)), ''), NULLIF(BTRIM(UPPER(c.conversation_type)), ''), 'CLIENT') = 'CLIENT'`;
+
   const result = await query<ConversationRow>(
     `SELECT
        c.id,
        COALESCE(
-         NULLIF(BTRIM(c.customer_name), ''),
-         NULLIF(BTRIM(ct.first_name), ''),
-         NULLIF(BTRIM(ct.full_name), ''),
          NULLIF(BTRIM(c.whatsapp_display_name), ''),
+         NULLIF(BTRIM(c.customer_name), ''),
+         NULLIF(BTRIM(ct.full_name), ''),
+         NULLIF(BTRIM(ct.first_name), ''),
          NULLIF(BTRIM(c.contact_phone), ''),
          NULLIF(BTRIM(c.external_contact_id), '')
        ) AS client_name,
@@ -203,6 +213,7 @@ async function listConversationsByScope(conditionSql: string, values: unknown[])
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
      LEFT JOIN corretores br ON br.id = c.assigned_broker_id
      WHERE ${conditionSql}
+       AND ${typeConditionSql}
      ORDER BY c.last_message_at DESC NULLS LAST, c.updated_at DESC
      LIMIT 200`,
     values
@@ -211,11 +222,14 @@ async function listConversationsByScope(conditionSql: string, values: unknown[])
   return result.rows.map(mapConversationRow);
 }
 
-export async function getMobileConversations(user: MobileAuthUser): Promise<MobileConversationsResponse> {
+export async function getMobileConversations(
+  user: MobileAuthUser,
+  type: MobileConversationFilterType
+): Promise<MobileConversationsResponse> {
   const scope = await resolveScopeFilter(user);
   if (!scope.ok) return { conversations: [] };
 
-  const conversations = await listConversationsByScope(scope.conditionSql, scope.values);
+  const conversations = await listConversationsByScope(scope.conditionSql, scope.values, type);
   return { conversations };
 }
 
@@ -237,10 +251,10 @@ export async function getMobileConversationDetail(
     `SELECT
        c.id,
        COALESCE(
-         NULLIF(BTRIM(c.customer_name), ''),
-         NULLIF(BTRIM(ct.first_name), ''),
-         NULLIF(BTRIM(ct.full_name), ''),
          NULLIF(BTRIM(c.whatsapp_display_name), ''),
+         NULLIF(BTRIM(c.customer_name), ''),
+         NULLIF(BTRIM(ct.full_name), ''),
+         NULLIF(BTRIM(ct.first_name), ''),
          NULLIF(BTRIM(c.contact_phone), ''),
          NULLIF(BTRIM(c.external_contact_id), '')
        ) AS client_name,
@@ -288,7 +302,7 @@ export async function getMobileConversationDetail(
     [conversationId]
   );
 
-  const statusLabel = row.status === 'HUMAN' ? 'Atendimento humano' : 'Ana atendendo';
+  const statusLabel = row.status === 'HUMAN' ? 'Atendimento Humano' : 'Atendimento Autonomo';
   const messages: MobileConversationDetailMessage[] = messagesResult.rows.map((message) => ({
     id: String(message.id),
     from: message.role === 'user' ? 'client' : 'ana',
