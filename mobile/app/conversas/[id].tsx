@@ -18,12 +18,9 @@ import { StatusBadge } from "../../src/components/StatusBadge";
 import { ApiRequestError } from "../../src/services/api";
 import {
   getConversationDetailWithApi,
-  getConversationDetailById,
   getConversationStatusLabel,
   sendMessageWithApi,
-  sendMockMessage,
   toggleHandoffWithApi,
-  toggleMockHandoff,
 } from "../../src/services/conversations.service";
 import { useAuthStore } from "../../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../../src/theme";
@@ -33,7 +30,7 @@ const INITIAL_CONVERSATION_DETAIL: ConversationDetail = {
   conversation: {
     id: "-",
     clientName: "Cliente",
-    enterpriseName: "Empreendimento",
+    enterpriseName: "Sem empreendimento",
     lastMessage: "Sem mensagem recente.",
     status: "ANA",
     needsHuman: false,
@@ -43,7 +40,7 @@ const INITIAL_CONVERSATION_DETAIL: ConversationDetail = {
   messages: [],
   commercialDetails: {
     leadTemperature: "Em analise",
-    enterpriseName: "Empreendimento",
+    enterpriseName: "Sem empreendimento",
     brokerName: "Corretor",
     visitInfo: "Sem agenda",
     statusLabel: "Atendimento Autonomo",
@@ -80,39 +77,37 @@ export default function ConversationDetailScreen() {
       setIsLoadingDetail(true);
       setIsDeniedOrMissing(false);
 
+      if (!token) {
+        if (!active) return;
+        setIsDeniedOrMissing(true);
+        return;
+      }
+
       try {
-        if (token) {
-          const apiDetail = await getConversationDetailWithApi(conversationId, token);
-          if (!active) return;
-          setDetail(apiDetail);
-          setHandoff(apiDetail.conversation.status === "HUMAN");
-          return;
-        }
+        const apiDetail = await getConversationDetailWithApi(conversationId, token);
+        if (!active) return;
+        setDetail(apiDetail);
+        setHandoff(apiDetail.conversation.status === "HUMAN");
       } catch (error) {
+        if (!active) return;
         if (error instanceof ApiRequestError && (error.status === 403 || error.status === 404)) {
-          if (!active) return;
           setIsDeniedOrMissing(true);
           return;
         }
-        // Falha de conexao/instabilidade: usa fallback mockado
+        setIsDeniedOrMissing(true);
+        Alert.alert("Falha ao carregar conversa", "Nao foi possivel carregar os dados em tempo real.");
+      } finally {
+        if (active) {
+          setIsLoadingDetail(false);
+        }
       }
-
-      const fallbackDetail = await getConversationDetailById(conversationId, user);
-      if (!active) return;
-      setDetail(fallbackDetail);
-      setHandoff(fallbackDetail.conversation.status === "HUMAN");
     }
 
-    loadConversationDetail().finally(() => {
-      if (active) {
-        setIsLoadingDetail(false);
-      }
-    });
-
+    void loadConversationDetail();
     return () => {
       active = false;
     };
-  }, [conversationId, token, user]);
+  }, [conversationId, token]);
 
   const statusLabel = handoff ? "Atendimento Humano" : "Atendimento Autonomo";
   const handoffButtonLabel = handoff ? "Voltar para Ana" : "Ativar handoff";
@@ -138,48 +133,33 @@ export default function ConversationDetailScreen() {
   async function handleSendMessage() {
     if (isDeniedOrMissing) return;
     if (!message.trim() || isSendingMessage) return;
+    if (!token) {
+      Alert.alert("Sessao invalida", "Faca login novamente para enviar mensagens.");
+      return;
+    }
 
     setIsSendingMessage(true);
     try {
-      let sentMessage = null;
       const draft = message;
-
-      try {
-        if (token) {
-          sentMessage = await sendMessageWithApi(conversationId, draft, token);
-        }
-      } catch (error) {
-        const unavailable =
-          error instanceof ApiRequestError &&
-          (error.message === "NETWORK_ERROR" || error.status == null || error.status >= 500);
-
-        if (unavailable) {
-          sentMessage = await sendMockMessage(conversationId, draft);
-          Alert.alert(
-            "Servidor indisponível",
-            "Sua mensagem foi registrada localmente temporariamente."
-          );
-        } else {
-          Alert.alert("Não foi possível enviar", "Verifique sua permissão ou tente novamente.");
-          return;
-        }
-      }
-
-      if (!sentMessage) {
-        sentMessage = await sendMockMessage(conversationId, draft);
-      }
+      const sentMessage = await sendMessageWithApi(conversationId, draft, token);
       if (!sentMessage) return;
 
       setDetail((current) => ({
         ...current,
         conversation: {
           ...current.conversation,
-          lastMessage: sentMessage!.text,
+          lastMessage: sentMessage.text,
           unread: false,
         },
-        messages: [...current.messages, sentMessage!],
+        messages: [...current.messages, sentMessage],
       }));
       setMessage("");
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        Alert.alert("Nao foi possivel enviar", error.message || "Falha ao enviar mensagem no WhatsApp.");
+      } else {
+        Alert.alert("Nao foi possivel enviar", "Falha ao enviar mensagem no WhatsApp.");
+      }
     } finally {
       setIsSendingMessage(false);
     }
@@ -188,53 +168,38 @@ export default function ConversationDetailScreen() {
   async function handleToggleHandoff() {
     if (isDeniedOrMissing) return;
     if (isUpdatingHandoff) return;
+    if (!token) {
+      Alert.alert("Sessao invalida", "Faca login novamente para alterar handoff.");
+      return;
+    }
 
     setIsUpdatingHandoff(true);
-    let updatedConversation = null;
     const nextHandoff = !handoff;
-
     try {
-      try {
-        if (token) {
-          updatedConversation = await toggleHandoffWithApi(conversationId, nextHandoff, token);
-        }
-      } catch (error) {
-        const unavailable =
-          error instanceof ApiRequestError &&
-          (error.message === "NETWORK_ERROR" || error.status == null || error.status >= 500);
-        if (unavailable) {
-          updatedConversation = await toggleMockHandoff(conversationId);
-          Alert.alert(
-            "Servidor indisponível",
-            "Alteração aplicada localmente temporariamente."
-          );
-        } else {
-          Alert.alert("Não foi possível alterar handoff", "Verifique sua permissão ou tente novamente.");
-          return;
-        }
+      const updatedConversation = await toggleHandoffWithApi(conversationId, nextHandoff, token);
+      if (!updatedConversation) {
+        Alert.alert("Nao foi possivel alterar handoff", "Conversa nao encontrada.");
+        return;
       }
 
-      if (!updatedConversation) {
-        updatedConversation = await toggleMockHandoff(conversationId);
+      setHandoff(updatedConversation.status === "HUMAN");
+      setDetail((current) => ({
+        ...current,
+        conversation: updatedConversation,
+        commercialDetails: {
+          ...current.commercialDetails,
+          statusLabel: getConversationStatusLabel(updatedConversation.status),
+        },
+      }));
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        Alert.alert("Nao foi possivel alterar handoff", error.message || "Tente novamente.");
+      } else {
+        Alert.alert("Nao foi possivel alterar handoff", "Tente novamente.");
       }
     } finally {
       setIsUpdatingHandoff(false);
     }
-
-    if (!updatedConversation) {
-      setHandoff((current) => !current);
-      return;
-    }
-
-    setHandoff(updatedConversation.status === "HUMAN");
-    setDetail((current) => ({
-      ...current,
-      conversation: updatedConversation,
-      commercialDetails: {
-        ...current.commercialDetails,
-        statusLabel: getConversationStatusLabel(updatedConversation.status),
-      },
-    }));
   }
 
   return (
@@ -242,6 +207,7 @@ export default function ConversationDetailScreen() {
       <KeyboardAvoidingView
         style={styles.root}
         behavior={Platform.select({ ios: "padding", android: undefined })}
+        keyboardVerticalOffset={Platform.select({ ios: 14, android: 0 })}
       >
         {isLoadingDetail ? (
           <View style={styles.loadingWrapper}>
@@ -258,9 +224,9 @@ export default function ConversationDetailScreen() {
               <View style={styles.blockedIcon}>
                 <AppIcon name="shield-crown-outline" size={24} color={colors.orange} />
               </View>
-              <Text style={styles.blockedTitle}>Conversa não encontrada ou sem acesso</Text>
+              <Text style={styles.blockedTitle}>Conversa nao encontrada ou sem acesso</Text>
               <Text style={styles.blockedDescription}>
-                Verifique suas permissões ou selecione outra conversa da lista.
+                Verifique suas permissoes ou selecione outra conversa da lista.
               </Text>
             </View>
           </View>
@@ -268,141 +234,135 @@ export default function ConversationDetailScreen() {
 
         {!isLoadingDetail && !isDeniedOrMissing ? (
           <>
-        <View style={styles.topPanel}>
-          <Pressable style={styles.backButton} onPress={() => router.back()}>
-            <Text style={styles.backButtonArrow}>{"<"}</Text>
-            <Text style={styles.backButtonText}>Voltar</Text>
-          </Pressable>
-          <View style={styles.topRow}>
-            <View style={styles.topTextBlock}>
-              <Text style={styles.topTitle}>Conversa #{conversationId}</Text>
-              <Text style={styles.topSubtitle}>
-                {`${detail.conversation.clientName} - ${detail.conversation.enterpriseName}`}
-              </Text>
-            </View>
-            <StatusBadge label={statusLabel} tone={handoff ? "danger" : "info"} />
-          </View>
-
-          {canManageHandoff ? (
-            <Pressable
-              style={[styles.handoffButton, handoff ? styles.handoffButtonDanger : null]}
-              onPress={handleToggleHandoff}
-              disabled={isUpdatingHandoff}
-            >
-              {isUpdatingHandoff ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <>
-                  <AppIcon name="account-switch-outline" size={14} color="#FFFFFF" />
-                  <Text style={styles.handoffButtonText}>{handoffButtonLabel}</Text>
-                </>
-              )}
-            </Pressable>
-          ) : null}
-        </View>
-
-        <View style={styles.content}>
-          {canSeeOperationalDetails ? (
-            <View style={styles.detailsSection}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Detalhes comerciais e operacionais</Text>
-                <View style={styles.sectionActions}>
-                  <Pressable
-                    style={styles.detailsToggleButton}
-                    onPress={() => setDetailsExpanded((current) => !current)}
-                  >
-                    <Text style={styles.detailsToggleButtonText}>
-                      {detailsExpanded ? "Recolher detalhes" : "Ver detalhes"}
-                    </Text>
-                  </Pressable>
-                  {role === "ADM" ? <StatusBadge label="Acesso total" tone="inverse" /> : null}
+            <View style={styles.topPanel}>
+              <Pressable style={styles.backButton} onPress={() => router.back()}>
+                <Text style={styles.backButtonArrow}>{"<"}</Text>
+                <Text style={styles.backButtonText}>Voltar</Text>
+              </Pressable>
+              <View style={styles.topRow}>
+                <View style={styles.topTextBlock}>
+                  <Text style={styles.topTitle}>{detail.conversation.clientName}</Text>
+                  <Text style={styles.topSubtitle}>
+                    {detail.conversation.enterpriseName || "Sem empreendimento"}
+                  </Text>
                 </View>
+                <StatusBadge label={statusLabel} tone={handoff ? "danger" : "info"} />
               </View>
 
-              <View style={styles.detailsPanel}>
-                {detailsExpanded ? (
-                  <View style={styles.detailsGrid}>
-                    {detailRows.map((item) => (
-                      <View key={item.label} style={styles.detailCard}>
-                        <Text style={styles.detailLabel}>{item.label}</Text>
-                        <Text style={styles.detailValue}>{item.value}</Text>
+              {canManageHandoff ? (
+                <Pressable
+                  style={[styles.handoffButton, handoff ? styles.handoffButtonDanger : null]}
+                  onPress={handleToggleHandoff}
+                  disabled={isUpdatingHandoff}
+                >
+                  {isUpdatingHandoff ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <AppIcon name="account-switch-outline" size={14} color="#FFFFFF" />
+                      <Text style={styles.handoffButtonText}>{handoffButtonLabel}</Text>
+                    </>
+                  )}
+                </Pressable>
+              ) : null}
+            </View>
+
+            <View style={styles.content}>
+              {canSeeOperationalDetails ? (
+                <View style={styles.detailsSection}>
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>Detalhes comerciais e operacionais</Text>
+                    <View style={styles.sectionActions}>
+                      <Pressable
+                        style={styles.detailsToggleButton}
+                        onPress={() => setDetailsExpanded((current) => !current)}
+                      >
+                        <Text style={styles.detailsToggleButtonText}>
+                          {detailsExpanded ? "Recolher detalhes" : "Ver detalhes"}
+                        </Text>
+                      </Pressable>
+                      {role === "ADM" ? <StatusBadge label="Acesso total" tone="inverse" /> : null}
+                    </View>
+                  </View>
+
+                  {detailsExpanded ? (
+                    <View style={styles.detailsPanel}>
+                      <View style={styles.detailsGrid}>
+                        {detailRows.map((item) => (
+                          <View key={item.label} style={styles.detailCard}>
+                            <Text style={styles.detailLabel}>{item.label}</Text>
+                            <Text style={styles.detailValue}>{item.value}</Text>
+                          </View>
+                        ))}
                       </View>
-                    ))}
-                  </View>
-                ) : (
-                  <View style={styles.collapsedSummary}>
-                    <View style={styles.collapsedSummaryItem}>
-                      <Text style={styles.detailLabel}>Lead</Text>
-                      <Text numberOfLines={1} style={styles.detailValue}>
-                        {detail.commercialDetails.leadTemperature}
-                      </Text>
-                    </View>
-                    <View style={styles.collapsedSummaryItem}>
-                      <Text style={styles.detailLabel}>Empreendimento</Text>
-                      <Text numberOfLines={1} style={styles.detailValue}>
-                        {detail.commercialDetails.enterpriseName}
-                      </Text>
-                    </View>
-                    <View style={styles.collapsedSummaryItem}>
-                      <Text style={styles.detailLabel}>Status</Text>
-                      <Text numberOfLines={1} style={styles.detailValue}>
-                        {statusLabel}
-                      </Text>
-                    </View>
-                  </View>
-                )}
 
-                {shouldShowHumanAssignment ? (
-                  <View style={styles.assignmentBanner}>
-                    <Text numberOfLines={1} style={styles.assignmentText}>
-                      {`Atribuida para ${detail.conversation.assignedBrokerName}`}
-                    </Text>
-                  </View>
-                ) : null}
+                      {shouldShowHumanAssignment ? (
+                        <View style={styles.assignmentBanner}>
+                          <Text numberOfLines={1} style={styles.assignmentText}>
+                            {`Atribuida para ${detail.conversation.assignedBrokerName}`}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+
+              <View style={styles.messagesSection}>
+                <View style={styles.messagesHeader}>
+                  <Text style={styles.messagesTitle}>Mensagens</Text>
+                </View>
+
+                <FlatList
+                  style={styles.messagesList}
+                  data={detail.messages}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.messagesContent}
+                  renderItem={({ item }) => {
+                    const direction =
+                      item.direction ??
+                      (item.from === "client"
+                        ? "INBOUND"
+                        : item.from === "system"
+                          ? "SYSTEM"
+                          : "OUTBOUND");
+
+                    if (direction === "SYSTEM") {
+                      return (
+                        <View style={styles.systemMessageWrap}>
+                          <Text style={styles.systemMessageText}>{item.text}</Text>
+                        </View>
+                      );
+                    }
+
+                    const mine = direction === "OUTBOUND";
+                    return (
+                      <View style={[styles.messageBubble, mine ? styles.messageMine : styles.messageTheirs]}>
+                        <Text style={[styles.messageText, mine ? styles.messageTextMine : null]}>{item.text}</Text>
+                      </View>
+                    );
+                  }}
+                />
               </View>
             </View>
-          ) : null}
 
-          <View style={styles.messagesSection}>
-            <View style={styles.messagesHeader}>
-              <Text style={styles.messagesTitle}>Mensagens</Text>
+            <View style={styles.composer}>
+              <TextInput
+                value={message}
+                onChangeText={setMessage}
+                placeholder="Digite sua resposta"
+                placeholderTextColor="#98A2B3"
+                style={styles.input}
+                editable={!isSendingMessage}
+              />
+              <Pressable style={styles.sendButton} onPress={handleSendMessage} disabled={isSendingMessage}>
+                {isSendingMessage ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <AppIcon name="send" size={15} color="#FFFFFF" />
+                )}
+              </Pressable>
             </View>
-
-            <FlatList
-              style={styles.messagesList}
-              data={detail.messages}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={styles.messagesContent}
-              renderItem={({ item }) => {
-                const mine = item.from === "me";
-
-                return (
-                  <View style={[styles.messageBubble, mine ? styles.messageMine : styles.messageTheirs]}>
-                    <Text style={[styles.messageText, mine ? styles.messageTextMine : null]}>{item.text}</Text>
-                  </View>
-                );
-              }}
-            />
-          </View>
-        </View>
-
-        <View style={styles.composer}>
-          <TextInput
-            value={message}
-            onChangeText={setMessage}
-            placeholder="Digite sua resposta"
-            placeholderTextColor="#98A2B3"
-            style={styles.input}
-            editable={!isSendingMessage}
-          />
-          <Pressable style={styles.sendButton} onPress={handleSendMessage} disabled={isSendingMessage}>
-            {isSendingMessage ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <AppIcon name="send" size={15} color="#FFFFFF" />
-            )}
-          </Pressable>
-        </View>
           </>
         ) : null}
       </KeyboardAvoidingView>
@@ -454,8 +414,8 @@ const styles = StyleSheet.create({
   },
   topTitle: {
     ...typography.cardTitle,
-    fontSize: 16,
-    lineHeight: 21,
+    fontSize: 17,
+    lineHeight: 22,
     color: colors.navy,
   },
   topSubtitle: {
@@ -463,7 +423,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 14,
     color: colors.muted,
-    marginTop: 1,
+    marginTop: 2,
   },
   handoffButton: {
     minHeight: 34,
@@ -539,18 +499,6 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: spacing.xs,
   },
-  collapsedSummary: {
-    flexDirection: "row",
-    gap: spacing.xs,
-  },
-  collapsedSummaryItem: {
-    flex: 1,
-    backgroundColor: colors.backgroundAlt,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.sm,
-  },
   detailCard: {
     width: "48%",
     backgroundColor: colors.backgroundAlt,
@@ -611,11 +559,11 @@ const styles = StyleSheet.create({
   },
   messagesContent: {
     paddingHorizontal: spacing.sm,
-    paddingBottom: spacing.xl,
-    gap: 6,
+    paddingBottom: spacing.xxl,
+    gap: 8,
   },
   messageBubble: {
-    maxWidth: "84%",
+    maxWidth: "78%",
     borderRadius: radius.lg,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
@@ -640,6 +588,23 @@ const styles = StyleSheet.create({
   messageTextMine: {
     color: "#FFFFFF",
   },
+  systemMessageWrap: {
+    alignSelf: "center",
+    maxWidth: "88%",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.backgroundAlt,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  systemMessageText: {
+    ...typography.caption,
+    color: colors.muted,
+    textAlign: "center",
+    fontSize: 10,
+    lineHeight: 14,
+  },
   composer: {
     flexDirection: "row",
     alignItems: "center",
@@ -648,8 +613,8 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
     paddingHorizontal: spacing.md,
-    paddingVertical: 8,
-    paddingBottom: spacing.sm,
+    paddingTop: 8,
+    paddingBottom: spacing.md,
   },
   input: {
     flex: 1,

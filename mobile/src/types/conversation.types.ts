@@ -13,9 +13,12 @@ export type Conversation = {
 
 export type ConversationListType = "CLIENT" | "INTERNO";
 
+export type ConversationMessageDirection = "INBOUND" | "OUTBOUND" | "SYSTEM";
+
 export type ConversationMessage = {
   id: string;
-  from: "client" | "ana" | "me";
+  from: "client" | "ana" | "me" | "system";
+  direction?: ConversationMessageDirection;
   text: string;
   createdAt?: string;
 };

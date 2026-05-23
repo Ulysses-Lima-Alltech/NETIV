@@ -113,15 +113,15 @@ router.post('/:id/messages', requireMobileAuth, async (req: Request, res: Respon
     }
 
     const payload = await createMobileConversationMessage(user, conversationId, text);
-    if (!payload) {
-      res.status(404).json({ error: 'Conversa nao encontrada.' });
+    if (!payload.ok) {
+      res.status(payload.status).json({ error: payload.message, code: payload.code });
       return;
     }
 
-    res.json(payload);
+    res.json(payload.payload);
   } catch (error) {
     console.error('[mobile-conversations] POST /:id/messages', error);
-    res.status(500).json({ error: 'Erro ao registrar mensagem mobile.' });
+    res.status(500).json({ error: 'Erro ao enviar mensagem mobile.' });
   }
 });
 

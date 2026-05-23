@@ -1,6 +1,9 @@
 import { query } from '../db/pg.js';
 import type { MobileAuthUser } from './mobileAuthService.js';
 import { insertMessage } from '../repositories/messageRepository.js';
+import { getConversationById } from '../repositories/conversationRepository.js';
+import { getConversationWhatsAppWindowStatus } from './whatsappWindowService.js';
+import { isMetaWindowClosedError, sendTextMessage } from './whatsappMetaService.js';
 
 type MobileConversationStatus = 'ANA' | 'HUMAN';
 type MobileConversationFilterType = 'CLIENT' | 'INTERNO';
@@ -22,7 +25,8 @@ export type MobileConversationsResponse = {
 
 export type MobileConversationDetailMessage = {
   id: string;
-  from: 'client' | 'ana' | 'me';
+  from: 'client' | 'ana' | 'me' | 'system';
+  direction: 'INBOUND' | 'OUTBOUND' | 'SYSTEM';
   text: string;
   createdAt: string | null;
 };
@@ -52,10 +56,20 @@ export type MobileConversationSendMessageResponse = {
   message: {
     id: string;
     from: 'me';
+    direction: 'OUTBOUND';
     text: string;
     createdAt: string;
   };
 };
+
+export type MobileConversationSendMessageResult =
+  | { ok: true; payload: MobileConversationSendMessageResponse }
+  | {
+      ok: false;
+      code: 'NOT_FOUND' | 'WINDOW_CLOSED' | 'SEND_FAILED';
+      status: number;
+      message: string;
+    };
 
 type ConversationRow = {
   id: number;
@@ -303,12 +317,36 @@ export async function getMobileConversationDetail(
   );
 
   const statusLabel = row.status === 'HUMAN' ? 'Atendimento Humano' : 'Atendimento Autonomo';
-  const messages: MobileConversationDetailMessage[] = messagesResult.rows.map((message) => ({
-    id: String(message.id),
-    from: message.role === 'user' ? 'client' : 'ana',
-    text: (message.content ?? '').trim(),
-    createdAt: message.created_at ? message.created_at.toISOString() : null,
-  }));
+  const messages: MobileConversationDetailMessage[] = messagesResult.rows.map((message) => {
+    const normalizedRole = String(message.role ?? '').toLowerCase();
+    if (normalizedRole === 'user') {
+      return {
+        id: String(message.id),
+        from: 'client',
+        direction: 'INBOUND',
+        text: (message.content ?? '').trim(),
+        createdAt: message.created_at ? message.created_at.toISOString() : null,
+      };
+    }
+
+    if (normalizedRole === 'assistant') {
+      return {
+        id: String(message.id),
+        from: 'me',
+        direction: 'OUTBOUND',
+        text: (message.content ?? '').trim(),
+        createdAt: message.created_at ? message.created_at.toISOString() : null,
+      };
+    }
+
+    return {
+      id: String(message.id),
+      from: 'system',
+      direction: 'SYSTEM',
+      text: (message.content ?? '').trim(),
+      createdAt: message.created_at ? message.created_at.toISOString() : null,
+    };
+  });
 
   return {
     conversation: mapConversationRow(row),
@@ -389,21 +427,82 @@ export async function createMobileConversationMessage(
   user: MobileAuthUser,
   conversationId: number,
   text: string
-): Promise<MobileConversationSendMessageResponse | null> {
-  if (!Number.isFinite(conversationId) || conversationId <= 0) return null;
+): Promise<MobileConversationSendMessageResult> {
+  if (!Number.isFinite(conversationId) || conversationId <= 0) {
+    return { ok: false, code: 'NOT_FOUND', status: 404, message: 'Conversa nao encontrada.' };
+  }
 
   const scopedConversation = await findScopedConversationAccess(user, conversationId);
-  if (!scopedConversation) return null;
+  if (!scopedConversation) {
+    return { ok: false, code: 'NOT_FOUND', status: 404, message: 'Conversa nao encontrada.' };
+  }
+
+  const conversation = await getConversationById(conversationId);
+  if (!conversation) {
+    return { ok: false, code: 'NOT_FOUND', status: 404, message: 'Conversa nao encontrada.' };
+  }
 
   const normalizedText = text.trim();
-  const inserted = await insertMessage(conversationId, 'assistant', normalizedText, null);
+  const destinationPhone = String(conversation.contact_phone ?? conversation.external_contact_id ?? '').replace(/\D/g, '');
+  if (!destinationPhone) {
+    return {
+      ok: false,
+      code: 'SEND_FAILED',
+      status: 400,
+      message: 'Sem numero de telefone valido na conversa.',
+    };
+  }
+
+  const windowStatus = await getConversationWhatsAppWindowStatus(conversationId);
+  if (!windowStatus.isOpen) {
+    return {
+      ok: false,
+      code: 'WINDOW_CLOSED',
+      status: 409,
+      message: 'Janela de atendimento encerrada. Envie uma mensagem padrao/template.',
+    };
+  }
+
+  const sendResult = await sendTextMessage(destinationPhone, normalizedText);
+  if (!sendResult.success || !sendResult.metaMessageId) {
+    const failedByWindow = isMetaWindowClosedError({
+      code: sendResult.code,
+      message: sendResult.error,
+    });
+
+    if (failedByWindow) {
+      return {
+        ok: false,
+        code: 'WINDOW_CLOSED',
+        status: 409,
+        message: 'Janela de atendimento encerrada. Envie uma mensagem padrao/template.',
+      };
+    }
+
+    const status =
+      typeof sendResult.code === 'number' && sendResult.code >= 400 && sendResult.code < 600
+        ? sendResult.code
+        : 502;
+    return {
+      ok: false,
+      code: 'SEND_FAILED',
+      status,
+      message: sendResult.error || 'Falha ao enviar mensagem via WhatsApp.',
+    };
+  }
+
+  const inserted = await insertMessage(conversationId, 'assistant', normalizedText, sendResult.metaMessageId);
 
   return {
-    message: {
-      id: String(inserted.id),
-      from: 'me',
-      text: normalizedText,
-      createdAt: inserted.created_at.toISOString(),
+    ok: true,
+    payload: {
+      message: {
+        id: String(inserted.id),
+        from: 'me',
+        direction: 'OUTBOUND',
+        text: normalizedText,
+        createdAt: inserted.created_at.toISOString(),
+      },
     },
   };
 }

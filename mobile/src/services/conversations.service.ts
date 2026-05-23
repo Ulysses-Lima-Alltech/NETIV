@@ -9,6 +9,7 @@ import {
   Conversation,
   ConversationDetail,
   ConversationMessage,
+  ConversationMessageDirection,
   ConversationStatus,
   ConversationListType,
 } from "../types/conversation.types";
@@ -74,6 +75,7 @@ type MobileSendMessageResponse = {
   message: {
     id: string;
     from: "me";
+    direction?: "OUTBOUND";
     text: string;
     createdAt: string;
   };
@@ -111,13 +113,25 @@ function normalizeConversationMessage(raw: unknown): ConversationMessage | null 
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Partial<ConversationMessage>;
   if (typeof value.id !== "string") return null;
-  if (value.from !== "client" && value.from !== "ana" && value.from !== "me") return null;
+  if (value.from !== "client" && value.from !== "ana" && value.from !== "me" && value.from !== "system") return null;
   if (typeof value.text !== "string") return null;
   if (value.createdAt !== undefined && value.createdAt !== null && typeof value.createdAt !== "string") return null;
+  const rawDirection = (value as { direction?: unknown }).direction;
+  let direction: ConversationMessageDirection | undefined;
+  if (rawDirection === "INBOUND" || rawDirection === "OUTBOUND" || rawDirection === "SYSTEM") {
+    direction = rawDirection;
+  } else if (value.from === "client") {
+    direction = "INBOUND";
+  } else if (value.from === "system") {
+    direction = "SYSTEM";
+  } else {
+    direction = "OUTBOUND";
+  }
 
   return {
     id: value.id,
     from: value.from,
+    direction,
     text: value.text,
     createdAt: value.createdAt ?? undefined,
   };
@@ -242,13 +256,18 @@ export async function sendMessageWithApi(
     }
   );
 
-  if (!response?.message?.id || response.message.from !== "me" || typeof response.message.text !== "string") {
+  if (
+    !response?.message?.id ||
+    response.message.from !== "me" ||
+    typeof response.message.text !== "string"
+  ) {
     throw new Error("INVALID_SEND_MESSAGE_PAYLOAD");
   }
 
   return {
     id: response.message.id,
     from: "me",
+    direction: "OUTBOUND",
     text: response.message.text,
     createdAt: response.message.createdAt,
   };
@@ -288,6 +307,7 @@ export function sendMockMessage(
   const newMessage: ConversationMessage = {
     id: `${conversationId}-${Date.now()}`,
     from: "me",
+    direction: "OUTBOUND",
     text: normalizedText,
     createdAt: new Date().toISOString(),
   };
