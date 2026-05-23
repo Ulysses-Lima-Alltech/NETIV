@@ -17,6 +17,7 @@ export default function RootLayout() {
         <Stack.Screen name="conversas/[id]" />
         <Stack.Screen name="visitas/index" />
         <Stack.Screen name="equipe/index" />
+        <Stack.Screen name="acessos-mobile/index" />
         <Stack.Screen name="empreendimentos/index" />
         <Stack.Screen name="templates/index" />
         <Stack.Screen name="configuracoes/index" />

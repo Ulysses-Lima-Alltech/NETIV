@@ -26,6 +26,12 @@ const TOP_MENU_ITEMS: Record<UserRole, AppMenuItem[]> = {
       icon: "account-multiple-outline",
     },
     {
+      label: "Acessos mobile",
+      description: "Criar e gerenciar logins do aplicativo.",
+      path: "/acessos-mobile",
+      icon: "file-plus-outline",
+    },
+    {
       label: "Configuracoes",
       description: "WhatsApp e configuracao de API da operacao.",
       path: "/configuracoes",

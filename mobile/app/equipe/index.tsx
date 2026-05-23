@@ -17,12 +17,10 @@ import { StatusBadge } from "../../src/components/StatusBadge";
 import { ApiRequestError } from "../../src/services/api";
 import {
   addEnterpriseToTeamMemberWithApi,
-  createMobileAccessForTeamMemberWithApi,
   getEnterpriseOptionsWithApi,
   getTeamWithApi,
   removeEnterpriseFromTeamMemberWithApi,
   updateTeamMemberWithApi,
-  type CreateTeamAccessPayload,
   type TeamEnterpriseOption,
 } from "../../src/services/team.service";
 import { useAuthStore } from "../../src/stores/auth.store";
@@ -50,13 +48,6 @@ export default function TeamScreen() {
   const [isLoadingEnterprises, setIsLoadingEnterprises] = useState(false);
   const [actionInProgressKey, setActionInProgressKey] = useState<string | null>(null);
 
-  const [accessMember, setAccessMember] = useState<TeamMember | null>(null);
-  const [accessUsername, setAccessUsername] = useState("");
-  const [accessPassword, setAccessPassword] = useState("");
-  const [accessRole, setAccessRole] = useState<"CORRETOR" | "GESTOR">("CORRETOR");
-  const [accessActive, setAccessActive] = useState(true);
-  const [isCreatingAccess, setIsCreatingAccess] = useState(false);
-
   useEffect(() => {
     void loadTeam();
   }, [token, role]);
@@ -74,31 +65,6 @@ export default function TeamScreen() {
   function canRemoveLinkedEnterprise(enterprise: TeamEnterprise): boolean {
     if (role === "ADM") return true;
     return enterprise.manageable === true;
-  }
-
-  function openCreateAccessModal(member: TeamMember) {
-    const suggestedUsername = member.name
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, ".")
-      .replace(/^\.+|\.+$/g, "")
-      .slice(0, 30);
-
-    setAccessMember(member);
-    setAccessUsername(suggestedUsername || "");
-    setAccessPassword("");
-    setAccessRole("CORRETOR");
-    setAccessActive(true);
-  }
-
-  function closeCreateAccessModal(force = false) {
-    if (isCreatingAccess && !force) return;
-    setAccessMember(null);
-    setAccessUsername("");
-    setAccessPassword("");
-    setAccessRole("CORRETOR");
-    setAccessActive(true);
   }
 
   async function loadTeam() {
@@ -179,48 +145,6 @@ export default function TeamScreen() {
       }
     } finally {
       setIsSavingEdit(false);
-    }
-  }
-
-  async function handleCreateMobileAccess() {
-    if (!token || !accessMember) return;
-    const username = accessUsername.trim().toLowerCase();
-    const temporaryPassword = accessPassword.trim();
-
-    if (!username) {
-      Alert.alert("Login obrigatorio", "Informe o usuario/login para criar o acesso.");
-      return;
-    }
-
-    if (!temporaryPassword) {
-      Alert.alert("Senha obrigatoria", "Informe a senha temporaria para criar o acesso.");
-      return;
-    }
-
-    const payload: CreateTeamAccessPayload = {
-      username,
-      temporaryPassword,
-      role: accessRole,
-      active: accessActive,
-    };
-
-    setIsCreatingAccess(true);
-    try {
-      const result = await createMobileAccessForTeamMemberWithApi(accessMember.id, token, payload);
-      closeCreateAccessModal(true);
-      await loadTeam();
-      Alert.alert(
-        "Acesso criado",
-        `Acesso mobile criado para ${result.user.name} (${result.user.username}). Compartilhe a senha temporaria com seguranca.`
-      );
-    } catch (error) {
-      if (error instanceof ApiRequestError) {
-        Alert.alert("Falha ao criar acesso", error.message || "Nao foi possivel criar o acesso mobile.");
-      } else {
-        Alert.alert("Falha ao criar acesso", "Nao foi possivel criar o acesso mobile.");
-      }
-    } finally {
-      setIsCreatingAccess(false);
     }
   }
 
@@ -392,19 +316,12 @@ export default function TeamScreen() {
                         tone={member.active ? "success" : "warning"}
                       />
                       {member.mobileAccess ? (
-                        <StatusBadge
-                          label={member.mobileAccess.active ? "Acesso ativo" : "Acesso inativo"}
-                          tone={member.mobileAccess.active ? "success" : "warning"}
-                        />
+                        <StatusBadge label="Com acesso mobile" tone="success" />
                       ) : (
                         <StatusBadge label="Sem acesso mobile" tone="neutral" />
                       )}
                     </View>
                   </View>
-
-                  {member.mobileAccess ? (
-                    <Text style={styles.accessInfoText}>Login mobile: {member.mobileAccess.username}</Text>
-                  ) : null}
 
                   <View style={styles.enterpriseList}>
                     {member.enterprises.map((enterprise) => (
@@ -454,20 +371,6 @@ export default function TeamScreen() {
                         Gerenciar empreendimentos
                       </Text>
                     </Pressable>
-
-                    {role === "ADM" && !member.mobileAccess && member.id.startsWith("corretor:") ? (
-                      <Pressable
-                        style={[
-                          styles.actionButton,
-                          styles.actionButtonSuccess,
-                          isSubmitting && styles.actionButtonDisabled,
-                        ]}
-                        onPress={() => openCreateAccessModal(member)}
-                        disabled={isSubmitting}
-                      >
-                        <Text style={styles.actionButtonText}>Criar acesso</Text>
-                      </Pressable>
-                    ) : null}
                   </View>
 
                   {!isAdminView ? (
@@ -522,100 +425,6 @@ export default function TeamScreen() {
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
                   <Text style={styles.modalButtonConfirmText}>Salvar</Text>
-                )}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={accessMember != null} transparent animationType="fade" onRequestClose={() => closeCreateAccessModal()}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Criar acesso mobile</Text>
-            <Text style={styles.modalSubtitle}>
-              Crie login para {accessMember?.name ?? "o membro selecionado"}. A senha informada sera temporaria.
-            </Text>
-
-            <Text style={styles.inputLabel}>Usuario/login</Text>
-            <TextInput
-              value={accessUsername}
-              onChangeText={setAccessUsername}
-              style={styles.input}
-              autoCapitalize="none"
-              autoCorrect={false}
-              placeholder="ex.: marcelo"
-            />
-
-            <Text style={styles.inputLabel}>Senha temporaria</Text>
-            <TextInput
-              value={accessPassword}
-              onChangeText={setAccessPassword}
-              style={styles.input}
-              placeholder="Senha temporaria"
-              secureTextEntry
-            />
-
-            <Text style={styles.inputLabel}>Papel de acesso</Text>
-            <View style={styles.roleSelectorRow}>
-              <Pressable
-                style={[
-                  styles.roleOption,
-                  accessRole === "CORRETOR" ? styles.roleOptionActive : styles.roleOptionInactive,
-                ]}
-                onPress={() => setAccessRole("CORRETOR")}
-                disabled={isCreatingAccess}
-              >
-                <Text
-                  style={[
-                    styles.roleOptionText,
-                    accessRole === "CORRETOR" ? styles.roleOptionTextActive : styles.roleOptionTextInactive,
-                  ]}
-                >
-                  CORRETOR
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.roleOption,
-                  accessRole === "GESTOR" ? styles.roleOptionActive : styles.roleOptionInactive,
-                ]}
-                onPress={() => setAccessRole("GESTOR")}
-                disabled={isCreatingAccess}
-              >
-                <Text
-                  style={[
-                    styles.roleOptionText,
-                    accessRole === "GESTOR" ? styles.roleOptionTextActive : styles.roleOptionTextInactive,
-                  ]}
-                >
-                  GESTOR
-                </Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.switchRow}>
-              <Text style={styles.switchLabel}>Acesso ativo</Text>
-              <Switch value={accessActive} onValueChange={setAccessActive} disabled={isCreatingAccess} />
-            </View>
-
-            <View style={styles.modalActions}>
-              <Pressable
-                style={[styles.modalButton, styles.modalButtonCancel]}
-                onPress={() => closeCreateAccessModal()}
-                disabled={isCreatingAccess}
-              >
-                <Text style={styles.modalButtonCancelText}>Cancelar</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.modalButton, styles.modalButtonConfirm, isCreatingAccess && styles.actionButtonDisabled]}
-                onPress={handleCreateMobileAccess}
-                disabled={isCreatingAccess}
-              >
-                {isCreatingAccess ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.modalButtonConfirmText}>Criar acesso</Text>
                 )}
               </Pressable>
             </View>
@@ -858,9 +667,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  actionButtonSuccess: {
-    backgroundColor: colors.green,
-  },
   actionButtonText: {
     ...typography.caption,
     color: "#FFFFFF",
@@ -874,13 +680,6 @@ const styles = StyleSheet.create({
     color: colors.navy,
   },
   helpText: {
-    ...typography.caption,
-    color: colors.muted,
-    fontSize: 10,
-    lineHeight: 14,
-    marginTop: 2,
-  },
-  accessInfoText: {
     ...typography.caption,
     color: colors.muted,
     fontSize: 10,
@@ -953,38 +752,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-  },
-  roleSelectorRow: {
-    flexDirection: "row",
-    gap: spacing.xs,
-    marginTop: 2,
-  },
-  roleOption: {
-    flex: 1,
-    minHeight: 36,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.sm,
-  },
-  roleOptionActive: {
-    backgroundColor: colors.navy,
-    borderColor: colors.navy,
-  },
-  roleOptionInactive: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-  },
-  roleOptionText: {
-    ...typography.caption,
-    fontWeight: "700",
-  },
-  roleOptionTextActive: {
-    color: "#FFFFFF",
-  },
-  roleOptionTextInactive: {
-    color: colors.navy,
   },
   switchLabel: {
     ...typography.body,
