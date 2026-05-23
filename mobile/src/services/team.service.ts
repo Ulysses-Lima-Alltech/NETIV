@@ -26,6 +26,22 @@ type MobileTeamMemberEnvelope = {
   member: MobileTeamMemberResponse;
 };
 
+type MobileEnterpriseOptionResponse = {
+  id: string;
+  name: string;
+  active: boolean;
+};
+
+type MobileEnterpriseOptionsEnvelope = {
+  enterprises: MobileEnterpriseOptionResponse[];
+};
+
+export type TeamEnterpriseOption = {
+  id: string;
+  name: string;
+  active: boolean;
+};
+
 function normalizeEnterprise(enterprise: MobileTeamEnterpriseResponse): TeamEnterprise {
   const manageable = enterprise.manageable === true;
   return {
@@ -116,6 +132,31 @@ export async function addEnterpriseToTeamMemberWithApi(
   }
 
   return normalizeTeamMember(response.member);
+}
+
+export async function getEnterpriseOptionsWithApi(token: string): Promise<TeamEnterpriseOption[]> {
+  const response = await requestJson<MobileEnterpriseOptionsEnvelope>("/api/mobile/enterprises", {
+    method: "GET",
+    token,
+  });
+
+  if (!response || !Array.isArray(response.enterprises)) {
+    throw new Error("INVALID_ENTERPRISE_OPTIONS_PAYLOAD");
+  }
+
+  return response.enterprises
+    .filter(
+      (enterprise) =>
+        enterprise &&
+        typeof enterprise.id === "string" &&
+        typeof enterprise.name === "string" &&
+        typeof enterprise.active === "boolean"
+    )
+    .map((enterprise) => ({
+      id: enterprise.id,
+      name: enterprise.name,
+      active: enterprise.active,
+    }));
 }
 
 export async function getTeamByRoleFallback(role: TeamMemberRole): Promise<TeamMember[]> {
