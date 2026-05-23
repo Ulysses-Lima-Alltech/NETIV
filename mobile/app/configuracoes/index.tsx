@@ -1,59 +1,83 @@
-﻿import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { router } from "expo-router";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "../../src/components/AppShell";
+import { AppIcon } from "../../src/components/AppIcon";
 import { EmptyState } from "../../src/components/EmptyState";
 import { StatusBadge } from "../../src/components/StatusBadge";
+import { useAuthStore } from "../../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../../src/theme";
 
-const configGroups = [
+type WebConfigOption = {
+  key: "whatsapp" | "api";
+  title: string;
+  description: string;
+  path: "/configuracoes/whatsapp" | "/configuracoes/api";
+  icon: "message-text-outline" | "cog-outline";
+  webSections: string;
+};
+
+const WEB_CONFIG_OPTIONS: WebConfigOption[] = [
   {
-    title: "Atendimento da Ana",
-    description: "Regras de handoff, janelas de atendimento e prioridade de encaminhamento humano.",
-    status: "Ativo",
+    key: "whatsapp",
+    title: "WhatsApp",
+    description: "Credenciais Meta, webhook e parametros de envio.",
+    path: "/configuracoes/whatsapp",
+    icon: "message-text-outline",
+    webSections: "Credenciais Meta, Webhook e Envio",
   },
   {
-    title: "Permissoes de acesso",
-    description: "Controle de perfis e visibilidade dos modulos administrativos.",
-    status: "Revisao",
-  },
-  {
-    title: "Integracoes comerciais",
-    description: "Mapa de conectores de CRM para sincronizacao de leads e historico.",
-    status: "Planejado",
+    key: "api",
+    title: "Configuracao de API",
+    description: "Config global, custos OpenAI e configuracao por empreendimento.",
+    path: "/configuracoes/api",
+    icon: "cog-outline",
+    webSections: "Global padrao, Custos OpenAI e Por empreendimento",
   },
 ];
 
-function getTone(status: string): "success" | "warning" | "info" {
-  if (status === "Ativo") return "success";
-  if (status === "Revisao") return "warning";
-  return "info";
-}
-
 export default function SettingsScreen() {
+  const user = useAuthStore((state) => state.user);
+  const role = user?.role ?? "CORRETOR";
+
+  if (role !== "ADM") {
+    return (
+      <AppShell>
+        <ScrollView contentContainerStyle={styles.container}>
+          <Text style={styles.title}>Configuracoes</Text>
+          <EmptyState
+            icon="shield-crown-outline"
+            title="Acesso restrito"
+            description="No momento, configuracoes estao disponiveis apenas para administradores."
+          />
+        </ScrollView>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Configuracoes</Text>
         <Text style={styles.subtitle}>
-          Painel administrativo com visao de governanca da operacao e evolucao do produto.
+          Opcoes reais mapeadas da web. Ajustes seguem indisponiveis no mobile ate existir suporte mobile-safe.
         </Text>
 
         <View style={styles.list}>
-          {configGroups.map((item) => (
-            <View key={item.title} style={styles.card}>
-              <View style={styles.cardRow}>
-                <Text style={styles.cardTitle}>{item.title}</Text>
-                <StatusBadge label={item.status} tone={getTone(item.status)} />
+          {WEB_CONFIG_OPTIONS.map((item) => (
+            <Pressable key={item.key} style={styles.card} onPress={() => router.push(item.path)}>
+              <View style={styles.cardTop}>
+                <View style={styles.iconWrap}>
+                  <AppIcon name={item.icon} size={18} color={colors.navy} />
+                </View>
+                <StatusBadge label="Indisponivel no mobile" tone="warning" />
               </View>
+
+              <Text style={styles.cardTitle}>{item.title}</Text>
               <Text style={styles.cardDescription}>{item.description}</Text>
-            </View>
+              <Text style={styles.cardFootnote}>Web: {item.webSections}</Text>
+            </Pressable>
           ))}
         </View>
-
-        <EmptyState
-          icon="cog-refresh-outline"
-          title="Centro de ajustes em evolucao"
-          description="As proximas entregas incluirao trilha de auditoria, historico de alteracoes e politicas avancadas de permissao."
-        />
       </ScrollView>
     </AppShell>
   );
@@ -82,30 +106,48 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: colors.card,
+    borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.lg,
-    padding: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
     ...shadows.card,
   },
-  cardRow: {
+  cardTop: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     gap: spacing.sm,
   },
+  iconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.md,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.backgroundAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
   cardTitle: {
     ...typography.cardTitle,
-    color: colors.text,
-    flex: 1,
+    color: colors.navy,
+    marginTop: spacing.xs,
     fontSize: 15,
     lineHeight: 20,
   },
   cardDescription: {
     ...typography.body,
-    color: colors.muted,
-    marginTop: spacing.xs,
+    color: colors.text,
+    marginTop: 2,
     fontSize: 12,
     lineHeight: 16,
+  },
+  cardFootnote: {
+    ...typography.caption,
+    color: colors.muted,
+    marginTop: spacing.xs,
+    fontSize: 11,
+    lineHeight: 15,
   },
 });

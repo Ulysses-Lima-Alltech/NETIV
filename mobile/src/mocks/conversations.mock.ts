@@ -39,7 +39,7 @@ export const CONVERSATIONS_MOCK: Conversation[] = [
   {
     id: "4",
     clientName: "Aline Souza",
-    enterpriseName: "Altis",
+    enterpriseName: "Evora II",
     lastMessage: "Tenho interesse no financiamento e queria os proximos passos.",
     status: "HUMAN",
     needsHuman: false,

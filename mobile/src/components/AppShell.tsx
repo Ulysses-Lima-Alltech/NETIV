@@ -1,16 +1,15 @@
-﻿import { router, usePathname } from "expo-router";
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { router, usePathname } from "expo-router";
+import { ReactNode, useMemo, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuthStore, UserRole } from "../stores/auth.store";
-import { useUiStore } from "../stores/ui.store";
 import { colors } from "../theme";
 import { AppMenu, AppMenuItem } from "./AppMenu";
 import { BottomNavigation, BottomNavItem } from "./BottomNavigation";
 import { Header } from "./Header";
 
 const BOTTOM_NAV_ITEMS: BottomNavItem[] = [
-  { label: "Início", path: "/home", icon: "home-variant-outline" },
+  { label: "Inicio", path: "/home", icon: "home-variant-outline" },
   { label: "Conversas", path: "/conversas", icon: "message-text-outline" },
   { label: "Visitas", path: "/visitas", icon: "calendar-month-outline" },
   { label: "Perfil", path: "/perfil", icon: "account-circle-outline" },
@@ -27,20 +26,8 @@ const TOP_MENU_ITEMS: Record<UserRole, AppMenuItem[]> = {
       icon: "account-multiple-outline",
     },
     {
-      label: "Empreendimentos",
-      description: "Gestao dos empreendimentos e responsaveis.",
-      path: "/empreendimentos",
-      icon: "office-building-outline",
-    },
-    {
-      label: "Templates",
-      description: "Modelos de atendimento e fluxos de conversa.",
-      path: "/templates",
-      icon: "file-document-multiple-outline",
-    },
-    {
       label: "Configuracoes",
-      description: "Parametros administrativos e de operacao.",
+      description: "WhatsApp e configuracao de API da operacao.",
       path: "/configuracoes",
       icon: "cog-outline",
     },
@@ -61,22 +48,10 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const user = useAuthStore((state) => state.user);
   const [menuOpen, setMenuOpen] = useState(false);
-  const shouldOpenAdminMenu = useUiStore((state) => state.shouldOpenAdminMenu);
-  const consumeAdminMenuRequest = useUiStore((state) => state.consumeAdminMenuRequest);
   const role = user?.role ?? "CORRETOR";
 
   const menuItems = useMemo(() => TOP_MENU_ITEMS[role], [role]);
   const showMenuButton = role === "ADM" && menuItems.length > 0;
-
-  useEffect(() => {
-    if (!shouldOpenAdminMenu) return;
-
-    if (showMenuButton) {
-      setMenuOpen(true);
-    }
-
-    consumeAdminMenuRequest();
-  }, [consumeAdminMenuRequest, shouldOpenAdminMenu, showMenuButton]);
 
   function navigate(path: string) {
     setMenuOpen(false);

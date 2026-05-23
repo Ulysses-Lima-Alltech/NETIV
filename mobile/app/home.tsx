@@ -6,7 +6,6 @@ import { AppShell } from "../src/components/AppShell";
 import { MetricCard } from "../src/components/MetricCard";
 import { getHomeSummaryByRole, getHomeSummaryWithApi } from "../src/services/home.service";
 import { useAuthStore } from "../src/stores/auth.store";
-import { useUiStore } from "../src/stores/ui.store";
 import { colors, radius, shadows, spacing, typography } from "../src/theme";
 import { HomeSummary } from "../src/types/home.types";
 
@@ -21,8 +20,8 @@ const INITIAL_HOME_SUMMARY: HomeSummary = {
 export default function HomeScreen() {
   const user = useAuthStore((state) => state.user);
   const token = useAuthStore((state) => state.token);
-  const requestAdminMenu = useUiStore((state) => state.requestAdminMenu);
   const role = user?.role ?? "CORRETOR";
+  const isAdmin = role === "ADM";
   const [content, setContent] = useState<HomeSummary>(INITIAL_HOME_SUMMARY);
   const [isRefreshingSummary, setIsRefreshingSummary] = useState<boolean>(false);
 
@@ -41,7 +40,7 @@ export default function HomeScreen() {
           return;
         }
       } catch {
-        // fallback para mocks locais quando API estiver indisponivel/token invalido
+        // fallback para resumo local quando API estiver indisponivel
       }
 
       const fallbackSummary = await getHomeSummaryByRole(user);
@@ -68,13 +67,13 @@ export default function HomeScreen() {
   return (
     <AppShell>
       <ScrollView contentContainerStyle={styles.container}>
-        <View style={styles.hero}>
+        <View style={[styles.hero, isAdmin ? styles.heroCompact : null]}>
           <View style={styles.heroPill}>
             <Text style={styles.heroPillText}>NETIV</Text>
           </View>
-          <Text style={styles.title}>{content.title}</Text>
+          <Text style={[styles.title, isAdmin ? styles.titleCompact : null]}>{content.title}</Text>
           <Text style={styles.subtitle}>{content.subtitle}</Text>
-          <Text style={styles.description}>{content.description}</Text>
+          <Text style={[styles.description, isAdmin ? styles.descriptionCompact : null]}>{content.description}</Text>
           {isRefreshingSummary ? (
             <View style={styles.loadingRow}>
               <ActivityIndicator size="small" color={colors.orange} />
@@ -98,7 +97,7 @@ export default function HomeScreen() {
           <ActionCard
             title="Abrir conversas"
             description="Entrar na inbox e manter atendimento ativo."
-            icon="message-processing-outline"
+            icon="message-text-outline"
             onPress={() => router.push("/conversas")}
             variant="primary"
           />
@@ -115,27 +114,35 @@ export default function HomeScreen() {
           {role === "GESTOR" ? (
             <>
               <ActionCard
-                title="Equipe"
+                title="Ver equipe"
                 description="Acompanhar corretores vinculados."
                 icon="account-group-outline"
                 onPress={() => router.push("/equipe")}
               />
               <ActionCard
-                title="Empreendimentos"
-                description="Monitorar carteira sob sua gestao."
-                icon="office-building-outline"
-                onPress={() => router.push("/empreendimentos")}
+                title="Ver visitas"
+                description="Acompanhar agenda dos empreendimentos sob sua gestao."
+                icon="calendar-check-outline"
+                onPress={() => router.push("/visitas")}
               />
             </>
           ) : null}
 
           {role === "ADM" ? (
-            <ActionCard
-              title="Abrir menu administrativo"
-              description="Acessar equipe, empreendimentos, templates e configuracoes."
-              icon="shield-crown-outline"
-              onPress={requestAdminMenu}
-            />
+            <>
+              <ActionCard
+                title="Ver equipe"
+                description="Gerenciar acessos de corretores, gestores e admin."
+                icon="account-group-outline"
+                onPress={() => router.push("/equipe")}
+              />
+              <ActionCard
+                title="Ver visitas"
+                description="Acompanhar a agenda operacional consolidada."
+                icon="calendar-check-outline"
+                onPress={() => router.push("/visitas")}
+              />
+            </>
           ) : null}
         </View>
       </ScrollView>
@@ -158,6 +165,9 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     ...shadows.card,
   },
+  heroCompact: {
+    paddingVertical: spacing.sm,
+  },
   heroPill: {
     alignSelf: "flex-start",
     borderRadius: radius.pill,
@@ -178,6 +188,10 @@ const styles = StyleSheet.create({
     fontSize: 28,
     lineHeight: 32,
   },
+  titleCompact: {
+    fontSize: 23,
+    lineHeight: 27,
+  },
   subtitle: {
     ...typography.cardTitle,
     color: colors.text,
@@ -189,6 +203,10 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
     fontSize: 13,
     lineHeight: 18,
+  },
+  descriptionCompact: {
+    fontSize: 12,
+    lineHeight: 16,
   },
   loadingRow: {
     marginTop: spacing.sm,

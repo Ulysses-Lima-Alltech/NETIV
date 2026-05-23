@@ -26,7 +26,7 @@ export const TEAM_MEMBERS_MOCK: TeamMember[] = [
     phone: "(11) 98888-1003",
     role: "CORRETOR",
     active: false,
-    enterprises: [{ enterpriseId: "3", enterpriseName: "Altis", manageable: false, label: "Somente visualizacao" }],
+    enterprises: [{ enterpriseId: "3", enterpriseName: "Evora II", manageable: false, label: "Somente visualizacao" }],
   },
   {
     id: "mobile:2",
@@ -48,8 +48,7 @@ export const TEAM_MEMBERS_MOCK: TeamMember[] = [
     enterprises: [
       { enterpriseId: "1", enterpriseName: "Evora", manageable: true, label: "Gerenciavel" },
       { enterpriseId: "2", enterpriseName: "Montaresa", manageable: true, label: "Gerenciavel" },
-      { enterpriseId: "3", enterpriseName: "Altis", manageable: true, label: "Gerenciavel" },
-      { enterpriseId: "4", enterpriseName: "Reserva Azul", manageable: true, label: "Gerenciavel" },
+      { enterpriseId: "3", enterpriseName: "Evora II", manageable: true, label: "Gerenciavel" },
     ],
   },
 ];

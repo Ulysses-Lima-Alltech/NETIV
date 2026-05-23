@@ -27,7 +27,7 @@ export const VISITS_MOCK: Visit[] = [
     id: "3",
     time: "17:15",
     clientName: "Rafael Gomes",
-    enterpriseName: "Altis",
+    enterpriseName: "Evora II",
     status: "Reagendada",
     assignedBrokerName: "Lucas Corretor",
   },

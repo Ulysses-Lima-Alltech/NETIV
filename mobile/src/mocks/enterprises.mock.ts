@@ -17,14 +17,8 @@ export const ENTERPRISES_MOCK: Enterprise[] = [
   },
   {
     id: "ent-3",
-    name: "Altis",
-    city: "Campinas",
-    active: true,
-  },
-  {
-    id: "ent-4",
-    name: "Reserva Azul",
-    city: "Santos",
+    name: "Evora II",
+    city: "Sao Paulo",
     active: false,
   },
 ];

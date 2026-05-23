@@ -1,4 +1,6 @@
-﻿import { StyleSheet, Text } from "react-native";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { ComponentProps } from "react";
+import { StyleSheet, View } from "react-native";
 
 export type AppIconName =
   | "home-variant-outline"
@@ -27,50 +29,41 @@ type AppIconProps = {
   color?: string;
 };
 
-const ICON_SYMBOLS: Record<AppIconName, string> = {
-  "home-variant-outline": "\u{1F3E0}",
-  "message-text-outline": "\u{1F4AC}",
-  "calendar-month-outline": "\u{1F4C5}",
-  "account-circle-outline": "\u{1F464}",
-  "account-multiple-outline": "\u25CD",
-  "office-building-outline": "\u25A6",
-  "file-document-multiple-outline": "\u25A4",
-  "cog-outline": "\u2699",
-  "message-processing-outline": "\u2709",
-  "calendar-check-outline": "\u2713",
-  "account-group-outline": "\u25CD",
-  "shield-crown-outline": "\u265B",
-  "file-plus-outline": "+",
-  "cog-refresh-outline": "\u21BB",
-  "chevron-right": "\u203A",
-  "clock-outline": "\u25F7",
-  menu: "\u2630",
-  "account-switch-outline": "\u21C4",
-  send: "\u27A4",
+type IoniconName = ComponentProps<typeof Ionicons>["name"];
+
+const ICON_NAMES: Record<AppIconName, IoniconName> = {
+  "home-variant-outline": "home-outline",
+  "message-text-outline": "chatbubble-ellipses-outline",
+  "calendar-month-outline": "calendar-outline",
+  "account-circle-outline": "person-circle-outline",
+  "account-multiple-outline": "people-outline",
+  "office-building-outline": "business-outline",
+  "file-document-multiple-outline": "documents-outline",
+  "cog-outline": "settings-outline",
+  "message-processing-outline": "chatbubbles-outline",
+  "calendar-check-outline": "calendar-clear-outline",
+  "account-group-outline": "people-circle-outline",
+  "shield-crown-outline": "shield-checkmark-outline",
+  "file-plus-outline": "document-text-outline",
+  "cog-refresh-outline": "refresh-outline",
+  "chevron-right": "chevron-forward",
+  "clock-outline": "time-outline",
+  menu: "menu",
+  "account-switch-outline": "swap-horizontal-outline",
+  send: "send",
 };
 
 export function AppIcon({ name, size = 16, color = "#303740" }: AppIconProps) {
   return (
-    <Text
-      style={[
-        styles.icon,
-        {
-          color,
-          fontSize: size,
-          lineHeight: Math.round(size * 1.15),
-        },
-      ]}
-    >
-      {ICON_SYMBOLS[name] ?? "\u2022"}
-    </Text>
+    <View style={styles.iconWrap}>
+      <Ionicons name={ICON_NAMES[name]} size={size} color={color} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  icon: {
-    fontWeight: "700",
-    textAlign: "center",
-    includeFontPadding: false,
-    textAlignVertical: "center",
+  iconWrap: {
+    alignItems: "center",
+    justifyContent: "center",
   },
 });
