@@ -4,27 +4,27 @@ import { HomeSummary } from "../types/home.types";
 
 const FALLBACK_SUMMARY_BY_ROLE: Record<UserRole, Omit<HomeSummary, "subtitle">> = {
   CORRETOR: {
-    title: "Painel de atendimento",
+    title: "Resumo do atendimento",
     description: "Resumo local temporario enquanto os dados online ficam indisponiveis.",
-    nextActionText: "Abra conversas para continuar seu atendimento.",
+    nextActionText: "",
     metrics: [
       { label: "Conversas ativas", value: "--" },
       { label: "Visitas hoje", value: "--" },
     ],
   },
   GESTOR: {
-    title: "Painel de gestao",
+    title: "Resumo da equipe",
     description: "Resumo local temporario enquanto os dados online ficam indisponiveis.",
-    nextActionText: "Revise equipe e agenda para manter a operacao fluida.",
+    nextActionText: "",
     metrics: [
       { label: "Conversas ativas", value: "--" },
       { label: "Visitas da equipe", value: "--" },
     ],
   },
   ADM: {
-    title: "Painel administrativo",
+    title: "Resumo da operacao",
     description: "Resumo local temporario enquanto os dados online ficam indisponiveis.",
-    nextActionText: "Use o menu superior para acessar as areas administrativas conectadas.",
+    nextActionText: "",
     metrics: [
       { label: "Conversas ativas", value: "--" },
       { label: "Visitas em andamento", value: "--" },

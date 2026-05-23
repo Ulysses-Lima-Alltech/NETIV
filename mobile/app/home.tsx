@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 import { ActionCard } from "../src/components/ActionCard";
 import { AppShell } from "../src/components/AppShell";
@@ -7,21 +7,80 @@ import { MetricCard } from "../src/components/MetricCard";
 import { getHomeSummaryByRole, getHomeSummaryWithApi } from "../src/services/home.service";
 import { useAuthStore } from "../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../src/theme";
-import { HomeSummary } from "../src/types/home.types";
+import { UserRole } from "../src/types/auth.types";
+import { HomeMetric, HomeSummary } from "../src/types/home.types";
 
 const INITIAL_HOME_SUMMARY: HomeSummary = {
-  title: "Carregando painel",
+  title: "Carregando resumo",
   subtitle: "Usuario",
   description: "Aguarde enquanto carregamos os indicadores do seu perfil.",
-  nextActionText: "Carregando proxima acao.",
+  nextActionText: "",
   metrics: [],
 };
+
+const ROLE_COPY: Record<
+  UserRole,
+  {
+    title: string;
+    subtitle: string;
+  }
+> = {
+  ADM: {
+    title: "Resumo da operacao",
+    subtitle: "Acompanhe gargalos, acessos e atividade comercial.",
+  },
+  GESTOR: {
+    title: "Resumo da equipe",
+    subtitle: "Veja conversas, visitas e corretores sob sua gestao.",
+  },
+  CORRETOR: {
+    title: "Resumo do atendimento",
+    subtitle: "Priorize conversas e visitas que exigem acao.",
+  },
+};
+
+const METRIC_PRIORITY_BY_ROLE: Record<UserRole, string[]> = {
+  ADM: ["conversas sem responsavel", "atendimento humano", "visitas hoje", "acesso mobile", "corretores ativos"],
+  GESTOR: ["conversas sem responsavel", "visitas hoje", "corretores ativos", "leads"],
+  CORRETOR: ["conversas aguardando", "visitas hoje", "atendimento humano", "leads ativos", "leads"],
+};
+
+function normalizeText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function rankMetric(metric: HomeMetric, role: UserRole): number {
+  const normalizedLabel = normalizeText(metric.label);
+  const priorityList = METRIC_PRIORITY_BY_ROLE[role];
+  const index = priorityList.findIndex((priority) => normalizedLabel.includes(priority));
+
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+function pickTopMetrics(metrics: HomeMetric[], role: UserRole): HomeMetric[] {
+  if (!metrics.length) return [];
+
+  const ranked = metrics
+    .map((metric, position) => ({
+      metric,
+      position,
+      rank: rankMetric(metric, role),
+    }))
+    .sort((a, b) => {
+      if (a.rank !== b.rank) return a.rank - b.rank;
+      return a.position - b.position;
+    });
+
+  return ranked.slice(0, 4).map((item) => item.metric);
+}
 
 export default function HomeScreen() {
   const user = useAuthStore((state) => state.user);
   const token = useAuthStore((state) => state.token);
-  const role = user?.role ?? "CORRETOR";
-  const isAdmin = role === "ADM";
+  const role = (user?.role ?? "CORRETOR") as UserRole;
   const [content, setContent] = useState<HomeSummary>(INITIAL_HOME_SUMMARY);
   const [isRefreshingSummary, setIsRefreshingSummary] = useState<boolean>(false);
 
@@ -64,33 +123,31 @@ export default function HomeScreen() {
     };
   }, [token, user]);
 
+  const roleCopy = ROLE_COPY[role];
+  const topMetrics = useMemo(() => pickTopMetrics(content.metrics, role), [content.metrics, role]);
+
   return (
     <AppShell>
       <ScrollView contentContainerStyle={styles.container}>
-        <View style={[styles.hero, isAdmin ? styles.heroCompact : null]}>
-          <View style={styles.heroPill}>
-            <Text style={styles.heroPillText}>NETIV</Text>
-          </View>
-          <Text style={[styles.title, isAdmin ? styles.titleCompact : null]}>{content.title}</Text>
-          <Text style={styles.subtitle}>{content.subtitle}</Text>
-          <Text style={[styles.description, isAdmin ? styles.descriptionCompact : null]}>{content.description}</Text>
+        <View style={styles.summaryTop}>
+          <Text style={styles.summaryTitle}>{roleCopy.title}</Text>
+          <Text style={styles.summarySubtitle}>{roleCopy.subtitle}</Text>
           {isRefreshingSummary ? (
             <View style={styles.loadingRow}>
               <ActivityIndicator size="small" color={colors.orange} />
-              <Text style={styles.loadingText}>Atualizando painel</Text>
+              <Text style={styles.loadingText}>Atualizando indicadores</Text>
             </View>
           ) : null}
         </View>
 
         <View style={styles.grid}>
-          {content.metrics.map((metric) => (
+          {topMetrics.map((metric) => (
             <MetricCard key={metric.label} label={metric.label} value={metric.value} />
           ))}
         </View>
 
-        <View style={styles.nextAction}>
-          <Text style={styles.nextActionLabel}>Proxima acao</Text>
-          <Text style={styles.nextActionText}>{content.nextActionText}</Text>
+        <View style={styles.sectionHeaderWrap}>
+          <Text style={styles.sectionTitle}>Acoes rapidas</Text>
         </View>
 
         <View style={styles.actionList}>
@@ -102,47 +159,29 @@ export default function HomeScreen() {
             variant="primary"
           />
 
-          {role === "CORRETOR" ? (
+          {(role === "GESTOR" || role === "ADM") ? (
             <ActionCard
-              title="Ver visitas"
-              description="Revisar agenda e status do dia."
-              icon="calendar-check-outline"
-              onPress={() => router.push("/visitas")}
+              title="Ver equipe"
+              description="Acompanhar estrutura e disponibilidade da equipe."
+              icon="account-group-outline"
+              onPress={() => router.push("/equipe")}
             />
           ) : null}
 
-          {role === "GESTOR" ? (
-            <>
-              <ActionCard
-                title="Ver equipe"
-                description="Acompanhar corretores vinculados."
-                icon="account-group-outline"
-                onPress={() => router.push("/equipe")}
-              />
-              <ActionCard
-                title="Ver visitas"
-                description="Acompanhar agenda dos empreendimentos sob sua gestao."
-                icon="calendar-check-outline"
-                onPress={() => router.push("/visitas")}
-              />
-            </>
-          ) : null}
+          <ActionCard
+            title="Ver visitas"
+            description="Revisar agenda e status de visitas do dia."
+            icon="calendar-check-outline"
+            onPress={() => router.push("/visitas")}
+          />
 
           {role === "ADM" ? (
-            <>
-              <ActionCard
-                title="Ver equipe"
-                description="Gerenciar acessos de corretores, gestores e admin."
-                icon="account-group-outline"
-                onPress={() => router.push("/equipe")}
-              />
-              <ActionCard
-                title="Ver visitas"
-                description="Acompanhar a agenda operacional consolidada."
-                icon="calendar-check-outline"
-                onPress={() => router.push("/visitas")}
-              />
-            </>
+            <ActionCard
+              title="Acessos mobile"
+              description="Controlar usuarios com acesso ao app mobile."
+              icon="shield-crown-outline"
+              onPress={() => router.push("/acessos-mobile")}
+            />
           ) : null}
         </View>
       </ScrollView>
@@ -153,63 +192,31 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
+    paddingTop: spacing.xs,
     paddingBottom: spacing.xxl,
-    gap: spacing.md,
+    gap: spacing.sm,
   },
-  hero: {
-    borderRadius: radius.xl,
-    padding: spacing.md,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    ...shadows.card,
-  },
-  heroCompact: {
-    paddingVertical: spacing.sm,
-  },
-  heroPill: {
-    alignSelf: "flex-start",
-    borderRadius: radius.pill,
-    backgroundColor: colors.orangeSoft,
-    borderWidth: 1,
-    borderColor: "#FFD8BD",
+  summaryTop: {
+    borderRadius: radius.lg,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    marginBottom: spacing.xs,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xs,
   },
-  heroPillText: {
-    ...typography.caption,
-    color: colors.orange,
-  },
-  title: {
-    ...typography.title,
-    color: colors.navy,
-    fontSize: 28,
-    lineHeight: 32,
-  },
-  titleCompact: {
-    fontSize: 23,
-    lineHeight: 27,
-  },
-  subtitle: {
+  summaryTitle: {
     ...typography.cardTitle,
-    color: colors.text,
-    marginTop: 1,
+    color: colors.navy,
+    fontSize: 21,
+    lineHeight: 25,
   },
-  description: {
-    ...typography.body,
+  summarySubtitle: {
+    ...typography.caption,
     color: colors.muted,
-    marginTop: spacing.xs,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  descriptionCompact: {
     fontSize: 12,
     lineHeight: 16,
+    marginTop: 4,
   },
   loadingRow: {
-    marginTop: spacing.sm,
+    marginTop: spacing.xs,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs,
@@ -223,26 +230,17 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: spacing.sm,
   },
-  nextAction: {
-    backgroundColor: colors.navy,
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+  sectionHeaderWrap: {
+    marginTop: spacing.xs,
   },
-  nextActionLabel: {
-    ...typography.caption,
-    color: "#D8E2ED",
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  nextActionText: {
-    ...typography.body,
-    color: "#FFFFFF",
-    marginTop: 4,
-    fontSize: 13,
-    lineHeight: 18,
+  sectionTitle: {
+    ...typography.cardTitle,
+    color: colors.navy,
+    fontSize: 16,
+    lineHeight: 20,
   },
   actionList: {
     gap: spacing.sm,
+    paddingBottom: spacing.sm,
   },
 });
