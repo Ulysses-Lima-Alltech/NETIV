@@ -1,6 +1,11 @@
 import { ApiRequestError, requestJson } from "./api";
 import { TEAM_MEMBERS_MOCK } from "../mocks/team.mock";
-import { TeamEnterprise, TeamMember, TeamMemberRole } from "../types/team.types";
+import {
+  TeamEnterprise,
+  TeamMember,
+  TeamMemberRole,
+  TeamMobileAccess,
+} from "../types/team.types";
 
 type MobileTeamEnterpriseResponse = {
   enterpriseId: string;
@@ -9,12 +14,20 @@ type MobileTeamEnterpriseResponse = {
   label: string | null;
 };
 
+type MobileTeamAccessResponse = {
+  id: string;
+  username: string;
+  role: TeamMemberRole;
+  active: boolean;
+};
+
 type MobileTeamMemberResponse = {
   id: string;
   name: string;
   phone: string | null;
   role: TeamMemberRole;
   active: boolean;
+  mobileAccess: MobileTeamAccessResponse | null;
   enterprises: MobileTeamEnterpriseResponse[];
 };
 
@@ -23,6 +36,17 @@ type MobileTeamListResponse = {
 };
 
 type MobileTeamMemberEnvelope = {
+  member: MobileTeamMemberResponse;
+};
+
+type MobileCreateAccessEnvelope = {
+  user: {
+    id: string;
+    username: string;
+    name: string;
+    role: TeamMemberRole;
+    active: boolean;
+  };
   member: MobileTeamMemberResponse;
 };
 
@@ -39,6 +63,21 @@ type MobileEnterpriseOptionsEnvelope = {
 export type TeamEnterpriseOption = {
   id: string;
   name: string;
+  active: boolean;
+};
+
+export type TeamCreatedAccess = {
+  id: string;
+  username: string;
+  name: string;
+  role: TeamMemberRole;
+  active: boolean;
+};
+
+export type CreateTeamAccessPayload = {
+  username: string;
+  temporaryPassword: string;
+  role: "CORRETOR" | "GESTOR";
   active: boolean;
 };
 
@@ -60,6 +99,25 @@ function normalizeEnterprise(enterprise: MobileTeamEnterpriseResponse): TeamEnte
   };
 }
 
+function normalizeMobileAccess(access: MobileTeamAccessResponse | null): TeamMobileAccess | null {
+  if (!access || typeof access !== "object") {
+    return null;
+  }
+
+  const id = String(access.id ?? "").trim();
+  const username = typeof access.username === "string" ? access.username.trim() : "";
+  if (!id || !username) {
+    return null;
+  }
+
+  return {
+    id,
+    username,
+    role: access.role,
+    active: access.active === true,
+  };
+}
+
 function normalizeTeamMember(member: MobileTeamMemberResponse): TeamMember {
   return {
     id: String(member.id ?? ""),
@@ -67,6 +125,7 @@ function normalizeTeamMember(member: MobileTeamMemberResponse): TeamMember {
     phone: typeof member.phone === "string" ? member.phone : null,
     role: member.role,
     active: member.active === true,
+    mobileAccess: normalizeMobileAccess(member.mobileAccess),
     enterprises: Array.isArray(member.enterprises) ? member.enterprises.map(normalizeEnterprise) : [],
   };
 }
@@ -134,6 +193,26 @@ export async function addEnterpriseToTeamMemberWithApi(
   return normalizeTeamMember(response.member);
 }
 
+export async function removeEnterpriseFromTeamMemberWithApi(
+  memberId: string,
+  enterpriseId: string,
+  token: string
+): Promise<TeamMember> {
+  const response = await requestJson<MobileTeamMemberEnvelope>(
+    `/api/mobile/team/${memberId}/enterprises/${enterpriseId}`,
+    {
+      method: "DELETE",
+      token,
+    }
+  );
+
+  if (!response?.member || typeof response.member !== "object") {
+    throw new Error("INVALID_TEAM_MEMBER_PAYLOAD");
+  }
+
+  return normalizeTeamMember(response.member);
+}
+
 export async function getEnterpriseOptionsWithApi(token: string): Promise<TeamEnterpriseOption[]> {
   const response = await requestJson<MobileEnterpriseOptionsEnvelope>("/api/mobile/enterprises", {
     method: "GET",
@@ -159,6 +238,39 @@ export async function getEnterpriseOptionsWithApi(token: string): Promise<TeamEn
     }));
 }
 
+export async function createMobileAccessForTeamMemberWithApi(
+  memberId: string,
+  token: string,
+  payload: CreateTeamAccessPayload
+): Promise<{ user: TeamCreatedAccess; member: TeamMember }> {
+  const response = await requestJson<MobileCreateAccessEnvelope>(`/api/mobile/team/${memberId}/access`, {
+    method: "POST",
+    token,
+    body: payload,
+  });
+
+  if (
+    !response ||
+    !response.member ||
+    typeof response.member !== "object" ||
+    !response.user ||
+    typeof response.user !== "object"
+  ) {
+    throw new Error("INVALID_TEAM_ACCESS_PAYLOAD");
+  }
+
+  return {
+    user: {
+      id: String(response.user.id ?? ""),
+      username: String(response.user.username ?? ""),
+      name: String(response.user.name ?? ""),
+      role: response.user.role,
+      active: response.user.active === true,
+    },
+    member: normalizeTeamMember(response.member),
+  };
+}
+
 export async function getTeamByRoleFallback(role: TeamMemberRole): Promise<TeamMember[]> {
   if (role === "CORRETOR") {
     return [];
@@ -167,6 +279,7 @@ export async function getTeamByRoleFallback(role: TeamMemberRole): Promise<TeamM
   return TEAM_MEMBERS_MOCK.map((member) => ({
     ...member,
     phone: member.phone ?? null,
+    mobileAccess: member.mobileAccess ?? null,
     enterprises: member.enterprises.map((enterprise) => ({
       enterpriseId: enterprise.enterpriseId,
       enterpriseName: enterprise.enterpriseName,

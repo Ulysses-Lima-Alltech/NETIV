@@ -1,5 +1,12 @@
 export type TeamMemberRole = "CORRETOR" | "GESTOR" | "ADM";
 
+export type TeamMobileAccess = {
+  id: string;
+  username: string;
+  role: TeamMemberRole;
+  active: boolean;
+};
+
 export type TeamEnterprise = {
   enterpriseId: string;
   enterpriseName: string;
@@ -13,6 +20,7 @@ export type TeamMember = {
   phone: string | null;
   role: TeamMemberRole;
   active: boolean;
+  mobileAccess: TeamMobileAccess | null;
   enterprises: TeamEnterprise[];
 };
 

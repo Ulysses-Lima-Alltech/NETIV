@@ -17,14 +17,17 @@ import { StatusBadge } from "../../src/components/StatusBadge";
 import { ApiRequestError } from "../../src/services/api";
 import {
   addEnterpriseToTeamMemberWithApi,
+  createMobileAccessForTeamMemberWithApi,
   getEnterpriseOptionsWithApi,
   getTeamWithApi,
+  removeEnterpriseFromTeamMemberWithApi,
   updateTeamMemberWithApi,
+  type CreateTeamAccessPayload,
   type TeamEnterpriseOption,
 } from "../../src/services/team.service";
 import { useAuthStore } from "../../src/stores/auth.store";
 import { colors, radius, shadows, spacing, typography } from "../../src/theme";
-import { TeamMember } from "../../src/types/team.types";
+import { TeamEnterprise, TeamMember } from "../../src/types/team.types";
 
 export default function TeamScreen() {
   const user = useAuthStore((state) => state.user);
@@ -42,21 +45,61 @@ export default function TeamScreen() {
   const [editActive, setEditActive] = useState(true);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
-  const [linkMember, setLinkMember] = useState<TeamMember | null>(null);
+  const [manageMember, setManageMember] = useState<TeamMember | null>(null);
   const [enterpriseOptions, setEnterpriseOptions] = useState<TeamEnterpriseOption[]>([]);
   const [isLoadingEnterprises, setIsLoadingEnterprises] = useState(false);
-  const [selectedEnterpriseId, setSelectedEnterpriseId] = useState<string | null>(null);
-  const [isSavingLink, setIsSavingLink] = useState(false);
+  const [actionInProgressKey, setActionInProgressKey] = useState<string | null>(null);
+
+  const [accessMember, setAccessMember] = useState<TeamMember | null>(null);
+  const [accessUsername, setAccessUsername] = useState("");
+  const [accessPassword, setAccessPassword] = useState("");
+  const [accessRole, setAccessRole] = useState<"CORRETOR" | "GESTOR">("CORRETOR");
+  const [accessActive, setAccessActive] = useState(true);
+  const [isCreatingAccess, setIsCreatingAccess] = useState(false);
 
   useEffect(() => {
     void loadTeam();
   }, [token, role]);
 
-  const availableEnterprisesForMember = useMemo(() => {
-    if (!linkMember) return [];
-    const linkedIds = new Set(linkMember.enterprises.map((enterprise) => enterprise.enterpriseId));
+  const linkedEnterprises = useMemo(() => {
+    return manageMember?.enterprises ?? [];
+  }, [manageMember]);
+
+  const availableEnterprises = useMemo(() => {
+    if (!manageMember) return [];
+    const linkedIds = new Set(manageMember.enterprises.map((enterprise) => enterprise.enterpriseId));
     return enterpriseOptions.filter((option) => !linkedIds.has(option.id));
-  }, [enterpriseOptions, linkMember]);
+  }, [enterpriseOptions, manageMember]);
+
+  function canRemoveLinkedEnterprise(enterprise: TeamEnterprise): boolean {
+    if (role === "ADM") return true;
+    return enterprise.manageable === true;
+  }
+
+  function openCreateAccessModal(member: TeamMember) {
+    const suggestedUsername = member.name
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ".")
+      .replace(/^\.+|\.+$/g, "")
+      .slice(0, 30);
+
+    setAccessMember(member);
+    setAccessUsername(suggestedUsername || "");
+    setAccessPassword("");
+    setAccessRole("CORRETOR");
+    setAccessActive(true);
+  }
+
+  function closeCreateAccessModal(force = false) {
+    if (isCreatingAccess && !force) return;
+    setAccessMember(null);
+    setAccessUsername("");
+    setAccessPassword("");
+    setAccessRole("CORRETOR");
+    setAccessActive(true);
+  }
 
   async function loadTeam() {
     setIsLoading(true);
@@ -82,6 +125,16 @@ export default function TeamScreen() {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  async function refreshTeamAndManagedMember(memberId?: string) {
+    if (!token) return;
+    const members = await getTeamWithApi(token);
+    setTeam(members);
+
+    if (!memberId) return;
+    const updated = members.find((member) => member.id === memberId) ?? null;
+    setManageMember(updated);
   }
 
   function openEditModal(member: TeamMember) {
@@ -129,6 +182,48 @@ export default function TeamScreen() {
     }
   }
 
+  async function handleCreateMobileAccess() {
+    if (!token || !accessMember) return;
+    const username = accessUsername.trim().toLowerCase();
+    const temporaryPassword = accessPassword.trim();
+
+    if (!username) {
+      Alert.alert("Login obrigatorio", "Informe o usuario/login para criar o acesso.");
+      return;
+    }
+
+    if (!temporaryPassword) {
+      Alert.alert("Senha obrigatoria", "Informe a senha temporaria para criar o acesso.");
+      return;
+    }
+
+    const payload: CreateTeamAccessPayload = {
+      username,
+      temporaryPassword,
+      role: accessRole,
+      active: accessActive,
+    };
+
+    setIsCreatingAccess(true);
+    try {
+      const result = await createMobileAccessForTeamMemberWithApi(accessMember.id, token, payload);
+      closeCreateAccessModal(true);
+      await loadTeam();
+      Alert.alert(
+        "Acesso criado",
+        `Acesso mobile criado para ${result.user.name} (${result.user.username}). Compartilhe a senha temporaria com seguranca.`
+      );
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        Alert.alert("Falha ao criar acesso", error.message || "Nao foi possivel criar o acesso mobile.");
+      } else {
+        Alert.alert("Falha ao criar acesso", "Nao foi possivel criar o acesso mobile.");
+      }
+    } finally {
+      setIsCreatingAccess(false);
+    }
+  }
+
   async function handleToggleActive(memberId: string) {
     if (!token) {
       Alert.alert("Sessao invalida", "Faca login novamente para editar membros.");
@@ -155,15 +250,16 @@ export default function TeamScreen() {
     }
   }
 
-  async function openAddEnterpriseModal(member: TeamMember) {
+  async function openManageEnterprisesModal(member: TeamMember) {
     if (!token) {
-      Alert.alert("Sessao invalida", "Faca login novamente para vincular empreendimentos.");
+      Alert.alert("Sessao invalida", "Faca login novamente para gerenciar empreendimentos.");
       return;
     }
 
-    setLinkMember(member);
-    setSelectedEnterpriseId(null);
+    setManageMember(member);
+    setActionInProgressKey(null);
     setIsLoadingEnterprises(true);
+
     try {
       const options = await getEnterpriseOptionsWithApi(token);
       setEnterpriseOptions(options);
@@ -179,26 +275,22 @@ export default function TeamScreen() {
     }
   }
 
-  function closeAddEnterpriseModal() {
-    if (isSavingLink) return;
-    setLinkMember(null);
-    setSelectedEnterpriseId(null);
+  function closeManageEnterprisesModal() {
+    if (actionInProgressKey != null) return;
+    setManageMember(null);
     setEnterpriseOptions([]);
+    setIsLoadingEnterprises(false);
+    setActionInProgressKey(null);
   }
 
-  async function handleConfirmAddEnterprise() {
-    if (!token || !linkMember) return;
-    if (!selectedEnterpriseId) {
-      Alert.alert("Selecao obrigatoria", "Escolha um empreendimento antes de confirmar.");
-      return;
-    }
-
-    setIsSavingLink(true);
+  async function handleAddEnterpriseExplicit(enterpriseId: string) {
+    if (!token || !manageMember) return;
+    const actionKey = `add:${enterpriseId}`;
+    setActionInProgressKey(actionKey);
     try {
-      await addEnterpriseToTeamMemberWithApi(linkMember.id, selectedEnterpriseId, token);
-      closeAddEnterpriseModal();
+      await addEnterpriseToTeamMemberWithApi(manageMember.id, enterpriseId, token);
+      await refreshTeamAndManagedMember(manageMember.id);
       Alert.alert("Vinculo adicionado", "Empreendimento vinculado com sucesso.");
-      await loadTeam();
     } catch (error) {
       if (error instanceof ApiRequestError) {
         Alert.alert("Falha no vinculo", error.message || "Nao foi possivel vincular empreendimento.");
@@ -206,7 +298,37 @@ export default function TeamScreen() {
         Alert.alert("Falha no vinculo", "Nao foi possivel vincular empreendimento.");
       }
     } finally {
-      setIsSavingLink(false);
+      setActionInProgressKey(null);
+    }
+  }
+
+  async function handleRemoveEnterpriseExplicit(enterpriseId: string) {
+    if (!token || !manageMember) return;
+    const enterprise = manageMember.enterprises.find((item) => item.enterpriseId === enterpriseId);
+    if (!enterprise) return;
+
+    if (!canRemoveLinkedEnterprise(enterprise)) {
+      Alert.alert(
+        "Sem permissao para remover",
+        "Este vinculo esta fora da sua area gerenciavel e nao pode ser removido por este perfil."
+      );
+      return;
+    }
+
+    const actionKey = `remove:${enterpriseId}`;
+    setActionInProgressKey(actionKey);
+    try {
+      await removeEnterpriseFromTeamMemberWithApi(manageMember.id, enterpriseId, token);
+      await refreshTeamAndManagedMember(manageMember.id);
+      Alert.alert("Vinculo removido", "Empreendimento removido com sucesso.");
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        Alert.alert("Falha ao remover", error.message || "Nao foi possivel remover o vinculo.");
+      } else {
+        Alert.alert("Falha ao remover", "Nao foi possivel remover o vinculo.");
+      }
+    } finally {
+      setActionInProgressKey(null);
     }
   }
 
@@ -269,20 +391,31 @@ export default function TeamScreen() {
                         label={member.active ? "Ativo" : "Inativo"}
                         tone={member.active ? "success" : "warning"}
                       />
+                      {member.mobileAccess ? (
+                        <StatusBadge
+                          label={member.mobileAccess.active ? "Acesso ativo" : "Acesso inativo"}
+                          tone={member.mobileAccess.active ? "success" : "warning"}
+                        />
+                      ) : (
+                        <StatusBadge label="Sem acesso mobile" tone="neutral" />
+                      )}
                     </View>
                   </View>
 
-                  <View style={styles.enterpriseList}>
-                    {member.enterprises.map((enterprise) => {
-                      const tone = enterprise.manageable ? "success" : "neutral";
+                  {member.mobileAccess ? (
+                    <Text style={styles.accessInfoText}>Login mobile: {member.mobileAccess.username}</Text>
+                  ) : null}
 
-                      return (
-                        <View key={`${member.id}-${enterprise.enterpriseId}`} style={styles.enterpriseRow}>
-                          <Text style={styles.enterpriseName}>{enterprise.enterpriseName}</Text>
-                          <StatusBadge label={enterprise.label ?? "Sem status"} tone={tone} />
-                        </View>
-                      );
-                    })}
+                  <View style={styles.enterpriseList}>
+                    {member.enterprises.map((enterprise) => (
+                      <View key={`${member.id}-${enterprise.enterpriseId}`} style={styles.enterpriseRow}>
+                        <Text style={styles.enterpriseName}>{enterprise.enterpriseName}</Text>
+                        <StatusBadge
+                          label={enterprise.manageable ? "Gerenciavel" : "Somente visualizacao"}
+                          tone={enterprise.manageable ? "success" : "neutral"}
+                        />
+                      </View>
+                    ))}
                   </View>
 
                   <View style={styles.actionsRow}>
@@ -314,13 +447,27 @@ export default function TeamScreen() {
                         styles.actionButtonOutline,
                         isSubmitting && styles.actionButtonDisabled,
                       ]}
-                      onPress={() => openAddEnterpriseModal(member)}
+                      onPress={() => openManageEnterprisesModal(member)}
                       disabled={isSubmitting}
                     >
                       <Text style={[styles.actionButtonText, styles.actionButtonTextOutline]}>
-                        Adicionar empreendimento
+                        Gerenciar empreendimentos
                       </Text>
                     </Pressable>
+
+                    {role === "ADM" && !member.mobileAccess && member.id.startsWith("corretor:") ? (
+                      <Pressable
+                        style={[
+                          styles.actionButton,
+                          styles.actionButtonSuccess,
+                          isSubmitting && styles.actionButtonDisabled,
+                        ]}
+                        onPress={() => openCreateAccessModal(member)}
+                        disabled={isSubmitting}
+                      >
+                        <Text style={styles.actionButtonText}>Criar acesso</Text>
+                      </Pressable>
+                    ) : null}
                   </View>
 
                   {!isAdminView ? (
@@ -382,64 +529,203 @@ export default function TeamScreen() {
         </View>
       </Modal>
 
-      <Modal visible={linkMember != null} transparent animationType="fade" onRequestClose={closeAddEnterpriseModal}>
+      <Modal visible={accessMember != null} transparent animationType="fade" onRequestClose={() => closeCreateAccessModal()}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Adicionar empreendimento</Text>
-            <Text style={styles.modalSubtitle}>Escolha explicitamente o empreendimento para vincular.</Text>
+            <Text style={styles.modalTitle}>Criar acesso mobile</Text>
+            <Text style={styles.modalSubtitle}>
+              Crie login para {accessMember?.name ?? "o membro selecionado"}. A senha informada sera temporaria.
+            </Text>
+
+            <Text style={styles.inputLabel}>Usuario/login</Text>
+            <TextInput
+              value={accessUsername}
+              onChangeText={setAccessUsername}
+              style={styles.input}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="ex.: marcelo"
+            />
+
+            <Text style={styles.inputLabel}>Senha temporaria</Text>
+            <TextInput
+              value={accessPassword}
+              onChangeText={setAccessPassword}
+              style={styles.input}
+              placeholder="Senha temporaria"
+              secureTextEntry
+            />
+
+            <Text style={styles.inputLabel}>Papel de acesso</Text>
+            <View style={styles.roleSelectorRow}>
+              <Pressable
+                style={[
+                  styles.roleOption,
+                  accessRole === "CORRETOR" ? styles.roleOptionActive : styles.roleOptionInactive,
+                ]}
+                onPress={() => setAccessRole("CORRETOR")}
+                disabled={isCreatingAccess}
+              >
+                <Text
+                  style={[
+                    styles.roleOptionText,
+                    accessRole === "CORRETOR" ? styles.roleOptionTextActive : styles.roleOptionTextInactive,
+                  ]}
+                >
+                  CORRETOR
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.roleOption,
+                  accessRole === "GESTOR" ? styles.roleOptionActive : styles.roleOptionInactive,
+                ]}
+                onPress={() => setAccessRole("GESTOR")}
+                disabled={isCreatingAccess}
+              >
+                <Text
+                  style={[
+                    styles.roleOptionText,
+                    accessRole === "GESTOR" ? styles.roleOptionTextActive : styles.roleOptionTextInactive,
+                  ]}
+                >
+                  GESTOR
+                </Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.switchRow}>
+              <Text style={styles.switchLabel}>Acesso ativo</Text>
+              <Switch value={accessActive} onValueChange={setAccessActive} disabled={isCreatingAccess} />
+            </View>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={[styles.modalButton, styles.modalButtonCancel]}
+                onPress={() => closeCreateAccessModal()}
+                disabled={isCreatingAccess}
+              >
+                <Text style={styles.modalButtonCancelText}>Cancelar</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalButton, styles.modalButtonConfirm, isCreatingAccess && styles.actionButtonDisabled]}
+                onPress={handleCreateMobileAccess}
+                disabled={isCreatingAccess}
+              >
+                {isCreatingAccess ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalButtonConfirmText}>Criar acesso</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={manageMember != null}
+        transparent
+        animationType="fade"
+        onRequestClose={closeManageEnterprisesModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCardLarge}>
+            <Text style={styles.modalTitle}>Gerenciar empreendimentos</Text>
+            <Text style={styles.modalSubtitle}>
+              Adicione e remova vinculos explicitamente para {manageMember?.name ?? "o membro selecionado"}.
+            </Text>
 
             {isLoadingEnterprises ? (
               <View style={styles.modalLoading}>
                 <ActivityIndicator size="small" color={colors.orange} />
                 <Text style={styles.loadingText}>Carregando empreendimentos</Text>
               </View>
-            ) : availableEnterprisesForMember.length === 0 ? (
-              <EmptyState
-                icon="office-building-outline"
-                title="Nenhum empreendimento disponivel"
-                description="Todos os empreendimentos disponiveis ja estao vinculados a este membro."
-              />
             ) : (
-              <ScrollView style={styles.enterpriseOptionsList}>
-                {availableEnterprisesForMember.map((option) => {
-                  const selected = selectedEnterpriseId === option.id;
-                  return (
-                    <Pressable
-                      key={option.id}
-                      style={[styles.enterpriseOptionRow, selected ? styles.enterpriseOptionRowSelected : null]}
-                      onPress={() => setSelectedEnterpriseId(option.id)}
-                    >
-                      <View style={styles.enterpriseOptionTextWrap}>
-                        <Text style={styles.enterpriseOptionTitle}>{option.name}</Text>
-                        <Text style={styles.enterpriseOptionMeta}>
-                          {option.active ? "Ativo" : "Inativo"}
-                        </Text>
+              <ScrollView style={styles.managementScroll}>
+                <Text style={styles.sectionTitle}>Vinculados</Text>
+                {linkedEnterprises.length === 0 ? (
+                  <Text style={styles.emptyInlineText}>Este membro ainda nao possui empreendimentos vinculados.</Text>
+                ) : (
+                  linkedEnterprises.map((enterprise) => {
+                    const canRemove = canRemoveLinkedEnterprise(enterprise);
+                    const removeKey = `remove:${enterprise.enterpriseId}`;
+                    const removing = actionInProgressKey === removeKey;
+                    return (
+                      <View key={`linked-${enterprise.enterpriseId}`} style={styles.managementRow}>
+                        <View style={styles.managementTextWrap}>
+                          <Text style={styles.managementTitle}>{enterprise.enterpriseName}</Text>
+                          <Text style={styles.managementMeta}>
+                            {enterprise.manageable ? "Gerenciavel" : "Somente visualizacao"}
+                          </Text>
+                        </View>
+                        <View style={styles.managementActions}>
+                          <StatusBadge
+                            label={enterprise.manageable ? "Gerenciavel" : "Somente visualizacao"}
+                            tone={enterprise.manageable ? "success" : "neutral"}
+                          />
+                          {canRemove ? (
+                            <Pressable
+                              style={[styles.smallActionButton, styles.smallActionRemove, removing && styles.actionButtonDisabled]}
+                              onPress={() => handleRemoveEnterpriseExplicit(enterprise.enterpriseId)}
+                              disabled={actionInProgressKey != null}
+                            >
+                              {removing ? (
+                                <ActivityIndicator size="small" color="#FFFFFF" />
+                              ) : (
+                                <Text style={styles.smallActionText}>Remover</Text>
+                              )}
+                            </Pressable>
+                          ) : (
+                            <Text style={styles.lockedText}>Nao gerenciavel</Text>
+                          )}
+                        </View>
                       </View>
-                      <StatusBadge label={selected ? "Selecionado" : "Selecionar"} tone={selected ? "info" : "neutral"} />
-                    </Pressable>
-                  );
-                })}
+                    );
+                  })
+                )}
+
+                <Text style={[styles.sectionTitle, styles.sectionTitleSpacing]}>Disponiveis para adicionar</Text>
+                {availableEnterprises.length === 0 ? (
+                  <Text style={styles.emptyInlineText}>Nao ha empreendimentos disponiveis para adicionar.</Text>
+                ) : (
+                  availableEnterprises.map((option) => {
+                    const addKey = `add:${option.id}`;
+                    const adding = actionInProgressKey === addKey;
+                    return (
+                      <View key={`available-${option.id}`} style={styles.managementRow}>
+                        <View style={styles.managementTextWrap}>
+                          <Text style={styles.managementTitle}>{option.name}</Text>
+                          <Text style={styles.managementMeta}>{option.active ? "Ativo" : "Inativo"}</Text>
+                        </View>
+                        <View style={styles.managementActions}>
+                          <StatusBadge label={option.active ? "Ativo" : "Inativo"} tone={option.active ? "success" : "warning"} />
+                          <Pressable
+                            style={[styles.smallActionButton, styles.smallActionAdd, adding && styles.actionButtonDisabled]}
+                            onPress={() => handleAddEnterpriseExplicit(option.id)}
+                            disabled={actionInProgressKey != null}
+                          >
+                            {adding ? (
+                              <ActivityIndicator size="small" color="#FFFFFF" />
+                            ) : (
+                              <Text style={styles.smallActionText}>Adicionar</Text>
+                            )}
+                          </Pressable>
+                        </View>
+                      </View>
+                    );
+                  })
+                )}
               </ScrollView>
             )}
 
             <View style={styles.modalActions}>
               <Pressable
                 style={[styles.modalButton, styles.modalButtonCancel]}
-                onPress={closeAddEnterpriseModal}
-                disabled={isSavingLink}
+                onPress={closeManageEnterprisesModal}
+                disabled={actionInProgressKey != null}
               >
-                <Text style={styles.modalButtonCancelText}>Cancelar</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.modalButton, styles.modalButtonConfirm, isSavingLink && styles.actionButtonDisabled]}
-                onPress={handleConfirmAddEnterprise}
-                disabled={isSavingLink || !selectedEnterpriseId}
-              >
-                {isSavingLink ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.modalButtonConfirmText}>Confirmar</Text>
-                )}
+                <Text style={styles.modalButtonCancelText}>Fechar</Text>
               </Pressable>
             </View>
           </View>
@@ -572,6 +858,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  actionButtonSuccess: {
+    backgroundColor: colors.green,
+  },
   actionButtonText: {
     ...typography.caption,
     color: "#FFFFFF",
@@ -585,6 +874,13 @@ const styles = StyleSheet.create({
     color: colors.navy,
   },
   helpText: {
+    ...typography.caption,
+    color: colors.muted,
+    fontSize: 10,
+    lineHeight: 14,
+    marginTop: 2,
+  },
+  accessInfoText: {
     ...typography.caption,
     color: colors.muted,
     fontSize: 10,
@@ -612,6 +908,15 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     ...shadows.card,
     maxHeight: "85%",
+  },
+  modalCardLarge: {
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    ...shadows.card,
+    maxHeight: "88%",
   },
   modalTitle: {
     ...typography.cardTitle,
@@ -648,6 +953,38 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  roleSelectorRow: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    marginTop: 2,
+  },
+  roleOption: {
+    flex: 1,
+    minHeight: 36,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.sm,
+  },
+  roleOptionActive: {
+    backgroundColor: colors.navy,
+    borderColor: colors.navy,
+  },
+  roleOptionInactive: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+  },
+  roleOptionText: {
+    ...typography.caption,
+    fontWeight: "700",
+  },
+  roleOptionTextActive: {
+    color: "#FFFFFF",
+  },
+  roleOptionTextInactive: {
+    color: colors.navy,
   },
   switchLabel: {
     ...typography.body,
@@ -691,10 +1028,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.xs,
   },
-  enterpriseOptionsList: {
-    maxHeight: 280,
+  managementScroll: {
+    maxHeight: 430,
   },
-  enterpriseOptionRow: {
+  sectionTitle: {
+    ...typography.cardTitle,
+    color: colors.navy,
+    fontSize: 14,
+    lineHeight: 19,
+    marginBottom: spacing.xs,
+  },
+  sectionTitleSpacing: {
+    marginTop: spacing.sm,
+  },
+  emptyInlineText: {
+    ...typography.caption,
+    color: colors.muted,
+    marginBottom: spacing.xs,
+  },
+  managementRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -707,24 +1059,51 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     marginBottom: 6,
   },
-  enterpriseOptionRowSelected: {
-    borderColor: colors.navy,
-    backgroundColor: colors.blueSoft,
-  },
-  enterpriseOptionTextWrap: {
+  managementTextWrap: {
     flex: 1,
   },
-  enterpriseOptionTitle: {
+  managementTitle: {
     ...typography.body,
     color: colors.text,
     fontSize: 12,
     lineHeight: 16,
     fontWeight: "700",
   },
-  enterpriseOptionMeta: {
+  managementMeta: {
     ...typography.caption,
     color: colors.muted,
     marginTop: 2,
     fontSize: 10,
+  },
+  managementActions: {
+    alignItems: "flex-end",
+    gap: 5,
+  },
+  smallActionButton: {
+    minHeight: 30,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  smallActionAdd: {
+    backgroundColor: colors.navy,
+  },
+  smallActionRemove: {
+    backgroundColor: colors.red,
+  },
+  smallActionText: {
+    ...typography.caption,
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 10,
+    lineHeight: 13,
+  },
+  lockedText: {
+    ...typography.caption,
+    color: colors.muted,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "700",
   },
 });
