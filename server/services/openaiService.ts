@@ -1,4 +1,4 @@
-import {
+﻿import {
   classifyLlmProviderError,
   detectLlmProvider,
   sanitizeProviderErrorMessage,
@@ -176,13 +176,34 @@ async function recordLlmUsage(params: {
 }
 
 export async function generateChatCompletion(params: GenerateCompletionParams): Promise<GenerateCompletionResult> {
-  const { apiKey, baseUrl, model, messages, temperature, maxTokens, responseFormatJson } = params;
+  let { apiKey, baseUrl, model, messages, temperature, maxTokens, responseFormatJson } = params;
+
+  const localLlmEnabled = String(process.env.ANA_LOCAL_LLM_ENABLED || '').trim().toLowerCase() === 'true';
+
+  if (localLlmEnabled) {
+    apiKey = process.env.ANA_LOCAL_LLM_API_KEY || 'ollama';
+    baseUrl = process.env.ANA_LOCAL_LLM_BASE_URL || 'http://localhost:11434/v1';
+    model = process.env.ANA_LOCAL_LLM_MODEL || model;
+    temperature = Number(process.env.ANA_LOCAL_LLM_TEMPERATURE || temperature || 0.2);
+    maxTokens = Number(process.env.ANA_LOCAL_LLM_MAX_TOKENS || maxTokens || 800);
+
+    console.log('[ANA_LOCAL_LLM_OVERRIDE]', {
+      enabled: true,
+      baseUrl,
+      model,
+      temperature,
+      maxTokens,
+    });
+  }
   const url = (baseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '') + '/chat/completions';
   const provider = detectLlmProvider(baseUrl);
   const startedAt = Date.now();
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const requestTimeoutMs = localLlmEnabled
+    ? Number(process.env.ANA_LOCAL_LLM_TIMEOUT_MS || 120000)
+    : REQUEST_TIMEOUT_MS;
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
 
   const usesMaxCompletionTokensOnly = usesMaxCompletionTokens(model);
   const body: Record<string, unknown> = {
@@ -389,3 +410,4 @@ export async function generateChatCompletion(params: GenerateCompletionParams): 
     };
   }
 }
+

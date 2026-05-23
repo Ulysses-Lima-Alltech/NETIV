@@ -47,6 +47,27 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
 
   if (isEntregaEmpreendimentoIntent(n)) return 'entrega_empreendimento';
   if (isValorCondominioIntent(n)) return 'valor_condominio';
+  if (
+    hasAny(n, [
+      /\b(qual o tamanho dos lotes|tamanho dos lotes|qual o tamanho do lote|qual a metragem dos lotes|metragem dos lotes|lotes? a partir de quantos m2)\b/,
+      /\b(lote|lotes)\b[\s\S]{0,24}\b(m2|m²|metro quadrado|metros quadrados|metragem|tamanho)\b/,
+    ])
+  ) {
+    return 'tamanho_lotes';
+  }
+  if (hasAny(n, [/\b(portaria|controle de acesso)\b/, /\btem seguranca\b.*\b24 horas\b/])) {
+    return 'portaria';
+  }
+  if (hasAny(n, [/\b(tem seguranca|seguranca|e seguro|empreendimento seguro)\b/])) {
+    return 'seguranca';
+  }
+  if (
+    hasAny(n, [
+      /\b(lazer|area de lazer|área de lazer|piscina|academia|salao de festas|salão de festas|playground|coworking|espaco zen|espaço zen|fireplace|beach tennis|campo society)\b/,
+    ])
+  ) {
+    return 'lazer';
+  }
 
   if (hasAny(n, [/\b(qual o preco|quero saber preco|queria saber preco|quanto custa|qual o valor|valor dos lotes|quanto e o lote|a partir de quanto)\b/])) {
     return 'preco_valor_lote';
@@ -56,7 +77,7 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
     return 'entrada';
   }
 
-  if (hasAny(n, [/\b(formas de pagamento|como posso pagar|tem parcelamento|quais as condicoes|condicoes de pagamento|como funciona o pagamento)\b/])) {
+  if (hasAny(n, [/\b(formas de pagamento|como posso pagar|tem parcelamento|tem parcelas|quais as condicoes|condicoes de pagamento|como funciona o pagamento|opcoes de pagamento|planos de pagamento)\b/])) {
     return 'formas_pagamento';
   }
 
@@ -72,7 +93,7 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
     return 'visita_agendamento';
   }
 
-  if (hasAny(n, [/\b(quais lotes disponiveis|tem desconto|qual parcela fica|faz simulacao|tem lote de quanto|qual unidade disponivel|qual lote tem|tem algum lote disponivel)\b/])) {
+  if (hasAny(n, [/\b(quais lotes disponiveis|tem desconto|desconto|negociar|negociacao|qual parcela fica|quanto fica a parcela|faz simulacao|fazer uma simulacao|consigo fazer uma simulacao|simulacao|simular|pre simulacao|tem lote de quanto|qual unidade disponivel|qual lote tem|tem algum lote disponivel)\b/])) {
     return 'disponibilidade_simulacao_desconto';
   }
 

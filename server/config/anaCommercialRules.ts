@@ -1,9 +1,13 @@
 ﻿export type AnaCommercialIntent =
   | 'first_contact'
   | 'preco_valor_lote'
+  | 'tamanho_lotes'
   | 'entrada'
   | 'formas_pagamento'
   | 'financiamento'
+  | 'seguranca'
+  | 'lazer'
+  | 'portaria'
   | 'localizacao_endereco'
   | 'visita_agendamento'
   | 'entrega_empreendimento'
@@ -23,17 +27,29 @@ export const ANA_COMMERCIAL_RULES = {
     preco_valor_lote: [
       'O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.',
     ],
+    tamanho_lotes: [
+      'Os lotes do Évora são a partir de 360 m².',
+    ],
     entrada: [
       'A entrada mínima é de 20% do valor do lote. O valor exato depende da unidade escolhida.',
       'O corretor consegue simular certinho com as opções disponíveis. Quer que eu te ajude a agendar uma visita?',
     ],
     formas_pagamento: [
-      'Temos algumas formas de pagamento que podem se encaixar na sua realidade. Para parcelas mais baixas, existem planos estendidos em até 120x. Para parcelamento sem juros, há opções em até 48x.',
-      'Você quer que eu te ajude a simular com um corretor ou prefere agendar uma visita?',
+      'Temos formas de pagamento que podem se encaixar na sua realidade: planos estendidos em até 120x para parcelas mais baixas e parcelamento sem juros em até 48x.',
+      'O financiamento é direto com a construtora, com menos burocracia e mais facilidade pra você.',
     ],
     financiamento: [
       'O financiamento é facilitado por ser direto com a construtora, com menos burocracia e mais facilidade pra você.',
-      'Quer que eu te ajude a simular com um corretor?',
+      'A simulação certinha depende do lote e do plano escolhido. O corretor te passa tudo direitinho no atendimento. Que tal marcarmos uma visita?',
+    ],
+    seguranca: [
+      'Sim. O Évora conta com segurança 24 horas e portaria com controle de acesso.',
+    ],
+    lazer: [
+      'O Évora conta com lazer completo: piscina adulto, academia, salão de festas, playground, coworking, espaço zen, fireplace, quadra de beach tennis e campo society.',
+    ],
+    portaria: [
+      'Sim. O Évora tem portaria 24 horas com controle de acesso para garantir a segurança dos moradores.',
     ],
     localizacao_endereco: [
       'O Évora fica na Estrada dos Pires, s/n, bairro Rio Abaixo, em Atibaia. Fica próximo à região da Pedreira, com acesso pela Rodovia Dom Pedro I.',
@@ -49,10 +65,10 @@ export const ANA_COMMERCIAL_RULES = {
       'O valor de condomínio vai depender das definições feitas pelos próprios moradores e associação do condomínio, mas temos uma estimativa entre R$400,00 e R$700,00.',
     ],
     disponibilidade_simulacao_desconto: [
-      'Esses detalhes variam conforme as opções disponíveis. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?',
+      'A simulação certinha depende do lote e do plano escolhido. O corretor te passa tudo direitinho no atendimento. Que tal marcarmos uma visita?',
     ],
     materiais: [
-      'Não tenho esse material liberado para envio por aqui. Tem algum detalhe específico que você gostaria de tratar?',
+      'A tabela comercial é enviada pelo corretor, mas posso te enviar o Book do Évora com as principais informações. Quer que eu envie?',
     ],
   } satisfies Record<Exclude<AnaCommercialIntent, 'first_contact'>, string[]>,
   followupWhileNoResponseMessages: [

@@ -934,13 +934,37 @@ function hasAnaInternalInstructionLeak(text: string): boolean {
   return ANA_INTERNAL_LEAK_PATTERNS.some((re) => re.test(normalized));
 }
 
+function sanitizeAnaInternalInstructionLeak(text: string): { text: string; changed: boolean } {
+  const raw = (text || '').trim();
+  if (!raw) return { text: raw, changed: false };
+  const parts = raw.split(/(?<=[.!?…])\s+|\r?\n+/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return { text: raw, changed: false };
+  let changed = false;
+  const kept = parts.filter((part) => {
+    const leaked = hasAnaInternalInstructionLeak(part);
+    if (leaked) changed = true;
+    return !leaked;
+  });
+  if (!changed) return { text: raw, changed: false };
+  const cleaned = kept.join(' ').replace(/\s{2,}/g, ' ').trim();
+  return { text: cleaned, changed: true };
+}
+
 function isEvoraLocationQuestion(userMessage: string): boolean {
   const n = normText(userMessage || '');
   if (!n) return false;
-  const asksLocation =
-    /\b(onde fica|localizacao|localizacao do|fica onde|qual o endereco|endereco|acesso)\b/.test(n) ||
-    /\b(evora)\b/.test(n);
-  return asksLocation && /\bevora\b/.test(n);
+
+  const hasLocationIntent =
+    /\b(onde fica|fica onde|localizacao|localizacao do|qual o endereco|endereco|bairro|cidade|regiao|rodovia|dom pedro|pedreira)\b/.test(n) ||
+    /\b(como chegar|como chego|rota|caminho)\b/.test(n) ||
+    /\b(perto de|proximo a|proxima a|distancia|fica perto|fica em|esta localizado|esta localizada|localizado em|localizada em)\b/.test(n);
+
+  const hasNonLocationIntent =
+    /\b(lazer|playground|quadra|churrasco|salao|piscina|seguranca|portaria|valor|preco|entrada|parcela|desconto|tabela|financ|lote|terreno|metragem|tamanho|foto|book|material|documentacao|reserva|simulacao)\b/.test(n);
+
+  if (hasNonLocationIntent && !hasLocationIntent) return false;
+
+  return hasLocationIntent;
 }
 
 const EVORA_LOCATION_REPLY_CHUNKS = [
@@ -1077,6 +1101,9 @@ type MaterialFlowFailureReason =
   | 'enterprise_not_resolved'
   | 'material_type_not_resolved'
   | 'no_pending_material_context'
+  | 'policy_table_requires_broker'
+  | 'policy_visual_material_unavailable'
+  | 'policy_material_text_fallback'
   | 'outbound_send_failed'
   | 'llm_bypassed'
   | 'guard_blocked_promise_without_send';
@@ -1111,6 +1138,7 @@ type MaterialRequestTurnResult =
       handled: true;
       status: MaterialRequestTurnStatus;
       log: MaterialFlowLogPayload;
+      textFallbackSent?: boolean;
     };
 
 /**
@@ -1335,6 +1363,29 @@ async function sendMaterialFlowTextMessage(params: {
   return true;
 }
 
+function isTableCommercialMaterialRequest(userMessage: string): boolean {
+  const n = normText(userMessage || '');
+  if (!n) return false;
+  return /\b(tabela(?:\s+comercial)?|planilha|lista de precos?|tabela de precos?)\b/.test(n);
+}
+
+function isVisualMaterialRequest(userMessage: string): boolean {
+  const n = normText(userMessage || '');
+  if (!n) return false;
+  return /\b(foto|fotos|imagem|imagens|video|videos)\b/.test(n);
+}
+
+function buildTableCommercialFallbackText(enterpriseName: string, hasSendableBook: boolean): string {
+  if (hasSendableBook) {
+    return `A tabela comercial é enviada pelo corretor, mas posso te enviar o Book do ${enterpriseName} com os principais detalhes. Quer que eu envie?`;
+  }
+  return `A tabela comercial é enviada pelo corretor, mas posso te passar os principais detalhes do ${enterpriseName} por aqui. Que tal marcarmos uma visita?`;
+}
+
+function buildVisualMaterialUnavailableFallbackText(): string {
+  return 'Ainda não tenho fotos liberadas para envio por aqui. Quer que eu te conte os principais detalhes do empreendimento?';
+}
+
 async function handleMaterialRequestTurn(params: {
   conversationId: number;
   toPhoneNumber: string;
@@ -1372,6 +1423,8 @@ async function handleMaterialRequestTurn(params: {
     params.flowState.pending_material_type ??
     params.flowState.last_requested_material_type ??
     null;
+  const askedForTableCommercial = isTableCommercialMaterialRequest(trimmed);
+  const askedForVisualMaterial = isVisualMaterialRequest(trimmed);
   logPayload.requestedMaterialType = requestedMaterialType;
 
   let resolvedEnterprise: EnterpriseRow | null = null;
@@ -1417,20 +1470,65 @@ async function handleMaterialRequestTurn(params: {
     return { handled: true, status: 'ENTERPRISE_NOT_RESOLVED', log: logPayload };
   }
 
-  if (requestedMaterialType == null) {
-    logPayload.failureReason = 'material_type_not_resolved';
-    const state = buildMaterialFlowState(params.flowState, {
-      pendingAction: 'send_material',
-      pendingMaterialType: null,
-      pendingEnterpriseId: resolvedEnterprise.id,
-      lastRequestedMaterialType: null,
-      status: 'MATERIAL_TYPE_NOT_RESOLVED',
-      lastMaterialSentId: null,
+  if (askedForTableCommercial) {
+    const sendableBook = await resolveSendableEnterpriseFileCurrentVersion(resolvedEnterprise.id, 'book');
+    const fallbackText = buildTableCommercialFallbackText(resolvedEnterprise.name, Boolean(sendableBook.file));
+    const textSent = await sendMaterialFlowTextMessage({
+      conversationId: params.conversationId,
+      toPhoneNumber: params.toPhoneNumber,
+      text: fallbackText,
+      replyPipelineToken: params.replyPipelineToken,
     });
-    await mergeConversationCommercialFlowState(params.conversationId, state);
-    // Sem fallback determinístico: o engine vai bloquear outbound e acionar handoff operacional.
+    if (textSent) {
+      logPayload.failureReason = 'policy_table_requires_broker';
+      logPayload.sendSucceeded = true;
+      const state = buildMaterialFlowState(params.flowState, {
+        pendingAction: null,
+        pendingMaterialType: null,
+        pendingEnterpriseId: null,
+        lastRequestedMaterialType: 'book',
+        status: 'MATERIAL_NOT_FOUND',
+        lastMaterialSentId: null,
+      });
+      await mergeConversationCommercialFlowState(params.conversationId, state);
+      console.log('[MATERIAL_FLOW]', logPayload);
+      return { handled: true, status: 'MATERIAL_NOT_FOUND', log: logPayload, textFallbackSent: true };
+    }
+    logPayload.failureReason = 'outbound_send_failed';
     console.log('[MATERIAL_FLOW]', logPayload);
-    return { handled: true, status: 'MATERIAL_TYPE_NOT_RESOLVED', log: logPayload };
+    return { handled: true, status: 'SEND_FAILED', log: logPayload };
+  }
+
+  if (requestedMaterialType == null) {
+    const fallbackText = askedForVisualMaterial
+      ? buildVisualMaterialUnavailableFallbackText()
+      : 'No momento nao consegui identificar um material para envio, mas posso te passar os principais detalhes do empreendimento por aqui. Que tal marcarmos uma visita?';
+    const textSent = await sendMaterialFlowTextMessage({
+      conversationId: params.conversationId,
+      toPhoneNumber: params.toPhoneNumber,
+      text: fallbackText,
+      replyPipelineToken: params.replyPipelineToken,
+    });
+    if (textSent) {
+      logPayload.failureReason = askedForVisualMaterial
+        ? 'policy_visual_material_unavailable'
+        : 'material_type_not_resolved';
+      logPayload.sendSucceeded = true;
+      const state = buildMaterialFlowState(params.flowState, {
+        pendingAction: null,
+        pendingMaterialType: null,
+        pendingEnterpriseId: null,
+        lastRequestedMaterialType: null,
+        status: 'MATERIAL_TYPE_NOT_RESOLVED',
+        lastMaterialSentId: null,
+      });
+      await mergeConversationCommercialFlowState(params.conversationId, state);
+      console.log('[MATERIAL_FLOW]', logPayload);
+      return { handled: true, status: 'MATERIAL_TYPE_NOT_RESOLVED', log: logPayload, textFallbackSent: true };
+    }
+    logPayload.failureReason = 'outbound_send_failed';
+    console.log('[MATERIAL_FLOW]', logPayload);
+    return { handled: true, status: 'SEND_FAILED', log: logPayload };
   }
 
   const fileResolution = await resolveSendableEnterpriseFileCurrentVersion(
@@ -1441,7 +1539,33 @@ async function handleMaterialRequestTurn(params: {
   logPayload.candidateVersionsCount = fileResolution.candidateVersionsCount;
 
   if (!fileResolution.file) {
-    logPayload.failureReason = fileResolution.failureReason ?? 'no_files_for_enterprise';
+    const fallbackText = askedForVisualMaterial
+      ? buildVisualMaterialUnavailableFallbackText()
+      : 'No momento nao localizei esse material para envio, mas posso te passar os principais detalhes do empreendimento por aqui. Que tal marcarmos uma visita?';
+    const textSent = await sendMaterialFlowTextMessage({
+      conversationId: params.conversationId,
+      toPhoneNumber: params.toPhoneNumber,
+      text: fallbackText,
+      replyPipelineToken: params.replyPipelineToken,
+    });
+    if (textSent) {
+      logPayload.failureReason = askedForVisualMaterial
+        ? 'policy_visual_material_unavailable'
+        : (fileResolution.failureReason ?? 'policy_material_text_fallback');
+      logPayload.sendSucceeded = true;
+      const state = buildMaterialFlowState(params.flowState, {
+        pendingAction: null,
+        pendingMaterialType: null,
+        pendingEnterpriseId: null,
+        lastRequestedMaterialType: requestedMaterialType,
+        status: 'MATERIAL_NOT_FOUND',
+        lastMaterialSentId: null,
+      });
+      await mergeConversationCommercialFlowState(params.conversationId, state);
+      console.log('[MATERIAL_FLOW]', logPayload);
+      return { handled: true, status: 'MATERIAL_NOT_FOUND', log: logPayload, textFallbackSent: true };
+    }
+    logPayload.failureReason = 'outbound_send_failed';
     const state = buildMaterialFlowState(params.flowState, {
       pendingAction: 'send_material',
       pendingMaterialType: requestedMaterialType,
@@ -1451,7 +1575,6 @@ async function handleMaterialRequestTurn(params: {
       lastMaterialSentId: null,
     });
     await mergeConversationCommercialFlowState(params.conversationId, state);
-    // Sem fallback determinístico: material indisponível vira bloqueio/handoff.
     console.log('[MATERIAL_FLOW]', logPayload);
     return { handled: true, status: 'MATERIAL_NOT_FOUND', log: logPayload };
   }
@@ -2143,6 +2266,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (materialTurnResult.status === 'MATERIAL_SENT') {
         anaTurnAuditOutcome = 'material_sent';
         anaTurnAuditBlockedReason = null;
+      } else if (materialTurnResult.textFallbackSent) {
+        anaTurnAuditOutcome = 'sent';
+        anaTurnAuditBlockedReason = null;
       } else if (materialTurnResult.status === 'SEND_FAILED') {
         anaTurnAuditOutcome = 'blocked';
         anaTurnAuditBlockedReason = 'material_flow_send_failed_handoff';
@@ -2150,11 +2276,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         anaTurnAuditOutcome = 'blocked';
         anaTurnAuditBlockedReason = `material_flow_${materialTurnResult.status.toLowerCase()}_handoff`;
       }
-      if (materialTurnResult.status !== 'MATERIAL_SENT') {
+      if (materialTurnResult.status !== 'MATERIAL_SENT' && !materialTurnResult.textFallbackSent) {
         console.log('[ANA_MATERIAL_FLOW_BLOCKED]', {
           conversationId,
           status: materialTurnResult.status,
           blockedReason: anaTurnAuditBlockedReason,
+        });
+      } else if (materialTurnResult.textFallbackSent) {
+        console.log('[ANA_MATERIAL_FLOW_TEXT_FALLBACK]', {
+          conversationId,
+          status: materialTurnResult.status,
         });
       }
       return;
@@ -5855,26 +5986,46 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
-    if (hasAnaInternalInstructionLeak(replyText)) {
-      logAnaOutboundBlocked({
-        reason: 'internal_instruction_leak_guard',
-        userMessage: trimmed,
+    const internalLeakSanitized = sanitizeAnaInternalInstructionLeak(replyText);
+    if (internalLeakSanitized.changed) {
+      replyText = (internalLeakSanitized.text || '').trim();
+      if (!replyText) {
+        replyText = 'Posso te passar os principais detalhes do empreendimento por aqui. Que tal marcarmos uma visita?';
+      }
+      console.log('[ANA_INTERNAL_INSTRUCTION_SANITIZED]', {
         conversationId,
-        replyCandidate: replyText,
+        changed: true,
       });
-      anaTurnAuditOutcome = 'blocked';
-      anaTurnAuditBlockedReason = 'internal_instruction_leak_guard';
-      anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
-      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-      markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-        replySource,
-        outboundStatus: anaTurnAuditOutcome,
-        blockedReason: anaTurnAuditBlockedReason,
-      });
-      return;
+    }
+    if (hasAnaInternalInstructionLeak(replyText)) {
+      const safeFallback = 'Posso te passar os principais detalhes do empreendimento por aqui. Que tal marcarmos uma visita?';
+      if (!hasAnaInternalInstructionLeak(safeFallback)) {
+        replyText = safeFallback;
+        console.log('[ANA_INTERNAL_INSTRUCTION_SANITIZED_FALLBACK]', {
+          conversationId,
+          changed: true,
+        });
+      } else {
+        logAnaOutboundBlocked({
+          reason: 'internal_instruction_leak_guard',
+          userMessage: trimmed,
+          conversationId,
+          replyCandidate: replyText,
+        });
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'internal_instruction_leak_guard';
+        anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+          replySource,
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: anaTurnAuditBlockedReason,
+        });
+        return;
+      }
     }
 
-    const shouldForceEvoraLocationTriplet = isEvoraLocationQuestion(trimmed);
+    const shouldForceEvoraLocationTriplet = isEvoraEnterpriseName(ent?.name ?? '') && isEvoraLocationQuestion(trimmed);
     if (shouldForceEvoraLocationTriplet) {
       const sentChunks: string[] = [];
       for (const chunk of EVORA_LOCATION_REPLY_CHUNKS) {
@@ -6138,6 +6289,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
   }
 }
+
 
 
 
