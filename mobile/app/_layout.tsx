@@ -20,6 +20,8 @@ export default function RootLayout() {
         <Stack.Screen name="empreendimentos/index" />
         <Stack.Screen name="templates/index" />
         <Stack.Screen name="configuracoes/index" />
+        <Stack.Screen name="configuracoes/whatsapp" />
+        <Stack.Screen name="configuracoes/api" />
         <Stack.Screen name="perfil" />
       </Stack>
     </QueryClientProvider>
