@@ -168,12 +168,55 @@ function lastAssistantInvitedVisit(text: string | null | undefined): boolean {
   return /\b(agendar|marcar|visita|conhecer pessoalmente)\b/.test(n) && /\b(interesse|qual dia|dia e horario|horario)\b/.test(n);
 }
 
+
+function isVisitSchedulingContinuationMessage(input: {
+  userMessage: string;
+  lastAssistantMessage?: string | null;
+  referenceNow?: Date;
+}): boolean {
+  const msg = norm(input.userMessage);
+  const last = norm(input.lastAssistantMessage ?? '');
+
+  if (!msg) return false;
+
+  if (/^(obrigado|obrigada|muito obrigado|muito obrigada|ok obrigado|ok obrigada|valeu|vlw|agradeco|agradeço)[.! ]*$/.test(msg)) {
+    return true;
+  }
+
+  if (/\b(meu nome e|me chamo|pode me chamar de|sou o|sou a|nome)\b/.test(msg)) {
+    return true;
+  }
+
+  if (
+    /\b(amanha|amanhã|hoje|segunda|terca|terça|quarta|quinta|sexta|sabado|sábado|domingo)\b/.test(msg) ||
+    /\bdia\s+\d{1,2}\b/.test(msg) ||
+    /\b\d{1,2}h(\d{2})?\b/.test(msg) ||
+    /\b\d{1,2}:\d{2}\b/.test(msg) ||
+    /\b(de manha|de manhã|a tarde|à tarde|de tarde|a noite|à noite)\b/.test(msg)
+  ) {
+    return true;
+  }
+
+  if (/^(sim|pode sim|pode ser|ok|fechado|combinado|confirmo|confirmado)$/.test(msg)) {
+    return /\b(visita|agendar|agenda|horario|horário|dia)\b/.test(last);
+  }
+
+  return false;
+}
 export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): boolean {
   const axes = [input.resolvedIntent, input.primaryAxis, input.currentAxis, input.requestedAxis]
     .map((x) => norm(String(x ?? '')))
     .filter(Boolean);
-  if (axes.some((x) => x === 'visita_agendamento' || x === 'agendar')) return true;
-  if (input.flowState.pendingVisitScheduling === true) return true;
+  const axisRequestedVisit = axes.some((x) => x === 'visita_agendamento' || x === 'agendar');
+  const schedulingContinuation = isVisitSchedulingContinuationMessage({
+    userMessage: input.userMessage,
+    lastAssistantMessage: input.lastAssistantMessage,
+    referenceNow: input.referenceNow,
+  });
+  if (input.flowState.pendingVisitScheduling === true) {
+    return schedulingContinuation;
+  }
+  if (axisRequestedVisit) return schedulingContinuation || hasVisitSchedulingWords(input.userMessage);
   if (hasVisitSchedulingWords(input.userMessage)) return true;
   if (isAckOnly(input.userMessage) && lastAssistantInvitedVisit(input.lastAssistantMessage)) return true;
   return false;
@@ -326,3 +369,5 @@ export function hasProhibitedVisitSchedulingPhrase(text: string): boolean {
   const n = norm(text);
   return PROHIBITED_VISIT_SCHEDULING_PHRASES.some((phrase) => n.includes(phrase));
 }
+
+
