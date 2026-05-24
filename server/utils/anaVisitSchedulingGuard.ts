@@ -131,6 +131,21 @@ function extractNameStatement(userMessage: string, fallbackName: string | null |
   return toFirstName(fallbackName);
 }
 
+function hmToDisplay(hm: string | null | undefined): string {
+  const raw = String(hm ?? '').trim();
+  if (!/^\d{2}:\d{2}$/.test(raw)) return '';
+  const hh = Number.parseInt(raw.slice(0, 2), 10);
+  const mm = raw.slice(3, 5);
+  return mm === '00' ? `${hh}h` : `${hh}h${mm}`;
+}
+
+function buildScheduledSummary(v: VisitState): string {
+  const dateLabel = (v.requestedDateText ?? '').trim() || 'o dia combinado';
+  const hm = hmToDisplay(v.normalizedTime);
+  if (hm) return `${dateLabel} às ${hm}`;
+  return dateLabel;
+}
+
 function hydrate(state: CommercialFlowState, customerName: string | null | undefined): VisitState {
   const v = state.visitScheduling;
   const name = (customerName ?? '').trim();
@@ -198,6 +213,36 @@ export function applyAnaVisitSchedulingGuard(params: {
     v.offered = true;
     v.status = 'collecting_date';
   }
+  const isScheduled =
+    v.status === 'scheduled' &&
+    Boolean((v.normalizedDate ?? '').trim()) &&
+    Boolean((v.normalizedTime ?? '').trim());
+  const nameFromStatement = extractNameStatement(userMessage, params.customerName);
+
+  if (!v.active && isGratitudeOnlyMessage(userMessage)) {
+    return {
+      handled: true,
+      finalAnswer: 'De nada! Se precisar de mais alguma informação sobre o Évora, estou por aqui.',
+      nextState: params.flowState,
+      reason: 'gratitude_when_inactive',
+      nextMissingField: null,
+    };
+  }
+
+  if (!v.active && isScheduled && nameFromStatement) {
+    v.nameCollected = true;
+    v.customerName = nameFromStatement;
+    const next = persist(params.flowState, v, params.enterpriseId);
+    const scheduledSummary = buildScheduledSummary(v);
+    return {
+      handled: true,
+      finalAnswer: `Perfeito, ${nameFromStatement}. Sua visita está agendada para ${scheduledSummary}. O corretor responsável estará aguardando você.`,
+      nextState: next,
+      reason: 'name_after_scheduled_confirmation',
+      nextMissingField: null,
+    };
+  }
+
   if (!v.active) {
     return {
       handled: false,
@@ -223,7 +268,6 @@ export function applyAnaVisitSchedulingGuard(params: {
 
   const date = parseDateFromText(userMessage, now);
   const time = parseTimeFromText(userMessage);
-  const nameFromStatement = extractNameStatement(userMessage, params.customerName);
   if (nameFromStatement) {
     v.nameCollected = true;
     v.customerName = nameFromStatement;

@@ -179,14 +179,15 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
     .map((x) => norm(String(x ?? '')))
     .filter(Boolean);
   const axisRequestedVisit = axes.some((x) => x === 'visita_agendamento' || x === 'agendar');
+  const schedulingContinuation = isVisitSchedulingContinuationMessage({
+    userMessage: input.userMessage,
+    lastAssistantMessage: input.lastAssistantMessage,
+    referenceNow: input.referenceNow,
+  });
   if (input.flowState.pendingVisitScheduling === true) {
-    return isVisitSchedulingContinuationMessage({
-      userMessage: input.userMessage,
-      lastAssistantMessage: input.lastAssistantMessage,
-      referenceNow: input.referenceNow,
-    });
+    return schedulingContinuation;
   }
-  if (axisRequestedVisit) return true;
+  if (axisRequestedVisit) return schedulingContinuation || hasVisitSchedulingWords(input.userMessage);
   if (hasVisitSchedulingWords(input.userMessage)) return true;
   if (isAckOnly(input.userMessage) && lastAssistantInvitedVisit(input.lastAssistantMessage)) return true;
   return false;
