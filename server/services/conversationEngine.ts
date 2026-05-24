@@ -2744,6 +2744,38 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               error: e instanceof Error ? e.message : String(e),
             });
           }
+          const scheduledCustomerName = (trustedCustomerName || effectiveConv.customer_name || '').trim();
+          const scheduledHm = directVisitSchedulingDecision.appointmentTimeHm ?? null;
+          const scheduledHh = scheduledHm ? Number.parseInt(scheduledHm.slice(0, 2), 10) : null;
+          const scheduledMm = scheduledHm ? scheduledHm.slice(3, 5) : null;
+          const scheduledTimeText =
+            scheduledHm && Number.isFinite(scheduledHh)
+              ? scheduledMm === '00'
+                ? `${scheduledHh}h`
+                : `${scheduledHh}h${scheduledMm}`
+              : null;
+          const scheduledState = {
+            ...directVisitSchedulingDecision.nextState,
+            pendingVisitScheduling: false,
+            pendingVisitDateLabel: null,
+            pendingVisitDate: null,
+            pendingVisitEnterpriseId: null,
+            visitScheduling: {
+              active: false,
+              offered: true,
+              accepted: true,
+              requestedDateText: directVisitSchedulingDecision.extractedDateLabel ?? null,
+              requestedTimeText: scheduledTimeText,
+              normalizedDate: directVisitSchedulingDecision.appointmentDateYmd ?? null,
+              normalizedTime: scheduledHm,
+              nameCollected: scheduledCustomerName.length > 0,
+              customerName: scheduledCustomerName || null,
+              status: 'scheduled' as const,
+            },
+            updatedAt: new Date().toISOString(),
+          };
+          await mergeConversationCommercialFlowState(conversationId, scheduledState);
+          flowStateParsed = scheduledState;
         } else {
           deterministicVisitReply =
             'Perfeito, ja tenho dia e horario. Me confirma qual empreendimento voce quer visitar?';
@@ -3862,6 +3894,94 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             message: blockingLatestFailure?.error ?? fallbackReason ?? 'retryable_llm_error',
           };
           const retryAfterMs = extractRetryAfterMs(retryErrorPayload);
+          const retryReason = mapRetryReason(retryErrorPayload);
+          let deterministicRetryReply: string | null = null;
+          let schedulingStateMerged = false;
+
+          const retrySchedulingGuard = applyAnaVisitSchedulingGuard({
+            conversationId,
+            enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+            isEvora: isEvoraEnterpriseName(ent?.name ?? null),
+            userMessage: trimmed,
+            customerName: trustedCustomerName || effectiveConv.customer_name || null,
+            flowState: flowStateParsed,
+            now: lastUserMessageAt,
+            currentAnswer: '',
+          });
+          if (retrySchedulingGuard.handled && retrySchedulingGuard.finalAnswer.trim().length > 0) {
+            deterministicRetryReply = retrySchedulingGuard.finalAnswer;
+            flowStateParsed = retrySchedulingGuard.nextState;
+            await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+            schedulingStateMerged = true;
+          } else if (isGratitudeOnlyMessage(trimmed)) {
+            deterministicRetryReply =
+              'De nada! Se precisar de mais alguma informação sobre o Évora, estou por aqui.';
+          } else if (isFirstAnaReply && (isGenericFirstGreetingMessage(trimmed) || isFirstContactGeneralInterestMessage(trimmed))) {
+            deterministicRetryReply = buildFirstGreetingSafeFallback(trimmed);
+          } else if (isGenericInterestFollowup(trimmed)) {
+            deterministicRetryReply =
+              'Claro. O Évora tem alguns pontos bem importantes: localização em Atibaia, lotes a partir de 360 m², lazer completo, segurança 24 horas e obras avançadas.\n\nVocê quer começar por valores, localização ou formas de pagamento?';
+          } else {
+            deterministicRetryReply =
+              'Posso te ajudar com valores, localização, formas de pagamento, andamento da obra e previsão de entrega. Qual desses pontos você quer ver primeiro?';
+          }
+
+          if (isPipelineStale(conversationId, replyPipelineToken)) {
+            anaTurnAuditOutcome = 'silent';
+            anaTurnAuditBlockedReason = 'pipeline_stale_before_retryable_deterministic_reply';
+            anaTurnAuditGuardsApplied.retryScheduled = {
+              reason: retryReason,
+              retryAfterMs,
+              triggerMessageId: lastUserRowForLog?.id ?? null,
+              deterministicReplyPlanned: true,
+              deterministicReplySent: false,
+              schedulingStateMerged,
+            };
+            return;
+          }
+
+          const retrySafeSend = await sendTextMessage({
+            conversationId,
+            to: toPhoneNumber,
+            text: deterministicRetryReply,
+            phase: 'ana_retryable_failure_safe_reply',
+          });
+          if (retrySafeSend.success && retrySafeSend.metaMessageId) {
+            await insertMessage(conversationId, 'assistant', deterministicRetryReply, retrySafeSend.metaMessageId);
+            anaTurnAuditOutcome = 'sent';
+            anaTurnAuditBlockedReason = null;
+            anaTurnAuditGuardsApplied.retryScheduled = {
+              reason: retryReason,
+              retryAfterMs,
+              triggerMessageId: lastUserRowForLog?.id ?? null,
+              deterministicReplyPlanned: true,
+              deterministicReplySent: true,
+              schedulingStateMerged,
+              fallbackPhase: 'ana_retryable_failure_safe_reply',
+            };
+            anaTurnDiagnostics.finalResponse.replySource = 'deterministic_fallback';
+            anaTurnDiagnostics.finalResponse.handoffUsed = false;
+            anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+            markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
+              replySource: 'deterministic_fallback',
+              outboundStatus: anaTurnAuditOutcome,
+              blockedReason: 'llm_retryable_generation_failure',
+              fallbackReason: traceReason,
+              usedFallback: true,
+            });
+            console.log('[ANA_RETRYABLE_FAILURE_SAFE_REPLY_SENT]', {
+              conversationId,
+              triggerMessageId: lastUserRowForLog?.id ?? null,
+              attemptCount: anaTurnDiagnostics.llm.attempts.length,
+              reason: retryReason,
+              retryAfterMs,
+              model,
+              error: sanitizeRetryErrorMessage(retryErrorPayload),
+              schedulingStateMerged,
+            });
+            return;
+          }
+
           await scheduleAnaRetry({
             conversationId,
             triggerMessageId: lastUserRowForLog?.id ?? null,
@@ -3870,15 +3990,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           anaTurnAuditOutcome = 'silent';
           anaTurnAuditBlockedReason = 'llm_retry_scheduled';
           anaTurnAuditGuardsApplied.retryScheduled = {
-            reason: mapRetryReason(retryErrorPayload),
+            reason: retryReason,
             retryAfterMs,
             triggerMessageId: lastUserRowForLog?.id ?? null,
+            deterministicReplyPlanned: true,
+            deterministicReplySent: false,
+            schedulingStateMerged,
           };
           console.log('[ANA_RETRY] llm_retryable_error', {
             conversationId,
             triggerMessageId: lastUserRowForLog?.id ?? null,
             attemptCount: anaTurnDiagnostics.llm.attempts.length,
-            reason: mapRetryReason(retryErrorPayload),
+            reason: retryReason,
             retryAfterMs,
             model,
             error: sanitizeRetryErrorMessage(retryErrorPayload),

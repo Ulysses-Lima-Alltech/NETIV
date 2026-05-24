@@ -111,6 +111,41 @@ function isPositiveVisitAck(text: string): boolean {
   return /^(sim|pode sim|pode ser|ok|fechado|combinado|confirmo|confirmado)$/.test(norm(text));
 }
 
+function isGratitudeOnlyMessage(text: string): boolean {
+  return /^(obrigad[oa]|muito obrigad[oa]|ok obrigad[oa]|valeu|vlw|agradeco|agradeço)[.! ]*$/.test(norm(text));
+}
+
+function toFirstName(value: string | null | undefined): string | null {
+  const raw = (value ?? '').trim();
+  if (!raw) return null;
+  const first = raw.split(/\s+/)[0]?.trim() ?? '';
+  return first.length >= 2 ? first : null;
+}
+
+function extractNameStatement(userMessage: string, fallbackName: string | null | undefined): string | null {
+  const n = norm(userMessage);
+  const namedByStatement =
+    /\b(meu nome e|me chamo|pode me chamar de|sou o|sou a)\b/.test(n) ||
+    /\bnome\b/.test(n);
+  if (!namedByStatement) return null;
+  return toFirstName(fallbackName);
+}
+
+function hmToDisplay(hm: string | null | undefined): string {
+  const raw = String(hm ?? '').trim();
+  if (!/^\d{2}:\d{2}$/.test(raw)) return '';
+  const hh = Number.parseInt(raw.slice(0, 2), 10);
+  const mm = raw.slice(3, 5);
+  return mm === '00' ? `${hh}h` : `${hh}h${mm}`;
+}
+
+function buildScheduledSummary(v: VisitState): string {
+  const dateLabel = (v.requestedDateText ?? '').trim() || 'o dia combinado';
+  const hm = hmToDisplay(v.normalizedTime);
+  if (hm) return `${dateLabel} às ${hm}`;
+  return dateLabel;
+}
+
 function hydrate(state: CommercialFlowState, customerName: string | null | undefined): VisitState {
   const v = state.visitScheduling;
   const name = (customerName ?? '').trim();
@@ -178,6 +213,36 @@ export function applyAnaVisitSchedulingGuard(params: {
     v.offered = true;
     v.status = 'collecting_date';
   }
+  const isScheduled =
+    v.status === 'scheduled' &&
+    Boolean((v.normalizedDate ?? '').trim()) &&
+    Boolean((v.normalizedTime ?? '').trim());
+  const nameFromStatement = extractNameStatement(userMessage, params.customerName);
+
+  if (!v.active && isGratitudeOnlyMessage(userMessage)) {
+    return {
+      handled: true,
+      finalAnswer: 'De nada! Se precisar de mais alguma informação sobre o Évora, estou por aqui.',
+      nextState: params.flowState,
+      reason: 'gratitude_when_inactive',
+      nextMissingField: null,
+    };
+  }
+
+  if (!v.active && isScheduled && nameFromStatement) {
+    v.nameCollected = true;
+    v.customerName = nameFromStatement;
+    const next = persist(params.flowState, v, params.enterpriseId);
+    const scheduledSummary = buildScheduledSummary(v);
+    return {
+      handled: true,
+      finalAnswer: `Perfeito, ${nameFromStatement}. Sua visita está agendada para ${scheduledSummary}. O corretor responsável estará aguardando você.`,
+      nextState: next,
+      reason: 'name_after_scheduled_confirmation',
+      nextMissingField: null,
+    };
+  }
+
   if (!v.active) {
     return {
       handled: false,
@@ -190,6 +255,10 @@ export function applyAnaVisitSchedulingGuard(params: {
 
   const date = parseDateFromText(userMessage, now);
   const time = parseTimeFromText(userMessage);
+  if (nameFromStatement) {
+    v.nameCollected = true;
+    v.customerName = nameFromStatement;
+  }
   if (date) {
     v.requestedDateText = date.text;
     v.normalizedDate = date.ymd;
@@ -296,3 +365,4 @@ export function applyAnaVisitSchedulingGuard(params: {
     nextMissingField: null,
   };
 }
+
