@@ -1,4 +1,4 @@
-import { readFileSync, mkdirSync, readdirSync } from 'fs';
+﻿import { readFileSync, mkdirSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import pg from 'pg';
@@ -44,3 +44,4 @@ export async function initPostgres(): Promise<void> {
   mkdirSync(config.storageEmpreendimentos, { recursive: true });
   console.log(`[pg] ${migrationFiles.length} migrations OK, storage:`, config.storageEmpreendimentos);
 }
+
