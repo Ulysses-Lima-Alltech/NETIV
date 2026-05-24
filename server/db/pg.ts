@@ -11,9 +11,9 @@ function isDuplicateAppSessionsScopeColumnError(error: unknown): boolean {
   );
 }
 
-async function safeBootstrapQuery(client: any, sql: string): Promise<void> {
+async function safeBootstrapQuery(client: any, sql: any, ...params: any[]): Promise<any> {
   try {
-    await client.query(sql);
+    return await client.query(sql, ...params);
   } catch (error) {
     if (isDuplicateAppSessionsScopeColumnError(error)) {
       console.warn('[startup] ignoring duplicate app_sessions.scope_kind bootstrap column');
@@ -62,7 +62,7 @@ export async function initPostgres(): Promise<void> {
   try {
     for (const file of migrationFiles) {
       const sql = readFileSync(join(pgMigrationsDir, file), 'utf-8');
-      await client.query(sql);
+      await safeBootstrapQuery(client, sql);
     }
   } finally {
     client.release();
@@ -70,6 +70,7 @@ export async function initPostgres(): Promise<void> {
   mkdirSync(config.storageEmpreendimentos, { recursive: true });
   console.log(`[pg] ${migrationFiles.length} migrations OK, storage:`, config.storageEmpreendimentos);
 }
+
 
 
 
