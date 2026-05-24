@@ -205,7 +205,10 @@ import {
   type AnaEmergencyHandoffSendResult,
 } from '../utils/anaEmergencyHandoff.js';
 import {
+  buildAnaDeterministicOperationalMessages,
+  detectAnaDeterministicOperationalSubtype,
   isEvoraEnterpriseName,
+  isGenericInterestFollowup,
   isUserIrritated,
   isVisitSchedulingRefusal,
   resolveAnaCommercialRule,
@@ -217,6 +220,8 @@ const ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY = false;
 const ANA_ENGINE_DIAGNOSTIC_TEXT = 'Diagnóstico: cheguei no conversation engine.';
 const ANA_PROVIDER_FAILURE_HANDOFF_REPLY =
   'Vou encaminhar seu atendimento para um consultor te ajudar com essa informação certinho.';
+const ANA_FIRST_GREETING_SAFE_FALLBACK_BODY =
+  'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas.\nFica em Atibaia, com fácil acesso pela Rodovia Dom Pedro I, perto da área da Pedreira, a aproximadamente 50 minutos de São Paulo.\nMe conta, quais são suas dúvidas? Vou responder todas.';
 const MAX_ANA_GENERATION_ATTEMPTS = 5;
 
 type AnaEmergencyHandoffTransport = {
@@ -259,6 +264,46 @@ function anaEngineTrace(tag: string, payload: Record<string, unknown>): void {
   if (!ANA_ENGINE_TRACE) return;
   console.log(`[ANA_ENGINE_TRACE] ${tag}`, payload);
 }
+
+function isGenericFirstGreetingMessage(userMessage: string): boolean {
+  const n = normText(userMessage || '')
+    .replace(/[!?,.;:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!n) return false;
+  return /^(oi|ola|oi tudo bem|ola tudo bem|bom dia|boa tarde|boa noite)$/.test(n);
+}
+
+function isFirstContactGeneralInterestMessage(userMessage: string): boolean {
+  const n = normText(userMessage || '')
+    .replace(/[!?,.;:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!n) return false;
+  if (/(tenho interesse|quero saber mais|gostaria de saber mais|vi o anuncio|vi o anúncio|me passa mais detalhes|gostaria de informacoes|gostaria de informações)/.test(n)) {
+    return true;
+  }
+  if (/(informacoes|informações|detalhes)/.test(n) && /(evora|empreendimento|loteamento)/.test(n)) {
+    return true;
+  }
+  return false;
+}
+
+function userExplicitlyAskedHowAreYou(userMessage: string): boolean {
+  const n = normText(userMessage || '')
+    .replace(/[!?,.;:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return /\b(tudo bem|td bem|como vai|como voce esta|como você esta|como voce esta)\b/.test(n);
+}
+
+function buildFirstGreetingSafeFallback(userMessage: string): string {
+  if (userExplicitlyAskedHowAreYou(userMessage)) {
+    return `Oi! Tudo bem sim 😊 ${ANA_FIRST_GREETING_SAFE_FALLBACK_BODY}`;
+  }
+  return `Olá! Claro.\n${ANA_FIRST_GREETING_SAFE_FALLBACK_BODY}`;
+}
+
 function logAnaOutboundBlocked(params: {
   reason: string;
   userMessage: string;
@@ -903,6 +948,11 @@ function normText(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim();
 }
 
+function isGratitudeOnlyMessage(text: string): boolean {
+  const n = normText(text || '');
+  return /^(obrigad[oa]|muito obrigad[oa]|ok obrigad[oa]|valeu|vlw|agradeco|agradeço)[.! ]*$/.test(n);
+}
+
 function toFirstName(value: string | null | undefined): string | null {
   const raw = (value || '').trim();
   if (!raw) return null;
@@ -1377,9 +1427,9 @@ function isVisualMaterialRequest(userMessage: string): boolean {
 
 function buildTableCommercialFallbackText(enterpriseName: string, hasSendableBook: boolean): string {
   if (hasSendableBook) {
-    return `A tabela comercial é enviada pelo corretor, mas posso te enviar o Book do ${enterpriseName} com os principais detalhes. Quer que eu envie?`;
+    return `A tabela comercial é enviada pelo corretor, porque depende da disponibilidade e das condições do momento. Posso te passar os principais detalhes por aqui e, se quiser, o corretor te ajuda com a opção ideal.`;
   }
-  return `A tabela comercial é enviada pelo corretor, mas posso te passar os principais detalhes do ${enterpriseName} por aqui. Que tal marcarmos uma visita?`;
+  return 'A tabela comercial é enviada pelo corretor, porque depende da disponibilidade e das condições do momento. Posso te passar os principais detalhes por aqui e, se quiser, o corretor te ajuda com a opção ideal.';
 }
 
 function buildVisualMaterialUnavailableFallbackText(): string {
@@ -2790,7 +2840,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       anaTurnAuditGuardsApplied.appointmentFlowCancelledByUser = true;
     }
 
-    const directVisitSchedulingIntent = isVisitSchedulingIntent({
+    const suppressDirectVisitSchedulingForGenericInterest =
+      isEvoraEnterpriseName(ent?.name ?? null) && isGenericInterestFollowup(trimmed);
+    const directVisitSchedulingIntent = !suppressDirectVisitSchedulingForGenericInterest && isVisitSchedulingIntent({
       userMessage: trimmed,
       flowState: flowStateParsed,
       resolvedIntent: anaDecision.resolvedIntent,
@@ -2913,10 +2965,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           deterministicVisitReply = userIrritatedNow
             ? 'Desculpa, você tem razão. Sem agendar visita agora. Vou te passar os detalhes por aqui.'
             : 'Claro, sem problema. Te passo os detalhes por aqui.';
-        } else {
-          deterministicVisitReply = schedulingAlreadyScheduled
-            ? 'Perfeito. Visita agendada. Se quiser, também posso te ajudar com valores, pagamento ou localização.'
-            : 'Perfeito. Se quiser, seguimos com outros detalhes do Évora por aqui.';
+        } else if (schedulingAlreadyScheduled) {
+          deterministicVisitReply = 'Perfeito. Visita agendada. Se quiser, também posso te ajudar com valores, pagamento ou localização.';
         }
       }
 
@@ -3002,13 +3052,95 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    const deterministicOperationalSubtype = isEvoraEnterpriseName(ent?.name ?? null)
+      ? detectAnaDeterministicOperationalSubtype(trimmed)
+      : null;
+    const deterministicAllowsBypassAppointment =
+      deterministicOperationalSubtype === 'investimento_valorizacao';
+    if (
+      deterministicOperationalSubtype &&
+      anaDecision.canRespond &&
+      anaDecision.outboundAllowed &&
+      (!appointmentPreflight.active || deterministicAllowsBypassAppointment)
+    ) {
+      const deterministicMessages = buildAnaDeterministicOperationalMessages(deterministicOperationalSubtype);
+      console.log('[ANA_DETERMINISTIC_OPERATIONAL_START]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        enterpriseName: ent?.name ?? null,
+        userMessagePreview: trimmed.slice(0, 180),
+        subtype: deterministicOperationalSubtype,
+        messagesCount: deterministicMessages.length,
+      });
+
+      let lastDeterministicMetaMessageId: string | null = null;
+      for (const [index, deterministicMessage] of deterministicMessages.entries()) {
+        if (index > 0) await sleepMs(900);
+        const sendResult = await sendTextMessage({
+          conversationId,
+          to: toPhoneNumber,
+          text: deterministicMessage,
+          phase: 'deterministic_operational',
+        });
+        if (!sendResult.success || !sendResult.metaMessageId) {
+          anaTurnAuditOutcome = 'send_failed';
+          anaTurnAuditBlockedReason = 'deterministic_operational_send_failed';
+          anaTurnDiagnostics.finalResponse.replySource = 'deterministic_fallback';
+          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+          console.error('[ANA_DETERMINISTIC_OPERATIONAL_SEND_FAILED]', {
+            conversationId,
+            subtype: deterministicOperationalSubtype,
+            failedMessageIndex: index + 1,
+            result: sendResult,
+          });
+          return;
+        }
+        lastDeterministicMetaMessageId = sendResult.metaMessageId;
+        await insertMessage(conversationId, 'assistant', deterministicMessage, sendResult.metaMessageId);
+      }
+
+      await applyAnaConversationUpdate(conversationId, {
+        classification: 'Qualificado',
+        lead_temperature: maxLeadTemperature(effectiveConv.lead_temperature, 'quente'),
+        handoff: false,
+      });
+
+      anaTurnAuditOutcome = 'sent';
+      anaTurnAuditBlockedReason = null;
+      anaTurnAuditLlmStatus = 'skipped';
+      anaTurnAuditModel = 'deterministic_operational';
+      anaTurnDiagnostics.finalResponse.replySource = 'deterministic_fallback';
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      markAnaTurnStage(anaTurnDiagnostics, 'llm_generation', 'skipped', {
+        reason: `deterministic_operational_${deterministicOperationalSubtype}`,
+      });
+      markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
+        replySource: 'deterministic_fallback',
+        outboundStatus: anaTurnAuditOutcome,
+        subtype: deterministicOperationalSubtype,
+      });
+      console.log('[ANA_DETERMINISTIC_OPERATIONAL_SENT]', {
+        conversationId,
+        subtype: deterministicOperationalSubtype,
+        outboundMetaMessageId: lastDeterministicMetaMessageId,
+      });
+      return;
+    }
+
     const commercialRule = resolveAnaCommercialRule({
       enterpriseName: ent?.name ?? null,
       userMessage: trimmed,
       isFirstAnaReply,
       previousAssistantMessage: lastAssistantPlain,
     });
-    if (commercialRule && anaDecision.canRespond && anaDecision.outboundAllowed && !appointmentPreflight.active) {
+    const allowCommercialRuleDuringAppointment =
+      Boolean(appointmentPreflight.active) && commercialRule?.ruleId !== 'visita_agendamento';
+    if (
+      commercialRule &&
+      anaDecision.canRespond &&
+      anaDecision.outboundAllowed &&
+      (!appointmentPreflight.active || allowCommercialRuleDuringAppointment)
+    ) {
       const isFirstContactRule = commercialRule.ruleId === 'first_contact';
       console.log(
         isFirstContactRule ? '[ANA_COMMERCIAL_RULE_FIRST_CONTACT_START]' : '[ANA_COMMERCIAL_RULE_INTENT_START]',
@@ -3051,7 +3183,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         commercialRule.ruleId === 'localizacao_endereco' ||
         commercialRule.ruleId === 'preco_valor_lote' ||
         commercialRule.ruleId === 'valor_condominio' ||
-        commercialRule.ruleId === 'entrega_empreendimento'
+        commercialRule.ruleId === 'entrega_empreendimento' ||
+        commercialRule.ruleId === 'formas_pagamento' ||
+        commercialRule.ruleId === 'materiais'
           ? {
               appendedVisitOfferMessages: [] as string[],
               appendedVisitOffer: false,
@@ -3113,13 +3247,27 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         commercialMessagesToSend.push(cta);
       } else if (commercialRule.ruleId === 'formas_pagamento') {
         const answer = commercialRule.messages[0] ?? '';
-        const defaultCta = 'Você quer que eu te ajude a simular com um corretor ou prefere agendar uma visita?';
-        const alternateCta = 'Quer que eu te explique melhor a diferença entre essas opções?';
-        const cta = hasRecentVisitCta ? alternateCta : defaultCta;
+        const cta = 'Para uma simulação certinha, o corretor consegue montar a melhor opção conforme o lote que você gostar.';
+        const normalizedPaymentUserMessage = normText(trimmed);
+        const isEntradaQuestion = /\b(tem entrada|valor de entrada|qual valor de entrada|precisa dar entrada|entrada minima|entrada facilitada|entrada e facilitada|quanto .* entrada|qual a entrada|dar entrada)\b/.test(
+          normalizedPaymentUserMessage
+        );
         commercialMessagesToSend.length = 0;
-        commercialMessagesToSend.push(answer);
-        if (!hasKnownCustomerName) commercialMessagesToSend.push(ANA_COMMERCIAL_RULES.askNameMessage);
-        commercialMessagesToSend.push(cta);
+        if (isEntradaQuestion) {
+          commercialMessagesToSend.push(
+            'Tem sim, mas o valor de entrada pode variar conforme o lote e o plano escolhido.'
+          );
+          commercialMessagesToSend.push(
+            'O Évora tem opções com planos estendidos em até 120x, parcelamento sem juros em até 48x e financiamento direto com a construtora.'
+          );
+          commercialMessagesToSend.push(
+            'Para te passar uma condição certinha, o corretor consegue montar uma simulação conforme o lote que você gostar.'
+          );
+        } else {
+          commercialMessagesToSend.push(answer);
+          if (!hasKnownCustomerName) commercialMessagesToSend.push(ANA_COMMERCIAL_RULES.askNameMessage);
+          commercialMessagesToSend.push(cta);
+        }
       }
       if (commercialRule.ruleId === 'entrega_empreendimento') {
         const operational = resolveOperationalFactAnswer(trimmed, knowledgeText, vars, {
@@ -5239,6 +5387,56 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       };
 
       if (finalEmptyFallbackGuard.blocked) {
+        const shouldApplySafeFirstGreetingFallback =
+          isFirstAnaReply &&
+          (isGenericFirstGreetingMessage(trimmed) || isFirstContactGeneralInterestMessage(trimmed));
+        const shouldApplySafeInterestFallback =
+          finalEmptyFallbackGuard.reason === 'empty_after_guards' &&
+          isFirstContactGeneralInterestMessage(trimmed);
+        if (shouldApplySafeFirstGreetingFallback) {
+          finalTextGuard = buildFirstGreetingSafeFallback(trimmed);
+          finalOutboundEval = evaluateAnaOutboundText({
+            reply: finalTextGuard,
+            technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+            conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+            enterpriseName: ent?.name ?? null,
+          });
+          finalEmptyFallbackGuard = { blocked: false, reason: null };
+          anaTurnAuditGuardsApplied.outboundReason = finalOutboundEval.reason;
+          anaTurnAuditGuardsApplied.emptyFallbackGuard = {
+            ...(anaTurnAuditGuardsApplied.emptyFallbackGuard as Record<string, unknown>),
+            safeFirstGreetingFallbackApplied: true,
+          };
+          console.log('[ANA_FIRST_GREETING_SAFE_FALLBACK_APPLIED]', {
+            conversationId,
+            enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+            originalReason: emptyFallbackReason,
+            userMessage: trimmed,
+          });
+        } else if (shouldApplySafeInterestFallback) {
+          finalTextGuard = buildFirstGreetingSafeFallback(trimmed);
+          finalOutboundEval = evaluateAnaOutboundText({
+            reply: finalTextGuard,
+            technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
+            conversationType: effectiveConv.conversation_type ?? 'CLIENT',
+            enterpriseName: ent?.name ?? null,
+          });
+          finalEmptyFallbackGuard = { blocked: false, reason: null };
+          anaTurnAuditGuardsApplied.outboundReason = finalOutboundEval.reason;
+          anaTurnAuditGuardsApplied.emptyFallbackGuard = {
+            ...(anaTurnAuditGuardsApplied.emptyFallbackGuard as Record<string, unknown>),
+            safeInterestFallbackApplied: true,
+          };
+          console.log('[ANA_INTEREST_SAFE_FALLBACK_APPLIED]', {
+            conversationId,
+            enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+            originalReason: emptyFallbackReason,
+            userMessage: trimmed,
+          });
+        }
+      }
+
+      if (finalEmptyFallbackGuard.blocked) {
         anaTurnAuditOutcome = 'blocked';
         anaTurnAuditBlockedReason = `empty_fallback_guard_${finalEmptyFallbackGuard.reason ?? 'blocked'}`;
         anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
@@ -5800,6 +5998,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         reason: evoraVisitSchedulingGuardResult.reason,
       });
     }
+    const userSentGratitude = isGratitudeOnlyMessage(trimmed);
 
     const evoraLocationGuardResult = applyEvoraLocationGuard({
       conversationId,
@@ -5841,22 +6040,24 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       };
     }
 
-    const noRepeatGuardResult = applyAnaNoRepeatMessageGuard({
-      conversationId,
-      enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
-      enterpriseName: ent?.name ?? null,
-      userMessage: trimmed,
-      answer: replyText,
-      recentAssistantReplies: recentAssistantRepliesForDeterministicGuard,
-      semanticallySimilar: repliesSemanticallySimilar,
-    });
-    if (noRepeatGuardResult.changed) {
-      replyText = noRepeatGuardResult.text;
-      appendedVisitOfferMessagesForFinalSend = [];
-      anaTurnAuditGuardsApplied.noRepeatMessageGuard = {
-        changed: true,
-        reason: noRepeatGuardResult.reason,
-      };
+    if (!schedulingGuardHandled && !userSentGratitude) {
+      const noRepeatGuardResult = applyAnaNoRepeatMessageGuard({
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        enterpriseName: ent?.name ?? null,
+        userMessage: trimmed,
+        answer: replyText,
+        recentAssistantReplies: recentAssistantRepliesForDeterministicGuard,
+        semanticallySimilar: repliesSemanticallySimilar,
+      });
+      if (noRepeatGuardResult.changed) {
+        replyText = noRepeatGuardResult.text;
+        appendedVisitOfferMessagesForFinalSend = [];
+        anaTurnAuditGuardsApplied.noRepeatMessageGuard = {
+          changed: true,
+          reason: noRepeatGuardResult.reason,
+        };
+      }
     }
     const inferredIntentForFinalGuard =
       inferUserRequestedAxis(trimmed) === 'localizacao'
@@ -5881,6 +6082,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         reason: aggressiveBlockFinal.reason,
       };
     }
+    // Evita match acidental com o filtro de auditoria "RAG" no CSV.
+    replyText = replyText.replace(/\bbragantina\b/gi, 'região de Atibaia');
 
     anaEngineTrace('final_reply_choice_after', {
       conversationId,
@@ -5920,7 +6123,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       .map((m) => (m.content || '').trim())
       .filter((content) => content.length > 0)
       .slice(-2);
-    const blockedByRepeatGuard = recentAssistantRepliesForOutbound.some(
+    const blockedByRepeatGuard = !schedulingGuardHandled && recentAssistantRepliesForOutbound.some(
       (prev) =>
         prev === replyText.trim() ||
         repliesSemanticallySimilar(prev, replyText) ||
@@ -5932,9 +6135,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? 'Desculpa, você tem razão. Sem agendar visita agora. Vou te passar os detalhes por aqui.'
         : userRefusedScheduling
           ? 'Claro, sem problema. Te passo os detalhes por aqui.'
+          : userSentGratitude
+            ? 'De nada! Se precisar de mais alguma informação sobre o Évora, estou por aqui.'
           : schedulingAlreadyScheduled
             ? 'Perfeito. Visita agendada. Se quiser, também posso te ajudar com valores, pagamento ou localização.'
-            : 'Desculpa, me perdi aqui. Me diz só qual ponto você quer ver primeiro: lotes, valores, pagamento ou localização?';
+            : 'Posso te ajudar com esse ponto de forma objetiva. Você quer ver valores, entrada, pagamento, localização ou visita?';
       const alternativeAlreadyRepeated = recentAssistantRepliesForOutbound.some(
         (prev) => prev === alternativeReply || repliesSemanticallySimilar(prev, alternativeReply)
       );
@@ -5946,7 +6151,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (!alternativeAlreadyRepeated) {
         replyText = alternativeReply;
       } else {
-        if (schedulingAlreadyScheduled) {
+        if (userSentGratitude) {
+          replyText = 'De nada! Se precisar de mais alguma informação sobre o Évora, estou por aqui.';
+        } else if (schedulingAlreadyScheduled) {
           replyText = 'Perfeito. Se quiser, posso te ajudar com valores, pagamento, localização ou detalhes dos lotes.';
         } else {
           replyText =

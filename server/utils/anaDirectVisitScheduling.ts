@@ -50,6 +50,12 @@ export interface DirectVisitSchedulingInput {
   referenceNow?: Date;
 }
 
+export interface VisitSchedulingContinuationInput {
+  userMessage: string;
+  lastAssistantMessage?: string | null;
+  referenceNow?: Date;
+}
+
 function norm(s: string): string {
   return s
     .toLowerCase()
@@ -172,9 +178,30 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
   const axes = [input.resolvedIntent, input.primaryAxis, input.currentAxis, input.requestedAxis]
     .map((x) => norm(String(x ?? '')))
     .filter(Boolean);
-  if (axes.some((x) => x === 'visita_agendamento' || x === 'agendar')) return true;
-  if (input.flowState.pendingVisitScheduling === true) return true;
+  const axisRequestedVisit = axes.some((x) => x === 'visita_agendamento' || x === 'agendar');
+  if (input.flowState.pendingVisitScheduling === true) {
+    return isVisitSchedulingContinuationMessage({
+      userMessage: input.userMessage,
+      lastAssistantMessage: input.lastAssistantMessage,
+      referenceNow: input.referenceNow,
+    });
+  }
+  if (axisRequestedVisit) return true;
   if (hasVisitSchedulingWords(input.userMessage)) return true;
+  if (isAckOnly(input.userMessage) && lastAssistantInvitedVisit(input.lastAssistantMessage)) return true;
+  return false;
+}
+
+export function isVisitSchedulingContinuationMessage(input: VisitSchedulingContinuationInput): boolean {
+  const referenceNow = input.referenceNow ?? new Date();
+  const n = norm(input.userMessage);
+  if (!n) return false;
+  if (hasVisitSchedulingWords(input.userMessage)) return true;
+  if (parseDateMention(input.userMessage, referenceNow)) return true;
+  if (parseTimeHmFromText(input.userMessage)) return true;
+  if (/\b(dia\s*\d{1,2}|horario|de manha|a tarde|a noite|manha|tarde|noite)\b/.test(n)) {
+    return true;
+  }
   if (isAckOnly(input.userMessage) && lastAssistantInvitedVisit(input.lastAssistantMessage)) return true;
   return false;
 }

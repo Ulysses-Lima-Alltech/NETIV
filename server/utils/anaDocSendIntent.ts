@@ -25,13 +25,13 @@ const _ARTICLE = '(?:\\s+(?:o|a|os|as|um|uma))?';
 
 // Material/document nouns.
 const _MATERIAL =
-  '(?:book|ebook|pdf|material(?:is)?|material\\s+completo|cat[aá]logo|brochure|dossi[eê]|apresenta(?:c|ç)(?:a|ã)o|tabela(?:\\s+comercial)?|planilha|pre[cç]o(?:s)?|valor(?:es)?|arquivo|documento|anexo|foto(?:s)?|imagem(?:ens)?|v[ií]deo(?:s)?)';
+  '(?:book|ebook|pdf|cat[aá]logo|brochure|dossi[eê]|apresenta(?:c|ç)(?:a|ã)o|tabela(?:\\s+comercial)?|planilha|arquivo|documento|anexo|foto(?:s)?|imagem(?:ens)?|planta(?:s)?|layout|implantac[aã]o|v[ií]deo(?:s)?)';
 
 const _MATERIAL_TOPIC_RE =
   /\b(book|ebook|pdf|material(?:is)?|cat[aá]logo|brochure|dossi[eê]|apresenta[cç][aã]o|planta|plantas?|implantac[aã]o|layout|tabela(?:\s+comercial)?|planilha|arquivo|documento|anexo|foto(?:s)?|imagem(?:ens)?|v[ií]deo(?:s)?)\b/i;
 
 const _FOLLOWUP_MATERIAL_COMMAND_RE =
-  /^(?:me\s+manda|me\s+mande|manda\s+pra\s+mim|manda\s+pra\s+gente|manda|mande|envia|envie|me\s+envia|me\s+envie|me\s+passa|me\s+passe|passa\s+pra\s+mim|passe\s+pra\s+mim|pode\s+enviar|pode\s+me\s+enviar|pode\s+me\s+mandar|pode\s+me\s+passar|quero\s+o\s+material|quero\s+material|quero\s+isso|quero\s+esse|quero\s+essa)\b/i;
+  /^(?:(?:me\s+manda|me\s+mande|manda\s+pra\s+mim|manda\s+pra\s+gente|me\s+envia|me\s+envie|me\s+passa|me\s+passe|passa\s+pra\s+mim|passe\s+pra\s+mim|pode\s+enviar|pode\s+me\s+enviar|pode\s+me\s+mandar|pode\s+me\s+passar)\s+(?:o\s+|a\s+)?(?:book|pdf|catalogo|catálogo|folder|tabela|planilha|arquivo|documento|anexo|foto|fotos|imagem|imagens|planta|plantas|video|vídeo|videos|vídeos)|quero\s+o\s+material|quero\s+material)\b/i;
 
 export interface MaterialAskResult {
   /** true only when the current message asks explicit send intent. */

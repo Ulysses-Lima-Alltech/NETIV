@@ -111,6 +111,26 @@ function isPositiveVisitAck(text: string): boolean {
   return /^(sim|pode sim|pode ser|ok|fechado|combinado|confirmo|confirmado)$/.test(norm(text));
 }
 
+function isGratitudeOnlyMessage(text: string): boolean {
+  return /^(obrigad[oa]|muito obrigad[oa]|ok obrigad[oa]|valeu|vlw|agradeco|agradeço)[.! ]*$/.test(norm(text));
+}
+
+function toFirstName(value: string | null | undefined): string | null {
+  const raw = (value ?? '').trim();
+  if (!raw) return null;
+  const first = raw.split(/\s+/)[0]?.trim() ?? '';
+  return first.length >= 2 ? first : null;
+}
+
+function extractNameStatement(userMessage: string, fallbackName: string | null | undefined): string | null {
+  const n = norm(userMessage);
+  const namedByStatement =
+    /\b(meu nome e|me chamo|pode me chamar de|sou o|sou a)\b/.test(n) ||
+    /\bnome\b/.test(n);
+  if (!namedByStatement) return null;
+  return toFirstName(fallbackName);
+}
+
 function hydrate(state: CommercialFlowState, customerName: string | null | undefined): VisitState {
   const v = state.visitScheduling;
   const name = (customerName ?? '').trim();
@@ -188,8 +208,26 @@ export function applyAnaVisitSchedulingGuard(params: {
     };
   }
 
+  if (isGratitudeOnlyMessage(userMessage)) {
+    v.active = false;
+    v.status = 'none';
+    const next = persist(params.flowState, v, params.enterpriseId);
+    return {
+      handled: true,
+      finalAnswer: 'De nada! Se precisar de mais alguma informação sobre o Évora, estou por aqui.',
+      nextState: next,
+      reason: 'gratitude_closure',
+      nextMissingField: null,
+    };
+  }
+
   const date = parseDateFromText(userMessage, now);
   const time = parseTimeFromText(userMessage);
+  const nameFromStatement = extractNameStatement(userMessage, params.customerName);
+  if (nameFromStatement) {
+    v.nameCollected = true;
+    v.customerName = nameFromStatement;
+  }
   if (date) {
     v.requestedDateText = date.text;
     v.normalizedDate = date.ymd;
@@ -237,11 +275,15 @@ export function applyAnaVisitSchedulingGuard(params: {
   if (!v.normalizedDate) {
     v.status = 'collecting_date';
     const next = persist(params.flowState, v, params.enterpriseId);
+    const displayName = (v.customerName ?? '').trim();
+    const askDateReply = displayName
+      ? `Perfeito, ${displayName}. Para qual dia você prefere agendar a visita?`
+      : 'Perfeito. Para qual dia você prefere agendar a visita?';
     return {
       handled: true,
-      finalAnswer: 'Perfeito. Para qual dia você prefere agendar a visita?',
+      finalAnswer: askDateReply,
       nextState: next,
-      reason: 'collect_date',
+      reason: nameFromStatement ? 'name_captured_collect_date' : 'collect_date',
       nextMissingField: 'date',
     };
   }
