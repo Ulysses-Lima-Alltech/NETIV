@@ -3943,7 +3943,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           const retrySafeSend = await sendTextMessage({
             conversationId,
             to: toPhoneNumber,
-            text: deterministicRetryReply,
+            text: deterministicRetryReply ?? 'Claro. Posso te ajudar com informações do Évora por aqui.',
             phase: 'ana_retryable_failure_safe_reply',
           });
           if (retrySafeSend.success && retrySafeSend.metaMessageId) {
@@ -6266,4 +6266,50 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
 
 
+
+
+
+function normalizeAnaLocalTextForRules(value: string | null | undefined): string {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function isGratitudeOnlyMessage(text: string): boolean {
+  const n = normalizeAnaLocalTextForRules(text).replace(/[.!?]+$/g, '').trim();
+  return /^(obrigado|obrigada|muito obrigado|muito obrigada|ok obrigado|ok obrigada|valeu|vlw|agradeco|agradeço)$/.test(n);
+}
+
+function isGenericFirstGreetingMessage(text: string): boolean {
+  const n = normalizeAnaLocalTextForRules(text).replace(/[.!?]+$/g, '').trim();
+  return /^(oi|ola|olá|bom dia|boa tarde|boa noite|oi tudo bem|ola tudo bem|olá tudo bem|tudo bem|td bem)$/.test(n);
+}
+
+function isFirstContactGeneralInterestMessage(text: string): boolean {
+  const n = normalizeAnaLocalTextForRules(text);
+  return (
+    /\b(tenho interesse|gostaria de saber mais|quero saber mais|vi o anuncio|vi o anúncio|me passa mais detalhes|me manda mais informacoes|me manda mais informações|gostaria de informacoes|gostaria de informações)\b/.test(n) &&
+    /\b(evora|empreendimento|lote|lotes|atibaia)?\b/.test(n)
+  );
+}
+
+function buildFirstGreetingSafeFallback(text: string): string {
+  const n = normalizeAnaLocalTextForRules(text);
+  const asksHowAreYou = /\b(tudo bem|td bem|como vai|como voce esta|como você está)\b/.test(n);
+  const opening = asksHowAreYou ? 'Oi! Tudo bem sim 😊' : 'Olá! Claro.';
+
+  return [
+    opening,
+    'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas.',
+    'Fica em Atibaia, com fácil acesso pela Rodovia Dom Pedro I, perto da área da Pedreira, a aproximadamente 50 minutos de São Paulo.',
+    'Me conta, quais são suas dúvidas? Vou responder todas.',
+  ].join('\n\n');
+}
+
+function isGenericInterestFollowup(text: string): boolean {
+  const n = normalizeAnaLocalTextForRules(text);
+  return /\b(queria saber mais|quero saber mais|me fala mais|me passa mais detalhes|tem mais informacoes|tem mais informações|quero entender melhor|gostaria de saber mais|saber mais sobre o evora|mais sobre o evora)\b/.test(n);
+}
 
