@@ -8,7 +8,14 @@ export interface AnaDialoguePolicyState {
   lastBrokerHandoffAskedAt?: string | null;
   brokerHandoffAcceptedAt?: string | null;
   nameUncertainAt?: string | null;
-  lastAssistantQuestionType?: 'visit_offer' | 'broker_handoff' | 'followup_topics' | 'other' | null;
+  lastAssistantQuestionType?:
+    | 'visit_offer'
+    | 'broker_handoff'
+    | 'followup_topics'
+    | 'followup_topic'
+    | 'media_offer'
+    | 'other'
+    | null;
   lastAssistantQuestionText?: string | null;
   lastOfferedTopics?: string[];
 }
@@ -42,6 +49,8 @@ export function getAnaDialoguePolicyState(flowState: CommercialFlowState | null 
       raw.lastAssistantQuestionType === 'visit_offer' ||
       raw.lastAssistantQuestionType === 'broker_handoff' ||
       raw.lastAssistantQuestionType === 'followup_topics' ||
+      raw.lastAssistantQuestionType === 'followup_topic' ||
+      raw.lastAssistantQuestionType === 'media_offer' ||
       raw.lastAssistantQuestionType === 'other'
         ? raw.lastAssistantQuestionType
         : null,

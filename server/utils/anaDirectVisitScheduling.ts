@@ -48,6 +48,14 @@ export interface DirectVisitSchedulingDecision {
 export interface DirectVisitSchedulingInput {
   userMessage: string;
   flowState: CommercialFlowState;
+  confirmationContextKind?:
+    | 'visit_confirmation'
+    | 'broker_confirmation'
+    | 'followup_topic_confirmation'
+    | 'media_confirmation'
+    | 'ambiguous_confirmation'
+    | 'not_short_confirmation'
+    | null;
   resolvedIntent?: string | null;
   primaryAxis?: string | null;
   currentAxis?: string | null;
@@ -221,20 +229,27 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
   const axisRequestedVisit = axes.some((x) => x === 'visita_agendamento' || x === 'agendar');
   const ackOnlyMessage = isVisitSchedulingAckOnlyMessage(input.userMessage);
   const hasVisitOfferContext = isAssistantVisitOfferContextMessage(input.lastAssistantMessage);
+  const confirmationContextKind = input.confirmationContextKind ?? null;
+  const shortConfirmationSuppressesVisit =
+    ackOnlyMessage &&
+    confirmationContextKind != null &&
+    confirmationContextKind !== 'not_short_confirmation' &&
+    confirmationContextKind !== 'visit_confirmation';
   const schedulingContinuation = isVisitSchedulingContinuationMessage({
     userMessage: input.userMessage,
     lastAssistantMessage: input.lastAssistantMessage,
     referenceNow: input.referenceNow,
   });
+  if (shortConfirmationSuppressesVisit) return false;
   if (input.flowState.pendingVisitScheduling === true) {
     return schedulingContinuation;
   }
   if (axisRequestedVisit) {
-    if (ackOnlyMessage) return hasVisitOfferContext;
+    if (ackOnlyMessage) return confirmationContextKind === 'visit_confirmation' || hasVisitOfferContext;
     return schedulingContinuation || hasVisitSchedulingWords(input.userMessage);
   }
   if (hasVisitSchedulingWords(input.userMessage)) return true;
-  if (ackOnlyMessage && hasVisitOfferContext) return true;
+  if (ackOnlyMessage && (confirmationContextKind === 'visit_confirmation' || hasVisitOfferContext)) return true;
   return false;
 }
 

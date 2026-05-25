@@ -27,6 +27,10 @@ import {
   extractCustomerNameFromUserUtterance,
   isUncertainCustomerNameCue,
 } from '../utils/extractCustomerNameFromMessage.js';
+import {
+  resolveShortConfirmationContext,
+  shouldSuppressVisitFlowForConfirmationKind,
+} from '../utils/anaShortConfirmationContext.js';
 import type { CommercialFlowState } from '../utils/commercialFlowState.js';
 
 test('resolve modelo da Ana por DB com gpt-4.1', () => {
@@ -507,15 +511,31 @@ test('cta repetido em sequencia e suprimido', () => {
   assert.equal(/agendar uma visita/i.test(policy.text), false);
 });
 
-test('"sim" apos pergunta de topicos nao inicia agendamento de visita', () => {
+test('"sim" apos pergunta de formas de pagamento explica pagamento e nao inicia visita', () => {
+  const recentMessages = [
+    { role: 'assistant' as const, content: 'Quer que eu te explique as formas de pagamento?' },
+    { role: 'user' as const, content: 'sim' },
+  ];
+  const context = resolveShortConfirmationContext({
+    userText: 'sim',
+    recentMessages,
+    lastAssistantMessage: recentMessages[0].content,
+    flowState: {},
+  });
+
+  assert.equal(context.kind, 'followup_topic_confirmation');
+  assert.equal(context.source, 'history');
+  assert.equal(context.lastOfferedTopics.includes('formas_pagamento'), true);
+
   const shouldScheduleVisit = isVisitSchedulingIntent({
     userMessage: 'sim',
     flowState: {},
+    confirmationContextKind: context.kind,
     resolvedIntent: 'visita_agendamento',
     primaryAxis: 'visita_agendamento',
     currentAxis: 'visita_agendamento',
     requestedAxis: 'visita_agendamento',
-    lastAssistantMessage: 'Quer que eu te explique tambem sobre lazer ou formas de pagamento?',
+    lastAssistantMessage: recentMessages[0].content,
     enterpriseId: 10,
     referenceNow: new Date('2026-05-25T12:00:00.000Z'),
   });
@@ -527,20 +547,36 @@ test('"sim" apos pergunta de topicos nao inicia agendamento de visita', () => {
     replyText: 'Perfeito. Para qual dia voce prefere agendar a visita?',
     isFirstAnaReply: false,
     flowState: {},
-    recentMessages: [
-      { role: 'assistant', content: 'Quer que eu te explique tambem sobre lazer ou formas de pagamento?' },
-      { role: 'user', content: 'sim' },
-    ],
+    recentMessages,
     disableFollowupQuestion: true,
+    shortConfirmationContext: {
+      kind: context.kind,
+      lastAssistantQuestionType: context.lastAssistantQuestionType,
+      lastAssistantQuestionText: context.lastAssistantQuestionText,
+      lastOfferedTopics: context.lastOfferedTopics,
+    },
   });
   assert.equal(/agendar|visita/i.test(policy.text), false);
-  assert.match(policy.text, /lazer|pagamento/i);
+  assert.match(policy.text, /formas de pagamento|pagamento/i);
 });
 
 test('"sim" apos oferta explicita de visita inicia fluxo de agendamento', () => {
+  const context = resolveShortConfirmationContext({
+    userText: 'sim',
+    recentMessages: [
+      { role: 'assistant', content: 'Quer que eu te ajude a agendar uma visita?' },
+      { role: 'user', content: 'sim' },
+    ],
+    lastAssistantMessage: 'Quer que eu te ajude a agendar uma visita?',
+    flowState: {},
+  });
+  assert.equal(context.kind, 'visit_confirmation');
+  assert.equal(shouldSuppressVisitFlowForConfirmationKind(context.kind), false);
+
   const shouldScheduleVisit = isVisitSchedulingIntent({
     userMessage: 'sim',
     flowState: {},
+    confirmationContextKind: context.kind,
     resolvedIntent: 'visita_agendamento',
     primaryAxis: 'visita_agendamento',
     currentAxis: 'visita_agendamento',
@@ -550,6 +586,128 @@ test('"sim" apos oferta explicita de visita inicia fluxo de agendamento', () => 
     referenceNow: new Date('2026-05-25T12:00:00.000Z'),
   });
   assert.equal(shouldScheduleVisit, true);
+});
+
+test('"sim" apos pergunta de corretor resolve para handoff', () => {
+  const recentMessages = [
+    { role: 'assistant' as const, content: 'Quer que eu encaminhe para um corretor te passar certinho?' },
+    { role: 'user' as const, content: 'sim' },
+  ];
+  const context = resolveShortConfirmationContext({
+    userText: 'sim',
+    recentMessages,
+    lastAssistantMessage: recentMessages[0].content,
+    flowState: {},
+  });
+  assert.equal(context.kind, 'broker_confirmation');
+
+  const policy = applyAnaConversationPolicy({
+    conversationId: 51,
+    userMessage: 'sim',
+    replyText: 'Perfeito. Posso te ajudar com mais algo?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages,
+    disableFollowupQuestion: true,
+    shortConfirmationContext: {
+      kind: context.kind,
+      lastAssistantQuestionType: context.lastAssistantQuestionType,
+      lastAssistantQuestionText: context.lastAssistantQuestionText,
+      lastOfferedTopics: context.lastOfferedTopics,
+    },
+  });
+  assert.match(policy.text, /encaminhar para um corretor/i);
+});
+
+test('"sim" apos pergunta com dois topicos pede escolha e nao visita', () => {
+  const recentMessages = [
+    { role: 'assistant' as const, content: 'Quer que eu te fale tambem sobre seguranca ou localizacao?' },
+    { role: 'user' as const, content: 'sim' },
+  ];
+  const context = resolveShortConfirmationContext({
+    userText: 'sim',
+    recentMessages,
+    lastAssistantMessage: recentMessages[0].content,
+    flowState: {},
+  });
+  assert.equal(context.kind, 'followup_topic_confirmation');
+  assert.equal(context.lastOfferedTopics.length >= 2, true);
+
+  const policy = applyAnaConversationPolicy({
+    conversationId: 52,
+    userMessage: 'sim',
+    replyText: 'Perfeito. Para qual dia voce prefere agendar a visita?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages,
+    disableFollowupQuestion: true,
+    shortConfirmationContext: {
+      kind: context.kind,
+      lastAssistantQuestionType: context.lastAssistantQuestionType,
+      lastAssistantQuestionText: context.lastAssistantQuestionText,
+      lastOfferedTopics: context.lastOfferedTopics,
+    },
+  });
+  assert.equal(/agendar|visita/i.test(policy.text), false);
+  assert.match(policy.text, /seguran[cç]a|localiza[cç][aã]o|qual dos dois/i);
+});
+
+test('quando confirmacao curta resolve para followup, suprime fluxo de visita no turno', () => {
+  const context = resolveShortConfirmationContext({
+    userText: 'sim',
+    recentMessages: [
+      { role: 'assistant', content: 'Quer que eu te explique as formas de pagamento?' },
+      { role: 'user', content: 'sim' },
+    ],
+    lastAssistantMessage: 'Quer que eu te explique as formas de pagamento?',
+    flowState: {
+      pendingVisitScheduling: true,
+      pendingVisitDateLabel: 'sabado',
+      pendingVisitDate: '2026-05-30',
+      pendingVisitPeriod: 'manha',
+    },
+  });
+  assert.equal(context.kind, 'followup_topic_confirmation');
+  assert.equal(shouldSuppressVisitFlowForConfirmationKind(context.kind), true);
+
+  const directVisitIntent = isVisitSchedulingIntent({
+    userMessage: 'sim',
+    flowState: {
+      pendingVisitScheduling: true,
+      pendingVisitDateLabel: 'sabado',
+      pendingVisitDate: '2026-05-30',
+      pendingVisitPeriod: 'manha',
+    },
+    confirmationContextKind: context.kind,
+    resolvedIntent: 'visita_agendamento',
+    primaryAxis: 'visita_agendamento',
+    currentAxis: 'visita_agendamento',
+    requestedAxis: 'visita_agendamento',
+    lastAssistantMessage: 'Quer que eu te explique as formas de pagamento?',
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T12:00:00.000Z'),
+  });
+  assert.equal(directVisitIntent, false);
+
+  const visitFlowContextActive =
+    !shouldSuppressVisitFlowForConfirmationKind(context.kind) &&
+    (directVisitIntent || true);
+  assert.equal(visitFlowContextActive, false);
+});
+
+test('estado ausente reconstrói contexto pela última outbound da Ana', () => {
+  const context = resolveShortConfirmationContext({
+    userText: 'sim',
+    recentMessages: [
+      { role: 'assistant', content: 'Quer que eu te explique tambem sobre lazer ou formas de pagamento?' },
+      { role: 'user', content: 'sim' },
+    ],
+    lastAssistantMessage: 'Quer que eu te explique tambem sobre lazer ou formas de pagamento?',
+    flowState: {},
+  });
+  assert.equal(context.source, 'history');
+  assert.equal(context.kind, 'followup_topic_confirmation');
+  assert.equal(context.lastOfferedTopics.length >= 2, true);
 });
 
 test('"vc disse que ia falar mais" recupera topicos pendentes do ultimo follow-up', () => {

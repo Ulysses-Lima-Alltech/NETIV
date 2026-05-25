@@ -127,7 +127,7 @@ function containsBrokerAsk(text: string): boolean {
 
 function isAckLikeMessage(text: string): boolean {
   const n = norm(text).replace(/[.!?]+$/g, '').trim();
-  return /^(sim|ok|perfeito|ta bom|tá bom|pode ser|pode sim|fechado|claro|beleza)$/.test(n);
+  return /^(sim|ok|perfeito|ta bom|tá bom|pode ser|pode sim|fechado|claro|beleza|isso|pode|quero)$/.test(n);
 }
 
 function stripVisitOffer(text: string): string {
@@ -218,7 +218,7 @@ function userAskedForHuman(userMessage: string): boolean {
 
 function isAffirmativeUserReply(userMessage: string): boolean {
   const n = norm(userMessage).replace(/[.!?]+$/g, '').trim();
-  return /^(sim|pode ser|pode sim|quero sim|quero|ok|perfeito|fechado|claro)$/.test(n);
+  return /^(sim|pode ser|pode sim|quero sim|quero|ok|perfeito|fechado|claro|ta bom|tá bom|isso|pode)$/.test(n);
 }
 
 function isContinuationDemandUserReply(userMessage: string): boolean {
@@ -291,7 +291,7 @@ function isAssistantVisitOfferQuestion(text: string | null | undefined): boolean
 }
 
 type LastAssistantQuestionContext = {
-  questionType: 'visit_offer' | 'broker_handoff' | 'followup_topics' | 'other';
+  questionType: 'visit_offer' | 'broker_handoff' | 'followup_topics' | 'followup_topic' | 'other';
   offeredTopics: AnaDialogueTopic[];
   questionText: string | null;
   askedVisitOffer: boolean;
@@ -307,7 +307,11 @@ function resolveLastAssistantQuestionContext(
 ): LastAssistantQuestionContext {
   const fallbackTopics = dedupeTopics(
     (stateOfferedTopics ?? [])
-      .map((topic) => String(topic || '').toLowerCase().trim() as AnaDialogueTopic)
+      .map((topic) => {
+        const normalized = String(topic || '').toLowerCase().trim();
+        if (normalized === 'formas_pagamento') return 'pagamento';
+        return normalized;
+      })
       .filter(
         (topic) =>
           topic === 'lazer' ||
@@ -315,7 +319,7 @@ function resolveLastAssistantQuestionContext(
           topic === 'localizacao' ||
           topic === 'valores' ||
           topic === 'pagamento'
-      )
+      ) as AnaDialogueTopic[]
   );
   const questionText = (recentAssistantQuestionText || stateQuestionText || '').trim() || null;
   const offeredTopics = questionText ? extractFollowupOfferedTopicsFromQuestion(questionText) : fallbackTopics;
@@ -326,7 +330,12 @@ function resolveLastAssistantQuestionContext(
   if (askedVisitOffer) questionType = 'visit_offer';
   else if (askedBrokerHandoff) questionType = 'broker_handoff';
   else if (askedFollowupTopics) questionType = 'followup_topics';
-  else if (stateQuestionType === 'visit_offer' || stateQuestionType === 'broker_handoff' || stateQuestionType === 'followup_topics') {
+  else if (
+    stateQuestionType === 'visit_offer' ||
+    stateQuestionType === 'broker_handoff' ||
+    stateQuestionType === 'followup_topics' ||
+    stateQuestionType === 'followup_topic'
+  ) {
     questionType = stateQuestionType;
   }
   return {
@@ -380,6 +389,19 @@ export interface ApplyAnaConversationPolicyInput {
   now?: Date;
   disableFollowupQuestion?: boolean;
   visitFlowActive?: boolean;
+  shortConfirmationContext?: {
+    kind?:
+      | 'visit_confirmation'
+      | 'broker_confirmation'
+      | 'followup_topic_confirmation'
+      | 'media_confirmation'
+      | 'ambiguous_confirmation'
+      | 'not_short_confirmation'
+      | null;
+    lastAssistantQuestionType?: string | null;
+    lastAssistantQuestionText?: string | null;
+    lastOfferedTopics?: string[] | null;
+  };
 }
 
 export interface ApplyAnaConversationPolicyResult {
@@ -441,11 +463,16 @@ export function applyAnaConversationPolicy(
     input.flowState.pendingVisitScheduling === true ||
     input.flowState.visitScheduling?.active === true;
   const lastAssistantQuestionFromHistory = recentAssistantReplies[recentAssistantReplies.length - 1] ?? null;
+  const shortConfirmationContext = input.shortConfirmationContext ?? null;
+  const shortConfirmationKind = shortConfirmationContext?.kind ?? null;
+  const overrideQuestionType = shortConfirmationContext?.lastAssistantQuestionType ?? null;
+  const overrideQuestionText = shortConfirmationContext?.lastAssistantQuestionText ?? null;
+  const overrideOfferedTopics = shortConfirmationContext?.lastOfferedTopics ?? null;
   const lastAssistantQuestionContext = resolveLastAssistantQuestionContext(
-    lastAssistantQuestionFromHistory,
-    state.lastAssistantQuestionText ?? null,
-    state.lastAssistantQuestionType ?? null,
-    state.lastOfferedTopics ?? []
+    overrideQuestionText || lastAssistantQuestionFromHistory,
+    overrideQuestionText || (state.lastAssistantQuestionText ?? null),
+    overrideQuestionType || (state.lastAssistantQuestionType ?? null),
+    overrideOfferedTopics ?? state.lastOfferedTopics ?? []
   );
   const userAffirmative = isAffirmativeUserReply(input.userMessage) || isAckLikeMessage(input.userMessage);
   const userContinuationDemand = isContinuationDemandUserReply(input.userMessage);
@@ -518,7 +545,9 @@ export function applyAnaConversationPolicy(
       lastAssistantQuestionContext.askedFollowupTopics
     ) {
       const shouldResolvePendingFollowup =
+        shortConfirmationKind === 'followup_topic_confirmation' ||
         userContinuationDemand ||
+        userAffirmative ||
         lastAssistantQuestionContext.offeredTopics.length > 1 ||
         replyLooksVisitScheduling ||
         isGenericDetailPromiseReply(reply);
@@ -535,7 +564,7 @@ export function applyAnaConversationPolicy(
         });
       }
     } else if (
-      userContinuationDemand &&
+      (userContinuationDemand || userAffirmative || shortConfirmationKind === 'ambiguous_confirmation') &&
       !lastAssistantQuestionContext.askedVisitOffer &&
       !lastAssistantQuestionContext.askedBrokerHandoff &&
       !lastAssistantQuestionContext.askedFollowupTopics
@@ -544,7 +573,7 @@ export function applyAnaConversationPolicy(
       appliedRules.push('pending_followup_ambiguous');
       console.log('[ANA_PENDING_FOLLOWUP_AMBIGUOUS]', {
         conversationId: input.conversationId,
-        trigger: 'continuation_request_without_pending_topic',
+        trigger: userContinuationDemand ? 'continuation_request_without_pending_topic' : 'affirmative_without_pending_topic',
       });
     }
   }
@@ -729,3 +758,4 @@ export function applyAnaConversationPolicy(
     changed: reply !== (input.replyText || '').trim() || appliedRules.length > 0 || shouldPersistQuestionContext,
   };
 }
+

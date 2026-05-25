@@ -165,6 +165,11 @@ import {
   isVisitSchedulingLoopFallbackReply,
   isVisitSchedulingRefusalMessage,
 } from '../utils/anaDirectVisitScheduling.js';
+import {
+  resolveShortConfirmationContext,
+  shouldSuppressVisitFlowForConfirmationKind,
+  type AnaShortConfirmationContext,
+} from '../utils/anaShortConfirmationContext.js';
 import { applyAnaConversationPolicy } from '../utils/anaConversationPolicy.js';
 import { applyOperationalFactGuard } from '../utils/anaOperationalFactGuard.js';
 import {
@@ -1243,6 +1248,7 @@ function followupTopicLabel(topic: string): string {
   if (topic === 'seguranca') return 'seguranca';
   if (topic === 'localizacao') return 'localizacao';
   if (topic === 'valores') return 'valores';
+  if (topic === 'formas_pagamento') return 'formas de pagamento';
   if (topic === 'pagamento') return 'formas de pagamento';
   return topic;
 }
@@ -1253,12 +1259,48 @@ function expandShortFollowUpWithContext(params: {
   awaitingName: boolean;
   appointmentActive: boolean;
   lastAssistantMessage?: string | null;
+  shortConfirmationContext?: AnaShortConfirmationContext | null;
 }): { expanded: string; expandedApplied: boolean; reason: string | null } {
   const raw = (params.userMessage || '').trim();
   if (!raw) return { expanded: raw, expandedApplied: false, reason: null };
 
   if (params.awaitingName && looksLikeStandaloneNameReply(raw)) {
     return { expanded: raw, expandedApplied: false, reason: 'awaiting_name_raw_preserved' };
+  }
+  const shortConfirmationContext = params.shortConfirmationContext ?? null;
+  if (
+    shortConfirmationContext?.kind === 'followup_topic_confirmation' &&
+    shortConfirmationContext.lastOfferedTopics.length > 0
+  ) {
+    if (shortConfirmationContext.lastOfferedTopics.length === 1) {
+      const topic = followupTopicLabel(shortConfirmationContext.lastOfferedTopics[0] ?? '');
+      return {
+        expanded: `me explica ${topic}`.trim(),
+        expandedApplied: true,
+        reason: 'generic_followup_with_pending_topics_single',
+      };
+    }
+    const firstTopic = followupTopicLabel(shortConfirmationContext.lastOfferedTopics[0] ?? '');
+    const secondTopic = followupTopicLabel(shortConfirmationContext.lastOfferedTopics[1] ?? '');
+    return {
+      expanded: `${raw} sobre ${firstTopic} ou ${secondTopic}`.replace(/\s{2,}/g, ' ').trim(),
+      expandedApplied: true,
+      reason: 'generic_followup_with_pending_topics',
+    };
+  }
+  if (shortConfirmationContext?.kind === 'broker_confirmation') {
+    return {
+      expanded: `${raw} para falar com corretor`.replace(/\s{2,}/g, ' ').trim(),
+      expandedApplied: true,
+      reason: 'generic_followup_with_broker_context',
+    };
+  }
+  if (shortConfirmationContext?.kind === 'media_confirmation') {
+    return {
+      expanded: `${raw} para receber video ou book`.replace(/\s{2,}/g, ' ').trim(),
+      expandedApplied: true,
+      reason: 'generic_followup_with_media_context',
+    };
   }
   const shortFollowup = isShortGenericFollowUpMessage(raw);
   const followupContinuation = isPendingFollowupContinuationRequest(raw);
@@ -2065,6 +2107,42 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const isFirstAnaReply = !rows.some((m) => m.role === 'assistant');
     const lastAssistantBeforeUser = [...rows].reverse().find((m) => m.role === 'assistant');
     const lastAssistantPlain = lastAssistantBeforeUser?.content?.trim() || null;
+    const shortConfirmationContext = resolveShortConfirmationContext({
+      userText: trimmed,
+      recentMessages: rows.map((m) => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: m.content,
+      })),
+      lastAssistantMessage: lastAssistantPlain,
+      flowState: flowStateParsed,
+    });
+    const suppressVisitByConfirmationContext = shouldSuppressVisitFlowForConfirmationKind(shortConfirmationContext.kind);
+    console.log('[ANA_SHORT_CONFIRMATION_CONTEXT_RESOLVED]', {
+      conversationId,
+      kind: shortConfirmationContext.kind,
+      isShortConfirmation: shortConfirmationContext.isShortConfirmation,
+      lastAssistantQuestionType: shortConfirmationContext.lastAssistantQuestionType,
+      lastOfferedTopics: shortConfirmationContext.lastOfferedTopics,
+      source: shortConfirmationContext.source,
+    });
+    if (shortConfirmationContext.kind === 'followup_topic_confirmation') {
+      console.log('[ANA_SHORT_CONFIRMATION_RESOLVED_TO_FOLLOWUP]', {
+        conversationId,
+        lastOfferedTopics: shortConfirmationContext.lastOfferedTopics,
+      });
+    } else if (shortConfirmationContext.kind === 'visit_confirmation') {
+      console.log('[ANA_SHORT_CONFIRMATION_RESOLVED_TO_VISIT]', {
+        conversationId,
+      });
+    } else if (shortConfirmationContext.kind === 'broker_confirmation') {
+      console.log('[ANA_SHORT_CONFIRMATION_RESOLVED_TO_BROKER]', {
+        conversationId,
+      });
+    } else if (shortConfirmationContext.kind === 'ambiguous_confirmation') {
+      console.log('[ANA_SHORT_CONFIRMATION_AMBIGUOUS]', {
+        conversationId,
+      });
+    }
     let trustedCustomerName =
       extractCustomerNameFromUserUtterance(trimmed, { lastAssistantPlain }) || null;
     if (!trustedCustomerName && effectiveConv.ana_asked_customer_name === true) {
@@ -2276,6 +2354,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       awaitingName: awaitingNameForExpansion,
       appointmentActive: appointmentPreflight.active,
       lastAssistantMessage: lastAssistantPlain,
+      shortConfirmationContext,
     });
     const userMessageForReasoning = expansion.expandedApplied ? expansion.expanded : trimmed;
     if (expansion.expandedApplied || expansion.reason) {
@@ -3247,9 +3326,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       anaTurnAuditGuardsApplied.appointmentFlowCancelledByUser = true;
     }
 
-    const directVisitSchedulingIntent = isVisitSchedulingIntent({
+    const rawDirectVisitSchedulingIntent = isVisitSchedulingIntent({
       userMessage: trimmed,
       flowState: flowStateParsed,
+      confirmationContextKind: shortConfirmationContext.kind,
       resolvedIntent: anaDecision.resolvedIntent,
       primaryAxis: anaDecision.primaryAxis,
       currentAxis: anaDecision.currentAxis,
@@ -3259,11 +3339,23 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       referenceNow: lastUserMessageAt,
     });
     const ackOnlyVisitCandidate = isVisitSchedulingAckOnlyMessage(trimmed);
-    const lastAssistantAskedVisitOffer = isAssistantVisitOfferContextMessage(lastAssistantPlain);
+    const lastAssistantAskedVisitOffer =
+      shortConfirmationContext.lastAssistantQuestionType === 'visit_offer' ||
+      isAssistantVisitOfferContextMessage(lastAssistantPlain);
+    const visitFlowSuppressedByConfirmationContext =
+      suppressVisitByConfirmationContext && shortConfirmationContext.isShortConfirmation;
+    const directVisitSchedulingIntent = visitFlowSuppressedByConfirmationContext
+      ? false
+      : rawDirectVisitSchedulingIntent;
+    const hadVisitFlowSignalsBeforeSuppression =
+      rawDirectVisitSchedulingIntent ||
+      flowStateParsed.pendingVisitScheduling === true ||
+      flowStateParsed.visitScheduling?.active === true;
     if (
       ackOnlyVisitCandidate &&
       !lastAssistantAskedVisitOffer &&
       flowStateParsed.pendingVisitScheduling !== true &&
+      flowStateParsed.visitScheduling?.active !== true &&
       directVisitSchedulingIntent === false
     ) {
       console.log('[ANA_VISIT_CONFIRMATION_REJECTED_NO_VISIT_CONTEXT]', {
@@ -3272,11 +3364,63 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         lastAssistantMessage: (lastAssistantPlain || '').slice(0, 220),
       });
     }
-    if (
-      directVisitSchedulingIntent ||
-      flowStateParsed.pendingVisitScheduling === true ||
-      flowStateParsed.visitScheduling?.active === true
-    ) {
+    if (visitFlowSuppressedByConfirmationContext) {
+      console.log('[ANA_VISIT_INTENT_SUPPRESSED_BY_CONFIRMATION_CONTEXT]', {
+        conversationId,
+        shortConfirmationKind: shortConfirmationContext.kind,
+        rawDirectVisitSchedulingIntent,
+        hadVisitFlowSignalsBeforeSuppression,
+        pendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
+        visitActive: flowStateParsed.visitScheduling?.active === true,
+      });
+      if (hadVisitFlowSignalsBeforeSuppression) {
+        const previousVisitScheduling = flowStateParsed.visitScheduling ?? null;
+        const clearedVisitSchedulingStatus: 'scheduled' | 'none' =
+          previousVisitScheduling?.status === 'scheduled' ? 'scheduled' : 'none';
+        const clearedVisitState: CommercialFlowState = {
+          ...flowStateParsed,
+          pendingVisitScheduling: false,
+          pendingVisitDateLabel: null,
+          pendingVisitDate: null,
+          pendingVisitTime: null,
+          pendingVisitPeriod: null,
+          pendingVisitEnterpriseId: null,
+          visitScheduling: previousVisitScheduling
+            ? {
+                ...previousVisitScheduling,
+                active: false,
+                accepted: previousVisitScheduling.status === 'scheduled' ? previousVisitScheduling.accepted : false,
+                requestedDateText:
+                  previousVisitScheduling.status === 'scheduled' ? previousVisitScheduling.requestedDateText : null,
+                requestedTimeText:
+                  previousVisitScheduling.status === 'scheduled' ? previousVisitScheduling.requestedTimeText : null,
+                requestedPeriodText:
+                  previousVisitScheduling.status === 'scheduled'
+                    ? previousVisitScheduling.requestedPeriodText ?? null
+                    : null,
+                normalizedDate:
+                  previousVisitScheduling.status === 'scheduled' ? previousVisitScheduling.normalizedDate : null,
+                normalizedTime:
+                  previousVisitScheduling.status === 'scheduled' ? previousVisitScheduling.normalizedTime : null,
+                nameCollected:
+                  previousVisitScheduling.status === 'scheduled' ? previousVisitScheduling.nameCollected : false,
+                customerName:
+                  previousVisitScheduling.status === 'scheduled' ? previousVisitScheduling.customerName : null,
+                status: clearedVisitSchedulingStatus,
+              }
+            : undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await mergeConversationCommercialFlowState(conversationId, clearedVisitState);
+        flowStateParsed = clearedVisitState;
+      }
+    }
+    const visitSchedulingFlowActiveForTurn =
+      !visitFlowSuppressedByConfirmationContext &&
+      (directVisitSchedulingIntent ||
+        flowStateParsed.pendingVisitScheduling === true ||
+        flowStateParsed.visitScheduling?.active === true);
+    if (visitSchedulingFlowActiveForTurn) {
       console.log('[ANA_VISIT_FLOW_ACTIVE]', {
         conversationId,
         directVisitSchedulingIntent,
@@ -3487,6 +3631,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         now: lastUserMessageAt,
         disableFollowupQuestion: true,
         visitFlowActive: true,
+        shortConfirmationContext: shortConfirmationContext.isShortConfirmation
+          ? {
+              kind: shortConfirmationContext.kind,
+              lastAssistantQuestionType: shortConfirmationContext.lastAssistantQuestionType,
+              lastAssistantQuestionText: shortConfirmationContext.lastAssistantQuestionText,
+              lastOfferedTopics: shortConfirmationContext.lastOfferedTopics,
+            }
+          : undefined,
       });
       deterministicVisitReply = visitPolicyResult.text;
       if (visitPolicyResult.changed) {
@@ -3718,7 +3870,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               userMessage: trimmed,
               answer: effectiveCommercialRule.messages.join('\n'),
               rowsBeforeSend: rows,
-              isSchedulingFlow: appointmentPreflight.active || flowStateParsed.pendingVisitScheduling === true,
+              isSchedulingFlow:
+                !visitFlowSuppressedByConfirmationContext &&
+                (appointmentPreflight.active || flowStateParsed.pendingVisitScheduling === true),
               isHandoff: Boolean(effectiveConv.handoff || effectiveConv.classification === 'Handoff'),
               isMaterialOnlyFlow: false,
             });
@@ -3870,10 +4024,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           disableFollowupQuestion:
             effectiveCommercialRule.ruleId === 'visita_agendamento' || commercialMessagesToSend.length > 1,
           visitFlowActive:
-            effectiveCommercialRule.ruleId === 'visita_agendamento' ||
-            appointmentPreflight.active ||
-            flowStateParsed.pendingVisitScheduling === true ||
-            flowStateParsed.visitScheduling?.active === true,
+            !visitFlowSuppressedByConfirmationContext &&
+            (effectiveCommercialRule.ruleId === 'visita_agendamento' ||
+              appointmentPreflight.active ||
+              flowStateParsed.pendingVisitScheduling === true ||
+              flowStateParsed.visitScheduling?.active === true),
+          shortConfirmationContext: shortConfirmationContext.isShortConfirmation
+            ? {
+                kind: shortConfirmationContext.kind,
+                lastAssistantQuestionType: shortConfirmationContext.lastAssistantQuestionType,
+                lastAssistantQuestionText: shortConfirmationContext.lastAssistantQuestionText,
+                lastOfferedTopics: shortConfirmationContext.lastOfferedTopics,
+              }
+            : undefined,
         });
         commercialRuleMessage = commercialPolicyResult.text;
         if (commercialPolicyResult.changed) {
@@ -6051,12 +6214,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
     anaTurnAuditGuardsApplied.outboundReason = finalOutboundEval.reason;
     const appointmentFinalGuardContext =
-      directVisitSchedulingIntent ||
-      appointmentPreflight.active ||
-      anaDecision.resolvedIntent === 'visita_agendamento' ||
-      anaDecision.resolvedIntent === 'agendar' ||
-      anaDecision.primaryAxis === 'visita_agendamento' ||
-      requestedAxisForPolicy === 'visita_agendamento';
+      !visitFlowSuppressedByConfirmationContext &&
+      (directVisitSchedulingIntent ||
+        appointmentPreflight.active ||
+        anaDecision.resolvedIntent === 'visita_agendamento' ||
+        anaDecision.resolvedIntent === 'agendar' ||
+        anaDecision.primaryAxis === 'visita_agendamento' ||
+        requestedAxisForPolicy === 'visita_agendamento');
     if (appointmentFinalGuardContext && hasProhibitedVisitSchedulingPhrase(finalOutboundEval.text)) {
       const guardDecision = handleVisitSchedulingDeterministically({
         userMessage: trimmed,
@@ -6940,7 +7104,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       answer: replyText,
       rowsBeforeSend,
       isSchedulingFlow:
-        schedulingGuardHandled || appointmentPreflight.active || flowStateParsed.pendingVisitScheduling === true,
+        !visitFlowSuppressedByConfirmationContext &&
+        (schedulingGuardHandled || appointmentPreflight.active || flowStateParsed.pendingVisitScheduling === true),
       isHandoff: Boolean(structured.handoff || effectiveConv.handoff),
       isMaterialOnlyFlow: Boolean(shouldAttemptDocSend),
     });
@@ -7175,15 +7340,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       now: lastUserMessageAt,
       disableFollowupQuestion:
         shouldAttemptDocSend ||
-        appointmentPreflight.active ||
-        flowStateParsed.pendingVisitScheduling === true ||
-        directVisitSchedulingIntent,
+        (!visitFlowSuppressedByConfirmationContext &&
+          (appointmentPreflight.active ||
+            flowStateParsed.pendingVisitScheduling === true ||
+            directVisitSchedulingIntent)),
       visitFlowActive:
-        schedulingGuardHandled ||
-        appointmentPreflight.active ||
-        flowStateParsed.pendingVisitScheduling === true ||
-        flowStateParsed.visitScheduling?.active === true ||
-        directVisitSchedulingIntent,
+        !visitFlowSuppressedByConfirmationContext &&
+        (schedulingGuardHandled ||
+          appointmentPreflight.active ||
+          flowStateParsed.pendingVisitScheduling === true ||
+          flowStateParsed.visitScheduling?.active === true ||
+          directVisitSchedulingIntent),
+      shortConfirmationContext: shortConfirmationContext.isShortConfirmation
+        ? {
+            kind: shortConfirmationContext.kind,
+            lastAssistantQuestionType: shortConfirmationContext.lastAssistantQuestionType,
+            lastAssistantQuestionText: shortConfirmationContext.lastAssistantQuestionText,
+            lastOfferedTopics: shortConfirmationContext.lastOfferedTopics,
+          }
+        : undefined,
     });
     replyText = finalPolicyResult.text;
     if (finalPolicyResult.changed) {
