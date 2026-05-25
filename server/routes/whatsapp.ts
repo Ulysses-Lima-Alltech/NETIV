@@ -461,9 +461,11 @@ router.get('/conversations', async (req, res) => {
     const type = typeRaw === 'INTERNO' ? 'INTERNO' : 'CLIENT';
 
     // ── Scope filtering (broker_portfolio) ──
+    // Se o usuário tem escopo broker_portfolio, SEMPRE passa o array (mesmo vazio).
+    // O repositório interpreta `[]` como "não retornar nada" e `undefined` como "sem restrição".
     const user = (req as AuthenticatedRequest).user;
     let scopeConvIds: number[] | undefined;
-    if (user?.sessionScope?.kind === 'broker_portfolio' && user.sessionScope.convIds.length > 0) {
+    if (user?.sessionScope?.kind === 'broker_portfolio') {
       scopeConvIds = user.sessionScope.convIds;
     }
 
@@ -487,7 +489,7 @@ router.get('/conversations', async (req, res) => {
     if (enterpriseId != null && !Number.isNaN(enterpriseId)) filters.enterpriseId = enterpriseId;
     if (search && search.trim() !== '') filters.search = search.trim();
     if (brokerId != null) filters.brokerId = brokerId;
-    if (scopeConvIds) filters.scopeConvIds = scopeConvIds;
+    if (scopeConvIds !== undefined) filters.scopeConvIds = scopeConvIds;
     filters.conversationTypeFilter = type as 'CLIENT' | 'INTERNO';
     const hasFilters = Object.keys(filters).length > 0;
     const rows = await listConversationsWithPreview(channel, limit, hasFilters ? filters : undefined);
