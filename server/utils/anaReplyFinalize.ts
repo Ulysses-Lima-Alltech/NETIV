@@ -153,7 +153,13 @@ function humanizeLazerReplyWhenNeeded(reply: string, userMessage?: string | null
   return HUMAN_LAZER_REPLY;
 }
 
-const GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION = 'Finalizar com pergunta aberta e natural, sem resposta fixa determinística.';
+const GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION = 'Me conta, quais são suas dúvidas? Vou responder todas.';
+
+const INTERNAL_INSTRUCTION_FRAGMENT_PATTERNS: readonly RegExp[] = [
+  /finalizar com pergunta aberta e natural,?\s*sem resposta fixa determin[ií]stica\.?/i,
+  /finalizar com pergunta aberta e natural/i,
+  /sem resposta fixa determin[ií]stica/i,
+];
 
 function replyAlreadyEndsWithQuestion(text: string): boolean {
   return /\?\s*$/.test((text || '').trim());
@@ -455,7 +461,11 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   const sanitized = removeInternalLimitationSentences(withOpenQuestion);
   const safeOffers = sanitizeUnsupportedSpecificOffers(sanitized.text);
   const dedupGreeting = sanitizeDuplicatedGreetingPrefix(safeOffers.text);
-  return dedupGreeting.slice(0, 4000);
+  const noInternalFragments = INTERNAL_INSTRUCTION_FRAGMENT_PATTERNS.reduce(
+    (acc, re) => acc.replace(re, ' ').replace(/\s{2,}/g, ' ').trim(),
+    dedupGreeting,
+  );
+  return noInternalFragments.slice(0, 4000);
 }
 
 function truncateAtWordBoundary(text: string, maxLen: number): string {

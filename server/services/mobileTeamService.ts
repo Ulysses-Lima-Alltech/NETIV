@@ -1,0 +1,766 @@
+import { query } from '../db/pg.js';
+import { hashPasswordForStorage } from '../repositories/userRepository.js';
+import type { MobileAuthUser } from './mobileAuthService.js';
+
+type TeamRole = 'CORRETOR' | 'GESTOR' | 'ADM';
+type CreatableMobileAccessRole = 'CORRETOR' | 'GESTOR';
+
+export type MobileTeamAccessInfo = {
+  id: string;
+  username: string;
+  role: TeamRole;
+  active: boolean;
+};
+
+export type MobileTeamEnterpriseLink = {
+  enterpriseId: string;
+  enterpriseName: string;
+  manageable: boolean;
+  label: string | null;
+};
+
+export type MobileTeamMember = {
+  id: string;
+  name: string;
+  phone: string | null;
+  role: TeamRole;
+  active: boolean;
+  mobileAccess: MobileTeamAccessInfo | null;
+  enterprises: MobileTeamEnterpriseLink[];
+};
+
+export type MobileTeamResponse = {
+  members: MobileTeamMember[];
+};
+
+export type UpdateMobileTeamMemberPayload = {
+  name?: string;
+  phone?: string;
+  active?: boolean;
+};
+
+export type CreateMobileTeamAccessPayload = {
+  username: string;
+  temporaryPassword: string;
+  role: CreatableMobileAccessRole;
+  active: boolean;
+};
+
+export type CreatedMobileTeamAccessUser = {
+  id: string;
+  username: string;
+  name: string;
+  role: TeamRole;
+  active: boolean;
+};
+
+type UpdateMobileTeamMemberResult =
+  | { ok: true; member: MobileTeamMember }
+  | { ok: false; code: 'FORBIDDEN' | 'NOT_FOUND' | 'BAD_REQUEST'; message: string };
+
+type AddEnterpriseToMobileTeamMemberResult =
+  | { ok: true; member: MobileTeamMember }
+  | { ok: false; code: 'FORBIDDEN' | 'NOT_FOUND' | 'BAD_REQUEST'; message: string };
+
+type RemoveEnterpriseFromMobileTeamMemberResult =
+  | { ok: true; member: MobileTeamMember }
+  | { ok: false; code: 'FORBIDDEN' | 'NOT_FOUND' | 'BAD_REQUEST'; message: string };
+
+type CreateMobileTeamAccessResult =
+  | { ok: true; user: CreatedMobileTeamAccessUser; member: MobileTeamMember }
+  | { ok: false; code: 'FORBIDDEN' | 'NOT_FOUND' | 'BAD_REQUEST'; message: string };
+
+type CorretorEnterpriseRow = {
+  corretor_id: number;
+  corretor_name: string;
+  corretor_phone: string | null;
+  corretor_active: boolean;
+  enterprise_id: number | null;
+  enterprise_name: string | null;
+  mobile_user_id: number | null;
+  mobile_username: string | null;
+  mobile_role: string | null;
+  mobile_is_active: boolean | null;
+};
+
+type MobileManagerEnterpriseRow = {
+  mobile_user_id: number;
+  mobile_user_name: string;
+  mobile_user_username: string;
+  mobile_user_phone: string | null;
+  mobile_user_role: TeamRole;
+  mobile_user_active: boolean;
+  enterprise_id: number | null;
+  enterprise_name: string | null;
+};
+
+type CorretorRow = {
+  id: number;
+  full_name: string;
+  phone: string;
+  active: boolean;
+};
+
+function parseTeamRole(value: string): TeamRole {
+  if (value === 'CORRETOR' || value === 'GESTOR' || value === 'ADM') return value;
+  throw new Error(`Role mobile invalida: ${value}`);
+}
+
+function normalizeUsername(username: string): string {
+  return username.trim().toLowerCase();
+}
+
+async function getManagedEnterpriseIds(mobileUserId: number): Promise<number[]> {
+  const result = await query<{ enterprise_id: number }>(
+    `SELECT enterprise_id
+     FROM mobile_user_enterprises
+     WHERE user_id = $1
+       AND can_manage = true`,
+    [mobileUserId]
+  );
+  return result.rows.map((row) => row.enterprise_id);
+}
+
+function manageableLabel(manageable: boolean): string {
+  return manageable ? 'Gerenciavel' : 'Somente visualizacao';
+}
+
+function digits(value: string): string {
+  return value.replace(/\D/g, '');
+}
+
+function parseCorretorMemberId(memberId: string): number | null {
+  const normalized = memberId.trim();
+  if (!normalized.startsWith('corretor:')) return null;
+  const idPart = normalized.slice('corretor:'.length);
+  const parsed = Number(idPart);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function mapMobileAccessFromCorretorRow(row: CorretorEnterpriseRow): MobileTeamAccessInfo | null {
+  if (!row.mobile_user_id || !row.mobile_username || !row.mobile_role) return null;
+  return {
+    id: String(row.mobile_user_id),
+    username: row.mobile_username,
+    role: parseTeamRole(row.mobile_role),
+    active: row.mobile_is_active === true,
+  };
+}
+
+function pushEnterpriseLink(
+  map: Map<string, MobileTeamMember>,
+  memberKey: string,
+  memberBase: Omit<MobileTeamMember, 'enterprises'>,
+  enterpriseId: number | null,
+  enterpriseName: string | null,
+  manageable: boolean
+): void {
+  if (!map.has(memberKey)) {
+    map.set(memberKey, { ...memberBase, enterprises: [] });
+  }
+
+  if (enterpriseId == null || !enterpriseName) return;
+
+  const member = map.get(memberKey);
+  if (!member) return;
+
+  const linkId = String(enterpriseId);
+  const alreadyAdded = member.enterprises.some((enterprise) => enterprise.enterpriseId === linkId);
+  if (alreadyAdded) return;
+
+  member.enterprises.push({
+    enterpriseId: linkId,
+    enterpriseName,
+    manageable,
+    label: manageableLabel(manageable),
+  });
+}
+
+async function canGestorManageCorretor(gestorId: number, corretorId: number): Promise<boolean> {
+  const result = await query<{ allowed: boolean }>(
+    `SELECT EXISTS(
+       SELECT 1
+       FROM corretor_empreendimentos ce
+       INNER JOIN mobile_user_enterprises mue
+         ON mue.enterprise_id = ce.enterprise_id
+       WHERE ce.corretor_id = $1
+         AND mue.user_id = $2
+         AND mue.can_manage = true
+     ) AS allowed`,
+    [corretorId, gestorId]
+  );
+  return result.rows[0]?.allowed === true;
+}
+
+async function canGestorManageEnterprise(gestorId: number, enterpriseId: number): Promise<boolean> {
+  const result = await query<{ allowed: boolean }>(
+    `SELECT EXISTS(
+       SELECT 1
+       FROM mobile_user_enterprises mue
+       WHERE mue.user_id = $1
+         AND mue.enterprise_id = $2
+         AND mue.can_manage = true
+     ) AS allowed`,
+    [gestorId, enterpriseId]
+  );
+  return result.rows[0]?.allowed === true;
+}
+
+async function enterpriseExists(enterpriseId: number): Promise<boolean> {
+  const result = await query<{ id: number }>(
+    `SELECT id
+     FROM enterprises
+     WHERE id = $1
+     LIMIT 1`,
+    [enterpriseId]
+  );
+  return result.rows.length > 0;
+}
+
+async function corretorExists(corretorId: number): Promise<boolean> {
+  const result = await query<{ id: number }>(
+    `SELECT id
+     FROM corretores
+     WHERE id = $1
+     LIMIT 1`,
+    [corretorId]
+  );
+  return result.rows.length > 0;
+}
+
+async function findCorretorById(corretorId: number): Promise<CorretorRow | null> {
+  const result = await query<CorretorRow>(
+    `SELECT id, full_name, phone, active
+     FROM corretores
+     WHERE id = $1
+     LIMIT 1`,
+    [corretorId]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function findMobileUserByUsername(username: string): Promise<{ id: number } | null> {
+  const normalized = normalizeUsername(username);
+  const result = await query<{ id: number }>(
+    `SELECT id
+     FROM mobile_users
+     WHERE LOWER(username) = $1
+     LIMIT 1`,
+    [normalized]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function findMobileUserByCorretorId(corretorId: number): Promise<{ id: number } | null> {
+  const result = await query<{ id: number }>(
+    `SELECT id
+     FROM mobile_users
+     WHERE corretor_id = $1
+     LIMIT 1`,
+    [corretorId]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function getGestorMembers(user: MobileAuthUser): Promise<MobileTeamMember[]> {
+  const managedEnterpriseIds = await getManagedEnterpriseIds(user.id);
+  if (managedEnterpriseIds.length === 0) return [];
+
+  const rows = await query<CorretorEnterpriseRow>(
+    `SELECT
+       c.id AS corretor_id,
+       c.full_name AS corretor_name,
+       c.phone AS corretor_phone,
+       c.active AS corretor_active,
+       ce.enterprise_id,
+       e.name AS enterprise_name,
+       mu.id AS mobile_user_id,
+       mu.username AS mobile_username,
+       mu.role AS mobile_role,
+       mu.is_active AS mobile_is_active
+     FROM corretores c
+     LEFT JOIN corretor_empreendimentos ce ON ce.corretor_id = c.id
+     LEFT JOIN enterprises e ON e.id = ce.enterprise_id
+     LEFT JOIN mobile_users mu ON mu.corretor_id = c.id
+     WHERE c.id = ANY(
+       SELECT DISTINCT ce2.corretor_id
+       FROM corretor_empreendimentos ce2
+       WHERE ce2.enterprise_id = ANY($1::int[])
+     )
+     ORDER BY c.full_name ASC, e.name ASC`,
+    [managedEnterpriseIds]
+  );
+
+  const managedSet = new Set<number>(managedEnterpriseIds);
+  const members = new Map<string, MobileTeamMember>();
+
+  for (const row of rows.rows) {
+    const memberKey = `corretor:${row.corretor_id}`;
+    pushEnterpriseLink(
+      members,
+      memberKey,
+      {
+        id: memberKey,
+        name: row.corretor_name,
+        phone: row.corretor_phone ?? null,
+        role: 'CORRETOR',
+        active: row.corretor_active === true,
+        mobileAccess: mapMobileAccessFromCorretorRow(row),
+      },
+      row.enterprise_id,
+      row.enterprise_name,
+      row.enterprise_id != null ? managedSet.has(row.enterprise_id) : false
+    );
+  }
+
+  return Array.from(members.values());
+}
+
+async function getAdmCorretorMembers(): Promise<MobileTeamMember[]> {
+  const rows = await query<CorretorEnterpriseRow>(
+    `SELECT
+       c.id AS corretor_id,
+       c.full_name AS corretor_name,
+       c.phone AS corretor_phone,
+       c.active AS corretor_active,
+       ce.enterprise_id,
+       e.name AS enterprise_name,
+       mu.id AS mobile_user_id,
+       mu.username AS mobile_username,
+       mu.role AS mobile_role,
+       mu.is_active AS mobile_is_active
+     FROM corretores c
+     LEFT JOIN corretor_empreendimentos ce ON ce.corretor_id = c.id
+     LEFT JOIN enterprises e ON e.id = ce.enterprise_id
+     LEFT JOIN mobile_users mu ON mu.corretor_id = c.id
+     ORDER BY c.full_name ASC, e.name ASC`
+  );
+
+  const members = new Map<string, MobileTeamMember>();
+
+  for (const row of rows.rows) {
+    const memberKey = `corretor:${row.corretor_id}`;
+    pushEnterpriseLink(
+      members,
+      memberKey,
+      {
+        id: memberKey,
+        name: row.corretor_name,
+        phone: row.corretor_phone ?? null,
+        role: 'CORRETOR',
+        active: row.corretor_active === true,
+        mobileAccess: mapMobileAccessFromCorretorRow(row),
+      },
+      row.enterprise_id,
+      row.enterprise_name,
+      true
+    );
+  }
+
+  return Array.from(members.values());
+}
+
+async function getAdmMobileManagerMembers(): Promise<MobileTeamMember[]> {
+  const rows = await query<MobileManagerEnterpriseRow>(
+    `SELECT
+       mu.id AS mobile_user_id,
+       mu.name AS mobile_user_name,
+       mu.username AS mobile_user_username,
+       mu.phone AS mobile_user_phone,
+       mu.role AS mobile_user_role,
+       mu.is_active AS mobile_user_active,
+       mue.enterprise_id,
+       e.name AS enterprise_name
+     FROM mobile_users mu
+     LEFT JOIN mobile_user_enterprises mue ON mue.user_id = mu.id
+     LEFT JOIN enterprises e ON e.id = mue.enterprise_id
+     WHERE mu.role IN ('GESTOR', 'ADM')
+     ORDER BY mu.name ASC, e.name ASC`
+  );
+
+  const members = new Map<string, MobileTeamMember>();
+
+  for (const row of rows.rows) {
+    const role = row.mobile_user_role === 'GESTOR' ? 'GESTOR' : 'ADM';
+    const memberKey = `mobile:${row.mobile_user_id}`;
+    pushEnterpriseLink(
+      members,
+      memberKey,
+      {
+        id: memberKey,
+        name: row.mobile_user_name,
+        phone: row.mobile_user_phone ?? null,
+        role,
+        active: row.mobile_user_active === true,
+        mobileAccess: {
+          id: String(row.mobile_user_id),
+          username: row.mobile_user_username,
+          role,
+          active: row.mobile_user_active === true,
+        },
+      },
+      row.enterprise_id,
+      row.enterprise_name,
+      true
+    );
+  }
+
+  return Array.from(members.values());
+}
+
+async function getCorretorMemberForUser(user: MobileAuthUser, corretorId: number): Promise<MobileTeamMember | null> {
+  const scopeEnterpriseIds = user.role === 'GESTOR' ? await getManagedEnterpriseIds(user.id) : [];
+  if (user.role === 'GESTOR' && scopeEnterpriseIds.length === 0) return null;
+
+  const rows = await query<CorretorEnterpriseRow>(
+    `SELECT
+       c.id AS corretor_id,
+       c.full_name AS corretor_name,
+       c.phone AS corretor_phone,
+       c.active AS corretor_active,
+       ce.enterprise_id,
+       e.name AS enterprise_name,
+       mu.id AS mobile_user_id,
+       mu.username AS mobile_username,
+       mu.role AS mobile_role,
+       mu.is_active AS mobile_is_active
+     FROM corretores c
+     LEFT JOIN corretor_empreendimentos ce ON ce.corretor_id = c.id
+     LEFT JOIN enterprises e ON e.id = ce.enterprise_id
+     LEFT JOIN mobile_users mu ON mu.corretor_id = c.id
+     WHERE c.id = $1
+     ORDER BY e.name ASC`,
+    [corretorId]
+  );
+
+  if (rows.rows.length === 0) return null;
+
+  const managedSet = new Set<number>(scopeEnterpriseIds);
+  const memberKey = `corretor:${corretorId}`;
+  const members = new Map<string, MobileTeamMember>();
+
+  for (const row of rows.rows) {
+    const manageable = user.role === 'GESTOR'
+      ? (row.enterprise_id != null ? managedSet.has(row.enterprise_id) : false)
+      : true;
+    pushEnterpriseLink(
+      members,
+      memberKey,
+      {
+        id: memberKey,
+        name: row.corretor_name,
+        phone: row.corretor_phone ?? null,
+        role: 'CORRETOR',
+        active: row.corretor_active === true,
+        mobileAccess: mapMobileAccessFromCorretorRow(row),
+      },
+      row.enterprise_id,
+      row.enterprise_name,
+      manageable
+    );
+  }
+
+  return members.get(memberKey) ?? null;
+}
+
+export async function getMobileTeam(user: MobileAuthUser): Promise<MobileTeamResponse> {
+  if (user.role === 'CORRETOR') {
+    return { members: [] };
+  }
+
+  if (user.role === 'GESTOR') {
+    const members = await getGestorMembers(user);
+    return { members };
+  }
+
+  const [corretorMembers, managerMembers] = await Promise.all([
+    getAdmCorretorMembers(),
+    getAdmMobileManagerMembers(),
+  ]);
+
+  return {
+    members: [...corretorMembers, ...managerMembers],
+  };
+}
+
+export async function updateMobileTeamMember(
+  user: MobileAuthUser,
+  memberId: string,
+  payload: UpdateMobileTeamMemberPayload
+): Promise<UpdateMobileTeamMemberResult> {
+  if (user.role === 'CORRETOR') {
+    return { ok: false, code: 'FORBIDDEN', message: 'Sem permissao para editar equipe.' };
+  }
+
+  if (memberId.startsWith('mobile:')) {
+    return {
+      ok: false,
+      code: 'BAD_REQUEST',
+      message: 'Edicao de membros mobile:* ainda nao suportada nesta etapa.',
+    };
+  }
+
+  const corretorId = parseCorretorMemberId(memberId);
+  if (!corretorId) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'ID de membro invalido.' };
+  }
+
+  if (user.role === 'GESTOR') {
+    const allowed = await canGestorManageCorretor(user.id, corretorId);
+    if (!allowed) {
+      return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+    }
+  }
+
+  const updates: string[] = [];
+  const values: Array<string | boolean | number> = [];
+  let index = 1;
+
+  if (payload.name !== undefined) {
+    updates.push(`full_name = $${index++}`);
+    values.push(payload.name.trim());
+  }
+  if (payload.phone !== undefined) {
+    updates.push(`phone = $${index++}`);
+    values.push(digits(payload.phone));
+  }
+  if (payload.active !== undefined) {
+    updates.push(`active = $${index++}`);
+    values.push(payload.active);
+  }
+
+  if (updates.length === 0) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'Nenhum campo valido para atualizar.' };
+  }
+
+  updates.push('updated_at = NOW()');
+  values.push(corretorId);
+
+  const updateResult = await query<{ id: number }>(
+    `UPDATE corretores
+     SET ${updates.join(', ')}
+     WHERE id = $${index}
+     RETURNING id`,
+    values
+  );
+
+  if (updateResult.rows.length === 0) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+  }
+
+  const member = await getCorretorMemberForUser(user, corretorId);
+  if (!member) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+  }
+
+  return { ok: true, member };
+}
+
+export async function addEnterpriseToMobileTeamMember(
+  user: MobileAuthUser,
+  memberId: string,
+  enterpriseId: number
+): Promise<AddEnterpriseToMobileTeamMemberResult> {
+  if (user.role === 'CORRETOR') {
+    return { ok: false, code: 'FORBIDDEN', message: 'Sem permissao para vincular equipe.' };
+  }
+
+  if (memberId.startsWith('mobile:')) {
+    return {
+      ok: false,
+      code: 'BAD_REQUEST',
+      message: 'Vinculo para membros mobile:* ainda nao suportado nesta etapa.',
+    };
+  }
+
+  const corretorId = parseCorretorMemberId(memberId);
+  if (!corretorId) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'ID de membro invalido.' };
+  }
+
+  if (!Number.isInteger(enterpriseId) || enterpriseId <= 0) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'enterpriseId invalido.' };
+  }
+
+  if (user.role === 'GESTOR') {
+    const allowed = await canGestorManageCorretor(user.id, corretorId);
+    if (!allowed) {
+      return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+    }
+  }
+
+  const exists = await enterpriseExists(enterpriseId);
+  if (!exists) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Empreendimento nao encontrado.' };
+  }
+
+  const brokerExists = await corretorExists(corretorId);
+  if (!brokerExists) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+  }
+
+  await query(
+    `INSERT INTO corretor_empreendimentos (corretor_id, enterprise_id)
+     VALUES ($1, $2)
+     ON CONFLICT (corretor_id, enterprise_id) DO NOTHING`,
+    [corretorId, enterpriseId]
+  );
+
+  const member = await getCorretorMemberForUser(user, corretorId);
+  if (!member) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+  }
+
+  return { ok: true, member };
+}
+
+export async function removeEnterpriseFromMobileTeamMember(
+  user: MobileAuthUser,
+  memberId: string,
+  enterpriseId: number
+): Promise<RemoveEnterpriseFromMobileTeamMemberResult> {
+  if (user.role === 'CORRETOR') {
+    return { ok: false, code: 'FORBIDDEN', message: 'Sem permissao para remover vinculos de equipe.' };
+  }
+
+  if (memberId.startsWith('mobile:')) {
+    return {
+      ok: false,
+      code: 'BAD_REQUEST',
+      message: 'Remocao para membros mobile:* ainda nao suportada nesta etapa.',
+    };
+  }
+
+  const corretorId = parseCorretorMemberId(memberId);
+  if (!corretorId) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'ID de membro invalido.' };
+  }
+
+  if (!Number.isInteger(enterpriseId) || enterpriseId <= 0) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'enterpriseId invalido.' };
+  }
+
+  if (user.role === 'GESTOR') {
+    const canManageBroker = await canGestorManageCorretor(user.id, corretorId);
+    if (!canManageBroker) {
+      return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+    }
+
+    const canManageTargetEnterprise = await canGestorManageEnterprise(user.id, enterpriseId);
+    if (!canManageTargetEnterprise) {
+      return { ok: false, code: 'FORBIDDEN', message: 'Sem permissao para remover este vinculo.' };
+    }
+  }
+
+  const exists = await enterpriseExists(enterpriseId);
+  if (!exists) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Empreendimento nao encontrado.' };
+  }
+
+  const brokerExists = await corretorExists(corretorId);
+  if (!brokerExists) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+  }
+
+  await query(
+    `DELETE FROM corretor_empreendimentos
+     WHERE corretor_id = $1
+       AND enterprise_id = $2`,
+    [corretorId, enterpriseId]
+  );
+
+  const member = await getCorretorMemberForUser(user, corretorId);
+  if (!member) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+  }
+
+  return { ok: true, member };
+}
+
+export async function createMobileAccessForTeamMember(
+  user: MobileAuthUser,
+  memberId: string,
+  payload: CreateMobileTeamAccessPayload
+): Promise<CreateMobileTeamAccessResult> {
+  if (user.role !== 'ADM') {
+    return { ok: false, code: 'FORBIDDEN', message: 'Sem permissao para criar acesso mobile.' };
+  }
+
+  if (memberId.startsWith('mobile:')) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'Fluxo suporta apenas membro corretor:* nesta etapa.' };
+  }
+
+  const corretorId = parseCorretorMemberId(memberId);
+  if (!corretorId) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'ID de membro invalido.' };
+  }
+
+  const username = normalizeUsername(payload.username);
+  if (!username) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'Username obrigatorio.' };
+  }
+
+  const temporaryPassword = String(payload.temporaryPassword ?? '');
+  if (!temporaryPassword.trim()) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'Senha temporaria obrigatoria.' };
+  }
+
+  if (payload.role !== 'CORRETOR' && payload.role !== 'GESTOR') {
+    return { ok: false, code: 'BAD_REQUEST', message: 'Role invalida para este fluxo.' };
+  }
+
+  const corretor = await findCorretorById(corretorId);
+  if (!corretor) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+  }
+
+  const existingByCorretor = await findMobileUserByCorretorId(corretorId);
+  if (existingByCorretor) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'Este membro ja possui acesso mobile.' };
+  }
+
+  const existingByUsername = await findMobileUserByUsername(username);
+  if (existingByUsername) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'Username ja esta em uso.' };
+  }
+
+  const passwordHash = await hashPasswordForStorage(temporaryPassword);
+  const phoneDigits = digits(corretor.phone ?? '');
+  const safePhone = phoneDigits.length > 0 ? phoneDigits : null;
+
+  const insertResult = await query<{
+    id: number;
+    username: string;
+    name: string;
+    role: string;
+    is_active: boolean;
+  }>(
+    `INSERT INTO mobile_users (username, password_hash, name, phone, role, is_active, corretor_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id, username, name, role, is_active`,
+    [username, passwordHash, corretor.full_name, safePhone, payload.role, payload.active, corretorId]
+  );
+
+  const created = insertResult.rows[0];
+  if (!created) {
+    return { ok: false, code: 'BAD_REQUEST', message: 'Nao foi possivel criar acesso mobile.' };
+  }
+
+  const member = await getCorretorMemberForUser(user, corretorId);
+  if (!member) {
+    return { ok: false, code: 'NOT_FOUND', message: 'Membro nao encontrado.' };
+  }
+
+  return {
+    ok: true,
+    user: {
+      id: String(created.id),
+      username: created.username,
+      name: created.name,
+      role: parseTeamRole(created.role),
+      active: created.is_active === true,
+    },
+    member,
+  };
+}

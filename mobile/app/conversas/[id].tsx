@@ -1,0 +1,701 @@
+import { router, useLocalSearchParams } from "expo-router";
+import { useEffect, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { AppIcon } from "../../src/components/AppIcon";
+import { AppShell } from "../../src/components/AppShell";
+import { StatusBadge } from "../../src/components/StatusBadge";
+import { ApiRequestError } from "../../src/services/api";
+import {
+  getConversationDetailWithApi,
+  getConversationStatusLabel,
+  sendMessageWithApi,
+  toggleHandoffWithApi,
+} from "../../src/services/conversations.service";
+import { useAuthStore } from "../../src/stores/auth.store";
+import { colors, radius, shadows, spacing, typography } from "../../src/theme";
+import { ConversationDetail } from "../../src/types/conversation.types";
+
+const INITIAL_CONVERSATION_DETAIL: ConversationDetail = {
+  conversation: {
+    id: "-",
+    clientName: "Cliente",
+    enterpriseName: "Sem empreendimento",
+    lastMessage: "Sem mensagem recente.",
+    status: "ANA",
+    needsHuman: false,
+    unread: false,
+    assignedBrokerName: "Corretor",
+  },
+  messages: [],
+  commercialDetails: {
+    leadTemperature: "Em analise",
+    enterpriseName: "Sem empreendimento",
+    brokerName: "Corretor",
+    visitInfo: "Sem agenda",
+    statusLabel: "Atendimento Autonomo",
+  },
+};
+
+function parseConversationId(rawId: string | string[] | undefined) {
+  if (Array.isArray(rawId)) return rawId[0] ?? "-";
+  return rawId ?? "-";
+}
+
+export default function ConversationDetailScreen() {
+  const { id } = useLocalSearchParams();
+  const user = useAuthStore((state) => state.user);
+  const token = useAuthStore((state) => state.token);
+  const [detail, setDetail] = useState<ConversationDetail>(INITIAL_CONVERSATION_DETAIL);
+  const [message, setMessage] = useState("");
+  const [handoff, setHandoff] = useState(false);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(true);
+  const [isDeniedOrMissing, setIsDeniedOrMissing] = useState(false);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [isUpdatingHandoff, setIsUpdatingHandoff] = useState(false);
+
+  const role = user?.role ?? "CORRETOR";
+  const [detailsExpanded, setDetailsExpanded] = useState(role === "GESTOR" || role === "ADM");
+  const canSeeOperationalDetails = role === "GESTOR" || role === "ADM";
+  const canManageHandoff = role === "CORRETOR";
+  const conversationId = parseConversationId(id);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadConversationDetail() {
+      setIsLoadingDetail(true);
+      setIsDeniedOrMissing(false);
+
+      if (!token) {
+        if (!active) return;
+        setIsDeniedOrMissing(true);
+        return;
+      }
+
+      try {
+        const apiDetail = await getConversationDetailWithApi(conversationId, token);
+        if (!active) return;
+        setDetail(apiDetail);
+        setHandoff(apiDetail.conversation.status === "HUMAN");
+      } catch (error) {
+        if (!active) return;
+        if (error instanceof ApiRequestError && (error.status === 403 || error.status === 404)) {
+          setIsDeniedOrMissing(true);
+          return;
+        }
+        setIsDeniedOrMissing(true);
+        Alert.alert("Falha ao carregar conversa", "Nao foi possivel carregar os dados em tempo real.");
+      } finally {
+        if (active) {
+          setIsLoadingDetail(false);
+        }
+      }
+    }
+
+    void loadConversationDetail();
+    return () => {
+      active = false;
+    };
+  }, [conversationId, token]);
+
+  const statusLabel = handoff ? "Atendimento Humano" : "Atendimento Autonomo";
+  const handoffButtonLabel = handoff ? "Voltar para Ana" : "Ativar handoff";
+  const shouldShowHumanAssignment = canSeeOperationalDetails && (handoff || detail.conversation.needsHuman);
+
+  const detailRows = useMemo(
+    () => [
+      { label: "Lead", value: detail.commercialDetails.leadTemperature },
+      { label: "Empreendimento", value: detail.commercialDetails.enterpriseName },
+      { label: "Corretor", value: detail.commercialDetails.brokerName },
+      { label: "Visita", value: detail.commercialDetails.visitInfo },
+      { label: "Status", value: statusLabel },
+    ],
+    [
+      detail.commercialDetails.brokerName,
+      detail.commercialDetails.enterpriseName,
+      detail.commercialDetails.leadTemperature,
+      detail.commercialDetails.visitInfo,
+      statusLabel,
+    ]
+  );
+
+  async function handleSendMessage() {
+    if (isDeniedOrMissing) return;
+    if (!message.trim() || isSendingMessage) return;
+    if (!token) {
+      Alert.alert("Sessao invalida", "Faca login novamente para enviar mensagens.");
+      return;
+    }
+
+    setIsSendingMessage(true);
+    try {
+      const draft = message;
+      const sentMessage = await sendMessageWithApi(conversationId, draft, token);
+      if (!sentMessage) return;
+
+      setDetail((current) => ({
+        ...current,
+        conversation: {
+          ...current.conversation,
+          lastMessage: sentMessage.text,
+          unread: false,
+        },
+        messages: [...current.messages, sentMessage],
+      }));
+      setMessage("");
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        Alert.alert("Nao foi possivel enviar", error.message || "Falha ao enviar mensagem no WhatsApp.");
+      } else {
+        Alert.alert("Nao foi possivel enviar", "Falha ao enviar mensagem no WhatsApp.");
+      }
+    } finally {
+      setIsSendingMessage(false);
+    }
+  }
+
+  async function handleToggleHandoff() {
+    if (isDeniedOrMissing) return;
+    if (isUpdatingHandoff) return;
+    if (!token) {
+      Alert.alert("Sessao invalida", "Faca login novamente para alterar handoff.");
+      return;
+    }
+
+    setIsUpdatingHandoff(true);
+    const nextHandoff = !handoff;
+    try {
+      const updatedConversation = await toggleHandoffWithApi(conversationId, nextHandoff, token);
+      if (!updatedConversation) {
+        Alert.alert("Nao foi possivel alterar handoff", "Conversa nao encontrada.");
+        return;
+      }
+
+      setHandoff(updatedConversation.status === "HUMAN");
+      setDetail((current) => ({
+        ...current,
+        conversation: updatedConversation,
+        commercialDetails: {
+          ...current.commercialDetails,
+          statusLabel: getConversationStatusLabel(updatedConversation.status),
+        },
+      }));
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        Alert.alert("Nao foi possivel alterar handoff", error.message || "Tente novamente.");
+      } else {
+        Alert.alert("Nao foi possivel alterar handoff", "Tente novamente.");
+      }
+    } finally {
+      setIsUpdatingHandoff(false);
+    }
+  }
+
+  return (
+    <AppShell>
+      <KeyboardAvoidingView
+        style={styles.root}
+        behavior={Platform.select({ ios: "padding", android: undefined })}
+        keyboardVerticalOffset={Platform.select({ ios: 14, android: 0 })}
+      >
+        {isLoadingDetail ? (
+          <View style={styles.loadingWrapper}>
+            <View style={styles.loadingCard}>
+              <ActivityIndicator size="small" color={colors.orange} />
+              <Text style={styles.loadingText}>Carregando conversa</Text>
+            </View>
+          </View>
+        ) : null}
+
+        {!isLoadingDetail && isDeniedOrMissing ? (
+          <View style={styles.blockedWrapper}>
+            <View style={styles.blockedCard}>
+              <View style={styles.blockedIcon}>
+                <AppIcon name="shield-crown-outline" size={24} color={colors.orange} />
+              </View>
+              <Text style={styles.blockedTitle}>Conversa nao encontrada ou sem acesso</Text>
+              <Text style={styles.blockedDescription}>
+                Verifique suas permissoes ou selecione outra conversa da lista.
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        {!isLoadingDetail && !isDeniedOrMissing ? (
+          <>
+            <View style={styles.topPanel}>
+              <Pressable style={styles.backButton} onPress={() => router.back()}>
+                <Text style={styles.backButtonArrow}>{"<"}</Text>
+                <Text style={styles.backButtonText}>Voltar</Text>
+              </Pressable>
+              <View style={styles.topRow}>
+                <View style={styles.topTextBlock}>
+                  <Text style={styles.topTitle}>{detail.conversation.clientName}</Text>
+                  <Text style={styles.topSubtitle}>
+                    {detail.conversation.enterpriseName || "Sem empreendimento"}
+                  </Text>
+                </View>
+                <StatusBadge label={statusLabel} tone={handoff ? "danger" : "info"} />
+              </View>
+
+              {canManageHandoff ? (
+                <Pressable
+                  style={[styles.handoffButton, handoff ? styles.handoffButtonDanger : null]}
+                  onPress={handleToggleHandoff}
+                  disabled={isUpdatingHandoff}
+                >
+                  {isUpdatingHandoff ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <AppIcon name="account-switch-outline" size={14} color="#FFFFFF" />
+                      <Text style={styles.handoffButtonText}>{handoffButtonLabel}</Text>
+                    </>
+                  )}
+                </Pressable>
+              ) : null}
+            </View>
+
+            <View style={styles.content}>
+              {canSeeOperationalDetails ? (
+                <View style={styles.detailsSection}>
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>Detalhes comerciais e operacionais</Text>
+                    <View style={styles.sectionActions}>
+                      <Pressable
+                        style={styles.detailsToggleButton}
+                        onPress={() => setDetailsExpanded((current) => !current)}
+                      >
+                        <Text style={styles.detailsToggleButtonText}>
+                          {detailsExpanded ? "Recolher detalhes" : "Ver detalhes"}
+                        </Text>
+                      </Pressable>
+                      {role === "ADM" ? <StatusBadge label="Acesso total" tone="inverse" /> : null}
+                    </View>
+                  </View>
+
+                  {detailsExpanded ? (
+                    <View style={styles.detailsPanel}>
+                      <View style={styles.detailsGrid}>
+                        {detailRows.map((item) => (
+                          <View key={item.label} style={styles.detailCard}>
+                            <Text style={styles.detailLabel}>{item.label}</Text>
+                            <Text style={styles.detailValue}>{item.value}</Text>
+                          </View>
+                        ))}
+                      </View>
+
+                      {shouldShowHumanAssignment ? (
+                        <View style={styles.assignmentBanner}>
+                          <Text numberOfLines={1} style={styles.assignmentText}>
+                            {`Atribuida para ${detail.conversation.assignedBrokerName}`}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+
+              <View style={styles.messagesSection}>
+                <View style={styles.messagesHeader}>
+                  <Text style={styles.messagesTitle}>Mensagens</Text>
+                </View>
+
+                <FlatList
+                  style={styles.messagesList}
+                  data={detail.messages}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.messagesContent}
+                  renderItem={({ item }) => {
+                    const direction =
+                      item.direction ??
+                      (item.from === "client"
+                        ? "INBOUND"
+                        : item.from === "system"
+                          ? "SYSTEM"
+                          : "OUTBOUND");
+
+                    if (direction === "SYSTEM") {
+                      return (
+                        <View style={styles.systemMessageWrap}>
+                          <Text style={styles.systemMessageText}>{item.text}</Text>
+                        </View>
+                      );
+                    }
+
+                    const mine = direction === "OUTBOUND";
+                    return (
+                      <View style={[styles.messageBubble, mine ? styles.messageMine : styles.messageTheirs]}>
+                        <Text style={[styles.messageText, mine ? styles.messageTextMine : null]}>{item.text}</Text>
+                      </View>
+                    );
+                  }}
+                />
+              </View>
+            </View>
+
+            <View style={styles.composer}>
+              <TextInput
+                value={message}
+                onChangeText={setMessage}
+                placeholder="Digite sua resposta"
+                placeholderTextColor="#98A2B3"
+                style={styles.input}
+                editable={!isSendingMessage}
+              />
+              <Pressable style={styles.sendButton} onPress={handleSendMessage} disabled={isSendingMessage}>
+                {isSendingMessage ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <AppIcon name="send" size={15} color="#FFFFFF" />
+                )}
+              </Pressable>
+            </View>
+          </>
+        ) : null}
+      </KeyboardAvoidingView>
+    </AppShell>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
+  topPanel: {
+    backgroundColor: colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xs,
+    gap: 7,
+  },
+  backButton: {
+    alignSelf: "flex-start",
+    minHeight: 30,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 2,
+  },
+  backButtonText: {
+    ...typography.caption,
+    color: colors.navy,
+    fontWeight: "700",
+  },
+  backButtonArrow: {
+    ...typography.caption,
+    color: colors.navy,
+    fontWeight: "800",
+    fontSize: 16,
+    lineHeight: 16,
+  },
+  topRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+    alignItems: "center",
+  },
+  topTextBlock: {
+    flex: 1,
+  },
+  topTitle: {
+    ...typography.cardTitle,
+    fontSize: 17,
+    lineHeight: 22,
+    color: colors.navy,
+  },
+  topSubtitle: {
+    ...typography.caption,
+    fontSize: 11,
+    lineHeight: 14,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  handoffButton: {
+    minHeight: 34,
+    borderRadius: radius.md,
+    backgroundColor: colors.orange,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+    alignSelf: "flex-start",
+    paddingHorizontal: spacing.sm,
+  },
+  handoffButtonDanger: {
+    backgroundColor: colors.red,
+  },
+  handoffButtonText: {
+    ...typography.caption,
+    color: "#FFFFFF",
+    fontSize: 11,
+  },
+  content: {
+    flex: 1,
+  },
+  detailsSection: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    gap: spacing.xs,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  sectionActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  detailsToggleButton: {
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.backgroundAlt,
+    paddingHorizontal: spacing.sm,
+    minHeight: 28,
+    justifyContent: "center",
+  },
+  detailsToggleButtonText: {
+    ...typography.caption,
+    color: colors.navy,
+    fontWeight: "700",
+    fontSize: 11,
+  },
+  sectionTitle: {
+    ...typography.cardTitle,
+    color: colors.navy,
+    fontSize: 14,
+    lineHeight: 19,
+    flex: 1,
+  },
+  detailsPanel: {
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.sm,
+    gap: spacing.xs,
+    ...shadows.card,
+  },
+  detailsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+  },
+  detailCard: {
+    width: "48%",
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.sm,
+  },
+  detailLabel: {
+    ...typography.caption,
+    color: colors.muted,
+    fontSize: 10,
+    lineHeight: 13,
+  },
+  detailValue: {
+    ...typography.body,
+    color: colors.text,
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  assignmentBanner: {
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#FFD7BC",
+    backgroundColor: colors.warningSoft,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+  },
+  assignmentText: {
+    ...typography.caption,
+    color: colors.navy,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "700",
+  },
+  messagesSection: {
+    flex: 1,
+    marginTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  messagesHeader: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs,
+  },
+  messagesTitle: {
+    ...typography.cardTitle,
+    color: colors.navy,
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  messagesList: {
+    flex: 1,
+  },
+  messagesContent: {
+    paddingHorizontal: spacing.sm,
+    paddingBottom: spacing.xxl,
+    gap: 8,
+  },
+  messageBubble: {
+    maxWidth: "78%",
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+  },
+  messageMine: {
+    alignSelf: "flex-end",
+    backgroundColor: colors.navy,
+    borderColor: colors.navy,
+  },
+  messageTheirs: {
+    alignSelf: "flex-start",
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+  },
+  messageText: {
+    ...typography.body,
+    color: colors.text,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  messageTextMine: {
+    color: "#FFFFFF",
+  },
+  systemMessageWrap: {
+    alignSelf: "center",
+    maxWidth: "88%",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.backgroundAlt,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  systemMessageText: {
+    ...typography.caption,
+    color: colors.muted,
+    textAlign: "center",
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  composer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    backgroundColor: colors.card,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingTop: 8,
+    paddingBottom: spacing.md,
+  },
+  input: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: "#FBFDFF",
+    paddingHorizontal: spacing.sm,
+    color: colors.text,
+  },
+  sendButton: {
+    width: 42,
+    height: 42,
+    borderRadius: radius.pill,
+    backgroundColor: colors.orange,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadingWrapper: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+  },
+  loadingCard: {
+    minWidth: 220,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    alignItems: "center",
+    gap: spacing.xs,
+    ...shadows.card,
+  },
+  loadingText: {
+    ...typography.caption,
+    color: colors.muted,
+  },
+  blockedWrapper: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+  },
+  blockedCard: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+    alignItems: "center",
+    ...shadows.card,
+  },
+  blockedIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: "#FFD8BD",
+    backgroundColor: colors.orangeSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  blockedTitle: {
+    ...typography.sectionTitle,
+    color: colors.navy,
+    textAlign: "center",
+    marginTop: spacing.sm,
+    fontSize: 18,
+    lineHeight: 23,
+  },
+  blockedDescription: {
+    ...typography.body,
+    color: colors.muted,
+    textAlign: "center",
+    marginTop: spacing.xs,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+});

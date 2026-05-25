@@ -25,13 +25,13 @@ const _ARTICLE = '(?:\\s+(?:o|a|os|as|um|uma))?';
 
 // Material/document nouns.
 const _MATERIAL =
-  '(?:book|ebook|pdf|material(?:is)?|material\\s+completo|cat[aá]logo|brochure|dossi[eê]|apresenta(?:c|ç)(?:a|ã)o|tabela(?:\\s+comercial)?|planilha|pre[cç]o(?:s)?|valor(?:es)?|arquivo|documento|anexo)';
+  '(?:book|ebook|pdf|cat[aá]logo|brochure|dossi[eê]|apresenta(?:c|ç)(?:a|ã)o|tabela(?:\\s+comercial)?|planilha|arquivo|documento|anexo|foto(?:s)?|imagem(?:ens)?|planta(?:s)?|layout|implantac[aã]o|v[ií]deo(?:s)?)';
 
 const _MATERIAL_TOPIC_RE =
-  /\b(book|ebook|pdf|material(?:is)?|cat[aá]logo|brochure|dossi[eê]|apresenta[cç][aã]o|planta|plantas?|implantac[aã]o|layout|tabela(?:\s+comercial)?|planilha|arquivo|documento|anexo)\b/i;
+  /\b(book|ebook|pdf|material(?:is)?|cat[aá]logo|brochure|dossi[eê]|apresenta[cç][aã]o|planta|plantas?|implantac[aã]o|layout|tabela(?:\s+comercial)?|planilha|arquivo|documento|anexo|foto(?:s)?|imagem(?:ens)?|v[ií]deo(?:s)?)\b/i;
 
 const _FOLLOWUP_MATERIAL_COMMAND_RE =
-  /^(?:me\s+manda|me\s+mande|manda\s+pra\s+mim|manda\s+pra\s+gente|manda|mande|envia|envie|me\s+envia|me\s+envie|me\s+passa|me\s+passe|passa\s+pra\s+mim|passe\s+pra\s+mim|pode\s+enviar|pode\s+me\s+enviar|pode\s+me\s+mandar|pode\s+me\s+passar|quero\s+o\s+material|quero\s+material|quero\s+isso|quero\s+esse|quero\s+essa)\b/i;
+  /^(?:(?:me\s+manda|me\s+mande|manda\s+pra\s+mim|manda\s+pra\s+gente|me\s+envia|me\s+envie|me\s+passa|me\s+passe|passa\s+pra\s+mim|passe\s+pra\s+mim|pode\s+enviar|pode\s+me\s+enviar|pode\s+me\s+mandar|pode\s+me\s+passar)\s+(?:o\s+|a\s+)?(?:book|pdf|catalogo|catálogo|folder|tabela|planilha|arquivo|documento|anexo|foto|fotos|imagem|imagens|planta|plantas|video|vídeo|videos|vídeos)|quero\s+o\s+material|quero\s+material)\b/i;
 
 export interface MaterialAskResult {
   /** true only when the current message asks explicit send intent. */
@@ -77,11 +77,16 @@ export function userAskedAboutMaterialTopic(userText: string): boolean {
  * Infer preferred category from current user text (without inventory validation).
  */
 export function inferPreferredCategoryFromUserText(userText: string): FileCategory | null {
-  const t = (userText || '').toLowerCase();
-  if (/\b(planta|plantas?|layout|implantac[aã]o)\b/.test(t)) return 'unidades';
-  if (/\b(tabela|pre[cç]o|pre[cç]os|valor|valores|planilha)\b/.test(t)) return 'tabela_comercial';
+  const t = (userText || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '');
+  if (/\b(planta|plantas?|layout|implantacao)\b/.test(t)) return 'unidades';
+  if (/\b(foto|fotos|imagem|imagens|video|videos)\b/.test(t)) return 'outro';
+  // Ana não envia tabela comercial diretamente: pedido de tabela deve cair em oferta textual/book.
+  if (/\b(tabela|preco|precos|valor|valores|planilha)\b/.test(t)) return 'book';
   if (
-    /\b(book|ebook|pdf|material|cat[aá]logo|brochure|dossi[eê]|apresenta[cç][aã]o|documento|arquivo|anexo)\b/.test(
+    /\b(book|ebook|pdf|material|catalogo|brochure|dossie|apresentacao|documento|arquivo|anexo)\b/.test(
       t
     )
   ) {

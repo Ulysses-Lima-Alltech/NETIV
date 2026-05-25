@@ -1,4 +1,4 @@
-﻿const EVORA_REGION_BLOCK = `Atibaia faz parte da região bragantina, que é uma das regiões mais valorizadas e desenvolvidas do estado. Fica a 50 minutos de São Paulo, tornando o Évora um condomínio para casas de veraneio ou até mesmo moradia.
+﻿const EVORA_REGION_BLOCK = `Atibaia faz parte de uma região valorizada e desenvolvida do estado. Fica a 50 minutos de São Paulo, tornando o Évora um condomínio para casas de veraneio ou até mesmo moradia.
 
 A cidade de Atibaia é rica em gastronomia, contendo os melhores restaurantes da região, sem contar com a avenida Lucas Nogueira Garces, que além de ser um verdadeiro centro gastronômico contém também as principais grifes, bares renomados se tornando um charmoso shopping a céu aberto.
 
@@ -27,6 +27,11 @@ function normalizeCompare(value: string | null | undefined): string {
   return normalizeText(value).replace(/[.!?,;:()"'`´]/g, '').trim();
 }
 
+function isGratitudeOnlyMessage(text: string | null | undefined): boolean {
+  const n = normalizeText(text);
+  return /^(obrigad[oa]|muito obrigad[oa]|ok obrigad[oa]|valeu|vlw|agradeco|agradeço)[.! ]*$/.test(n);
+}
+
 const EXPLICIT_VISIT_CTA_PATTERNS: RegExp[] = [
   /agendar uma visita/,
   /marcar uma visita/,
@@ -49,12 +54,12 @@ function isEvoraEnterprise(enterpriseName: string | null | undefined): boolean {
 
 function isAddressIntent(userMessage: string): boolean {
   const n = normalizeText(userMessage);
-  return /(onde fica|endereco|bairro|localizacao exata|ponto de referencia|como chegar|entrada|acesso|rota|caminho)/.test(n);
+  return /(onde fica|endereco|bairro|localizacao exata|ponto de referencia|como chegar|acesso|rota|caminho)/.test(n);
 }
 
 function isAccessIntent(userMessage: string): boolean {
   const n = normalizeText(userMessage);
-  return /(como e o acesso|como eh o acesso|acesso|como chegar|rota|entrada|caminho)/.test(n);
+  return /(como e o acesso|como eh o acesso|acesso|como chegar|rota|caminho)/.test(n);
 }
 
 function isRegionIntent(userMessage: string): boolean {
@@ -66,7 +71,7 @@ function hasLucasAsAccessLeak(answer: string): boolean {
   const n = normalizeText(answer);
   return (
     n.includes('lucas nogueira garces') &&
-    /(acesso|acessar|rota|entrada|caminho|endereco|chegar|localizacao exata|acesso facilitado)/.test(n)
+    /(acesso|acessar|rota|caminho|endereco|chegar|localizacao exata|acesso facilitado)/.test(n)
   );
 }
 
@@ -319,6 +324,10 @@ export function applyAnaNoRepeatMessageGuard(params: {
   recentAssistantReplies: string[];
   semanticallySimilar: (a: string, b: string) => boolean;
 }): { text: string; changed: boolean; reason: string | null } {
+  if (isGratitudeOnlyMessage(params.userMessage)) {
+    return { text: params.answer, changed: false, reason: null };
+  }
+
   const targetNorm = normalizeCompare(params.answer);
   const alreadyExact = params.recentAssistantReplies.some((msg) => normalizeCompare(msg) === targetNorm);
   const alreadySimilar =
@@ -331,13 +340,13 @@ export function applyAnaNoRepeatMessageGuard(params: {
   const nUser = normalizeText(params.userMessage ?? '');
   let text = 'Posso te responder de forma mais objetiva nesse ponto.';
   if (/(entrega|obra|prazo|lotes|construir|libera)/.test(nUser)) {
-    text = 'Você está perguntando sobre a previsão de entrega do empreendimento. Ainda não tenho a previsão exata liberada por aqui, mas o corretor confirma certinho pra você.';
+    text = 'A previsão de entrega do Évora é dezembro de 2027, e as obras estão avançadas com 55% executado.';
   } else if (/(entrada)/.test(nUser)) {
-    text = 'A entrada mínima é 20% do valor do lote, e o valor exato depende da unidade escolhida.';
+    text = 'Temos planos estendidos em até 120x, parcelamento sem juros em até 48x e financiamento direto com a construtora.';
+  } else if (/(condominio|taxa condominial)/.test(nUser)) {
+    text = 'O condomínio tem estimativa entre R$400 e R$700, conforme definições da associação.';
   } else if (/(preco|valor|quanto custa|lote)/.test(nUser)) {
     text = 'Esse é o valor inicial mesmo. Se quiser, o corretor pode simular conforme o lote disponível.';
-  } else if (/(condominio|taxa condominial)/.test(nUser)) {
-    text = 'Essa estimativa pode variar conforme as definições da associação. Se quiser, o corretor te explica no detalhe.';
   } else if (/(localizacao|endereco|onde fica|como chegar)/.test(nUser)) {
     text = 'Se quiser, te passo a referência de acesso de forma mais direta para sua rota.';
   }
@@ -352,4 +361,5 @@ export function applyAnaNoRepeatMessageGuard(params: {
   });
   return { text, changed: true, reason };
 }
+
 

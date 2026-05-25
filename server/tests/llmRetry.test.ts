@@ -7,7 +7,7 @@ import {
   isRetryableLlmError,
 } from '../utils/llmRetry.js';
 
-test('extractRetryAfterMs lê "Please try again in 12.614s"', () => {
+test('extractRetryAfterMs lÃª "Please try again in 12.614s"', () => {
   const ms = extractRetryAfterMs({ message: 'Rate limit reached. Please try again in 12.614s.' });
   assert.ok(ms != null);
   assert.ok(ms! >= 12600 && ms! <= 12630);

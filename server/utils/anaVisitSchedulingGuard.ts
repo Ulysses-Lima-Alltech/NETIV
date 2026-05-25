@@ -253,6 +253,19 @@ export function applyAnaVisitSchedulingGuard(params: {
     };
   }
 
+  if (isGratitudeOnlyMessage(userMessage)) {
+    v.active = false;
+    v.status = 'none';
+    const next = persist(params.flowState, v, params.enterpriseId);
+    return {
+      handled: true,
+      finalAnswer: 'De nada! Se precisar de mais alguma informação sobre o Évora, estou por aqui.',
+      nextState: next,
+      reason: 'gratitude_closure',
+      nextMissingField: null,
+    };
+  }
+
   const date = parseDateFromText(userMessage, now);
   const time = parseTimeFromText(userMessage);
   if (nameFromStatement) {
@@ -306,11 +319,15 @@ export function applyAnaVisitSchedulingGuard(params: {
   if (!v.normalizedDate) {
     v.status = 'collecting_date';
     const next = persist(params.flowState, v, params.enterpriseId);
+    const displayName = (v.customerName ?? '').trim();
+    const askDateReply = displayName
+      ? `Perfeito, ${displayName}. Para qual dia você prefere agendar a visita?`
+      : 'Perfeito. Para qual dia você prefere agendar a visita?';
     return {
       handled: true,
-      finalAnswer: 'Perfeito. Para qual dia você prefere agendar a visita?',
+      finalAnswer: askDateReply,
       nextState: next,
-      reason: 'collect_date',
+      reason: nameFromStatement ? 'name_captured_collect_date' : 'collect_date',
       nextMissingField: 'date',
     };
   }

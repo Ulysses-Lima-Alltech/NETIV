@@ -134,11 +134,11 @@ async function loadSourceBuffer(target: IngestionTarget): Promise<Buffer> {
 
   if (provider !== 's3') {
     throw new Error(
-      `Vers�o n�o eleg�vel para ingest�o S3-only. fileVersionId=${target.fileVersionId} provider=${target.storageProvider ?? 'NULL'}`
+      `Versão não elegível para ingestão S3-only. fileVersionId=${target.fileVersionId} provider=${target.storageProvider ?? 'NULL'}`
     );
   }
   if (!target.storageKey) {
-    throw new Error(`storage_key ausente para vers�o S3. fileVersionId=${target.fileVersionId}`);
+    throw new Error(`storage_key ausente para versão S3. fileVersionId=${target.fileVersionId}`);
   }
   const fromS3 = await downloadFromKnowledgeS3(target.storageKey);
   if (!fromS3) throw new Error(`Falha ao baixar do S3. key=${target.storageKey}`);
