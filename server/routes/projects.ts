@@ -31,10 +31,10 @@ import {
 import { createProjectSchema, updateProjectSchema, patchKnowledgeFileSchema } from '../validators/projects.js';
 import { insertPromptAddonsHistory, listPromptAddonsHistory } from '../repositories/promptAddonsHistoryRepository.js';
 import { getKnowledgeBackfillJob, startKnowledgeBackfill } from '../services/knowledgeBackfillService.js';
+import { SYSTEM_UPLOAD_MAX_BYTES } from '../constants/mediaLimits.js';
 
 const router = Router();
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
-const VIDEO_MAX_BYTES = 25 * 1024 * 1024;
 
 function isImageUploadMimeOrExt(mime: string, name: string): boolean {
   const m = (mime || '').toLowerCase();
@@ -73,6 +73,7 @@ function mapKnowledgeFileRow(f: {
   is_active: boolean;
   can_be_used_as_knowledge: boolean;
   can_be_sent_by_ana: boolean;
+  can_be_offered_by_ana: boolean;
   created_at: Date;
 }) {
   return {
@@ -84,6 +85,7 @@ function mapKnowledgeFileRow(f: {
     isActive: f.is_active,
     canBeUsedAsKnowledge: f.can_be_used_as_knowledge !== false,
     canBeSentByAna: f.can_be_sent_by_ana === true,
+    canBeOfferedByAna: f.can_be_offered_by_ana === true,
     createdAt: f.created_at.toISOString(),
   };
 }
@@ -100,9 +102,13 @@ function parseUploadBool(v: unknown, defaultVal: boolean): boolean {
 function defaultUploadPermissions(category: FileCategory): {
   canBeUsedAsKnowledge: boolean;
   canBeSentByAna: boolean;
+  canBeOfferedByAna: boolean;
 } {
-  if (category === 'outro') return { canBeUsedAsKnowledge: true, canBeSentByAna: false };
-  return { canBeUsedAsKnowledge: false, canBeSentByAna: true };
+  if (category === 'base_ana') return { canBeUsedAsKnowledge: true, canBeSentByAna: false, canBeOfferedByAna: false };
+  if (category === 'video') return { canBeUsedAsKnowledge: false, canBeSentByAna: true, canBeOfferedByAna: false };
+  if (category === 'foto') return { canBeUsedAsKnowledge: false, canBeSentByAna: true, canBeOfferedByAna: false };
+  if (category === 'outro') return { canBeUsedAsKnowledge: true, canBeSentByAna: false, canBeOfferedByAna: false };
+  return { canBeUsedAsKnowledge: false, canBeSentByAna: true, canBeOfferedByAna: false };
 }
 
 // memoryStorage: o buffer fica em RAM. O handler escreve em disco (cache local)
@@ -125,7 +131,7 @@ const upload = multer({
     }
     cb(null, true);
   },
-  limits: { fileSize: 100 * 1024 * 1024 },
+  limits: { fileSize: SYSTEM_UPLOAD_MAX_BYTES },
 });
 
 function parseListFilters(req: Request): { tipo?: EnterpriseTipo; exclusivo?: boolean } {
@@ -393,7 +399,7 @@ router.delete('/:id', async (req, res) => {
 
 function handleMulterError(err: unknown, _req: Request, res: Response, next: NextFunction): void {
   if (err instanceof MulterError && err.code === 'LIMIT_FILE_SIZE') {
-    res.status(400).json({ error: 'Arquivo muito grande. Limite: 100 MB.' });
+    res.status(400).json({ error: 'Arquivo muito grande. Limite: 700 MB.' });
     return;
   }
   next(err);
@@ -425,22 +431,22 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
     if (isImage && req.file.size > IMAGE_MAX_BYTES) {
       return res.status(400).json({ error: 'Imagem muito grande. Limite de 10 MB por imagem.' });
     }
-    if (isVideo && req.file.size > VIDEO_MAX_BYTES) {
-      return res.status(400).json({ error: 'Vídeo muito grande. Limite de 25 MB por vídeo.' });
-    }
     const tipoDoc = String(req.body?.tipoDocumento ?? req.body?.tipo_documento ?? '')
       .trim()
       .toUpperCase();
     let cat = (req.body?.category as string) || 'outro';
     if (tipoDoc === 'BOOK') cat = 'book';
     if (!FILE_CATEGORIES.includes(cat as FileCategory)) {
-      return res.status(400).json({ error: 'Categoria invÃ¡lida: book | unidades | tabela_comercial | outro' });
+      return res.status(400).json({ error: 'Categoria inválida.' });
     }
     const defaults = (isImage || isVideo)
-      ? { canBeUsedAsKnowledge: false, canBeSentByAna: true }
+      ? { canBeUsedAsKnowledge: false, canBeSentByAna: true, canBeOfferedByAna: false }
       : defaultUploadPermissions(cat as FileCategory);
     const canBeUsedAsKnowledge = parseUploadBool(req.body?.canBeUsedAsKnowledge, defaults.canBeUsedAsKnowledge);
     const canBeSentByAna = parseUploadBool(req.body?.canBeSentByAna, defaults.canBeSentByAna);
+    const canBeOfferedByAna = canBeSentByAna
+      ? parseUploadBool(req.body?.canBeOfferedByAna, defaults.canBeOfferedByAna)
+      : false;
 
     // Gera nome do arquivo (mesmo padrÃ£o do diskStorage anterior).
     const ext = req.file.originalname.includes('.')
@@ -487,7 +493,7 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
       req.file.originalname,
       mime || 'application/octet-stream',
       req.file.size,
-      { canBeUsedAsKnowledge, canBeSentByAna, storageProvider, storageKey, bucketName, publicUrl }
+      { canBeUsedAsKnowledge, canBeSentByAna, canBeOfferedByAna, storageProvider, storageKey, bucketName, publicUrl }
     );
     const files = await listEnterpriseFiles(id);
     const f = files.find((x) => x.id === fid)!;

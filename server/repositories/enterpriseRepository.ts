@@ -5,7 +5,7 @@ import { getPool, query } from '../db/pg.js';
 import { replaceEnterpriseFileChunks, splitTextIntoChunks } from './enterpriseKnowledgeChunkRepository.js';
 import { downloadFromKnowledgeS3 } from '../services/s3Storage.js';
 
-export const FILE_CATEGORIES = ['book', 'unidades', 'tabela_comercial', 'outro'] as const;
+export const FILE_CATEGORIES = ['book', 'base_ana', 'foto', 'video', 'mapa_localizacao', 'tabela_comercial', 'outro', 'unidades'] as const;
 export type FileCategory = (typeof FILE_CATEGORIES)[number];
 
 const FILE_CATEGORY_SET = new Set<string>(FILE_CATEGORIES);
@@ -18,9 +18,19 @@ const FILE_CATEGORY_ALIASES: Record<string, FileCategory> = {
   catalog: 'book',
   pdf: 'book',
   brochure: 'book',
+  base: 'base_ana',
   planta: 'unidades',
   plantas: 'unidades',
   unidade: 'unidades',
+  foto: 'foto',
+  fotos: 'foto',
+  imagem: 'foto',
+  imagens: 'foto',
+  video: 'video',
+  videos: 'video',
+  mapa: 'mapa_localizacao',
+  localizacao: 'mapa_localizacao',
+  localizacao_mapa: 'mapa_localizacao',
   tabela: 'tabela_comercial',
   precos: 'tabela_comercial',
   preco: 'tabela_comercial',
@@ -330,12 +340,13 @@ export async function listEnterpriseFiles(enterpriseId: number): Promise<
     is_active: boolean;
     can_be_used_as_knowledge: boolean;
     can_be_sent_by_ana: boolean;
+    can_be_offered_by_ana: boolean;
     created_at: Date;
   }[]
 > {
   const { rows } = await query(
     `SELECT id, category, original_name, storage_path, mime_type, size_bytes, is_active,
-            can_be_used_as_knowledge, can_be_sent_by_ana, created_at
+            can_be_used_as_knowledge, can_be_sent_by_ana, can_be_offered_by_ana, created_at
      FROM enterprise_files WHERE enterprise_id = $1 ORDER BY created_at`,
     [enterpriseId]
   );
@@ -681,6 +692,7 @@ export async function registerEnterpriseFile(
   opts?: {
     canBeUsedAsKnowledge?: boolean;
     canBeSentByAna?: boolean;
+    canBeOfferedByAna?: boolean;
     /** 's3' para uploads novos (storage oficial); 'local' mantido por compatibilidade legada. */
     storageProvider?: 's3' | 'local';
     /** Chave do objeto no bucket S3 (ex.: empreendimentos/7/1735-abc.pdf). */
@@ -740,12 +752,13 @@ export async function registerEnterpriseFile(
 
   const canBeUsedAsKnowledge = opts?.canBeUsedAsKnowledge === true;
   const canBeSentByAna = opts?.canBeSentByAna === true;
+  const canBeOfferedByAna = canBeSentByAna && opts?.canBeOfferedByAna === true;
   const { rows } = await query<{ id: number }>(
     `INSERT INTO enterprise_files
        (enterprise_id, category, original_name, storage_path, mime_type, size_bytes,
-        extracted_text, is_active, can_be_used_as_knowledge, can_be_sent_by_ana,
+        extracted_text, is_active, can_be_used_as_knowledge, can_be_sent_by_ana, can_be_offered_by_ana,
         file_data, storage_provider, storage_key, bucket_name, public_url)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, $10, $11, $12, $13, $14)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, $10, $11, $12, $13, $14, $15)
      RETURNING id`,
     [
       enterpriseId,
@@ -757,6 +770,7 @@ export async function registerEnterpriseFile(
       extracted || null,
       canBeUsedAsKnowledge,
       canBeSentByAna,
+      canBeOfferedByAna,
       fileData,
       storageProvider,
       opts?.storageKey ?? null,
@@ -987,7 +1001,7 @@ async function syncCurrentFileVersionAfterUploadOrPermissionChange(opts: {
 export async function updateEnterpriseFilePermissions(
   enterpriseId: number,
   fileId: number,
-  patch: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean }
+  patch: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean; canBeOfferedByAna?: boolean }
 ): Promise<boolean> {
   const { rows } = await query<{
     id: number;
@@ -998,15 +1012,20 @@ export async function updateEnterpriseFilePermissions(
     extracted_text: string | null;
     can_be_sent_by_ana: boolean;
     can_be_used_as_knowledge: boolean;
+    can_be_offered_by_ana: boolean;
   }>(
     `UPDATE enterprise_files
      SET can_be_used_as_knowledge = COALESCE($3, can_be_used_as_knowledge),
-         can_be_sent_by_ana = COALESCE($4, can_be_sent_by_ana)
+         can_be_sent_by_ana = COALESCE($4, can_be_sent_by_ana),
+         can_be_offered_by_ana = CASE
+           WHEN COALESCE($4, can_be_sent_by_ana) = false THEN false
+           ELSE COALESCE($5, can_be_offered_by_ana)
+         END
      WHERE enterprise_id = $1
        AND id = $2
      RETURNING id, category, original_name, storage_path, mime_type, extracted_text,
-               can_be_sent_by_ana, can_be_used_as_knowledge`,
-    [enterpriseId, fileId, patch.canBeUsedAsKnowledge ?? null, patch.canBeSentByAna ?? null]
+               can_be_sent_by_ana, can_be_used_as_knowledge, can_be_offered_by_ana`,
+    [enterpriseId, fileId, patch.canBeUsedAsKnowledge ?? null, patch.canBeSentByAna ?? null, patch.canBeOfferedByAna ?? null]
   );
   const updated = rows[0];
   if (!updated) return false;
@@ -1389,6 +1408,7 @@ type EnterpriseFileSendCandidateRow = {
   storage_provider: string | null;
   storage_key: string | null;
   bucket_name: string | null;
+  public_url: string | null;
   created_at: Date;
 };
 
@@ -1403,6 +1423,7 @@ export interface ResolvedSendableEnterpriseFile {
   storageProvider: string;
   storageKey: string;
   bucketName: string;
+  publicUrl: string | null;
 }
 export interface ResolveSendableEnterpriseFileResult {
   category: FileCategory | null;
@@ -1467,6 +1488,7 @@ export async function resolveSendableEnterpriseFileCurrentVersion(
        COALESCE(v.storage_provider, f.storage_provider) AS storage_provider,
        COALESCE(v.storage_key, f.storage_key) AS storage_key,
        COALESCE(v.bucket_name, f.bucket_name) AS bucket_name,
+       COALESCE(v.public_url, f.public_url) AS public_url,
        f.created_at
      FROM enterprise_files f
      LEFT JOIN enterprise_file_versions v
@@ -1666,6 +1688,7 @@ export async function resolveSendableEnterpriseFileCurrentVersion(
     storageProvider: String(selected.storage_provider ?? 's3'),
     storageKey,
     bucketName,
+    publicUrl: selected.public_url ?? null,
   };
 
   console.log('[ANA_DOC_LOOKUP_RESULT]', {
@@ -1722,6 +1745,7 @@ export async function resolveSendableEnterpriseImageFilesCurrentVersion(
     storage_provider: string;
     storage_key: string;
     bucket_name: string;
+    public_url: string | null;
   }>(
     `SELECT
        f.id AS enterprise_file_id,
@@ -1732,7 +1756,8 @@ export async function resolveSendableEnterpriseImageFilesCurrentVersion(
        COALESCE(v.storage_path, f.storage_path) AS storage_path,
        COALESCE(v.storage_provider, f.storage_provider) AS storage_provider,
        COALESCE(v.storage_key, f.storage_key) AS storage_key,
-       COALESCE(v.bucket_name, f.bucket_name) AS bucket_name
+       COALESCE(v.bucket_name, f.bucket_name) AS bucket_name,
+       COALESCE(v.public_url, f.public_url) AS public_url
      FROM enterprise_files f
      INNER JOIN enterprise_file_versions v
        ON v.id = f.current_version_id
@@ -1772,6 +1797,7 @@ export async function resolveSendableEnterpriseImageFilesCurrentVersion(
       storageProvider: f.storage_provider,
       storageKey: f.storage_key,
       bucketName: f.bucket_name,
+      publicUrl: f.public_url ?? null,
     });
   }
   return out;
@@ -1779,7 +1805,8 @@ export async function resolveSendableEnterpriseImageFilesCurrentVersion(
 
 export async function resolveSendableEnterpriseVideoFilesCurrentVersion(
   enterpriseId: number,
-  limit = 2
+  limit = 2,
+  opts?: { requireOfferable?: boolean }
 ): Promise<ResolvedSendableEnterpriseFile[]> {
   const { rows } = await query<{
     enterprise_file_id: number;
@@ -1791,6 +1818,7 @@ export async function resolveSendableEnterpriseVideoFilesCurrentVersion(
     storage_provider: string;
     storage_key: string;
     bucket_name: string;
+    public_url: string | null;
   }>(
     `SELECT
        f.id AS enterprise_file_id,
@@ -1801,7 +1829,8 @@ export async function resolveSendableEnterpriseVideoFilesCurrentVersion(
        COALESCE(v.storage_path, f.storage_path) AS storage_path,
        COALESCE(v.storage_provider, f.storage_provider) AS storage_provider,
        COALESCE(v.storage_key, f.storage_key) AS storage_key,
-       COALESCE(v.bucket_name, f.bucket_name) AS bucket_name
+       COALESCE(v.bucket_name, f.bucket_name) AS bucket_name,
+       COALESCE(v.public_url, f.public_url) AS public_url
      FROM enterprise_files f
      INNER JOIN enterprise_file_versions v
        ON v.id = f.current_version_id
@@ -1809,11 +1838,12 @@ export async function resolveSendableEnterpriseVideoFilesCurrentVersion(
      WHERE f.enterprise_id = $1
        AND f.is_active = true
        AND f.can_be_sent_by_ana = true
+       AND ($2::boolean = false OR f.can_be_offered_by_ana = true)
        AND v.is_active = true
        AND v.can_be_sent_by_ana = true
        AND COALESCE(v.storage_provider, f.storage_provider) = 's3'
      ORDER BY f.created_at DESC, f.id DESC`,
-    [enterpriseId]
+    [enterpriseId, opts?.requireOfferable === true]
   );
   const out: ResolvedSendableEnterpriseFile[] = [];
   for (const f of rows) {
@@ -1841,6 +1871,7 @@ export async function resolveSendableEnterpriseVideoFilesCurrentVersion(
       storageProvider: f.storage_provider,
       storageKey: f.storage_key,
       bucketName: f.bucket_name,
+      publicUrl: f.public_url ?? null,
     });
   }
   return out;

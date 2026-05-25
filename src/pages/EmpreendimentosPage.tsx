@@ -15,17 +15,25 @@ import type { MunicipioIbge } from '../types/municipioIbge';
 
 const CAT_LABEL: Record<FileCategory, string> = {
   book: 'Book',
+  base_ana: 'Base da Ana',
+  foto: 'Foto',
+  video: 'Vídeo',
+  mapa_localizacao: 'Mapa / localização',
   unidades: 'Unidades',
   tabela_comercial: 'Tabela comercial',
-  outro: 'Outro / Imagem / Vídeo',
+  outro: 'Outro',
 };
 
 function uploadPermissionDefaults(category: FileCategory): {
   asKnowledge: boolean;
   allowSend: boolean;
+  canOffer: boolean;
 } {
-  if (category === 'outro') return { asKnowledge: true, allowSend: false };
-  return { asKnowledge: false, allowSend: true };
+  if (category === 'base_ana') return { asKnowledge: true, allowSend: false, canOffer: false };
+  if (category === 'video') return { asKnowledge: false, allowSend: true, canOffer: false };
+  if (category === 'foto') return { asKnowledge: false, allowSend: true, canOffer: false };
+  if (category === 'outro') return { asKnowledge: true, allowSend: false, canOffer: false };
+  return { asKnowledge: false, allowSend: true, canOffer: false };
 }
 
 const LANGS: { v: EmpreendimentoDTO['languageStyle']; l: string }[] = [
@@ -113,6 +121,7 @@ export function EmpreendimentosPage() {
   const initialUploadDefaults = uploadPermissionDefaults('book');
   const [uploadAsKnowledge, setUploadAsKnowledge] = useState(initialUploadDefaults.asKnowledge);
   const [uploadAllowSend, setUploadAllowSend] = useState(initialUploadDefaults.allowSend);
+  const [uploadCanOffer, setUploadCanOffer] = useState(initialUploadDefaults.canOffer);
   const [uploadFlagsTouched, setUploadFlagsTouched] = useState(false);
   const [filePatchingId, setFilePatchingId] = useState<number | null>(null);
   const [regrasTab, setRegrasTab] = useState<'regras' | 'historico'>('regras');
@@ -126,6 +135,7 @@ export function EmpreendimentosPage() {
     const defaults = uploadPermissionDefaults(uploadCategory);
     setUploadAsKnowledge(defaults.asKnowledge);
     setUploadAllowSend(defaults.allowSend);
+    setUploadCanOffer(defaults.canOffer);
   }, [uploadCategory, uploadFlagsTouched]);
 
   const loadList = useCallback(() => {
@@ -252,6 +262,7 @@ export function EmpreendimentosPage() {
       .uploadKnowledge(selectedId, f, uploadCategory, {
         canBeUsedAsKnowledge: isImage || isVideo ? false : uploadAsKnowledge,
         canBeSentByAna: isImage || isVideo ? true : uploadAllowSend,
+        canBeOfferedByAna: uploadAllowSend ? uploadCanOffer : false,
         ...(uploadCategory === 'book' ? { tipoDocumento: 'BOOK' as const } : {}),
       })
       .then(() => {
@@ -259,13 +270,14 @@ export function EmpreendimentosPage() {
         const defaults = uploadPermissionDefaults(uploadCategory);
         setUploadAsKnowledge(defaults.asKnowledge);
         setUploadAllowSend(defaults.allowSend);
+        setUploadCanOffer(defaults.canOffer);
         loadDetail(selectedId);
       })
       .catch((er) => setErr(er instanceof Error ? er.message : 'Upload falhou'))
       .finally(() => setUploading(false));
   };
 
-  const patchFileFlags = (fileId: number, patch: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean }) => {
+  const patchFileFlags = (fileId: number, patch: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean; canBeOfferedByAna?: boolean }) => {
     if (selectedId == null) return;
     setErr(null);
     setFilePatchingId(fileId);
@@ -302,6 +314,27 @@ export function EmpreendimentosPage() {
   const knowledgeActive = files.filter((f) => f.isActive !== false);
   const knowledgeInactive = files.filter((f) => f.isActive === false);
   const knowledgeDisplayed = showInactiveKnowledge ? files : knowledgeActive;
+  const groupedKnowledge = useMemo(() => {
+    const groups: Record<string, KnowledgeFileItem[]> = {
+      'Base da Ana': [],
+      'Book / PDF': [],
+      Fotos: [],
+      'Vídeos': [],
+      'Mapas / localização': [],
+      'Tabela comercial': [],
+      Outros: [],
+    };
+    for (const f of knowledgeDisplayed) {
+      if (f.category === 'base_ana') groups['Base da Ana'].push(f);
+      else if (f.category === 'book') groups['Book / PDF'].push(f);
+      else if (f.category === 'foto') groups['Fotos'].push(f);
+      else if (f.category === 'video') groups['Vídeos'].push(f);
+      else if (f.category === 'mapa_localizacao') groups['Mapas / localização'].push(f);
+      else if (f.category === 'tabela_comercial') groups['Tabela comercial'].push(f);
+      else groups['Outros'].push(f);
+    }
+    return groups;
+  }, [knowledgeDisplayed]);
 
   const selectedIbgeForMunicipio = useMemo(() => {
     const n = parseInt(ibgeCode.replace(/\D/g, ''), 10);
@@ -742,6 +775,19 @@ export function EmpreendimentosPage() {
                       />
                       Permitir envio ao cliente
                     </label>
+                    <label className={`flex items-center gap-2 text-[13px] ${uploadAllowSend ? 'cursor-pointer text-[#374151]' : 'cursor-not-allowed text-[#9CA3AF]'}`}>
+                      <input
+                        type="checkbox"
+                        className="rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
+                        checked={uploadCanOffer}
+                        onChange={(e) => {
+                          setUploadFlagsTouched(true);
+                          setUploadCanOffer(e.target.checked);
+                        }}
+                        disabled={uploading || !uploadAllowSend}
+                      />
+                      Ofertar durante conversa
+                    </label>
                   </div>
                   <div className="flex flex-wrap items-end gap-3">
                   <label className="block">
@@ -763,7 +809,7 @@ export function EmpreendimentosPage() {
                     </span>
                     <input type="file" accept=".pdf,.txt,.md,.jpg,.jpeg,.png,.webp,.mp4,.mov,.webm,application/pdf,text/plain,text/markdown,image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" onChange={onUpload} disabled={uploading} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                   </label>
-                  <span className="text-[11px] text-[#9CA3AF]">PDF, TXT, MD, imagens ou vídeos (até 100 MB; imagem 10 MB, vídeo 25 MB)</span>
+                  <span className="text-[11px] text-[#9CA3AF]">PDF, TXT, MD, imagens ou vídeos. Upload até 700 MB. Para envio no WhatsApp, vídeos grandes podem exigir versão otimizada ou link.</span>
                   </div>
                 </div>
 
@@ -802,11 +848,17 @@ export function EmpreendimentosPage() {
                     )}
                   </div>
                 ) : (
-                  <ul className="space-y-2">
-                    {knowledgeDisplayed.map((f) => {
+                  <div className="space-y-4">
+                    {Object.entries(groupedKnowledge).map(([groupName, groupFiles]) => {
+                      if (groupFiles.length === 0) return null;
+                      return <div key={groupName}>
+                        <h3 className="text-[12px] font-semibold text-[#6B7280] uppercase tracking-wide mb-2">{groupName}</h3>
+                        <ul className="space-y-2">
+                    {groupFiles.map((f) => {
                       const isInactive = f.isActive === false;
                       const useKnowledge = f.canBeUsedAsKnowledge !== false;
                       const allowSend = f.canBeSentByAna === true;
+                      const canOffer = f.canBeOfferedByAna === true;
                       const permBusy = filePatchingId === f.id;
                       return (
                         <li
@@ -837,7 +889,18 @@ export function EmpreendimentosPage() {
                                   Desativado
                                 </span>
                               )}
+                              <span className="inline-block text-[10px] font-semibold uppercase tracking-wide text-[#065F46] bg-emerald-50 rounded px-1.5 py-[1px]">
+                                {f.mime.startsWith('video/') ? 'VÍDEO' : f.mime.startsWith('image/') ? 'IMAGEM' : f.mime.includes('pdf') ? 'PDF' : f.mime.startsWith('text/') ? 'TXT/MD' : 'ARQUIVO'}
+                              </span>
                             </div>
+                            <p className="text-[11px] text-[#9CA3AF] mt-1">{(f.size / (1024 * 1024)).toFixed(2)} MB</p>
+                            <p className="text-[11px] text-[#6B7280] mt-1">
+                              {f.mime.startsWith('image/')
+                                ? 'Ignorado para RAG: imagem sem OCR'
+                                : f.mime.startsWith('video/')
+                                  ? 'Ignorado para RAG: vídeo sem transcrição'
+                                  : (f.canBeUsedAsKnowledge !== false ? 'RAG processado' : 'RAG não habilitado')}
+                            </p>
                             <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-2.5">
                               <label
                                 className={`flex items-center gap-2 text-[12px] ${isInactive ? 'text-[#9CA3AF] cursor-default' : 'text-[#374151] cursor-pointer'}`}
@@ -863,6 +926,18 @@ export function EmpreendimentosPage() {
                                 />
                                 Enviar ao cliente
                               </label>
+                              <label
+                                className={`flex items-center gap-2 text-[12px] ${isInactive || !allowSend ? 'text-[#9CA3AF] cursor-default' : 'text-[#374151] cursor-pointer'}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="rounded border-[#D1D5DB] text-[#F97316] focus:ring-[#F97316]"
+                                  checked={canOffer}
+                                  disabled={isInactive || permBusy || saving || !allowSend}
+                                  onChange={(e) => patchFileFlags(f.id, { canBeOfferedByAna: e.target.checked })}
+                                />
+                                Ofertar durante conversa
+                              </label>
                             </div>
                           </div>
                           <button
@@ -875,7 +950,10 @@ export function EmpreendimentosPage() {
                         </li>
                       );
                     })}
-                  </ul>
+                        </ul>
+                      </div>;
+                    })}
+                  </div>
                 )}
               </section>
 

@@ -1,6 +1,6 @@
 /** Alinhado a `server/utils/manualWhatsappAttachment.ts` e à Cloud API. */
 
-export const W_MANUAL_BODY_MAX = 100 * 1024 * 1024;
+export const W_MANUAL_BODY_MAX = 700 * 1024 * 1024;
 export const W_MANUAL_DOCUMENT_MAX = 100 * 1024 * 1024;
 export const W_MANUAL_VIDEO_MAX = 16 * 1024 * 1024;
 export const W_MANUAL_IMAGE_MAX = 5 * 1024 * 1024;

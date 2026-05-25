@@ -588,6 +588,12 @@ function isVideoMaterialRequest(text: string): boolean {
   return /\b(video|videos|vídeo|vídeos|manda video|manda vídeo|tem video|tem vídeo|tour|video do empreendimento|vídeo do empreendimento|quero ver o empreendimento)\b/.test(n);
 }
 
+function isProactiveVideoOfferIntent(text: string): boolean {
+  const n = normText(text || '');
+  if (!n) return false;
+  return /\b(visao geral|visão geral|lazer|fotos|imagens|localizacao|localização|quero ver|me mostra|como e|como é|tem video|tem vídeo)\b/.test(n);
+}
+
 function pickAuthorizedLocationLink(vars: Record<string, unknown>): string | null {
   const entries = Object.entries(vars || {});
   const candidates = entries.filter(([k, v]) => {
@@ -1393,6 +1399,9 @@ async function sendAnaEnterpriseMediaFirst(params: {
         fileName: file.originalName,
         messageKind: mk,
       });
+      if (mk === 'video') {
+        console.log('[ANA_VIDEO_DIRECT_SENT]', { conversationId, enterpriseId: enterpriseIdForFile, fileId: file.id });
+      }
       return { ok: true };
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
@@ -1422,6 +1431,35 @@ async function sendAnaEnterpriseMediaFirst(params: {
     phase: 'upload_or_messages_meta',
     note: 'Nenhuma linha de mídia gravada em messages; texto ao cliente será substituído por falha honesta.',
   });
+  if (mediaRes.code === 413) {
+    if (file.publicUrl) {
+      const linkText = `Tenho esse material cadastrado. Como ele está grande para envio direto no WhatsApp, segue o link seguro: ${file.publicUrl}`;
+      const linkSend = await sendTextMessage({
+        conversationId,
+        to: toPhoneNumber,
+        text: linkText,
+        phase: 'ana_large_media_link_fallback',
+      });
+      if (linkSend.success && linkSend.metaMessageId) {
+        console.log('[ANA_VIDEO_LINK_SENT]', { conversationId, enterpriseId: enterpriseIdForFile, fileId: file.id });
+        await insertMessage(conversationId, 'assistant', linkText, linkSend.metaMessageId);
+        return { ok: true };
+      }
+    }
+    const safeText =
+      'Tenho esse material cadastrado, mas ele está grande para envio direto por WhatsApp. Posso te passar as principais informações por aqui.';
+    const safeSend = await sendTextMessage({
+      conversationId,
+      to: toPhoneNumber,
+      text: safeText,
+      phase: 'ana_large_media_safe_fallback',
+    });
+    if (safeSend.success && safeSend.metaMessageId) {
+      console.log('[ANA_VIDEO_TOO_LARGE_FOR_WHATSAPP]', { conversationId, enterpriseId: enterpriseIdForFile, fileId: file.id });
+      await insertMessage(conversationId, 'assistant', safeText, safeSend.metaMessageId);
+      return { ok: true };
+    }
+  }
   return {
     ok: false,
     error: mediaRes.error || 'Falha ao enviar mídia pela Meta',
@@ -2311,7 +2349,38 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     );
 
+    const proactiveVideoIntent = isProactiveVideoOfferIntent(trimmed) && !isVideoMaterialRequest(trimmed);
+    const alreadyOfferedOrSentVideo = flowStateParsed.last_material_sent_id != null || flowStateParsed.last_requested_material_type === 'video';
+    if (proactiveVideoIntent && ent) {
+      if (alreadyOfferedOrSentVideo) {
+        console.log('[ANA_PROACTIVE_VIDEO_OFFER_SUPPRESSED_REPEAT]', { conversationId, enterpriseId: ent.id });
+      } else {
+        const offerableVideos = await resolveSendableEnterpriseVideoFilesCurrentVersion(ent.id, 1, { requireOfferable: true });
+        if (offerableVideos.length > 0) {
+          console.log('[ANA_PROACTIVE_VIDEO_OFFER_AVAILABLE]', { conversationId, enterpriseId: ent.id, fileId: offerableVideos[0]?.id ?? null });
+          const offerText = 'Tenho um vídeo do empreendimento que ajuda a visualizar melhor a estrutura. Posso te enviar?';
+          const offerSend = await sendTextMessage({
+            conversationId,
+            to: toPhoneNumber,
+            text: offerText,
+            phase: 'ana_proactive_video_offer',
+          });
+          if (offerSend.success && offerSend.metaMessageId) {
+            await insertMessage(conversationId, 'assistant', offerText, offerSend.metaMessageId);
+            console.log('[ANA_PROACTIVE_VIDEO_OFFER_SENT]', { conversationId, enterpriseId: ent.id });
+            await mergeConversationCommercialFlowState(conversationId, {
+              pending_material_type: 'video',
+              pending_action: 'send_material',
+              last_requested_material_type: 'video',
+            });
+            return;
+          }
+        }
+      }
+    }
+
     if (isVideoMaterialRequest(trimmed)) {
+      console.log('[ANA_PROACTIVE_VIDEO_ACCEPTED]', { conversationId, enterpriseId: ent?.id ?? null });
       console.log('[ANA_VIDEO_MATERIAL_REQUESTED]', {
         conversationId,
         enterpriseId: ent?.id ?? null,
