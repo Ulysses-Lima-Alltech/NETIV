@@ -216,6 +216,16 @@ function userAskedForHuman(userMessage: string): boolean {
   return /\b(corretor|consultor|atendente|humano|pessoa)\b/.test(n);
 }
 
+function replyLooksInfoGap(text: string): boolean {
+  const n = norm(text);
+  if (!n) return false;
+  const hasMissingDataCue =
+    /\b(ainda nao tenho|nao tenho|nao consegui localizar|sem essa informacao|sem essa previsao)\b/.test(n);
+  const hasSpecificityCue =
+    /\b(informacao|previsao|dado|detalhe|liberad|exat|disponibilidade|quantidade)\b/.test(n);
+  return hasMissingDataCue && hasSpecificityCue;
+}
+
 function isAffirmativeUserReply(userMessage: string): boolean {
   const n = norm(userMessage).replace(/[.!?]+$/g, '').trim();
   return /^(sim|pode ser|pode sim|quero sim|quero|ok|perfeito|fechado|claro|ta bom|tá bom|isso|pode)$/.test(n);
@@ -578,10 +588,13 @@ export function applyAnaConversationPolicy(
     }
   }
 
-  const needsBrokerAsk = userAskedDetailedCommercialTopic(input.userMessage) || userAskedForHuman(input.userMessage);
+  const infoGapReply = replyLooksInfoGap(reply);
+  const needsBrokerAsk =
+    userAskedDetailedCommercialTopic(input.userMessage) || userAskedForHuman(input.userMessage) || infoGapReply;
   const recentBrokerAsk =
     recentAssistantReplies.length > 0 &&
     recentAssistantReplies.slice(-2).some((msg) => containsBrokerAsk(msg));
+  const infoGapBrokerAskAlreadyPresent = infoGapReply && brokerAskAlreadyPresent(reply);
   if (needsBrokerAsk && recentBrokerAsk) {
     const stripped = stripBrokerAsk(reply);
     if (stripped && stripped !== reply) {
@@ -600,7 +613,18 @@ export function applyAnaConversationPolicy(
       console.log('[ANA_BROKER_HANDOFF_ASKED]', {
         conversationId: input.conversationId,
       });
+      if (infoGapReply) {
+        console.log('[ANA_INFO_GAP_BROKER_HANDOFF_ASKED]', {
+          conversationId: input.conversationId,
+          source: 'conversation_policy_rewrite',
+        });
+      }
     }
+  } else if (infoGapBrokerAskAlreadyPresent) {
+    console.log('[ANA_INFO_GAP_BROKER_HANDOFF_ASKED]', {
+      conversationId: input.conversationId,
+      source: 'conversation_policy_already_present',
+    });
   }
 
   const lastAssistantAskedBroker = lastAssistantQuestionContext.askedBrokerHandoff;
@@ -667,13 +691,21 @@ export function applyAnaConversationPolicy(
   const discussedNow = detectAnaDialogueTopics(`${input.userMessage}\n${reply}`);
   nextState = pushAnaDialogueTopics(nextState, { discussed: discussedNow });
 
+  const suppressNextQuestionForInfoGap = replyLooksInfoGap(reply) && brokerAskAlreadyPresent(reply);
+  if (suppressNextQuestionForInfoGap) {
+    console.log('[ANA_NEXT_QUESTION_SUPPRESSED_INFO_GAP]', {
+      conversationId: input.conversationId,
+    });
+  }
+
   const shouldSelectNextQuestion =
     !input.disableFollowupQuestion &&
     !visitFlowActive &&
     reply.length > 0 &&
     !/\?\s*$/.test(reply) &&
     !brokerAskAlreadyPresent(reply) &&
-    !userAffirmative;
+    !userAffirmative &&
+    !suppressNextQuestionForInfoGap;
 
   if (shouldSelectNextQuestion) {
     const currentTopic = resolveCurrentTopic(input.userMessage, reply);

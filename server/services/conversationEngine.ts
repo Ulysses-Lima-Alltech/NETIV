@@ -352,19 +352,19 @@ function buildCanonicalSafeReplyForMissingRag(params: {
   isEvora: boolean;
 }): string {
   if (params.axis === 'preco' || params.axis === 'financiamento' || params.axis === 'disponibilidade') {
-    return 'Esses detalhes variam conforme as opções disponíveis. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?';
+    return 'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?';
   }
   if (params.isEvora) {
     return [
       'O Évora é um loteamento fechado em Atibaia, na região da Pedreira, com fácil acesso pela Rodovia Dom Pedro I.',
       'Tem lotes a partir de 360 m², lazer completo e segurança com portaria 24h.',
-      'Os detalhes comerciais variam conforme disponibilidade. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?',
+      'Para detalhes específicos que variam conforme disponibilidade, quer que eu encaminhe para um corretor te passar certinho?',
     ].join(' ');
   }
   if (params.axis === 'localizacao') {
-    return 'Posso te orientar pela localização geral do empreendimento e o corretor te passa todos os detalhes certinho no atendimento. Que tal marcarmos uma visita?';
+    return 'Posso te orientar pela localização geral do empreendimento. Se você quiser o detalhe exato, quer que eu encaminhe para um corretor te passar certinho?';
   }
-  return 'Posso te ajudar com as informações gerais do empreendimento e, para os detalhes comerciais variáveis, o corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?';
+  return 'Posso te ajudar com as informações gerais do empreendimento. Para os detalhes específicos que variam, quer que eu encaminhe para um corretor te passar certinho?';
 }
 
 function axisHumanLabel(axis: CommercialAxis): string {
@@ -829,7 +829,7 @@ function buildSafeCommercialPartialReply(params: {
 
   if (/\bvalor(?:es)?|preco|disponibilidade|simul|desconto|condic|entrada|parcela\b/.test(n)) {
     blocks.push(
-      'Esses detalhes variam conforme as opcoes disponiveis. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?'
+      'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?'
     );
     console.log('ANA_UNSUPPORTED_DETAIL_ROUTED_TO_BROKER', {
       detailType: 'pricing_or_availability_or_custom_condition',
@@ -838,7 +838,7 @@ function buildSafeCommercialPartialReply(params: {
 
   if (blocks.length === 0) {
     blocks.push(
-      'Consigo te adiantar os pontos gerais do empreendimento e, para os detalhes especificos, o corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?'
+      'Consigo te adiantar os pontos gerais do empreendimento e, para os detalhes especificos, quer que eu encaminhe para um corretor te passar certinho?'
     );
   }
 
@@ -3934,13 +3934,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           enterpriseName: ent?.name ?? null,
           hintedTopic: 'entrega_prazo',
         });
-        const fallbackEntrega =
-          'Ainda não tenho a previsão exata liberada por aqui. O corretor confirma certinho pra você.';
+        const fallbackEntrega = 'Ainda não tenho essa previsão exata liberada por aqui.';
+        const fallbackEntregaBrokerAsk =
+          'Quer que eu encaminhe para um corretor te passar essa informação certinho?';
         let resolvedEntrega = operational?.dataFound ? operational.answer : fallbackEntrega;
         if (isWeakEntregaAnswer(resolvedEntrega)) resolvedEntrega = fallbackEntrega;
         commercialMessagesToSend.length = 0;
         commercialMessagesToSend.push(resolvedEntrega.replace(/\[DATA\/PRAZO DA BASE\]/gi, '').replace(/\s{2,}/g, ' ').trim());
-        commercialMessagesToSend.push('Quer saber também como está a infraestrutura prevista?');
+        commercialMessagesToSend.push(fallbackEntregaBrokerAsk);
+        console.log('[ANA_INFO_GAP_BROKER_HANDOFF_ASKED]', {
+          conversationId,
+          reason: 'entrega_empreendimento_without_exact_data',
+        });
       }
       console.log('[ANA_CANONICAL_REPLY_USED]', {
         conversationId,

@@ -747,4 +747,52 @@ test('"fala mais" sem topico pendente pede direcionamento objetivo', () => {
   assert.match(policy.text, /valores|lazer|localiza|seguran|pagamento/i);
 });
 
+test('info gap de lotes pede permissao para corretor e nao troca para infraestrutura', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 80,
+    userMessage: 'o condominio vai ter quantos lotes?',
+    replyText: 'Ainda nao tenho essa previsao exata liberada por aqui.',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'user', content: 'o condominio vai ter quantos lotes?' }],
+    disableFollowupQuestion: false,
+  });
+
+  assert.match(policy.text, /ainda n[aã]o tenho essa previs[aã]o exata liberada/i);
+  assert.match(policy.text, /quer que eu encaminhe para um corretor te passar certinho\?/i);
+  assert.equal(/infraestrutura/i.test(policy.text), false);
+  assert.equal(/agendar|visita/i.test(policy.text), false);
+});
+
+test('apos info gap com corretor, "sim" resolve broker_confirmation e nao visit_confirmation', () => {
+  const assistantReply =
+    'Ainda nao tenho essa informacao exata liberada por aqui. Quer que eu encaminhe para um corretor te passar certinho?';
+  const context = resolveShortConfirmationContext({
+    userText: 'sim',
+    recentMessages: [
+      { role: 'assistant', content: assistantReply },
+      { role: 'user', content: 'sim' },
+    ],
+    lastAssistantMessage: assistantReply,
+    flowState: {},
+  });
+
+  assert.equal(context.kind, 'broker_confirmation');
+  assert.notEqual(context.kind, 'visit_confirmation');
+
+  const visitIntent = isVisitSchedulingIntent({
+    userMessage: 'sim',
+    flowState: {},
+    confirmationContextKind: context.kind,
+    resolvedIntent: 'visita_agendamento',
+    primaryAxis: 'visita_agendamento',
+    currentAxis: 'visita_agendamento',
+    requestedAxis: 'visita_agendamento',
+    lastAssistantMessage: assistantReply,
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T12:00:00.000Z'),
+  });
+  assert.equal(visitIntent, false);
+});
+
 
