@@ -1,4 +1,5 @@
 export type OpenAiModelRecommendedFor = 'hot' | 'cold' | 'advanced' | 'realtime';
+export type AiModelProvider = 'openai' | 'openrouter';
 
 export interface OpenAiAllowedModelItem {
   value: string;
@@ -92,10 +93,52 @@ export const OPENAI_ALLOWED_MODELS: readonly OpenAiAllowedModelItem[] = [
   },
 ] as const;
 
-const ALLOWED_MODEL_SET = new Set(OPENAI_ALLOWED_MODELS.map((item) => item.value));
+export const OPENROUTER_ALLOWED_MODELS: readonly OpenAiAllowedModelItem[] = [
+  {
+    value: 'openai/gpt-4.1',
+    label: 'OpenRouter - GPT-4.1',
+    description: 'Slug OpenRouter para GPT-4.1',
+    recommendedFor: 'hot',
+    costTier: 'médio/alto',
+    costHint: 'Use quando o provider/base URL estiver em OpenRouter',
+  },
+  {
+    value: 'openai/gpt-4.1-mini',
+    label: 'OpenRouter - GPT-4.1 mini',
+    description: 'Slug OpenRouter para GPT-4.1 mini',
+    recommendedFor: 'cold',
+    costTier: 'baixo',
+    costHint: 'Use quando o provider/base URL estiver em OpenRouter',
+  },
+  {
+    value: 'openai/gpt-4.1-nano',
+    label: 'OpenRouter - GPT-4.1 nano',
+    description: 'Slug OpenRouter para GPT-4.1 nano',
+    recommendedFor: 'cold',
+    costTier: 'muito baixo',
+    costHint: 'Use quando o provider/base URL estiver em OpenRouter',
+  },
+] as const;
 
-export function isAllowedOpenAiModel(model: string): boolean {
-  return ALLOWED_MODEL_SET.has(String(model).trim());
+const ALLOWED_MODEL_SET_OPENAI = new Set(OPENAI_ALLOWED_MODELS.map((item) => item.value));
+const ALLOWED_MODEL_SET_OPENROUTER = new Set(OPENROUTER_ALLOWED_MODELS.map((item) => item.value));
+
+function normalizeProviderOrBaseUrl(input?: string | null): AiModelProvider {
+  const raw = String(input ?? '').trim().toLowerCase();
+  if (raw === 'openrouter' || raw.includes('openrouter.ai')) return 'openrouter';
+  return 'openai';
+}
+
+export function getAllowedOpenAiModels(providerOrBaseUrl?: string | null): readonly OpenAiAllowedModelItem[] {
+  const provider = normalizeProviderOrBaseUrl(providerOrBaseUrl);
+  return provider === 'openrouter' ? OPENROUTER_ALLOWED_MODELS : OPENAI_ALLOWED_MODELS;
+}
+
+export function isAllowedOpenAiModel(model: string, providerOrBaseUrl?: string | null): boolean {
+  const normalizedModel = String(model).trim();
+  const provider = normalizeProviderOrBaseUrl(providerOrBaseUrl);
+  if (provider === 'openrouter') return ALLOWED_MODEL_SET_OPENROUTER.has(normalizedModel);
+  return ALLOWED_MODEL_SET_OPENAI.has(normalizedModel);
 }
 
 export function getDefaultOpenAiModelHot(): string {

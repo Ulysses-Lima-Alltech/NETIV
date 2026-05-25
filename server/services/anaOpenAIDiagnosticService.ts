@@ -23,12 +23,14 @@ export async function runAnaOpenAIDiagnostic(): Promise<AnaOpenAIDiagnosticResul
   const cfg = await getOpenAIConfig();
   const rawModels = await getIntegrationModelStringsRaw();
   const configuredModelFromDb = rawModels.modelHotLead ?? rawModels.modelColdLead ?? null;
+  const provider = detectLlmProvider(cfg?.openaiBaseUrl ?? null);
   const modelResolution = resolveAnaOpenAIModel({
     configuredModelFromDb,
     slot: rawModels.modelHotLead ? 'hot_lead' : 'cold_lead',
+    provider,
+    baseUrl: cfg?.openaiBaseUrl ?? null,
   });
   const model = modelResolution.finalModel;
-  const provider = detectLlmProvider(cfg?.openaiBaseUrl ?? null);
 
   if (modelResolution.blocked) {
     const sanitizedMessage =

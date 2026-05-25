@@ -1,10 +1,10 @@
 import type { OpenAIConfig, OpenAIConfigPublic, OpenAIConfigUpdate } from '../types/ai.js';
 import { query } from '../db/pg.js';
 import {
+  getAllowedOpenAiModels,
   getDefaultOpenAiModelCold,
   getDefaultOpenAiModelHot,
   isAllowedOpenAiModel,
-  OPENAI_ALLOWED_MODELS,
 } from '../catalogs/aiModels.js';
 
 type Row = {
@@ -62,12 +62,12 @@ export async function updateOpenAIConfig(update: OpenAIConfigUpdate): Promise<Op
   const openaiBaseUrl = update.openaiBaseUrl !== undefined ? update.openaiBaseUrl : current?.openaiBaseUrl ?? null;
   const modelColdLead = update.modelColdLead ?? current?.modelColdLead ?? getDefaultOpenAiModelCold();
   const modelHotLead = update.modelHotLead ?? current?.modelHotLead ?? getDefaultOpenAiModelHot();
-  if (modelColdLead && !isAllowedOpenAiModel(modelColdLead)) {
+  if (modelColdLead && !isAllowedOpenAiModel(modelColdLead, openaiBaseUrl)) {
     const error = new Error('Modelo invalido para modelColdLead.');
     (error as Error & { code?: string }).code = 'INVALID_OPENAI_MODEL';
     throw error;
   }
-  if (modelHotLead && !isAllowedOpenAiModel(modelHotLead)) {
+  if (modelHotLead && !isAllowedOpenAiModel(modelHotLead, openaiBaseUrl)) {
     const error = new Error('Modelo invalido para modelHotLead.');
     (error as Error & { code?: string }).code = 'INVALID_OPENAI_MODEL';
     throw error;
@@ -128,6 +128,6 @@ export async function getOpenAIConfigPublic(): Promise<OpenAIConfigPublic | null
     leadScoreThreshold: c.leadScoreThreshold,
     aiEnabled: c.aiEnabled,
     updatedAt: c.updatedAt,
-    availableModels: OPENAI_ALLOWED_MODELS,
+    availableModels: getAllowedOpenAiModels(c.openaiBaseUrl),
   };
 }
