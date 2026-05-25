@@ -560,12 +560,69 @@ function stripGenericAxisFollowupQuestion(text: string): string {
 }
 
 function buildNoAdditionalLazerReply(): string {
-  return '';
+  return 'Esses são os itens de lazer disponíveis na base do Évora. Também posso te explicar sobre valores, localização, segurança ou formas de pagamento.';
 }
 
 function buildOnlyNewLazerItemsReply(newItems: string[]): string {
   void newItems;
   return '';
+}
+
+function isLocationLinkRequest(text: string): boolean {
+  const n = normText(text || '');
+  if (!n) return false;
+  return /\b(tem o link da localizacao|link da localizacao|manda localizacao|manda a localizacao|manda o endereco|me passa o endereco|mapa|google maps|rota|como chegar)\b/.test(n);
+}
+
+function pickAuthorizedLocationLink(vars: Record<string, unknown>): string | null {
+  const entries = Object.entries(vars || {});
+  const candidates = entries.filter(([k, v]) => {
+    const key = normText(k);
+    const val = String(v ?? '').trim();
+    if (!val) return false;
+    if (!/^https?:\/\//i.test(val)) return false;
+    return /(mapa|maps|localizacao|localizacao_link|google|endereco|rota)/.test(key);
+  });
+  return candidates[0]?.[1] ? String(candidates[0][1]).trim() : null;
+}
+
+function hasConversationalUnsupportedPromise(text: string): boolean {
+  const n = normText(text || '');
+  if (!n) return false;
+  return /(vamos detalhar|detalhar um pouco mais|posso detalhar|te passo|posso te passar|te envio|posso enviar|link|rota|referencia de acesso)/.test(n);
+}
+
+function isBrokenEnumeratedReply(text: string): boolean {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return false;
+  const last = lines[lines.length - 1] ?? '';
+  if (/^(?:-|\*|•)$/.test(last)) return true;
+  if (/^\d+\s*[.:)]\s*$/.test(last)) return true;
+  return false;
+}
+
+function dedupeMessageParts(parts: string[], logContext: { conversationId: number; stage: string }): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of parts) {
+    const clean = (raw || '').trim();
+    if (!clean) continue;
+    const key = normalizeAnaLocalTextForRules(clean).replace(/[.!?]+$/g, '').trim();
+    if (seen.has(key)) {
+      console.log('[ANA_MULTIPART_DUPLICATE_SUPPRESSED]', {
+        conversationId: logContext.conversationId,
+        stage: logContext.stage,
+        suppressedPreview: clean.slice(0, 120),
+      });
+      continue;
+    }
+    seen.add(key);
+    out.push(clean);
+  }
+  return out;
 }
 
 function userAskedDirectOperationalAxis(
@@ -1057,7 +1114,7 @@ function isEvoraLocationQuestion(userMessage: string): boolean {
 const EVORA_LOCATION_REPLY_CHUNKS = [
   'O Évora fica em Atibaia, próximo à região da Pedreira.',
   'Tem fácil acesso pela Rodovia Dom Pedro I, em uma localização que combina tranquilidade, natureza e boa conexão com a cidade.',
-  'Quer que eu te envie mais detalhes sobre o acesso ou prefere agendar uma visita para conhecer?',
+  'Atibaia também se destaca pela gastronomia e pela Avenida Lucas Nogueira Garcez, com restaurantes, bares e comércio em uma região bem valorizada.',
 ];
 
 function hasExplicitHandoffIntent(message: string): boolean {
@@ -2303,6 +2360,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         : allActiveEnterprises.filter((e) => expandCadastroTipoToPool(focusEnterprise.tipo).includes(e.tipo));
 
     const vars = ent ? await getVariablesMap(ent.id) : {};
+    const authorizedLocationLink = pickAuthorizedLocationLink(vars);
     let commercialSnapshots: CommercialSnapshot[] = [];
     if (mode === 'scoped' && ent) {
       commercialSnapshots = [{ enterpriseName: ent.name, variables: vars }];
@@ -3028,6 +3086,58 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    if (isLocationLinkRequest(trimmed) && isEvoraEnterpriseName(ent?.name ?? null)) {
+      const locationLinkMessages = authorizedLocationLink
+        ? [authorizedLocationLink]
+        : [
+            'Não tenho um link de localização liberado para envio por aqui.',
+            'O Évora fica na região da Pedreira, no bairro Rio Abaixo, em Atibaia, com fácil acesso pela Rodovia Dom Pedro I.',
+          ];
+      const dedupedLocationLinkMessages = dedupeMessageParts(locationLinkMessages, {
+        conversationId,
+        stage: 'location_link_intent',
+      });
+      if (dedupedLocationLinkMessages.length > 0) {
+        console.log('[ANA_CANONICAL_INTENT_MATCHED]', {
+          conversationId,
+          intent: 'localizacao_endereco',
+          source: 'Exemplos.txt/canonical',
+        });
+        console.log('[ANA_CANONICAL_REPLY_USED]', {
+          conversationId,
+          intent: 'localizacao_endereco',
+          messagePartsCount: dedupedLocationLinkMessages.length,
+        });
+      }
+      for (const [index, message] of dedupedLocationLinkMessages.entries()) {
+        if (index > 0) await sleepMs(900);
+        if (isPipelineStale(conversationId, replyPipelineToken)) {
+          anaTurnAuditOutcome = 'silent';
+          anaTurnAuditBlockedReason = `pipeline_stale_before_location_link_message_${index + 1}`;
+          return;
+        }
+        const sendResult = await sendTextMessage({
+          conversationId,
+          to: toPhoneNumber,
+          text: message,
+          phase: 'commercial_rules',
+        });
+        if (!sendResult.success || !sendResult.metaMessageId) {
+          anaTurnAuditOutcome = 'send_failed';
+          anaTurnAuditBlockedReason = 'location_link_send_failed';
+          return;
+        }
+        await insertMessage(conversationId, 'assistant', message, sendResult.metaMessageId);
+      }
+      anaTurnAuditOutcome = 'sent';
+      anaTurnAuditBlockedReason = null;
+      anaTurnAuditLlmStatus = 'skipped';
+      anaTurnAuditModel = 'commercial_rules';
+      anaTurnDiagnostics.finalResponse.replySource = 'commercial_rules_intent';
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      return;
+    }
+
     const commercialRule = resolveAnaCommercialRule({
       enterpriseName: ent?.name ?? null,
       userMessage: trimmed,
@@ -3122,8 +3232,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               isHandoff: Boolean(effectiveConv.handoff || effectiveConv.classification === 'Handoff'),
               isMaterialOnlyFlow: false,
             });
-      const visitOfferMessagesFromCommercialRule =
-        commercialRuleVisitOfferDecision.appendedVisitOfferMessages ?? [];
+      const visitOfferMessagesFromCommercialRule = dedupeMessageParts(
+        commercialRuleVisitOfferDecision.appendedVisitOfferMessages ?? [],
+        {
+          conversationId,
+          stage: 'commercial_rule_visit_offer',
+        }
+      );
       if (commercialRuleVisitOfferDecision.appendedVisitOfferMessages.length > 0) {
         console.log('[ANA_VISIT_OFFER_SUPPRESSED]', {
           conversationId,
@@ -3161,7 +3276,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         .slice(-8);
       const hasRecentVisitCta = hasRecentExplicitVisitCta(recentAssistantForCtaPolicy);
 
-      const commercialMessagesToSend = [...effectiveCommercialRule.messages];
+      const commercialMessagesToSend = dedupeMessageParts([...effectiveCommercialRule.messages], {
+        conversationId,
+        stage: 'commercial_rule_messages_initial',
+      });
       if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessagesToSend.length === 0) {
         commercialMessagesToSend.push(
           'Atibaia faz parte da região bragantina e fica a cerca de 50 minutos de São Paulo.',
@@ -3808,12 +3926,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       : null;
     if (conversationalQwenMode && result.success && rawTrimmed.length > 0) {
       const rawNatural = rawTrimmed;
+      const blockedUnsupportedPromise = hasConversationalUnsupportedPromise(rawNatural) && !authorizedLocationLink;
+      const blockedBrokenReply = isBrokenEnumeratedReply(rawNatural);
       const forbiddenByGuardrails =
         rawNatural === '{}' ||
         hasAnaInternalInstructionLeak(rawNatural) ||
         /\bapartamento\b/i.test(rawNatural) ||
         hasUnauthorizedPriceClaimInConversationalReply(rawNatural) ||
-        textHasMaterialDeliveryClaim(rawNatural);
+        textHasMaterialDeliveryClaim(rawNatural) ||
+        blockedUnsupportedPromise ||
+        blockedBrokenReply;
       if (!forbiddenByGuardrails) {
         const sanitizedVisit = stripInappropriateVisitOffer(rawNatural);
         const naturalReply = sanitizedVisit.text.trim();
@@ -3825,6 +3947,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             replyLen: naturalReply.length,
           });
         }
+      }
+      if (!structured && blockedUnsupportedPromise) {
+        console.log('[ANA_CONVERSATIONAL_UNSUPPORTED_PROMISE_BLOCKED]', {
+          conversationId,
+          lastAxis: currentAxisForRepetition,
+        });
+      }
+      if (!structured && blockedBrokenReply) {
+        console.log('[ANA_CONVERSATIONAL_BROKEN_REPLY_BLOCKED]', {
+          conversationId,
+          lastAxis: currentAxisForRepetition,
+        });
       }
       if (!structured) {
         console.log('[ANA_CONVERSATIONAL_QWEN_FAILED]', {
@@ -5729,6 +5863,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       .map((m) => (m.content || '').trim())
       .filter((content) => content.length > 0)
       .slice(-4);
+    if (conversationalQwenMode && lastAxisForRepetition === 'lazer') {
+      const lazerListAlreadySent = recentAssistantReplies.some((msg) => /piscina adulto[\s\S]*campo society/i.test(msg));
+      if (lazerListAlreadySent && isConversationalGenericFollowup(trimmed)) {
+        replyText = buildNoAdditionalLazerReply();
+      }
+    }
     const latestAssistantReply = recentAssistantReplies[recentAssistantReplies.length - 1] ?? '';
     const sameAxisAsLast =
       currentAxisForRepetition != null &&
@@ -6339,6 +6479,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         }
       }
     }
+    appendedVisitOfferMessagesForFinalSend = dedupeMessageParts(appendedVisitOfferMessagesForFinalSend, {
+      conversationId,
+      stage: 'final_visit_offer_messages',
+    });
     console.log('[ANA_PIPELINE] engine_reply_generated', {
       conversationId,
       inboundMetaMessageId,
@@ -6408,7 +6552,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const shouldForceEvoraLocationTriplet = isEvoraLocationQuestion(trimmed);
     if (shouldForceEvoraLocationTriplet) {
       const sentChunks: string[] = [];
-      for (const chunk of EVORA_LOCATION_REPLY_CHUNKS) {
+      const locationChunks = dedupeMessageParts(EVORA_LOCATION_REPLY_CHUNKS, {
+        conversationId,
+        stage: 'evora_location_chunks',
+      });
+      for (const chunk of locationChunks) {
         anaEngineTrace('final_send_start', {
           conversationId,
           phase: 'ana_main_reply_evora_location_chunk',
@@ -6467,7 +6615,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
       console.log('[ANA_EVORA_LOCATION_TRIPLET_SENT]', {
         conversationId,
-        chunks: EVORA_LOCATION_REPLY_CHUNKS.length,
+        chunks: locationChunks.length,
       });
       return;
     }
