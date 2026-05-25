@@ -175,40 +175,6 @@ function lastAssistantInvitedVisit(text: string | null | undefined): boolean {
 }
 
 
-function isVisitSchedulingContinuationMessage(input: {
-  userMessage: string;
-  lastAssistantMessage?: string | null;
-  referenceNow?: Date;
-}): boolean {
-  const msg = norm(input.userMessage);
-  const last = norm(input.lastAssistantMessage ?? '');
-
-  if (!msg) return false;
-
-  if (/^(obrigado|obrigada|muito obrigado|muito obrigada|ok obrigado|ok obrigada|valeu|vlw|agradeco|agradeço)[.! ]*$/.test(msg)) {
-    return true;
-  }
-
-  if (/\b(meu nome e|me chamo|pode me chamar de|sou o|sou a|nome)\b/.test(msg)) {
-    return true;
-  }
-
-  if (
-    /\b(amanha|amanhã|hoje|segunda|terca|terça|quarta|quinta|sexta|sabado|sábado|domingo)\b/.test(msg) ||
-    /\bdia\s+\d{1,2}\b/.test(msg) ||
-    /\b\d{1,2}h(\d{2})?\b/.test(msg) ||
-    /\b\d{1,2}:\d{2}\b/.test(msg) ||
-    /\b(de manha|de manhã|a tarde|à tarde|de tarde|a noite|à noite)\b/.test(msg)
-  ) {
-    return true;
-  }
-
-  if (/^(sim|pode sim|pode ser|ok|fechado|combinado|confirmo|confirmado)$/.test(msg)) {
-    return /\b(visita|agendar|agenda|horario|horário|dia)\b/.test(last);
-  }
-
-  return false;
-}
 export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): boolean {
   const axes = [input.resolvedIntent, input.primaryAxis, input.currentAxis, input.requestedAxis]
     .map((x) => norm(String(x ?? '')))
@@ -232,6 +198,10 @@ export function isVisitSchedulingContinuationMessage(input: VisitSchedulingConti
   const referenceNow = input.referenceNow ?? new Date();
   const n = norm(input.userMessage);
   if (!n) return false;
+  if (/^(obrigado|obrigada|muito obrigado|muito obrigada|ok obrigado|ok obrigada|valeu|vlw|agradeco)[.! ]*$/.test(n)) {
+    return true;
+  }
+  if (/\b(meu nome e|me chamo|pode me chamar de|sou o|sou a|nome)\b/.test(n)) return true;
   if (hasVisitSchedulingWords(input.userMessage)) return true;
   if (parseDateMention(input.userMessage, referenceNow)) return true;
   if (parseTimeHmFromText(input.userMessage)) return true;
