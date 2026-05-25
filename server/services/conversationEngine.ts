@@ -159,6 +159,8 @@ import {
 import {
   handleVisitSchedulingDeterministically,
   hasProhibitedVisitSchedulingPhrase,
+  isAssistantVisitOfferContextMessage,
+  isVisitSchedulingAckOnlyMessage,
   isVisitSchedulingIntent,
   isVisitSchedulingLoopFallbackReply,
   isVisitSchedulingRefusalMessage,
@@ -1207,11 +1209,50 @@ function isShortGenericFollowUpMessage(message: string): boolean {
   );
 }
 
+function isAffirmativeShortReply(message: string): boolean {
+  const n = normText(message).replace(/[.!?]+$/g, '').trim();
+  return /^(sim|quero|quero sim|ok|pode ser|pode sim|claro|perfeito|fechado|ta bom|t[aá] bom)$/.test(n);
+}
+
+function isPendingFollowupContinuationRequest(message: string): boolean {
+  const n = normText(message);
+  if (!n) return false;
+  return (
+    /\b(vc disse que ia falar mais|voce disse que ia falar mais|você disse que ia falar mais)\b/.test(n) ||
+    /\b(fala mais|me explica melhor|voce falou que ia explicar|você falou que ia explicar|quero saber mais)\b/.test(n)
+  );
+}
+
+function extractFollowupTopicsFromAssistantQuestion(message: string | null | undefined): string[] {
+  const raw = (message || '').trim();
+  const n = normText(raw);
+  if (!n || !/\?/.test(raw)) return [];
+  const topics: string[] = [];
+  if (/\b(lazer|area de lazer|areas de lazer|piscina|academia|playground|quadra)\b/.test(n)) topics.push('lazer');
+  if (/\b(seguranca|portaria|controle de acesso|monitoramento)\b/.test(n)) topics.push('seguranca');
+  if (/\b(localizacao|onde fica|bairro|regiao|acesso|endereco)\b/.test(n)) topics.push('localizacao');
+  if (/\b(valores?|preco|quanto custa|r\$)\b/.test(n)) topics.push('valores');
+  if (/\b(formas? de pagamento|pagamento|entrada|parcela|parcelamento|financiamento)\b/.test(n)) {
+    topics.push('pagamento');
+  }
+  return [...new Set(topics)];
+}
+
+function followupTopicLabel(topic: string): string {
+  if (topic === 'lazer') return 'lazer';
+  if (topic === 'seguranca') return 'seguranca';
+  if (topic === 'localizacao') return 'localizacao';
+  if (topic === 'valores') return 'valores';
+  if (topic === 'pagamento') return 'formas de pagamento';
+  return topic;
+}
+
 function expandShortFollowUpWithContext(params: {
   userMessage: string;
   enterpriseName: string | null;
   awaitingName: boolean;
   appointmentActive: boolean;
+  lastAssistantMessage?: string | null;
 }): { expanded: string; expandedApplied: boolean; reason: string | null } {
   const raw = (params.userMessage || '').trim();
   if (!raw) return { expanded: raw, expandedApplied: false, reason: null };
@@ -1219,8 +1260,21 @@ function expandShortFollowUpWithContext(params: {
   if (params.awaitingName && looksLikeStandaloneNameReply(raw)) {
     return { expanded: raw, expandedApplied: false, reason: 'awaiting_name_raw_preserved' };
   }
-  if (!isShortGenericFollowUpMessage(raw)) {
+  const shortFollowup = isShortGenericFollowUpMessage(raw);
+  const followupContinuation = isPendingFollowupContinuationRequest(raw);
+  if (!shortFollowup && !followupContinuation) {
     return { expanded: raw, expandedApplied: false, reason: null };
+  }
+  const offeredTopics = extractFollowupTopicsFromAssistantQuestion(params.lastAssistantMessage);
+  if (offeredTopics.length > 0 && (isAffirmativeShortReply(raw) || followupContinuation)) {
+    const firstTopic = followupTopicLabel(offeredTopics[0] ?? '');
+    const secondTopic = offeredTopics[1] ? followupTopicLabel(offeredTopics[1]) : null;
+    const topicContext = secondTopic ? `${firstTopic} ou ${secondTopic}` : firstTopic;
+    return {
+      expanded: `${raw} sobre ${topicContext}`.replace(/\s{2,}/g, ' ').trim(),
+      expandedApplied: true,
+      reason: 'generic_followup_with_pending_topics',
+    };
   }
 
   const ent = (params.enterpriseName || '').trim();
@@ -2221,6 +2275,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       enterpriseName: flowHintEnterpriseName,
       awaitingName: awaitingNameForExpansion,
       appointmentActive: appointmentPreflight.active,
+      lastAssistantMessage: lastAssistantPlain,
     });
     const userMessageForReasoning = expansion.expandedApplied ? expansion.expanded : trimmed;
     if (expansion.expandedApplied || expansion.reason) {
@@ -3203,6 +3258,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
       referenceNow: lastUserMessageAt,
     });
+    const ackOnlyVisitCandidate = isVisitSchedulingAckOnlyMessage(trimmed);
+    const lastAssistantAskedVisitOffer = isAssistantVisitOfferContextMessage(lastAssistantPlain);
+    if (
+      ackOnlyVisitCandidate &&
+      !lastAssistantAskedVisitOffer &&
+      flowStateParsed.pendingVisitScheduling !== true &&
+      directVisitSchedulingIntent === false
+    ) {
+      console.log('[ANA_VISIT_CONFIRMATION_REJECTED_NO_VISIT_CONTEXT]', {
+        conversationId,
+        userMessage: trimmed.slice(0, 120),
+        lastAssistantMessage: (lastAssistantPlain || '').slice(0, 220),
+      });
+    }
     if (
       directVisitSchedulingIntent ||
       flowStateParsed.pendingVisitScheduling === true ||

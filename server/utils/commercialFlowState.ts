@@ -86,6 +86,9 @@ export interface CommercialFlowState {
     lastBrokerHandoffAskedAt?: string | null;
     brokerHandoffAcceptedAt?: string | null;
     nameUncertainAt?: string | null;
+    lastAssistantQuestionType?: string | null;
+    lastAssistantQuestionText?: string | null;
+    lastOfferedTopics?: string[];
   };
 }
 

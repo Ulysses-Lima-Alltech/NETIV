@@ -19,7 +19,10 @@ import {
   applyAnaConversationPolicy,
   evaluateAnaReengagementPolicy,
 } from '../utils/anaConversationPolicy.js';
-import { handleVisitSchedulingDeterministically } from '../utils/anaDirectVisitScheduling.js';
+import {
+  handleVisitSchedulingDeterministically,
+  isVisitSchedulingIntent,
+} from '../utils/anaDirectVisitScheduling.js';
 import {
   extractCustomerNameFromUserUtterance,
   isUncertainCustomerNameCue,
@@ -502,6 +505,88 @@ test('cta repetido em sequencia e suprimido', () => {
   });
 
   assert.equal(/agendar uma visita/i.test(policy.text), false);
+});
+
+test('"sim" apos pergunta de topicos nao inicia agendamento de visita', () => {
+  const shouldScheduleVisit = isVisitSchedulingIntent({
+    userMessage: 'sim',
+    flowState: {},
+    resolvedIntent: 'visita_agendamento',
+    primaryAxis: 'visita_agendamento',
+    currentAxis: 'visita_agendamento',
+    requestedAxis: 'visita_agendamento',
+    lastAssistantMessage: 'Quer que eu te explique tambem sobre lazer ou formas de pagamento?',
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T12:00:00.000Z'),
+  });
+  assert.equal(shouldScheduleVisit, false);
+
+  const policy = applyAnaConversationPolicy({
+    conversationId: 5,
+    userMessage: 'sim',
+    replyText: 'Perfeito. Para qual dia voce prefere agendar a visita?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [
+      { role: 'assistant', content: 'Quer que eu te explique tambem sobre lazer ou formas de pagamento?' },
+      { role: 'user', content: 'sim' },
+    ],
+    disableFollowupQuestion: true,
+  });
+  assert.equal(/agendar|visita/i.test(policy.text), false);
+  assert.match(policy.text, /lazer|pagamento/i);
+});
+
+test('"sim" apos oferta explicita de visita inicia fluxo de agendamento', () => {
+  const shouldScheduleVisit = isVisitSchedulingIntent({
+    userMessage: 'sim',
+    flowState: {},
+    resolvedIntent: 'visita_agendamento',
+    primaryAxis: 'visita_agendamento',
+    currentAxis: 'visita_agendamento',
+    requestedAxis: 'visita_agendamento',
+    lastAssistantMessage: 'Quer que eu te ajude a agendar uma visita?',
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T12:00:00.000Z'),
+  });
+  assert.equal(shouldScheduleVisit, true);
+});
+
+test('"vc disse que ia falar mais" recupera topicos pendentes do ultimo follow-up', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 6,
+    userMessage: 'vc disse que ia falar mais',
+    replyText: 'Com certeza! Vou detalhar um pouco mais sobre o loteamento Evora.',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [
+      { role: 'assistant', content: 'Quer que eu te explique tambem sobre lazer ou formas de pagamento?' },
+      { role: 'user', content: 'vc disse que ia falar mais' },
+    ],
+    disableFollowupQuestion: true,
+  });
+
+  assert.match(policy.text, /lazer/i);
+  assert.match(policy.text, /formas de pagamento|pagamento/i);
+  assert.match(policy.text, /qual dos dois voce prefere|qual dos dois você prefere/i);
+});
+
+test('"fala mais" sem topico pendente pede direcionamento objetivo', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 7,
+    userMessage: 'fala mais',
+    replyText: 'Com certeza! Vou detalhar um pouco mais sobre o empreendimento.',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [
+      { role: 'assistant', content: 'Perfeito, te passo os detalhes por aqui.' },
+      { role: 'user', content: 'fala mais' },
+    ],
+    disableFollowupQuestion: true,
+  });
+
+  assert.equal(/vou detalhar um pouco mais/i.test(policy.text), false);
+  assert.match(policy.text, /valores|lazer|localiza|seguran|pagamento/i);
 });
 
 

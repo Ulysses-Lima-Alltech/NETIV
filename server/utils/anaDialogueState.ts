@@ -8,6 +8,9 @@ export interface AnaDialoguePolicyState {
   lastBrokerHandoffAskedAt?: string | null;
   brokerHandoffAcceptedAt?: string | null;
   nameUncertainAt?: string | null;
+  lastAssistantQuestionType?: 'visit_offer' | 'broker_handoff' | 'followup_topics' | 'other' | null;
+  lastAssistantQuestionText?: string | null;
+  lastOfferedTopics?: string[];
 }
 
 const MAX_RECENT = 6;
@@ -35,6 +38,15 @@ export function getAnaDialoguePolicyState(flowState: CommercialFlowState | null 
     lastBrokerHandoffAskedAt: raw.lastBrokerHandoffAskedAt ?? null,
     brokerHandoffAcceptedAt: raw.brokerHandoffAcceptedAt ?? null,
     nameUncertainAt: raw.nameUncertainAt ?? null,
+    lastAssistantQuestionType:
+      raw.lastAssistantQuestionType === 'visit_offer' ||
+      raw.lastAssistantQuestionType === 'broker_handoff' ||
+      raw.lastAssistantQuestionType === 'followup_topics' ||
+      raw.lastAssistantQuestionType === 'other'
+        ? raw.lastAssistantQuestionType
+        : null,
+    lastAssistantQuestionText: raw.lastAssistantQuestionText ?? null,
+    lastOfferedTopics: compactTopicList(raw.lastOfferedTopics),
   };
 }
 
@@ -49,6 +61,7 @@ export function mergeAnaDialoguePolicyState(
   };
   merged.recentlyDiscussedTopics = compactTopicList(merged.recentlyDiscussedTopics);
   merged.recentlyAskedTopics = compactTopicList(merged.recentlyAskedTopics);
+  merged.lastOfferedTopics = compactTopicList(merged.lastOfferedTopics);
   return {
     ...flowState,
     dialoguePolicy: merged,

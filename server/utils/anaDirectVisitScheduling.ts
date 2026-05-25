@@ -176,7 +176,7 @@ function parseDateMention(text: string, referenceNow: Date): { label: string; ym
   return null;
 }
 
-function isAckOnly(text: string): boolean {
+export function isVisitSchedulingAckOnlyMessage(text: string): boolean {
   const n = norm(text).replace(/[.,;:!?]+/g, ' ').replace(/\s+/g, ' ').trim();
   return /^(sim|ok|ta|tá|certo|beleza|perfeito|combinado|aguardo|fico no aguardo|ok aguardo|ok aguardo agendamento|aguardo agendamento|pode ser|pode sim)$/.test(n);
 }
@@ -196,9 +196,22 @@ export function isVisitSchedulingLoopFallbackReply(text: string): boolean {
   return n.includes('so preciso que voce me diga o horario para agendar sua visita');
 }
 
-function lastAssistantInvitedVisit(text: string | null | undefined): boolean {
-  const n = norm(text ?? '');
-  return /\b(agendar|marcar|visita|conhecer pessoalmente)\b/.test(n) && /\b(interesse|qual dia|dia e horario|horario)\b/.test(n);
+export function isAssistantVisitOfferContextMessage(text: string | null | undefined): boolean {
+  const raw = text ?? '';
+  const n = norm(raw);
+  if (!n || !/\?/.test(raw)) return false;
+  const hasVisitWords =
+    /\b(agendar|agendamento|marcar|visita|conhecer pessoalmente|reservar horario|reservar horÃ¡rio)\b/.test(n);
+  if (!hasVisitWords) return false;
+  const asksVisitOffer =
+    /\b(quer que eu te ajude a agendar|posso te ajudar a agendar|prefere agendar|vamos marcar|marcar uma visita|agendar uma visita|conhecer pessoalmente)\b/.test(
+      n
+    );
+  const asksVisitSlot =
+    /\b(qual dia|para qual dia|dia e horario|dia e horÃ¡rio|qual horario|qual horÃ¡rio|horario fica melhor|horÃ¡rio fica melhor)\b/.test(
+      n
+    );
+  return asksVisitOffer || asksVisitSlot;
 }
 
 export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): boolean {
@@ -206,6 +219,8 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
     .map((x) => norm(String(x ?? '')))
     .filter(Boolean);
   const axisRequestedVisit = axes.some((x) => x === 'visita_agendamento' || x === 'agendar');
+  const ackOnlyMessage = isVisitSchedulingAckOnlyMessage(input.userMessage);
+  const hasVisitOfferContext = isAssistantVisitOfferContextMessage(input.lastAssistantMessage);
   const schedulingContinuation = isVisitSchedulingContinuationMessage({
     userMessage: input.userMessage,
     lastAssistantMessage: input.lastAssistantMessage,
@@ -214,9 +229,12 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
   if (input.flowState.pendingVisitScheduling === true) {
     return schedulingContinuation;
   }
-  if (axisRequestedVisit) return schedulingContinuation || hasVisitSchedulingWords(input.userMessage);
+  if (axisRequestedVisit) {
+    if (ackOnlyMessage) return hasVisitOfferContext;
+    return schedulingContinuation || hasVisitSchedulingWords(input.userMessage);
+  }
   if (hasVisitSchedulingWords(input.userMessage)) return true;
-  if (isAckOnly(input.userMessage) && lastAssistantInvitedVisit(input.lastAssistantMessage)) return true;
+  if (ackOnlyMessage && hasVisitOfferContext) return true;
   return false;
 }
 
@@ -235,7 +253,12 @@ export function isVisitSchedulingContinuationMessage(input: VisitSchedulingConti
   if (/\b(dia\s*\d{1,2}|horario|de manha|a tarde|a noite|manha|tarde|noite)\b/.test(n)) {
     return true;
   }
-  if (isAckOnly(input.userMessage) && lastAssistantInvitedVisit(input.lastAssistantMessage)) return true;
+  if (
+    isVisitSchedulingAckOnlyMessage(input.userMessage) &&
+    isAssistantVisitOfferContextMessage(input.lastAssistantMessage)
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -391,7 +414,7 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
       });
       return finish('start_collecting_date', askDayReply(), nextState, 'dia');
     }
-    if (isAckOnly(input.userMessage)) {
+    if (isVisitSchedulingAckOnlyMessage(input.userMessage)) {
       const nextState = buildPendingState(input.flowState, {
         pending: true,
         dateLabel: pendingDateLabel,
