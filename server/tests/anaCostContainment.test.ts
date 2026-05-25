@@ -145,6 +145,40 @@ test('bloqueia openai/gpt-4.1-nano com provider openai', () => {
   }
 });
 
+test('aceita ana-evora-qwen-8k-v2:latest com baseUrl custom', () => {
+  const resolution = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'ana-evora-qwen-8k-v2:latest',
+    slot: 'hot_lead',
+    baseUrl: 'https://teste.trycloudflare.com/v1',
+  });
+  assert.equal(resolution.blocked, false);
+});
+
+test('aceita qwen2.5:7b-instruct com provider local/custom', () => {
+  const localProvider = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'qwen2.5:7b-instruct',
+    slot: 'cold_lead',
+    provider: 'local',
+  });
+  const customProvider = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'qwen2.5:7b-instruct',
+    slot: 'cold_lead',
+    provider: 'custom',
+  });
+  assert.equal(localProvider.blocked, false);
+  assert.equal(customProvider.blocked, false);
+});
+
+test('bloqueia ana-evora-qwen-8k-v2:latest com baseUrl OpenAI', () => {
+  const resolution = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'ana-evora-qwen-8k-v2:latest',
+    slot: 'hot_lead',
+    baseUrl: 'https://api.openai.com/v1',
+  });
+  assert.equal(resolution.blocked, true);
+  if (resolution.blocked) assert.equal(resolution.reason, 'ana_model_invalid_for_slot');
+});
+
 test('openaiService nao envia configuracao de prioridade de tier', () => {
   const openaiServiceSource = readFileSync(new URL('../services/openaiService.js', import.meta.url), 'utf8');
   const serviceTierKey = ['service', 'tier'].join('_');
