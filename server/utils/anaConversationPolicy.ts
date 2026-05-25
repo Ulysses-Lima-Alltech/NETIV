@@ -79,11 +79,34 @@ function combineDateAndPeriodLabel(dateLabel: string | null | undefined, period:
   return p;
 }
 
-function askVisitMissingSlotQuestion(flowState: CommercialFlowState, hasKnownName: boolean): string {
+function isConfusionVisitMessage(text: string): boolean {
+  const n = norm(text);
+  if (!n) return false;
+  return /^(ue|ueh|como assim|nao entendi|o que|oxi)$/.test(n);
+}
+
+function askVisitMissingSlotQuestion(
+  flowState: CommercialFlowState,
+  hasKnownName: boolean,
+  userMessage?: string
+): string {
   const pendingDate = (flowState.pendingVisitDate || '').trim();
   const pendingDateLabel = flowState.pendingVisitDateLabel ?? null;
   const pendingPeriod = flowState.pendingVisitPeriod ?? null;
   const pendingTime = (flowState.pendingVisitTime || '').trim();
+  const pendingInvalidTime = (flowState.pendingVisitInvalidTime || '').trim();
+  const pendingMissingSlot = flowState.pendingVisitMissingSlot ?? null;
+  const invalidTimeFlow = pendingMissingSlot === 'valid_time' || pendingInvalidTime.length > 0;
+  if (invalidTimeFlow) {
+    const invalidTimeLabel = pendingInvalidTime || 'Esse horário';
+    if (isConfusionVisitMessage(userMessage || '')) {
+      return `Você tem razão, eu me expressei mal. ${invalidTimeLabel} fica fora do horário disponível para visitas. Consigo seguir com um horário entre 09h e 18h. Qual fica melhor?`;
+    }
+    if (isAckLikeMessage(userMessage || '')) {
+      return 'Certo. Qual horário entre 09h e 18h você prefere?';
+    }
+    return `${invalidTimeLabel} fica fora do horário de visitas. Posso seguir com um horário entre 09h e 18h. Qual prefere?`;
+  }
   const label = combineDateAndPeriodLabel(pendingDateLabel, pendingPeriod);
   if (!pendingDate) {
     return 'Perfeito. Para qual dia você prefere agendar a visita?';
@@ -643,7 +666,7 @@ export function applyAnaConversationPolicy(
       /\b(lazer|localizacao|localização|infraestrutura|pagamento|valor|seguranca|segurança|book|vídeo|video|foto|fotos)\b/.test(norm(reply));
     const replyNeedsVisitAnchor = !looksLikeVisitFlowReply(reply) || isAckLikeMessage(input.userMessage);
     if (hasTopicSwitchIntent || replyNeedsVisitAnchor) {
-      const anchoredVisitReply = askVisitMissingSlotQuestion(nextState, hasKnownName);
+      const anchoredVisitReply = askVisitMissingSlotQuestion(nextState, hasKnownName, input.userMessage);
       if (anchoredVisitReply !== reply) {
         if (containsMediaOffer(reply)) {
           console.log('[ANA_MEDIA_OFFER_SUPPRESSED_VISIT_FLOW]', {

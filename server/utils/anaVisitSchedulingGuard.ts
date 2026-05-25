@@ -165,6 +165,17 @@ function hydrate(state: CommercialFlowState, customerName: string | null | undef
 }
 
 function persist(base: CommercialFlowState, v: VisitState, enterpriseId: number | null): CommercialFlowState {
+  const invalidWindowTime =
+    v.normalizedTime && !isInsideVisitWindow(v.normalizedTime) ? hmToDisplay(v.normalizedTime) || v.normalizedTime : null;
+  const missingSlot: 'nome' | 'dia' | 'periodo_ou_horario' | 'valid_time' | null = invalidWindowTime
+    ? 'valid_time'
+    : !v.normalizedDate
+      ? 'dia'
+      : !v.normalizedTime
+        ? 'periodo_ou_horario'
+        : !v.nameCollected
+          ? 'nome'
+          : null;
   return {
     ...base,
     pendingVisitScheduling: v.active,
@@ -173,6 +184,8 @@ function persist(base: CommercialFlowState, v: VisitState, enterpriseId: number 
     pendingVisitTime: v.normalizedTime,
     pendingVisitPeriod: (v.requestedPeriodText as string | null | undefined) ?? null,
     pendingVisitEnterpriseId: v.active ? enterpriseId : null,
+    pendingVisitInvalidTime: v.active ? invalidWindowTime : null,
+    pendingVisitMissingSlot: v.active ? missingSlot : null,
     visitScheduling: v,
     updatedAt: new Date().toISOString(),
   };

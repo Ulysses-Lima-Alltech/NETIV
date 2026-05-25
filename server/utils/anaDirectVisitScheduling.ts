@@ -1,4 +1,4 @@
-import {
+﻿import {
   APPOINTMENT_BUSINESS_TZ,
   getJsWeekdayForYmdInSaoPaulo,
   parseAppointmentStartEndInSaoPaulo,
@@ -9,7 +9,7 @@ import { extractCustomerNameFromUserUtterance } from './extractCustomerNameFromM
 const SP_OFFSET = '-03:00';
 export const VISIT_WINDOW_START_MINUTES = 9 * 60;
 export const VISIT_WINDOW_END_MINUTES = 18 * 60;
-export const VISIT_WINDOW_REPLY = 'Temos disponibilidade de segunda a sábado, das 09h às 18h.';
+export const VISIT_WINDOW_REPLY = 'Temos disponibilidade de segunda a sÃ¡bado, das 09h Ã s 18h.';
 
 const PROHIBITED_VISIT_SCHEDULING_PHRASES = [
   'assim que o corretor confirmar',
@@ -38,7 +38,8 @@ export interface DirectVisitSchedulingDecision {
   extractedPeriod: VisitPeriod | null;
   extractedTime: string | null;
   capturedSlots: VisitSlotKey[];
-  missingSlot: 'nome' | 'dia' | 'periodo_ou_horario' | null;
+  missingSlot: 'nome' | 'dia' | 'periodo_ou_horario' | 'valid_time' | null;
+  invalidVisitTime: string | null;
   nextState: CommercialFlowState;
   appointmentConfirmed: boolean;
   appointmentDateYmd: string | null;
@@ -130,8 +131,20 @@ function weekdayTokenToJsDay(token: string): number | null {
   return null;
 }
 
-function parseTimeHmFromText(text: string): string | null {
+function parseTimeHmFromText(
+  text: string,
+  options?: {
+    allowStandaloneHour?: boolean;
+  }
+): string | null {
   const n = norm(text);
+  if (options?.allowStandaloneHour === true) {
+    const standaloneHour = n.match(/^\s*(\d{1,2})\s*$/);
+    if (standaloneHour?.[1]) {
+      const hh = parseInt(standaloneHour[1], 10);
+      if (hh >= 0 && hh <= 23) return `${pad2(hh)}:00`;
+    }
+  }
   const reList = [
     /\bas\s+(\d{1,2})(?:h(\d{2})|\s*:\s*(\d{2}))?\b/g,
     /\b(\d{1,2})h(\d{2})\b/g,
@@ -155,9 +168,9 @@ function parseTimeHmFromText(text: string): string | null {
 function parsePeriodFromText(text: string): VisitPeriod | null {
   const n = norm(text);
   if (!n) return null;
-  if (/\b(de manha|de manhã|manha|manhã)\b/.test(n)) return 'manha';
-  if (/\b(a tarde|à tarde|de tarde|tarde)\b/.test(n)) return 'tarde';
-  if (/\b(a noite|à noite|de noite|noite)\b/.test(n)) return 'noite';
+  if (/\b(de manha|de manhÃ£|manha|manhÃ£)\b/.test(n)) return 'manha';
+  if (/\b(a tarde|Ã  tarde|de tarde|tarde)\b/.test(n)) return 'tarde';
+  if (/\b(a noite|Ã  noite|de noite|noite)\b/.test(n)) return 'noite';
   return null;
 }
 
@@ -173,8 +186,8 @@ function normalizeVisitPeriod(value: string | null | undefined): VisitPeriod | n
 function parseDateMention(text: string, referenceNow: Date): { label: string; ymd: string } | null {
   const n = norm(text);
   const today = formatYmdInSaoPaulo(referenceNow);
-  if (/\bdepois de amanha\b/.test(n)) return { label: 'depois de amanhã', ymd: addDaysYmd(today, 2) };
-  if (/\bamanha\b/.test(n)) return { label: 'amanhã', ymd: addDaysYmd(today, 1) };
+  if (/\bdepois de amanha\b/.test(n)) return { label: 'depois de amanhÃ£', ymd: addDaysYmd(today, 2) };
+  if (/\bamanha\b/.test(n)) return { label: 'amanhÃ£', ymd: addDaysYmd(today, 1) };
   if (/\bhoje\b/.test(n)) return { label: 'hoje', ymd: today };
   const wd = n.match(/\b(domingo|segunda(?: feira)?|terca(?: feira)?|quarta(?: feira)?|quinta(?: feira)?|sexta(?: feira)?|sabado)\b/);
   if (wd) {
@@ -186,7 +199,7 @@ function parseDateMention(text: string, referenceNow: Date): { label: string; ym
 
 export function isVisitSchedulingAckOnlyMessage(text: string): boolean {
   const n = norm(text).replace(/[.,;:!?]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return /^(sim|ok|ta|tá|certo|beleza|perfeito|combinado|aguardo|fico no aguardo|ok aguardo|ok aguardo agendamento|aguardo agendamento|pode ser|pode sim)$/.test(n);
+  return /^(sim|ok|ta|tÃ¡|certo|beleza|perfeito|combinado|aguardo|fico no aguardo|ok aguardo|ok aguardo agendamento|aguardo agendamento|pode ser|pode sim)$/.test(n);
 }
 
 function hasVisitSchedulingWords(text: string): boolean {
@@ -209,14 +222,14 @@ export function isAssistantVisitOfferContextMessage(text: string | null | undefi
   const n = norm(raw);
   if (!n || !/\?/.test(raw)) return false;
   const hasVisitWords =
-    /\b(agendar|agendamento|marcar|visita|conhecer pessoalmente|reservar horario|reservar horÃ¡rio)\b/.test(n);
+    /\b(agendar|agendamento|marcar|visita|conhecer pessoalmente|reservar horario|reservar horÃƒÂ¡rio)\b/.test(n);
   if (!hasVisitWords) return false;
   const asksVisitOffer =
     /\b(quer que eu te ajude a agendar|posso te ajudar a agendar|prefere agendar|vamos marcar|marcar uma visita|agendar uma visita|conhecer pessoalmente)\b/.test(
       n
     );
   const asksVisitSlot =
-    /\b(qual dia|para qual dia|dia e horario|dia e horÃ¡rio|qual horario|qual horÃ¡rio|horario fica melhor|horÃ¡rio fica melhor)\b/.test(
+    /\b(qual dia|para qual dia|dia e horario|dia e horÃƒÂ¡rio|qual horario|qual horÃƒÂ¡rio|horario fica melhor|horÃƒÂ¡rio fica melhor)\b/.test(
       n
     );
   return asksVisitOffer || asksVisitSlot;
@@ -242,7 +255,7 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
   });
   if (shortConfirmationSuppressesVisit) return false;
   if (input.flowState.pendingVisitScheduling === true) {
-    return schedulingContinuation;
+    return true;
   }
   if (axisRequestedVisit) {
     if (ackOnlyMessage) return confirmationContextKind === 'visit_confirmation' || hasVisitOfferContext;
@@ -302,10 +315,94 @@ export function isAllowedVisitSlot(dateYmd: string, timeHm: string): boolean {
   return minutes != null && minutes >= VISIT_WINDOW_START_MINUTES && minutes <= VISIT_WINDOW_END_MINUTES;
 }
 
+export type VisitDateTimeSlotValidation =
+  | { valid: true; reason: 'ok'; weekday: number; minutes: number }
+  | { valid: false; reason: 'invalid_datetime' | 'sunday_not_allowed' | 'outside_visit_window'; weekday: number | null; minutes: number | null };
+
+export function validateVisitDateTimeSlot(dateYmd: string, timeHm: string): VisitDateTimeSlotValidation {
+  const parsed = parseAppointmentStartEndInSaoPaulo(dateYmd, timeHm);
+  if (!parsed) return { valid: false, reason: 'invalid_datetime', weekday: null, minutes: null };
+  const weekday = getJsWeekdayForYmdInSaoPaulo(dateYmd);
+  if (weekday === 0) return { valid: false, reason: 'sunday_not_allowed', weekday, minutes: null };
+  const minutes = timeHmToMinutes(timeHm);
+  if (minutes == null) return { valid: false, reason: 'invalid_datetime', weekday, minutes: null };
+  if (minutes < VISIT_WINDOW_START_MINUTES || minutes > VISIT_WINDOW_END_MINUTES) {
+    return { valid: false, reason: 'outside_visit_window', weekday, minutes };
+  }
+  return { valid: true, reason: 'ok', weekday, minutes };
+}
+
+function displayTimeHm(timeHm: string | null | undefined): string | null {
+  const raw = String(timeHm ?? '').trim();
+  if (!/^\d{2}:\d{2}$/.test(raw)) return null;
+  const hh = Number.parseInt(raw.slice(0, 2), 10);
+  const mm = raw.slice(3, 5);
+  if (!Number.isFinite(hh)) return null;
+  return mm === '00' ? `${hh}h` : `${hh}h${mm}`;
+}
+
+function isEmpatheticConfusionMessage(text: string): boolean {
+  const n = norm(text);
+  if (!n) return false;
+  return /^(ue|ueh|u[eÃ©]|como assim|nao entendi|n[aÃ£]o entendi|que|oxi|o que)$/i.test(n);
+}
+
+const LOOSE_VISIT_NAME_BLOCKLIST = new Set(
+  [
+    'sim',
+    'nao',
+    'ok',
+    'claro',
+    'pode',
+    'amanha',
+    'hoje',
+    'sabado',
+    'domingo',
+    'segunda',
+    'terca',
+    'quarta',
+    'quinta',
+    'sexta',
+    'manha',
+    'tarde',
+    'noite',
+    'horario',
+    'visita',
+    'agendar',
+    'mestre',
+    'chefe',
+    'boss',
+    'amigo',
+    'parceiro',
+    'idolo',
+    'kkk',
+    'haha',
+    'rs',
+    'ue',
+    'ueh',
+    'oxi',
+  ].map((token) => token.toLowerCase())
+);
+
+function extractLooseVisitNameCandidate(text: string): string | null {
+  const raw = String(text || '').trim();
+  if (!raw || raw.length < 2 || raw.length > 40) return null;
+  if (!/^[A-Za-zÀ-ÿ]+(?:\s+[A-Za-zÀ-ÿ]+){0,2}$/.test(raw)) return null;
+  const normalized = norm(raw);
+  if (!normalized) return null;
+  if (LOOSE_VISIT_NAME_BLOCKLIST.has(normalized)) return null;
+  const words = normalized.split(' ');
+  if (words.some((word) => LOOSE_VISIT_NAME_BLOCKLIST.has(word))) return null;
+  return raw
+    .split(/\s+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
+
 function periodHumanLabel(period: VisitPeriod | null): string | null {
-  if (period === 'manha') return 'de manhã';
-  if (period === 'tarde') return 'à tarde';
-  if (period === 'noite') return 'à noite';
+  if (period === 'manha') return 'de manhÃ£';
+  if (period === 'tarde') return 'Ã  tarde';
+  if (period === 'noite') return 'Ã  noite';
   return null;
 }
 
@@ -318,26 +415,26 @@ function combineDateAndPeriodLabel(dateLabel: string | null, period: VisitPeriod
 }
 
 function askTimeReply(label: string | null): string {
-  if (label) return `Perfeito, ${label}. Qual horário fica melhor para você? ${VISIT_WINDOW_REPLY}`;
-  return `Perfeito. Qual horário você prefere para a visita? ${VISIT_WINDOW_REPLY}`;
+  if (label) return `Perfeito, ${label}. Qual horÃ¡rio fica melhor para vocÃª? ${VISIT_WINDOW_REPLY}`;
+  return `Perfeito. Qual horÃ¡rio vocÃª prefere para a visita? ${VISIT_WINDOW_REPLY}`;
 }
 
 function askDayReply(): string {
-  return 'Perfeito. Para qual dia você prefere agendar a visita?';
+  return 'Perfeito. Para qual dia vocÃª prefere agendar a visita?';
 }
 
 function askNameReply(dateLabel: string | null, timeHm: string): string {
   const hh = parseInt(timeHm.slice(0, 2), 10);
   const mm = timeHm.slice(3, 5);
   const displayTime = mm === '00' ? `${hh}h` : `${hh}h${mm}`;
-  return `Perfeito, ${dateLabel ?? 'o dia escolhido'} às ${displayTime}. Como posso te chamar para confirmar o agendamento?`;
+  return `Perfeito, ${dateLabel ?? 'o dia escolhido'} Ã s ${displayTime}. Como posso te chamar para confirmar o agendamento?`;
 }
 
 function confirmReply(label: string | null, timeHm: string): string {
   const hh = parseInt(timeHm.slice(0, 2), 10);
   const mm = timeHm.slice(3, 5);
   const displayTime = mm === '00' ? `${hh}h` : `${hh}h${mm}`;
-  return `Perfeito, sua visita ficou agendada para ${label ?? 'o dia escolhido'} às ${displayTime}.`;
+  return `Perfeito, sua visita ficou agendada para ${label ?? 'o dia escolhido'} Ã s ${displayTime}.`;
 }
 
 function buildPendingState(
@@ -349,8 +446,12 @@ function buildPendingState(
     timeHm?: string | null;
     period?: VisitPeriod | null;
     enterpriseId: number | null;
+    invalidTime?: string | null;
+    missingSlot?: 'nome' | 'dia' | 'periodo_ou_horario' | 'valid_time' | null;
   }
 ): CommercialFlowState {
+  const hasInvalidTimePatch = Object.prototype.hasOwnProperty.call(patch, 'invalidTime');
+  const hasMissingSlotPatch = Object.prototype.hasOwnProperty.call(patch, 'missingSlot');
   return {
     ...prev,
     pendingVisitScheduling: patch.pending,
@@ -359,6 +460,16 @@ function buildPendingState(
     pendingVisitTime: patch.pending ? (patch.timeHm ?? prev.pendingVisitTime ?? null) : null,
     pendingVisitPeriod: patch.pending ? (patch.period ?? prev.pendingVisitPeriod ?? null) : null,
     pendingVisitEnterpriseId: patch.pending ? patch.enterpriseId : null,
+    pendingVisitInvalidTime: patch.pending
+      ? hasInvalidTimePatch
+        ? (patch.invalidTime ?? null)
+        : (prev.pendingVisitInvalidTime ?? null)
+      : null,
+    pendingVisitMissingSlot: patch.pending
+      ? hasMissingSlotPatch
+        ? (patch.missingSlot ?? null)
+        : (prev.pendingVisitMissingSlot ?? null)
+      : null,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -366,31 +477,44 @@ function buildPendingState(
 function knownNameFromContext(input: DirectVisitSchedulingInput): string | null {
   const fromContext = (input.customerName || '').trim();
   if (fromContext.length >= 2) return fromContext;
-  const fromMessage = extractCustomerNameFromUserUtterance(input.userMessage);
+  const fromMessage = extractCustomerNameFromUserUtterance(input.userMessage, {
+    lastAssistantPlain: input.lastAssistantMessage ?? null,
+  });
   return fromMessage && fromMessage.trim().length >= 2 ? fromMessage.trim() : null;
 }
 
 export function handleVisitSchedulingDeterministically(input: DirectVisitSchedulingInput): DirectVisitSchedulingDecision {
   const referenceNow = input.referenceNow ?? new Date();
-  const dateMention = parseDateMention(input.userMessage, referenceNow);
-  const timeHm = parseTimeHmFromText(input.userMessage);
-  const period = parsePeriodFromText(input.userMessage);
   const pending = input.flowState.pendingVisitScheduling === true;
+  const dateMention = parseDateMention(input.userMessage, referenceNow);
+  const timeHm = parseTimeHmFromText(input.userMessage, { allowStandaloneHour: pending });
+  const period = parsePeriodFromText(input.userMessage);
+  const explicitNameFromMessage =
+    extractCustomerNameFromUserUtterance(input.userMessage, {
+      lastAssistantPlain: input.lastAssistantMessage ?? null,
+    }) || (pending ? extractLooseVisitNameCandidate(input.userMessage) : null);
   const pendingDateLabel = input.flowState.pendingVisitDateLabel ?? null;
   const pendingDateYmd = input.flowState.pendingVisitDate ?? null;
   const pendingTimeHm = input.flowState.pendingVisitTime ?? null;
   const pendingPeriod = normalizeVisitPeriod(input.flowState.pendingVisitPeriod ?? null);
+  const pendingInvalidTime = (input.flowState.pendingVisitInvalidTime || '').trim() || null;
   const effectiveDateLabel = dateMention?.label ?? pendingDateLabel;
   const effectiveDateYmd = dateMention?.ymd ?? pendingDateYmd;
   const effectiveTimeHm = timeHm ?? pendingTimeHm;
   const effectivePeriod = period ?? pendingPeriod;
   const effectiveName = knownNameFromContext(input);
+  const userAckOnly = isVisitSchedulingAckOnlyMessage(input.userMessage);
+  const userConfusion = isEmpatheticConfusionMessage(input.userMessage);
 
   const capturedSlots: VisitSlotKey[] = [];
   if (effectiveName) capturedSlots.push('nome');
   if (effectiveDateYmd) capturedSlots.push('dia');
   if (effectivePeriod) capturedSlots.push('periodo');
-  if (effectiveTimeHm) capturedSlots.push('horario');
+  const effectiveTimeIsValidForDate =
+    effectiveDateYmd && effectiveTimeHm
+      ? validateVisitDateTimeSlot(effectiveDateYmd, effectiveTimeHm).valid
+      : Boolean(effectiveTimeHm);
+  if (effectiveTimeIsValidForDate) capturedSlots.push('horario');
   if (input.enterpriseId != null) capturedSlots.push('empreendimento');
   if ((input.customerPhone || '').replace(/\D/g, '').length >= 10) capturedSlots.push('telefone');
 
@@ -398,7 +522,7 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
     reason: string,
     reply: string,
     nextState: CommercialFlowState,
-    missingSlot: 'nome' | 'dia' | 'periodo_ou_horario' | null,
+    missingSlot: 'nome' | 'dia' | 'periodo_ou_horario' | 'valid_time' | null,
     appointmentConfirmed = false,
     appointmentDateYmd: string | null = null,
     appointmentTimeHm: string | null = null
@@ -414,10 +538,49 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
     extractedTime: timeHm,
     capturedSlots,
     missingSlot,
+    invalidVisitTime: nextState.pendingVisitInvalidTime ?? null,
     appointmentConfirmed,
     appointmentDateYmd,
     appointmentTimeHm,
   });
+
+  if (pending && pendingInvalidTime && !timeHm) {
+    const nextState = buildPendingState(input.flowState, {
+      pending: true,
+      dateLabel: pendingDateLabel,
+      dateYmd: pendingDateYmd,
+      timeHm: null,
+      period: pendingPeriod,
+      enterpriseId: input.enterpriseId,
+      invalidTime: pendingInvalidTime,
+      missingSlot: 'valid_time',
+    });
+    if (userConfusion) {
+      return finish(
+        'invalid_time_pending_confusion_repair',
+        `Você tem razão, eu me expressei mal. ${pendingInvalidTime} fica fora do horário disponível para visitas. Consigo seguir com um horário entre 09h e 18h. Qual fica melhor?`,
+        nextState,
+        'valid_time'
+      );
+    }
+    if (userAckOnly) {
+      return finish('invalid_time_pending_ack', 'Certo. Qual horário entre 09h e 18h você prefere?', nextState, 'valid_time');
+    }
+    if (explicitNameFromMessage) {
+      return finish(
+        'invalid_time_pending_after_name',
+        `Obrigado. Só preciso ajustar o horário: ${pendingInvalidTime} fica fora do período disponível para visitas. Pode ser entre 09h e 18h?`,
+        nextState,
+        'valid_time'
+      );
+    }
+    return finish(
+      'invalid_time_pending_waiting_valid_time',
+      'Consigo seguir com um horário entre 09h e 18h. Qual horário você prefere?',
+      nextState,
+      'valid_time'
+    );
+  }
 
   if (!effectiveDateYmd && !effectiveTimeHm && !effectivePeriod) {
     if (!pending) {
@@ -426,24 +589,10 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
         dateLabel: null,
         dateYmd: null,
         enterpriseId: input.enterpriseId,
+        invalidTime: null,
+        missingSlot: 'dia',
       });
       return finish('start_collecting_date', askDayReply(), nextState, 'dia');
-    }
-    if (isVisitSchedulingAckOnlyMessage(input.userMessage)) {
-      const nextState = buildPendingState(input.flowState, {
-        pending: true,
-        dateLabel: pendingDateLabel,
-        dateYmd: pendingDateYmd,
-        timeHm: pendingTimeHm,
-        period: pendingPeriod,
-        enterpriseId: input.enterpriseId,
-      });
-      return finish(
-        'pending_without_time_ack',
-        askTimeReply(combineDateAndPeriodLabel(pendingDateLabel, pendingPeriod)),
-        nextState,
-        'periodo_ou_horario'
-      );
     }
     const nextState = buildPendingState(input.flowState, {
       pending: true,
@@ -452,12 +601,16 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
       timeHm: pendingTimeHm,
       period: pendingPeriod,
       enterpriseId: input.enterpriseId,
+      invalidTime: pendingInvalidTime,
+      missingSlot: pendingInvalidTime ? 'valid_time' : 'periodo_ou_horario',
     });
     return finish(
-      'pending_without_time',
-      askTimeReply(combineDateAndPeriodLabel(pendingDateLabel, pendingPeriod)),
+      userAckOnly ? 'pending_without_time_ack' : 'pending_without_time',
+      pendingInvalidTime
+        ? 'Certo. Qual horário entre 09h e 18h você prefere?'
+        : askTimeReply(combineDateAndPeriodLabel(pendingDateLabel, pendingPeriod)),
       nextState,
-      'periodo_ou_horario'
+      pendingInvalidTime ? 'valid_time' : 'periodo_ou_horario'
     );
   }
 
@@ -469,6 +622,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
       timeHm: effectiveTimeHm,
       period: effectivePeriod,
       enterpriseId: input.enterpriseId,
+      invalidTime: null,
+      missingSlot: 'dia',
     });
     return finish('time_or_period_without_date', askDayReply(), nextState, 'dia');
   }
@@ -482,6 +637,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
       timeHm: null,
       period: effectivePeriod,
       enterpriseId: input.enterpriseId,
+      invalidTime: null,
+      missingSlot: weekday === 0 ? 'dia' : 'periodo_ou_horario',
     });
     if (weekday === 0) {
       return finish(
@@ -500,24 +657,27 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
   }
 
   if (effectiveDateYmd && effectiveTimeHm) {
-    const weekday = getJsWeekdayForYmdInSaoPaulo(effectiveDateYmd);
-    if (weekday === 0) {
-      const nextState = buildPendingState(input.flowState, {
-        pending: true,
-        dateLabel: null,
-        dateYmd: null,
-        timeHm: null,
-        period: null,
-        enterpriseId: input.enterpriseId,
-      });
-      return finish(
-        'sunday_not_allowed',
-        'Para visitas, trabalhamos de segunda a sábado. Pode ser em algum dia da semana ou no sábado?',
-        nextState,
-        'dia'
-      );
-    }
-    if (!isAllowedVisitSlot(effectiveDateYmd, effectiveTimeHm)) {
+    const slotValidation = validateVisitDateTimeSlot(effectiveDateYmd, effectiveTimeHm);
+    if (!slotValidation.valid) {
+      if (slotValidation.reason === 'sunday_not_allowed') {
+        const nextState = buildPendingState(input.flowState, {
+          pending: true,
+          dateLabel: null,
+          dateYmd: null,
+          timeHm: null,
+          period: null,
+          enterpriseId: input.enterpriseId,
+          invalidTime: null,
+          missingSlot: 'dia',
+        });
+        return finish(
+          'sunday_not_allowed',
+          'Para visitas, trabalhamos de segunda a sábado. Pode ser em algum dia da semana ou no sábado?',
+          nextState,
+          'dia'
+        );
+      }
+      const invalidDisplay = displayTimeHm(effectiveTimeHm) ?? 'esse horário';
       const nextState = buildPendingState(input.flowState, {
         pending: true,
         dateLabel: effectiveDateLabel,
@@ -525,12 +685,24 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
         timeHm: null,
         period: effectivePeriod,
         enterpriseId: input.enterpriseId,
+        invalidTime: invalidDisplay,
+        missingSlot: 'valid_time',
       });
+      if (pending && !dateMention && !period && timeHm) {
+        return finish(
+          'time_outside_visit_window_repeat',
+          `${invalidDisplay} fica fora do horário de visitas. Posso seguir com um horário entre 09h e 18h. Qual prefere?`,
+          nextState,
+          'valid_time'
+        );
+      }
+      const label = combineDateAndPeriodLabel(effectiveDateLabel, effectivePeriod);
+      const timeWithDate = label ? `${label} às ${invalidDisplay}` : invalidDisplay;
       return finish(
         'time_outside_visit_window',
-        `Esse horário fica fora do período de visitas. ${VISIT_WINDOW_REPLY} Pode ser em algum horário dentro desse período?`,
+        `${timeWithDate} fica fora do horário disponível para visitas. ${VISIT_WINDOW_REPLY} Qual horário dentro desse período fica melhor para você?`,
         nextState,
-        'periodo_ou_horario'
+        'valid_time'
       );
     }
     if (!effectiveName) {
@@ -541,6 +713,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
         timeHm: effectiveTimeHm,
         period: effectivePeriod,
         enterpriseId: input.enterpriseId,
+        invalidTime: null,
+        missingSlot: 'nome',
       });
       return finish(
         'date_time_without_name',
@@ -556,6 +730,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
       timeHm: null,
       period: null,
       enterpriseId: null,
+      invalidTime: null,
+      missingSlot: null,
     });
     return finish(
       'date_and_time_confirmed',
@@ -575,16 +751,20 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
     timeHm: pendingTimeHm,
     period: pendingPeriod,
     enterpriseId: input.enterpriseId,
+    invalidTime: pendingInvalidTime,
+    missingSlot: pendingInvalidTime ? 'valid_time' : 'periodo_ou_horario',
   });
   return finish(
     'fallback_pending',
-    askTimeReply(combineDateAndPeriodLabel(pendingDateLabel, pendingPeriod)),
+    pendingInvalidTime
+      ? 'Consigo seguir com um horário entre 09h e 18h. Qual horário você prefere?'
+      : askTimeReply(combineDateAndPeriodLabel(pendingDateLabel, pendingPeriod)),
     nextState,
-    'periodo_ou_horario'
+    pendingInvalidTime ? 'valid_time' : 'periodo_ou_horario'
   );
 }
-
 export function hasProhibitedVisitSchedulingPhrase(text: string): boolean {
   const n = norm(text);
   return PROHIBITED_VISIT_SCHEDULING_PHRASES.some((phrase) => n.includes(phrase));
 }
+

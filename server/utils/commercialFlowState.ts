@@ -63,6 +63,10 @@ export interface CommercialFlowState {
   pendingVisitPeriod?: string | null;
   /** Empreendimento usado no fluxo pendente de visita. */
   pendingVisitEnterpriseId?: number | null;
+  /** Ultimo horario rejeitado por janela de visita (ex.: "20h"), aguardando ajuste do cliente. */
+  pendingVisitInvalidTime?: string | null;
+  /** Slot faltante no fluxo transacional de visita. */
+  pendingVisitMissingSlot?: 'nome' | 'dia' | 'periodo_ou_horario' | 'valid_time' | null;
   /** Estado estruturado do fluxo de agendamento de visita. */
   visitScheduling?: {
     active: boolean;
@@ -114,6 +118,8 @@ export function resetCommercialScopeHints(prev: CommercialFlowState | null): Com
   delete next.pendingVisitTime;
   delete next.pendingVisitPeriod;
   delete next.pendingVisitEnterpriseId;
+  delete next.pendingVisitInvalidTime;
+  delete next.pendingVisitMissingSlot;
   delete next.visitScheduling;
   delete next.dialoguePolicy;
   next.clearedAt = new Date().toISOString();

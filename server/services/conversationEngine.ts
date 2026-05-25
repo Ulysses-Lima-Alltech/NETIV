@@ -3313,6 +3313,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         pendingVisitTime: null,
         pendingVisitPeriod: null,
         pendingVisitEnterpriseId: null,
+        pendingVisitInvalidTime: null,
+        pendingVisitMissingSlot: null,
         updatedAt: new Date().toISOString(),
       };
       await mergeConversationCommercialFlowState(conversationId, cancelledSchedulingState);
@@ -3385,6 +3387,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           pendingVisitTime: null,
           pendingVisitPeriod: null,
           pendingVisitEnterpriseId: null,
+          pendingVisitInvalidTime: null,
+          pendingVisitMissingSlot: null,
           visitScheduling: previousVisitScheduling
             ? {
                 ...previousVisitScheduling,
@@ -3427,8 +3431,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         pendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
         visitStatus: flowStateParsed.visitScheduling?.status ?? null,
       });
+      console.log('[ANA_VISIT_FLOW_TURN_LOCKED]', {
+        conversationId,
+        directVisitSchedulingIntent,
+        pendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
+        visitStatus: flowStateParsed.visitScheduling?.status ?? null,
+      });
     }
-    const directVisitSchedulingDecision = directVisitSchedulingIntent && !userRefusedScheduling
+    const directVisitSchedulingDecision = visitSchedulingFlowActiveForTurn && !userRefusedScheduling
       ? handleVisitSchedulingDeterministically({
           userMessage: trimmed,
           flowState: flowStateParsed,
@@ -3499,6 +3509,33 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           reason: directVisitSchedulingDecision.reason,
         });
       }
+      if (
+        directVisitSchedulingDecision.missingSlot === 'valid_time' ||
+        directVisitSchedulingDecision.reason === 'time_outside_visit_window' ||
+        directVisitSchedulingDecision.reason === 'time_outside_visit_window_repeat'
+      ) {
+        console.log('[ANA_VISIT_INVALID_TIME_REJECTED]', {
+          conversationId,
+          invalidVisitTime: directVisitSchedulingDecision.invalidVisitTime ?? null,
+          reason: directVisitSchedulingDecision.reason,
+        });
+      }
+      if (
+        directVisitSchedulingDecision.missingSlot === 'valid_time' &&
+        (isVisitSchedulingAckOnlyMessage(trimmed) || shortConfirmationContext.kind === 'visit_confirmation')
+      ) {
+        console.log('[ANA_VISIT_CONFIRMATION_BLOCKED_INVALID_SLOT]', {
+          conversationId,
+          userMessage: trimmed.slice(0, 120),
+          reason: directVisitSchedulingDecision.reason,
+        });
+      }
+      if (directVisitSchedulingDecision.reason === 'invalid_time_pending_confusion_repair') {
+        console.log('[ANA_VISIT_FLOW_REPAIR_AFTER_CONFUSION]', {
+          conversationId,
+          userMessage: trimmed.slice(0, 120),
+        });
+      }
 
       if (directVisitSchedulingDecision.appointmentConfirmed) {
         if (ent) {
@@ -3542,6 +3579,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             pendingVisitTime: null,
             pendingVisitPeriod: null,
             pendingVisitEnterpriseId: null,
+            pendingVisitInvalidTime: null,
+            pendingVisitMissingSlot: null,
             visitScheduling: {
               active: false,
               offered: true,
@@ -3577,6 +3616,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             pendingVisitTime: directVisitSchedulingDecision.appointmentTimeHm ?? null,
             pendingVisitPeriod: directVisitSchedulingDecision.extractedPeriod ?? null,
             pendingVisitEnterpriseId: null,
+            pendingVisitInvalidTime: null,
+            pendingVisitMissingSlot: null,
             updatedAt: new Date().toISOString(),
           });
         }
@@ -3672,6 +3713,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         return;
       }
       await insertMessage(conversationId, 'assistant', deterministicVisitReply, sendVisitResult.metaMessageId);
+      console.log('[ANA_VISIT_FLOW_RESPONSE_SENT]', {
+        conversationId,
+        reason: directVisitSchedulingDecision.reason,
+        missingSlot: directVisitSchedulingDecision.missingSlot ?? null,
+      });
       anaTurnAuditOutcome = 'sent';
       anaTurnAuditBlockedReason = null;
       anaTurnDiagnostics.finalResponse.replySource = 'deterministic_visit_scheduling';

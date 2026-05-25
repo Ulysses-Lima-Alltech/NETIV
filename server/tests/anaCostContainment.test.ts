@@ -417,7 +417,7 @@ test('captura sabado de manha e pergunta apenas horario', () => {
   assert.equal(decision.extractedPeriod, 'manha');
   assert.equal(decision.missingSlot, 'periodo_ou_horario');
   assert.equal(decision.pendingVisitScheduling, true);
-  assert.match(decision.reply ?? '', /qual horário fica melhor para você/i);
+  assert.match(decision.reply ?? '', /qual hor/i);
 });
 
 test('apelido nao vira nome automaticamente', () => {
@@ -489,7 +489,7 @@ test('fluxo de visita ativo suprime oferta de midia e ancora no slot faltante', 
   });
 
   assert.equal(/vídeo|video|book/i.test(policy.text), false);
-  assert.match(policy.text, /qual horário fica melhor para você/i);
+  assert.match(policy.text, /qual hor/i);
 });
 
 test('cta repetido em sequencia e suprimido', () => {
@@ -793,6 +793,219 @@ test('apos info gap com corretor, "sim" resolve broker_confirmation e nao visit_
     referenceNow: new Date('2026-05-25T12:00:00.000Z'),
   });
   assert.equal(visitIntent, false);
+});
+
+test('agendamento rejeita "amanha as 20" e nao avanca para nome', () => {
+  const decision = handleVisitSchedulingDeterministically({
+    userMessage: 'pode ser amanha as 20?',
+    flowState: {
+      pendingVisitScheduling: true,
+    },
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:00:00.000Z'),
+  });
+
+  assert.equal(decision.reason, 'time_outside_visit_window');
+  assert.equal(decision.missingSlot, 'valid_time');
+  assert.equal(decision.pendingVisitScheduling, true);
+  assert.equal(decision.nextState.pendingVisitTime ?? null, null);
+  assert.match(decision.reply ?? '', /fora do hor[áa]rio dispon[íi]vel para visitas/i);
+  assert.equal(/como posso te chamar|confirmar sua visita/i.test(decision.reply ?? ''), false);
+});
+
+test('apos horario invalido, "20" mantem bloqueio e pede horario valido', () => {
+  const first = handleVisitSchedulingDeterministically({
+    userMessage: 'amanha as 20',
+    flowState: { pendingVisitScheduling: true },
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:00:00.000Z'),
+  });
+  const insist = handleVisitSchedulingDeterministically({
+    userMessage: '20',
+    flowState: first.nextState,
+    lastAssistantMessage: first.reply,
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:05:00.000Z'),
+  });
+
+  assert.equal(insist.reason, 'time_outside_visit_window_repeat');
+  assert.equal(insist.missingSlot, 'valid_time');
+  assert.match(insist.reply ?? '', /20h fica fora do hor[áa]rio de visitas/i);
+});
+
+test('apos horario invalido, nome informado nao confirma visita e segue pedindo horario', () => {
+  const first = handleVisitSchedulingDeterministically({
+    userMessage: 'amanha as 20',
+    flowState: { pendingVisitScheduling: true },
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:00:00.000Z'),
+  });
+  const afterName = handleVisitSchedulingDeterministically({
+    userMessage: 'ulysses',
+    flowState: first.nextState,
+    lastAssistantMessage: first.reply,
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:06:00.000Z'),
+  });
+
+  assert.equal(afterName.missingSlot, 'valid_time');
+  assert.equal(afterName.appointmentConfirmed, false);
+  assert.match(afterName.reply ?? '', /s[oó] preciso ajustar o hor[áa]rio/i);
+  assert.equal(/confirmar sua visita/i.test(afterName.reply ?? ''), false);
+});
+
+test('apos horario invalido, "sim" nao confirma e pede horario entre 09h e 18h', () => {
+  const first = handleVisitSchedulingDeterministically({
+    userMessage: 'amanha as 20',
+    flowState: { pendingVisitScheduling: true },
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:00:00.000Z'),
+  });
+  const afterYes = handleVisitSchedulingDeterministically({
+    userMessage: 'sim',
+    flowState: first.nextState,
+    lastAssistantMessage: first.reply,
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:07:00.000Z'),
+  });
+
+  assert.equal(afterYes.missingSlot, 'valid_time');
+  assert.equal(afterYes.appointmentConfirmed, false);
+  assert.match(afterYes.reply ?? '', /qual hor[áa]rio entre 09h e 18h/i);
+});
+
+test('com fluxo de visita ativo e horario invalido, politica nao devolve CTA generico comercial', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 90,
+    userMessage: 'sim',
+    replyText: 'Claro. Você quer saber mais sobre valores, lazer, localização, segurança ou formas de pagamento?',
+    isFirstAnaReply: false,
+    flowState: {
+      pendingVisitScheduling: true,
+      pendingVisitDateLabel: 'amanha',
+      pendingVisitDate: '2026-05-26',
+      pendingVisitTime: null,
+      pendingVisitInvalidTime: '20h',
+      pendingVisitMissingSlot: 'valid_time',
+    },
+    recentMessages: [
+      { role: 'assistant', content: 'Amanhã às 20h fica fora do horário disponível para visitas.' },
+      { role: 'user', content: 'sim' },
+    ],
+    disableFollowupQuestion: true,
+    visitFlowActive: true,
+  });
+
+  assert.match(policy.text, /09h e 18h/i);
+  assert.equal(/valores|lazer|localiza|seguran|formas de pagamento/i.test(policy.text), false);
+});
+
+test('mensagem "ue" com horario invalido gera reparo empatico e pede horario valido', () => {
+  const first = handleVisitSchedulingDeterministically({
+    userMessage: 'amanha as 20',
+    flowState: { pendingVisitScheduling: true },
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:00:00.000Z'),
+  });
+  const repair = handleVisitSchedulingDeterministically({
+    userMessage: 'ue',
+    flowState: first.nextState,
+    lastAssistantMessage: first.reply,
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:08:00.000Z'),
+  });
+
+  assert.equal(repair.reason, 'invalid_time_pending_confusion_repair');
+  assert.match(repair.reply ?? '', /voce tem raz[aã]o|você tem razão/i);
+  assert.match(repair.reply ?? '', /09h e 18h/i);
+});
+
+test('apos horario invalido, horario valido avanca para captura de nome', () => {
+  const first = handleVisitSchedulingDeterministically({
+    userMessage: 'amanha as 20',
+    flowState: { pendingVisitScheduling: true },
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:00:00.000Z'),
+  });
+  const valid = handleVisitSchedulingDeterministically({
+    userMessage: 'amanha as 10',
+    flowState: first.nextState,
+    lastAssistantMessage: first.reply,
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:09:00.000Z'),
+  });
+
+  assert.equal(valid.reason, 'date_time_without_name');
+  assert.equal(valid.missingSlot, 'nome');
+  assert.equal(valid.nextState.pendingVisitInvalidTime ?? null, null);
+});
+
+test('todos os slots validos com "sim" confirmam agendamento', () => {
+  const confirm = handleVisitSchedulingDeterministically({
+    userMessage: 'sim',
+    flowState: {
+      pendingVisitScheduling: true,
+      pendingVisitDateLabel: 'amanha',
+      pendingVisitDate: '2026-05-26',
+      pendingVisitTime: '10:00',
+      pendingVisitPeriod: null,
+      pendingVisitInvalidTime: null,
+      pendingVisitMissingSlot: null,
+    },
+    enterpriseId: 10,
+    customerName: 'Ulysses',
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:10:00.000Z'),
+  });
+
+  assert.equal(confirm.appointmentConfirmed, true);
+  assert.equal(confirm.missingSlot, null);
+  assert.match(confirm.reply ?? '', /visita ficou agendada/i);
+});
+
+test('quando pendingVisitScheduling esta ativo, intencao de visita permanece ligada ao fluxo transacional', () => {
+  const intent = isVisitSchedulingIntent({
+    userMessage: 'qual o valor?',
+    flowState: {
+      pendingVisitScheduling: true,
+      pendingVisitDateLabel: 'amanha',
+      pendingVisitDate: '2026-05-26',
+      pendingVisitTime: null,
+      pendingVisitInvalidTime: '20h',
+      pendingVisitMissingSlot: 'valid_time',
+    },
+    confirmationContextKind: 'not_short_confirmation',
+    resolvedIntent: null,
+    primaryAxis: null,
+    currentAxis: null,
+    requestedAxis: null,
+    lastAssistantMessage: '20h fica fora do horario de visitas. Posso seguir com um horario entre 09h e 18h. Qual prefere?',
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T12:11:00.000Z'),
+  });
+  assert.equal(intent, true);
 });
 
 
