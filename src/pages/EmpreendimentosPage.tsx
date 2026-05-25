@@ -17,7 +17,7 @@ const CAT_LABEL: Record<FileCategory, string> = {
   book: 'Book',
   unidades: 'Unidades',
   tabela_comercial: 'Tabela comercial',
-  outro: 'Outro',
+  outro: 'Outro / Imagem',
 };
 
 function uploadPermissionDefaults(category: FileCategory): {
@@ -245,11 +245,12 @@ export function EmpreendimentosPage() {
     const f = e.target.files?.[0];
     e.target.value = '';
     if (!f || selectedId == null) return;
+    const isImage = /^image\/(jpeg|jpg|png|webp)$/i.test(f.type || '') || /\.(jpg|jpeg|png|webp)$/i.test(f.name);
     setUploading(true);
     projectsApi
       .uploadKnowledge(selectedId, f, uploadCategory, {
-        canBeUsedAsKnowledge: uploadAsKnowledge,
-        canBeSentByAna: uploadAllowSend,
+        canBeUsedAsKnowledge: isImage ? false : uploadAsKnowledge,
+        canBeSentByAna: isImage ? true : uploadAllowSend,
         ...(uploadCategory === 'book' ? { tipoDocumento: 'BOOK' as const } : {}),
       })
       .then(() => {
@@ -759,9 +760,9 @@ export function EmpreendimentosPage() {
                       <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                       {uploading ? 'Enviando…' : 'Enviar arquivo'}
                     </span>
-                    <input type="file" accept=".pdf,.txt,.md" onChange={onUpload} disabled={uploading} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                    <input type="file" accept=".pdf,.txt,.md,.jpg,.jpeg,.png,.webp,application/pdf,text/plain,text/markdown,image/jpeg,image/png,image/webp" onChange={onUpload} disabled={uploading} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                   </label>
-                  <span className="text-[11px] text-[#9CA3AF]">PDF, TXT ou MD (até 100 MB)</span>
+                  <span className="text-[11px] text-[#9CA3AF]">PDF, TXT, MD, JPG, JPEG, PNG ou WEBP (até 100 MB)</span>
                   </div>
                 </div>
 

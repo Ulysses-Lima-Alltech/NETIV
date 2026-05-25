@@ -934,7 +934,10 @@ export const projectsApi = {
     fd.append('category', category);
     if (opts?.tipoDocumento === 'BOOK') fd.append('tipoDocumento', 'BOOK');
     fd.append('file', file);
-    const defaults = defaultKnowledgeUploadFlags(category);
+    const isImage = /^image\/(jpeg|jpg|png|webp)$/i.test(file.type || '');
+    const defaults = isImage
+      ? { canBeUsedAsKnowledge: false, canBeSentByAna: true }
+      : defaultKnowledgeUploadFlags(category);
     fd.append('canBeUsedAsKnowledge', String(opts?.canBeUsedAsKnowledge ?? defaults.canBeUsedAsKnowledge));
     fd.append('canBeSentByAna', String(opts?.canBeSentByAna ?? defaults.canBeSentByAna));
     const token = getStoredAuthToken();

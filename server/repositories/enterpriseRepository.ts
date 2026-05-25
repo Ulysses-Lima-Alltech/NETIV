@@ -371,6 +371,18 @@ async function extractTextFromBuffer(buf: Buffer, mime: string, originalName: st
       const d = await pdfParse(buf);
       return normalizeExtractedText(d.text || '').slice(0, 500_000);
     }
+    if (
+      mime === 'image/jpeg' ||
+      mime === 'image/jpg' ||
+      mime === 'image/png' ||
+      mime === 'image/webp' ||
+      lower.endsWith('.jpg') ||
+      lower.endsWith('.jpeg') ||
+      lower.endsWith('.png') ||
+      lower.endsWith('.webp')
+    ) {
+      return '';
+    }
     return '';
   } catch {
     return '';
@@ -812,6 +824,21 @@ async function syncCurrentFileVersionAfterUploadOrPermissionChange(opts: {
   let chunksCreated = 0;
 
   if (!opts.canBeUsedAsKnowledge) {
+    await query(
+      `UPDATE enterprise_knowledge_chunks
+       SET is_active = false
+       WHERE enterprise_file_version_id = $1
+         AND is_active = true`,
+      [currentVersionId]
+    );
+  } else if (
+    opts.mime === 'image/jpeg' ||
+    opts.mime === 'image/jpg' ||
+    opts.mime === 'image/png' ||
+    opts.mime === 'image/webp'
+  ) {
+    processingStatus = 'SKIPPED';
+    processingError = 'image_knowledge_without_ocr';
     await query(
       `UPDATE enterprise_knowledge_chunks
        SET is_active = false
@@ -1648,6 +1675,30 @@ export async function getFileForSend(
 ): Promise<ResolvedSendableEnterpriseFile | null> {
   const result = await resolveSendableEnterpriseFileCurrentVersion(enterpriseId, category);
   return result.file;
+}
+
+function isImageMime(mime: string | null | undefined): boolean {
+  const m = String(mime ?? '').toLowerCase().trim();
+  return m === 'image/jpeg' || m === 'image/jpg' || m === 'image/png' || m === 'image/webp';
+}
+
+export async function resolveSendableEnterpriseImageFilesCurrentVersion(
+  enterpriseId: number,
+  limit = 3
+): Promise<ResolvedSendableEnterpriseFile[]> {
+  const files = await listEnterpriseFiles(enterpriseId);
+  const activeSendable = files.filter((f) => f.is_active && f.can_be_sent_by_ana === true && isImageMime(f.mime_type));
+  const ordered = [...activeSendable].reverse();
+  const out: ResolvedSendableEnterpriseFile[] = [];
+  for (const f of ordered) {
+    if (out.length >= Math.max(1, Math.min(limit, 10))) break;
+    const resolved = await resolveSendableEnterpriseFileCurrentVersion(enterpriseId, f.category);
+    if (!resolved.file) continue;
+    if (!isImageMime(resolved.file.mime)) continue;
+    if (out.some((x) => x.id === resolved.file!.id)) continue;
+    out.push(resolved.file);
+  }
+  return out;
 }
 
 export async function logSentFile(conversationId: number, enterpriseFileId: number): Promise<void> {
