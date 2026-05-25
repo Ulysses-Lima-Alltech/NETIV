@@ -354,6 +354,7 @@ async function extractText(filePath: string, mime: string, originalName: string)
 async function extractTextFromBuffer(buf: Buffer, mime: string, originalName: string): Promise<string> {
   try {
     const lower = originalName.toLowerCase();
+    const mimeLower = String(mime || '').toLowerCase();
     if (mime.includes('text') || lower.endsWith('.txt') || lower.endsWith('.md')) {
       return normalizeExtractedText(buf.toString('utf-8')).slice(0, 500_000);
     }
@@ -366,20 +367,30 @@ async function extractTextFromBuffer(buf: Buffer, mime: string, originalName: st
       const r = await mammoth.extractRawText({ buffer: buf });
       return normalizeExtractedText(r.value || '').slice(0, 500_000);
     }
-    if (mime.includes('pdf') || lower.endsWith('.pdf')) {
+    if (mimeLower.includes('pdf') || lower.endsWith('.pdf')) {
       const pdfParse = (await import('pdf-parse')).default;
       const d = await pdfParse(buf);
       return normalizeExtractedText(d.text || '').slice(0, 500_000);
     }
     if (
-      mime === 'image/jpeg' ||
-      mime === 'image/jpg' ||
-      mime === 'image/png' ||
-      mime === 'image/webp' ||
+      mimeLower === 'image/jpeg' ||
+      mimeLower === 'image/jpg' ||
+      mimeLower === 'image/png' ||
+      mimeLower === 'image/webp' ||
       lower.endsWith('.jpg') ||
       lower.endsWith('.jpeg') ||
       lower.endsWith('.png') ||
       lower.endsWith('.webp')
+    ) {
+      return '';
+    }
+    if (
+      mimeLower === 'video/mp4' ||
+      mimeLower === 'video/quicktime' ||
+      mimeLower === 'video/webm' ||
+      lower.endsWith('.mp4') ||
+      lower.endsWith('.mov') ||
+      lower.endsWith('.webm')
     ) {
       return '';
     }
@@ -839,6 +850,16 @@ async function syncCurrentFileVersionAfterUploadOrPermissionChange(opts: {
   ) {
     processingStatus = 'SKIPPED';
     processingError = 'image_knowledge_without_ocr';
+    await query(
+      `UPDATE enterprise_knowledge_chunks
+       SET is_active = false
+       WHERE enterprise_file_version_id = $1
+         AND is_active = true`,
+      [currentVersionId]
+    );
+  } else if (opts.mime === 'video/mp4' || opts.mime === 'video/quicktime' || opts.mime === 'video/webm') {
+    processingStatus = 'SKIPPED';
+    processingError = 'video_knowledge_without_transcription';
     await query(
       `UPDATE enterprise_knowledge_chunks
        SET is_active = false
@@ -1682,21 +1703,145 @@ function isImageMime(mime: string | null | undefined): boolean {
   return m === 'image/jpeg' || m === 'image/jpg' || m === 'image/png' || m === 'image/webp';
 }
 
+function isVideoMime(mime: string | null | undefined): boolean {
+  const m = String(mime ?? '').toLowerCase().trim();
+  return m === 'video/mp4' || m === 'video/quicktime' || m === 'video/webm';
+}
+
 export async function resolveSendableEnterpriseImageFilesCurrentVersion(
   enterpriseId: number,
   limit = 3
 ): Promise<ResolvedSendableEnterpriseFile[]> {
-  const files = await listEnterpriseFiles(enterpriseId);
-  const activeSendable = files.filter((f) => f.is_active && f.can_be_sent_by_ana === true && isImageMime(f.mime_type));
-  const ordered = [...activeSendable].reverse();
+  const { rows } = await query<{
+    enterprise_file_id: number;
+    current_version_id: number;
+    category: string;
+    original_name: string;
+    mime_type: string;
+    storage_path: string;
+    storage_provider: string;
+    storage_key: string;
+    bucket_name: string;
+  }>(
+    `SELECT
+       f.id AS enterprise_file_id,
+       f.current_version_id,
+       f.category,
+       COALESCE(v.original_name, f.original_name) AS original_name,
+       COALESCE(v.mime_type, f.mime_type) AS mime_type,
+       COALESCE(v.storage_path, f.storage_path) AS storage_path,
+       COALESCE(v.storage_provider, f.storage_provider) AS storage_provider,
+       COALESCE(v.storage_key, f.storage_key) AS storage_key,
+       COALESCE(v.bucket_name, f.bucket_name) AS bucket_name
+     FROM enterprise_files f
+     INNER JOIN enterprise_file_versions v
+       ON v.id = f.current_version_id
+      AND v.enterprise_file_id = f.id
+     WHERE f.enterprise_id = $1
+       AND f.is_active = true
+       AND f.can_be_sent_by_ana = true
+       AND v.is_active = true
+       AND v.can_be_sent_by_ana = true
+       AND COALESCE(v.storage_provider, f.storage_provider) = 's3'
+     ORDER BY f.created_at DESC, f.id DESC`,
+    [enterpriseId]
+  );
   const out: ResolvedSendableEnterpriseFile[] = [];
-  for (const f of ordered) {
+  for (const f of rows) {
     if (out.length >= Math.max(1, Math.min(limit, 10))) break;
-    const resolved = await resolveSendableEnterpriseFileCurrentVersion(enterpriseId, f.category);
-    if (!resolved.file) continue;
-    if (!isImageMime(resolved.file.mime)) continue;
-    if (out.some((x) => x.id === resolved.file!.id)) continue;
-    out.push(resolved.file);
+    if (!isImageMime(f.mime_type)) continue;
+    if (!f.storage_key || !f.bucket_name || !f.storage_path || !f.original_name) continue;
+    const path = join(enterpriseDir(enterpriseId), f.storage_path);
+    if (!existsSync(path)) {
+      const buf = await downloadFromKnowledgeS3(f.storage_key, { bucket: f.bucket_name });
+      if (!buf) continue;
+      try {
+        writeFileSync(path, buf);
+      } catch {
+        continue;
+      }
+    }
+    out.push({
+      id: f.enterprise_file_id,
+      versionId: f.current_version_id,
+      category: (normalizeFileCategory(f.category) ?? 'outro') as FileCategory,
+      path,
+      originalName: f.original_name,
+      mime: f.mime_type,
+      relativeStoragePath: f.storage_path,
+      storageProvider: f.storage_provider,
+      storageKey: f.storage_key,
+      bucketName: f.bucket_name,
+    });
+  }
+  return out;
+}
+
+export async function resolveSendableEnterpriseVideoFilesCurrentVersion(
+  enterpriseId: number,
+  limit = 2
+): Promise<ResolvedSendableEnterpriseFile[]> {
+  const { rows } = await query<{
+    enterprise_file_id: number;
+    current_version_id: number;
+    category: string;
+    original_name: string;
+    mime_type: string;
+    storage_path: string;
+    storage_provider: string;
+    storage_key: string;
+    bucket_name: string;
+  }>(
+    `SELECT
+       f.id AS enterprise_file_id,
+       f.current_version_id,
+       f.category,
+       COALESCE(v.original_name, f.original_name) AS original_name,
+       COALESCE(v.mime_type, f.mime_type) AS mime_type,
+       COALESCE(v.storage_path, f.storage_path) AS storage_path,
+       COALESCE(v.storage_provider, f.storage_provider) AS storage_provider,
+       COALESCE(v.storage_key, f.storage_key) AS storage_key,
+       COALESCE(v.bucket_name, f.bucket_name) AS bucket_name
+     FROM enterprise_files f
+     INNER JOIN enterprise_file_versions v
+       ON v.id = f.current_version_id
+      AND v.enterprise_file_id = f.id
+     WHERE f.enterprise_id = $1
+       AND f.is_active = true
+       AND f.can_be_sent_by_ana = true
+       AND v.is_active = true
+       AND v.can_be_sent_by_ana = true
+       AND COALESCE(v.storage_provider, f.storage_provider) = 's3'
+     ORDER BY f.created_at DESC, f.id DESC`,
+    [enterpriseId]
+  );
+  const out: ResolvedSendableEnterpriseFile[] = [];
+  for (const f of rows) {
+    if (out.length >= Math.max(1, Math.min(limit, 10))) break;
+    if (!isVideoMime(f.mime_type)) continue;
+    if (!f.storage_key || !f.bucket_name || !f.storage_path || !f.original_name) continue;
+    const path = join(enterpriseDir(enterpriseId), f.storage_path);
+    if (!existsSync(path)) {
+      const buf = await downloadFromKnowledgeS3(f.storage_key, { bucket: f.bucket_name });
+      if (!buf) continue;
+      try {
+        writeFileSync(path, buf);
+      } catch {
+        continue;
+      }
+    }
+    out.push({
+      id: f.enterprise_file_id,
+      versionId: f.current_version_id,
+      category: (normalizeFileCategory(f.category) ?? 'outro') as FileCategory,
+      path,
+      originalName: f.original_name,
+      mime: f.mime_type,
+      relativeStoragePath: f.storage_path,
+      storageProvider: f.storage_provider,
+      storageKey: f.storage_key,
+      bucketName: f.bucket_name,
+    });
   }
   return out;
 }

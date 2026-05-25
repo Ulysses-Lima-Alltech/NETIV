@@ -46,6 +46,7 @@ import {
   logAnaDocInventoryForEnterprise,
   resolveSendableEnterpriseFileCurrentVersion,
   resolveSendableEnterpriseImageFilesCurrentVersion,
+  resolveSendableEnterpriseVideoFilesCurrentVersion,
   type MaterialFileResolveFailureReason,
   type FileCategory,
   type EnterpriseRow,
@@ -579,6 +580,12 @@ function isImageMaterialRequest(text: string): boolean {
   const n = normText(text || '');
   if (!n) return false;
   return /\b(foto|fotos|imagem|imagens|manda foto|tem foto|quero ver|galeria)\b/.test(n);
+}
+
+function isVideoMaterialRequest(text: string): boolean {
+  const n = normText(text || '');
+  if (!n) return false;
+  return /\b(video|videos|vídeo|vídeos|manda video|manda vídeo|tem video|tem vídeo|tour|video do empreendimento|vídeo do empreendimento|quero ver o empreendimento)\b/.test(n);
 }
 
 function pickAuthorizedLocationLink(vars: Record<string, unknown>): string | null {
@@ -2303,6 +2310,114 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationEnterpriseId: effectiveConv.enterprise_id ?? null,
       }
     );
+
+    if (isVideoMaterialRequest(trimmed)) {
+      console.log('[ANA_VIDEO_MATERIAL_REQUESTED]', {
+        conversationId,
+        enterpriseId: ent?.id ?? null,
+        userMessage: trimmed.slice(0, 180),
+      });
+      if (!ent) {
+        console.log('[ANA_VIDEO_MATERIAL_NOT_AVAILABLE]', {
+          conversationId,
+          enterpriseId: null,
+          reason: 'enterprise_not_resolved',
+        });
+        const notAvailableText =
+          'Não tenho vídeos liberados para envio por aqui no momento. Quer que eu te explique algum ponto específico do empreendimento?';
+        const sendNotAvailable = await sendTextMessage({
+          conversationId,
+          to: toPhoneNumber,
+          text: notAvailableText,
+          phase: 'ana_video_material_not_available',
+        });
+        if (sendNotAvailable.success && sendNotAvailable.metaMessageId) {
+          await insertMessage(conversationId, 'assistant', notAvailableText, sendNotAvailable.metaMessageId);
+          anaTurnAuditOutcome = 'sent';
+          anaTurnAuditBlockedReason = null;
+          return;
+        }
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'video_not_available_send_failed';
+        return;
+      }
+      const videoFiles = await resolveSendableEnterpriseVideoFilesCurrentVersion(ent.id, 2);
+      if (videoFiles.length === 0) {
+        console.log('[ANA_VIDEO_MATERIAL_NOT_AVAILABLE]', {
+          conversationId,
+          enterpriseId: ent.id,
+          reason: 'no_authorized_videos',
+        });
+        const notAvailableText =
+          'Não tenho vídeos liberados para envio por aqui no momento. Quer que eu te explique algum ponto específico do empreendimento?';
+        const sendNotAvailable = await sendTextMessage({
+          conversationId,
+          to: toPhoneNumber,
+          text: notAvailableText,
+          phase: 'ana_video_material_not_available',
+        });
+        if (sendNotAvailable.success && sendNotAvailable.metaMessageId) {
+          await insertMessage(conversationId, 'assistant', notAvailableText, sendNotAvailable.metaMessageId);
+          anaTurnAuditOutcome = 'sent';
+          anaTurnAuditBlockedReason = null;
+          return;
+        }
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'video_not_available_send_failed';
+        return;
+      }
+      console.log('[ANA_VIDEO_MATERIAL_FOUND]', {
+        conversationId,
+        enterpriseId: ent.id,
+        count: videoFiles.length,
+      });
+      let sentCount = 0;
+      for (const [idx, video] of videoFiles.entries()) {
+        if (idx > 0) await sleepMs(900);
+        const mediaOutcome = await sendAnaEnterpriseMediaFirst({
+          conversationId,
+          toPhoneNumber,
+          ent,
+          enterpriseIdForFile: ent.id,
+          cat: video.category,
+          preResolvedFile: video,
+        });
+        if (!mediaOutcome.ok) continue;
+        sentCount += 1;
+      }
+      if (sentCount > 0) {
+        console.log('[ANA_VIDEO_MATERIAL_SENT]', {
+          conversationId,
+          enterpriseId: ent.id,
+          sentCount,
+        });
+        anaTurnAuditOutcome = 'material_sent';
+        anaTurnAuditBlockedReason = null;
+        return;
+      }
+      console.log('[ANA_VIDEO_MATERIAL_NOT_AVAILABLE]', {
+        conversationId,
+        enterpriseId: ent.id,
+        reason: 'send_failed_all',
+      });
+      const notAvailableText =
+        'Não tenho vídeos liberados para envio por aqui no momento. Quer que eu te explique algum ponto específico do empreendimento?';
+      const sendNotAvailable = await sendTextMessage({
+        conversationId,
+        to: toPhoneNumber,
+        text: notAvailableText,
+        phase: 'ana_video_material_not_available',
+      });
+      if (sendNotAvailable.success && sendNotAvailable.metaMessageId) {
+        await insertMessage(conversationId, 'assistant', notAvailableText, sendNotAvailable.metaMessageId);
+        anaTurnAuditOutcome = 'sent';
+        anaTurnAuditBlockedReason = null;
+        return;
+      }
+      anaTurnAuditOutcome = 'send_failed';
+      anaTurnAuditBlockedReason = 'video_not_available_send_failed';
+      return;
+    }
 
     if (isImageMaterialRequest(trimmed)) {
       console.log('[ANA_IMAGE_MATERIAL_REQUESTED]', {

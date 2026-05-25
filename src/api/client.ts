@@ -935,7 +935,8 @@ export const projectsApi = {
     if (opts?.tipoDocumento === 'BOOK') fd.append('tipoDocumento', 'BOOK');
     fd.append('file', file);
     const isImage = /^image\/(jpeg|jpg|png|webp)$/i.test(file.type || '');
-    const defaults = isImage
+    const isVideo = /^video\/(mp4|quicktime|webm)$/i.test(file.type || '');
+    const defaults = isImage || isVideo
       ? { canBeUsedAsKnowledge: false, canBeSentByAna: true }
       : defaultKnowledgeUploadFlags(category);
     fd.append('canBeUsedAsKnowledge', String(opts?.canBeUsedAsKnowledge ?? defaults.canBeUsedAsKnowledge));

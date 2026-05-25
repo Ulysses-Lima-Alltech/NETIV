@@ -33,6 +33,36 @@ import { insertPromptAddonsHistory, listPromptAddonsHistory } from '../repositor
 import { getKnowledgeBackfillJob, startKnowledgeBackfill } from '../services/knowledgeBackfillService.js';
 
 const router = Router();
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const VIDEO_MAX_BYTES = 25 * 1024 * 1024;
+
+function isImageUploadMimeOrExt(mime: string, name: string): boolean {
+  const m = (mime || '').toLowerCase();
+  const n = (name || '').toLowerCase();
+  return (
+    m === 'image/jpeg' ||
+    m === 'image/jpg' ||
+    m === 'image/png' ||
+    m === 'image/webp' ||
+    n.endsWith('.jpg') ||
+    n.endsWith('.jpeg') ||
+    n.endsWith('.png') ||
+    n.endsWith('.webp')
+  );
+}
+
+function isVideoUploadMimeOrExt(mime: string, name: string): boolean {
+  const m = (mime || '').toLowerCase();
+  const n = (name || '').toLowerCase();
+  return (
+    m === 'video/mp4' ||
+    m === 'video/quicktime' ||
+    m === 'video/webm' ||
+    n.endsWith('.mp4') ||
+    n.endsWith('.mov') ||
+    n.endsWith('.webm')
+  );
+}
 
 function mapKnowledgeFileRow(f: {
   id: number;
@@ -83,21 +113,14 @@ const upload = multer({
     const name = (file.originalname || '').toLowerCase();
     const isPdf = file.mimetype === 'application/pdf' || name.endsWith('.pdf');
     const isTxt = file.mimetype.startsWith('text/') || name.endsWith('.txt') || name.endsWith('.md');
-    const isImage =
-      file.mimetype === 'image/jpeg' ||
-      file.mimetype === 'image/jpg' ||
-      file.mimetype === 'image/png' ||
-      file.mimetype === 'image/webp' ||
-      name.endsWith('.jpg') ||
-      name.endsWith('.jpeg') ||
-      name.endsWith('.png') ||
-      name.endsWith('.webp');
+    const isImage = isImageUploadMimeOrExt(file.mimetype, name);
+    const isVideo = isVideoUploadMimeOrExt(file.mimetype, name);
     const isDocx =
       file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
       name.endsWith('.docx');
-    if (!isPdf && !isTxt && !isDocx && !isImage) {
+    if (!isPdf && !isTxt && !isDocx && !isImage && !isVideo) {
       (req as unknown as { fileValidationError?: string }).fileValidationError =
-        'Tipo invalido. Envie PDF, DOCX, TXT, MD, JPG, JPEG, PNG ou WEBP.';
+        'Tipo inválido. Envie PDF, DOCX, TXT, MD, JPG, JPEG, PNG, WEBP, MP4, MOV ou WEBM.';
       return cb(null, false);
     }
     cb(null, true);
@@ -390,22 +413,20 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
     const mime = req.file.mimetype || '';
     const isPdf = mime.includes('pdf') || origName.endsWith('.pdf');
     const isTxt = mime.startsWith('text/') || origName.endsWith('.txt') || origName.endsWith('.md');
-    const isImage =
-      mime === 'image/jpeg' ||
-      mime === 'image/jpg' ||
-      mime === 'image/png' ||
-      mime === 'image/webp' ||
-      origName.endsWith('.jpg') ||
-      origName.endsWith('.jpeg') ||
-      origName.endsWith('.png') ||
-      origName.endsWith('.webp');
+    const isImage = isImageUploadMimeOrExt(mime, origName);
+    const isVideo = isVideoUploadMimeOrExt(mime, origName);
     const isDocx =
       mime.includes('wordprocessingml') || mime.includes('msword') || origName.endsWith('.docx');
-    if (!isPdf && !isTxt && !isDocx && !isImage) {
-      return res.status(400).json({ error: 'Tipo invalido. Envie PDF, DOCX, TXT, MD, JPG, JPEG, PNG ou WEBP.' });
+    if (!isPdf && !isTxt && !isDocx && !isImage && !isVideo) {
+      return res
+        .status(400)
+        .json({ error: 'Tipo inválido. Envie PDF, DOCX, TXT, MD, JPG, JPEG, PNG, WEBP, MP4, MOV ou WEBM.' });
     }
-    if (isImage && req.file.size > 10 * 1024 * 1024) {
+    if (isImage && req.file.size > IMAGE_MAX_BYTES) {
       return res.status(400).json({ error: 'Imagem muito grande. Limite de 10 MB por imagem.' });
+    }
+    if (isVideo && req.file.size > VIDEO_MAX_BYTES) {
+      return res.status(400).json({ error: 'Vídeo muito grande. Limite de 25 MB por vídeo.' });
     }
     const tipoDoc = String(req.body?.tipoDocumento ?? req.body?.tipo_documento ?? '')
       .trim()
@@ -415,7 +436,7 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
     if (!FILE_CATEGORIES.includes(cat as FileCategory)) {
       return res.status(400).json({ error: 'Categoria invÃ¡lida: book | unidades | tabela_comercial | outro' });
     }
-    const defaults = isImage
+    const defaults = (isImage || isVideo)
       ? { canBeUsedAsKnowledge: false, canBeSentByAna: true }
       : defaultUploadPermissions(cat as FileCategory);
     const canBeUsedAsKnowledge = parseUploadBool(req.body?.canBeUsedAsKnowledge, defaults.canBeUsedAsKnowledge);
