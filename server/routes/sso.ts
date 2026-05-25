@@ -7,9 +7,12 @@ import {
   updateUser,
   createSession,
   type AppUser,
+  type SessionScope,
 } from '../repositories/userRepository.js';
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { isUserRole, type UserRole } from '../constants/roles.js';
+import { upsertCorretorAndEnterprise } from '../repositories/corretorRepository.js';
+import { getPool } from '../db/pg.js';
 
 const router = Router();
 
@@ -85,6 +88,7 @@ function verifyJwt(token: string, secret: string): Record<string, unknown> | nul
 // POST /api/auth/sso
 // Chamado pelo Django server-to-server (NÃO pelo navegador!)
 router.post('/', async (req: Request, res: Response): Promise<void> => {
+  const client = await getPool().connect();
   try {
     // ── PASSO 1: Ler o JWT do body ──
     const { token: jwtToken } = req.body;
@@ -115,6 +119,10 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     const brokerId = typeof payload.broker_id === 'number' ? payload.broker_id : null;
     const djangoUserId = typeof payload.django_user_id === 'number' ? payload.django_user_id : null;
 
+    const brokerInfo = (payload.broker && typeof payload.broker === 'object')
+      ? payload.broker as Record<string, unknown>
+      : null;
+
     if (!email) {
       res.status(400).json({ error: 'Email é obrigatório no JWT.' });
       return;
@@ -123,7 +131,32 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     // Se o role não for válido (ADMIN, MANAGERIAL, COLLABORATOR), usa COLLABORATOR
     const safeRole: UserRole = isUserRole(role) ? role : 'COLLABORATOR';
 
-    // ── PASSO 4: Buscar ou criar o usuário ──
+    // ── Iniciar transação ──
+    await client.query('BEGIN');
+
+    // ── PASSO 4: Upsert do corretor (apenas para COLLABORATOR com broker_info) ──
+    let effectiveBrokerId: number | null = brokerId;
+    if (safeRole === 'COLLABORATOR' && brokerInfo && typeof brokerInfo.enterprise_id === 'number') {
+      console.log('[SSO][broker-upsert] Iniciando upsert de corretor para email:', email);
+      try {
+        effectiveBrokerId = await upsertCorretorAndEnterprise({
+          existingBrokerId: brokerId,
+          fullName: String(brokerInfo.full_name ?? name ?? email),
+          phone: typeof brokerInfo.phone === 'string' ? brokerInfo.phone : null,
+          email: typeof brokerInfo.email === 'string' ? brokerInfo.email : email || null,
+          realEstateAgency: String(brokerInfo.real_estate_agency ?? ''),
+          enterpriseId: brokerInfo.enterprise_id as number,
+        });
+        console.log('[SSO][broker-upsert] Corretor upsert concluído, broker_id:', effectiveBrokerId);
+      } catch (e) {
+        console.error('[SSO][broker-upsert] Erro no upsert do corretor:', e);
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: 'Erro ao provisionar corretor.' });
+        return;
+      }
+    }
+
+    // ── PASSO 5: Buscar ou criar o usuário ──
     let user: AppUser | null = await findByEmail(email);
 
     if (user) {
@@ -132,7 +165,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
         name: name || user.name,
         role: safeRole,
         active: true,
-        broker_id: brokerId,
+        broker_id: effectiveBrokerId,
         django_user_id: djangoUserId,
       });
     } else {
@@ -144,7 +177,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
           name: name || inactive.name,
           role: safeRole,
           active: true,
-          broker_id: brokerId,
+          broker_id: effectiveBrokerId,
           django_user_id: djangoUserId,
         });
         user = await findByEmail(email);
@@ -160,29 +193,54 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
         });
         // Após criar, atualizar broker_id e django_user_id
         await updateUser(user.id, {
-          broker_id: brokerId,
+          broker_id: effectiveBrokerId,
           django_user_id: djangoUserId,
         });
       }
     }
 
     if (!user) {
+      await client.query('ROLLBACK');
       res.status(500).json({ error: 'Falha ao criar/buscar usuário.' });
       return;
     }
 
-    // ── PASSO 5: Criar sessão (token) ──
+    // ── PASSO 6: Ler e validar a whitelist do JWT ──
+    const rawIds = payload.allowed_conversation_ids;
+    const scopeKind = typeof payload.scope_kind === 'string' ? payload.scope_kind : null;
+    const totalPortfolioSize = typeof payload.total_portfolio_size === 'number' ? payload.total_portfolio_size : null;
+
+    let scope: SessionScope | null = null;
+    if (Array.isArray(rawIds) && scopeKind) {
+      const convIds = rawIds
+        .map((n) => Number(n))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      scope = {
+        kind: scopeKind,
+        convIds,
+        totalSize: totalPortfolioSize ?? undefined,
+      };
+      console.log(`[SSO] scope=${scopeKind} size=${convIds.length} total=${totalPortfolioSize} user=${email}`);
+    }
+
+    // ── PASSO 7: Criar sessão (token) ──
     // Isso é a mesma função que o login normal usa.
     // O token gerado funciona exatamente como se o usuário tivesse digitado email+senha.
     // É um randomBytes(32) = 256 bits de entropia → impossível adivinhar (anti-IDOR)
-    const sessionToken = await createSession(user.id);
+    const sessionToken = await createSession(user.id, scope);
 
-    // ── PASSO 6: Retornar o session token para o Django ──
+    // ── Commit da transação ──
+    await client.query('COMMIT');
+
+    // ── PASSO 8: Retornar o session token para o Django ──
     res.json({ sessionToken });
 
   } catch (e) {
     console.error('[SSO] Erro:', e);
+    await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: 'Erro interno no SSO.' });
+  } finally {
+    client.release();
   }
 });
 

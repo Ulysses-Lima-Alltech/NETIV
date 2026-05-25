@@ -14,6 +14,7 @@ interface ConversationListProps {
   onScrollMetaChange?: (meta: { scrollTop: number; nearTop: boolean }) => void;
   hasPendingRealtimeUpdates?: boolean;
   onApplyRealtimeUpdates?: () => void;
+  emptyVariant?: 'default' | 'broker_portfolio_empty' | 'broker_portfolio_gap';
 }
 
 export function ConversationList({
@@ -28,6 +29,7 @@ export function ConversationList({
   onScrollMetaChange,
   hasPendingRealtimeUpdates = false,
   onApplyRealtimeUpdates,
+  emptyVariant = 'default',
 }: ConversationListProps) {
   const scrollElRef = useRef<HTMLDivElement | null>(null);
   const scrollTopRef = useRef(0);
@@ -135,8 +137,22 @@ export function ConversationList({
           </div>
         ) : conversations.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-4 py-16 text-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mb-2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            <p className="text-[13px] text-[#94a3b8]">Nenhuma conversa encontrada</p>
+            {emptyVariant === 'broker_portfolio_empty' ? (
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mb-2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <p className="text-[13px] text-[#94a3b8]">Você ainda não tem conversas no Netiv</p>
+              </>
+            ) : emptyVariant === 'broker_portfolio_gap' ? (
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mb-2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <p className="text-[13px] text-[#94a3b8]">Nenhuma conversa disponível no momento</p>
+              </>
+            ) : (
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mb-2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <p className="text-[13px] text-[#94a3b8]">Nenhuma conversa encontrada</p>
+              </>
+            )}
           </div>
         ) : (
           <ul className="m-0 list-none space-y-1 p-0" role="list">

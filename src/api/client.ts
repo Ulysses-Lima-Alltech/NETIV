@@ -127,9 +127,13 @@ export const AUTH_BYPASS_MOCK_USER: AuthUser = {
 
 export const authApi = {
   login: (_email: string, _password: string) =>
-    Promise.resolve({ token: '', user: AUTH_BYPASS_MOCK_USER }),
-  me: () => Promise.resolve({ user: AUTH_BYPASS_MOCK_USER }),
-  logout: () => Promise.resolve({ ok: true as const }),
+    request<{ token: string; user: AuthUser }>('/auth/login', {
+      method: 'POST',
+      body: { email: _email, password: _password },
+    }),
+  me: () =>
+    request<{ user: AuthUser; session: { scopeKind: string | null; scopeSize: number | null; scopeTotal: number | null } | null }>('/auth/me'),
+  logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
 };
 
 export interface WhatsAppConfigPublic {
@@ -814,7 +818,7 @@ export const contactsApi = {
     ),
 };
 
-export type FileCategory = 'book' | 'unidades' | 'tabela_comercial' | 'outro';
+export type FileCategory = 'book' | 'base_ana' | 'foto' | 'video' | 'mapa_localizacao' | 'tabela_comercial' | 'outro' | 'unidades';
 
 export interface ProjectVariables {
   priceLabel?: string;
@@ -836,6 +840,8 @@ export interface KnowledgeFileItem {
   canBeUsedAsKnowledge?: boolean;
   /** Permitir envio deste arquivo ao cliente via WhatsApp */
   canBeSentByAna?: boolean;
+  /** Permite oferta proativa pela Ana durante conversa */
+  canBeOfferedByAna?: boolean;
   createdAt: string;
 }
 
@@ -877,9 +883,13 @@ export type ProjectListFilters = { tipo?: EnterpriseTipo; exclusivo?: boolean };
 function defaultKnowledgeUploadFlags(category: FileCategory): {
   canBeUsedAsKnowledge: boolean;
   canBeSentByAna: boolean;
+  canBeOfferedByAna: boolean;
 } {
-  if (category === 'outro') return { canBeUsedAsKnowledge: true, canBeSentByAna: false };
-  return { canBeUsedAsKnowledge: false, canBeSentByAna: true };
+  if (category === 'base_ana') return { canBeUsedAsKnowledge: true, canBeSentByAna: false, canBeOfferedByAna: false };
+  if (category === 'video') return { canBeUsedAsKnowledge: false, canBeSentByAna: true, canBeOfferedByAna: false };
+  if (category === 'foto') return { canBeUsedAsKnowledge: false, canBeSentByAna: true, canBeOfferedByAna: false };
+  if (category === 'outro') return { canBeUsedAsKnowledge: true, canBeSentByAna: false, canBeOfferedByAna: false };
+  return { canBeUsedAsKnowledge: false, canBeSentByAna: true, canBeOfferedByAna: false };
 }
 
 export const projectsApi = {
@@ -924,15 +934,20 @@ export const projectsApi = {
     projectId: number,
     file: File,
     category: FileCategory,
-    opts?: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean; tipoDocumento?: 'BOOK' }
+    opts?: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean; canBeOfferedByAna?: boolean; tipoDocumento?: 'BOOK' }
   ): Promise<KnowledgeFileItem> => {
     const fd = new FormData();
     fd.append('category', category);
     if (opts?.tipoDocumento === 'BOOK') fd.append('tipoDocumento', 'BOOK');
     fd.append('file', file);
-    const defaults = defaultKnowledgeUploadFlags(category);
+    const isImage = /^image\/(jpeg|jpg|png|webp)$/i.test(file.type || '');
+    const isVideo = /^video\/(mp4|quicktime|webm)$/i.test(file.type || '');
+    const defaults = isImage || isVideo
+      ? { canBeUsedAsKnowledge: false, canBeSentByAna: true, canBeOfferedByAna: false }
+      : defaultKnowledgeUploadFlags(category);
     fd.append('canBeUsedAsKnowledge', String(opts?.canBeUsedAsKnowledge ?? defaults.canBeUsedAsKnowledge));
     fd.append('canBeSentByAna', String(opts?.canBeSentByAna ?? defaults.canBeSentByAna));
+    fd.append('canBeOfferedByAna', String(opts?.canBeOfferedByAna ?? defaults.canBeOfferedByAna));
     const token = getStoredAuthToken();
     const res = await fetch(`${API_BASE}/projects/${projectId}/knowledge`, {
       method: 'POST',
@@ -966,7 +981,7 @@ export const projectsApi = {
   patchKnowledgeFile: (
     projectId: number,
     fileId: number,
-    body: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean }
+    body: { canBeUsedAsKnowledge?: boolean; canBeSentByAna?: boolean; canBeOfferedByAna?: boolean }
   ) => request<KnowledgeFileItem>(`/projects/${projectId}/knowledge/${fileId}`, { method: 'PATCH', body }),
 };
 

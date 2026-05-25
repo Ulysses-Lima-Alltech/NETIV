@@ -1,16 +1,16 @@
 /** Limites alinhados à WhatsApp Cloud API (upload de mídia) + teto do body no servidor. */
 
 /** Teto do multipart no multer (corpo da requisição). */
-export const MANUAL_UPLOAD_BODY_LIMIT_BYTES = 100 * 1024 * 1024;
+export const MANUAL_UPLOAD_BODY_LIMIT_BYTES = SYSTEM_UPLOAD_MAX_BYTES;
 
 /** Documentos (PDF, Office, etc.) — Cloud API. */
-export const MANUAL_MAX_DOCUMENT_BYTES = 100 * 1024 * 1024;
+export const MANUAL_MAX_DOCUMENT_BYTES = WHATSAPP_DOCUMENT_MAX_BYTES;
 
 /** Vídeo — Cloud API. */
-export const MANUAL_MAX_VIDEO_BYTES = 16 * 1024 * 1024;
+export const MANUAL_MAX_VIDEO_BYTES = WHATSAPP_VIDEO_MAX_BYTES;
 
 /** Imagem (JPEG/PNG/WebP) — Cloud API para mensagens `image`. */
-export const MANUAL_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MANUAL_MAX_IMAGE_BYTES = WHATSAPP_IMAGE_MAX_BYTES;
 
 export type ManualMediaKind = 'image' | 'video' | 'document';
 
@@ -66,7 +66,7 @@ export function manualAttachmentRejectionMessage(filename: string, mimetype: str
     return 'Anexo não suportado. Use PDF, imagens (JPG, PNG, WEBP), ou vídeo MP4/3GP.';
   }
   if (size > MANUAL_UPLOAD_BODY_LIMIT_BYTES) {
-    return 'Arquivo excede o limite de 100 MB.';
+    return 'Arquivo excede o limite de 700 MB.';
   }
   const max = maxBytesForManualMediaKind(kind);
   if (size > max) {
@@ -76,3 +76,9 @@ export function manualAttachmentRejectionMessage(filename: string, mimetype: str
   }
   return 'Anexo não suportado.';
 }
+import {
+  SYSTEM_UPLOAD_MAX_BYTES,
+  WHATSAPP_DOCUMENT_MAX_BYTES,
+  WHATSAPP_IMAGE_MAX_BYTES,
+  WHATSAPP_VIDEO_MAX_BYTES,
+} from '../constants/mediaLimits.js';

@@ -1,4 +1,4 @@
-import { Router, type Request, type Response, type NextFunction } from 'express';
+﻿import { Router, type Request, type Response, type NextFunction } from 'express';
 import multer, { MulterError } from 'multer';
 import { randomBytes } from 'crypto';
 import { mkdirSync, writeFileSync } from 'fs';
@@ -31,8 +31,38 @@ import {
 import { createProjectSchema, updateProjectSchema, patchKnowledgeFileSchema } from '../validators/projects.js';
 import { insertPromptAddonsHistory, listPromptAddonsHistory } from '../repositories/promptAddonsHistoryRepository.js';
 import { getKnowledgeBackfillJob, startKnowledgeBackfill } from '../services/knowledgeBackfillService.js';
+import { SYSTEM_UPLOAD_MAX_BYTES } from '../constants/mediaLimits.js';
 
 const router = Router();
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+
+function isImageUploadMimeOrExt(mime: string, name: string): boolean {
+  const m = (mime || '').toLowerCase();
+  const n = (name || '').toLowerCase();
+  return (
+    m === 'image/jpeg' ||
+    m === 'image/jpg' ||
+    m === 'image/png' ||
+    m === 'image/webp' ||
+    n.endsWith('.jpg') ||
+    n.endsWith('.jpeg') ||
+    n.endsWith('.png') ||
+    n.endsWith('.webp')
+  );
+}
+
+function isVideoUploadMimeOrExt(mime: string, name: string): boolean {
+  const m = (mime || '').toLowerCase();
+  const n = (name || '').toLowerCase();
+  return (
+    m === 'video/mp4' ||
+    m === 'video/quicktime' ||
+    m === 'video/webm' ||
+    n.endsWith('.mp4') ||
+    n.endsWith('.mov') ||
+    n.endsWith('.webm')
+  );
+}
 
 function mapKnowledgeFileRow(f: {
   id: number;
@@ -43,6 +73,7 @@ function mapKnowledgeFileRow(f: {
   is_active: boolean;
   can_be_used_as_knowledge: boolean;
   can_be_sent_by_ana: boolean;
+  can_be_offered_by_ana: boolean;
   created_at: Date;
 }) {
   return {
@@ -54,6 +85,7 @@ function mapKnowledgeFileRow(f: {
     isActive: f.is_active,
     canBeUsedAsKnowledge: f.can_be_used_as_knowledge !== false,
     canBeSentByAna: f.can_be_sent_by_ana === true,
+    canBeOfferedByAna: f.can_be_offered_by_ana === true,
     createdAt: f.created_at.toISOString(),
   };
 }
@@ -70,9 +102,13 @@ function parseUploadBool(v: unknown, defaultVal: boolean): boolean {
 function defaultUploadPermissions(category: FileCategory): {
   canBeUsedAsKnowledge: boolean;
   canBeSentByAna: boolean;
+  canBeOfferedByAna: boolean;
 } {
-  if (category === 'outro') return { canBeUsedAsKnowledge: true, canBeSentByAna: false };
-  return { canBeUsedAsKnowledge: false, canBeSentByAna: true };
+  if (category === 'base_ana') return { canBeUsedAsKnowledge: true, canBeSentByAna: false, canBeOfferedByAna: false };
+  if (category === 'video') return { canBeUsedAsKnowledge: false, canBeSentByAna: true, canBeOfferedByAna: false };
+  if (category === 'foto') return { canBeUsedAsKnowledge: false, canBeSentByAna: true, canBeOfferedByAna: false };
+  if (category === 'outro') return { canBeUsedAsKnowledge: true, canBeSentByAna: false, canBeOfferedByAna: false };
+  return { canBeUsedAsKnowledge: false, canBeSentByAna: true, canBeOfferedByAna: false };
 }
 
 // memoryStorage: o buffer fica em RAM. O handler escreve em disco (cache local)
@@ -83,17 +119,19 @@ const upload = multer({
     const name = (file.originalname || '').toLowerCase();
     const isPdf = file.mimetype === 'application/pdf' || name.endsWith('.pdf');
     const isTxt = file.mimetype.startsWith('text/') || name.endsWith('.txt') || name.endsWith('.md');
+    const isImage = isImageUploadMimeOrExt(file.mimetype, name);
+    const isVideo = isVideoUploadMimeOrExt(file.mimetype, name);
     const isDocx =
       file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
       name.endsWith('.docx');
-    if (!isPdf && !isTxt && !isDocx) {
+    if (!isPdf && !isTxt && !isDocx && !isImage && !isVideo) {
       (req as unknown as { fileValidationError?: string }).fileValidationError =
-        'Tipo inválido. Envie PDF, DOCX, TXT ou MD.';
+        'Tipo inválido. Envie PDF, DOCX, TXT, MD, JPG, JPEG, PNG, WEBP, MP4, MOV ou WEBM.';
       return cb(null, false);
     }
     cb(null, true);
   },
-  limits: { fileSize: 100 * 1024 * 1024 },
+  limits: { fileSize: SYSTEM_UPLOAD_MAX_BYTES },
 });
 
 function parseListFilters(req: Request): { tipo?: EnterpriseTipo; exclusivo?: boolean } {
@@ -147,13 +185,13 @@ router.post('/knowledge/backfill', async (req, res) => {
           : NaN;
 
     if (enterpriseId !== undefined && (!Number.isFinite(enterpriseId) || enterpriseId <= 0)) {
-      return res.status(400).json({ error: 'enterpriseId inválido.' });
+      return res.status(400).json({ error: 'enterpriseId invÃ¡lido.' });
     }
     if (fileId !== undefined && (!Number.isFinite(fileId) || fileId <= 0)) {
-      return res.status(400).json({ error: 'fileId inválido.' });
+      return res.status(400).json({ error: 'fileId invÃ¡lido.' });
     }
     if (maxFiles !== undefined && (!Number.isFinite(maxFiles) || maxFiles <= 0)) {
-      return res.status(400).json({ error: 'maxFiles inválido.' });
+      return res.status(400).json({ error: 'maxFiles invÃ¡lido.' });
     }
 
     const jobId = startKnowledgeBackfill({
@@ -188,9 +226,9 @@ router.post('/knowledge/backfill', async (req, res) => {
 router.get('/knowledge/backfill/:jobId', async (req, res) => {
   try {
     const jobId = String(req.params.jobId || '').trim();
-    if (!jobId) return res.status(400).json({ error: 'jobId inválido.' });
+    if (!jobId) return res.status(400).json({ error: 'jobId invÃ¡lido.' });
     const job = getKnowledgeBackfillJob(jobId);
-    if (!job) return res.status(404).json({ error: 'Job não encontrado.' });
+    if (!job) return res.status(404).json({ error: 'Job nÃ£o encontrado.' });
     res.json({
       id: job.id,
       status: job.status,
@@ -218,9 +256,9 @@ router.get('/knowledge/backfill/:jobId', async (req, res) => {
 router.get('/:id/prompt-addons-history', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID invÃ¡lido.' });
     const project = await getEnterpriseById(id);
-    if (!project) return res.status(404).json({ error: 'Não encontrado.' });
+    if (!project) return res.status(404).json({ error: 'NÃ£o encontrado.' });
     const rows = await listPromptAddonsHistory(id);
     res.json({
       items: rows.map((r) => ({
@@ -233,16 +271,16 @@ router.get('/:id/prompt-addons-history', async (req, res) => {
     });
   } catch (e) {
     console.error('[Projects] GET prompt-addons-history:', e);
-    res.status(500).json({ error: 'Erro ao listar histórico.' });
+    res.status(500).json({ error: 'Erro ao listar histÃ³rico.' });
   }
 });
 
 router.get('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID invÃ¡lido.' });
     const project = await getEnterpriseById(id);
-    if (!project) return res.status(404).json({ error: 'Não encontrado.' });
+    if (!project) return res.status(404).json({ error: 'NÃ£o encontrado.' });
     const vars = await getVariablesMap(id);
     const files = await listEnterpriseFiles(id);
     res.json({
@@ -259,7 +297,7 @@ router.post('/', async (req, res) => {
   try {
     const parsed = createProjectSchema.safeParse(req.body);
     if (!parsed.success) {
-      const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
+      const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados invÃ¡lidos.';
       return res.status(400).json({ error: msg });
     }
     const ent = await createEnterprise(parsed.data.name.trim(), {
@@ -272,7 +310,7 @@ router.post('/', async (req, res) => {
     res.status(201).json(enterpriseToPublic(ent, vars));
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Erro ao criar.';
-    if (msg.includes('obrigatório') || msg.includes('Já existe')) {
+    if (msg.includes('obrigatÃ³rio') || msg.includes('JÃ¡ existe')) {
       return res.status(400).json({ error: msg });
     }
     console.error('[Projects] POST:', e);
@@ -283,10 +321,10 @@ router.post('/', async (req, res) => {
 router.patch('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID invÃ¡lido.' });
     const parsed = updateProjectSchema.safeParse(req.body);
     if (!parsed.success) {
-      const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
+      const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados invÃ¡lidos.';
       return res.status(400).json({ error: msg });
     }
     const d = parsed.data;
@@ -328,7 +366,7 @@ router.patch('/:id', async (req, res) => {
       commercialRegion: d.commercialRegion,
       ibgeCode: d.ibgeCode,
     });
-    if (!ent) return res.status(404).json({ error: 'Não encontrado.' });
+    if (!ent) return res.status(404).json({ error: 'NÃ£o encontrado.' });
     console.log('[TIPO_DEBUG] PATCH saved tipo:', ent.tipo, '| id:', id);
     if (variables) await setVariables(id, variables);
     const vars = await getVariablesMap(id);
@@ -337,7 +375,7 @@ router.patch('/:id', async (req, res) => {
     res.json(pub);
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Erro.';
-    if (msg.includes('obrigatório') || msg.includes('Já existe')) {
+    if (msg.includes('obrigatÃ³rio') || msg.includes('JÃ¡ existe')) {
       return res.status(400).json({ error: msg });
     }
     console.error('[Projects] PATCH:', e);
@@ -348,9 +386,9 @@ router.patch('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID invÃ¡lido.' });
     const ent = await inactivateEnterprise(id);
-    if (!ent) return res.status(404).json({ error: 'Não encontrado.' });
+    if (!ent) return res.status(404).json({ error: 'NÃ£o encontrado.' });
     const vars = await getVariablesMap(id);
     res.json(enterpriseToPublic(ent, vars));
   } catch (e) {
@@ -361,7 +399,7 @@ router.delete('/:id', async (req, res) => {
 
 function handleMulterError(err: unknown, _req: Request, res: Response, next: NextFunction): void {
   if (err instanceof MulterError && err.code === 'LIMIT_FILE_SIZE') {
-    res.status(400).json({ error: 'Arquivo muito grande. Limite: 100 MB.' });
+    res.status(400).json({ error: 'Arquivo muito grande. Limite: 700 MB.' });
     return;
   }
   next(err);
@@ -370,9 +408,9 @@ function handleMulterError(err: unknown, _req: Request, res: Response, next: Nex
 router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (req: Request, res: Response) => {
   try {
     const id = parseInt(String(req.params.id), 10);
-    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID invÃ¡lido.' });
     const project = await getEnterpriseById(id);
-    if (!project) return res.status(404).json({ error: 'Não encontrado.' });
+    if (!project) return res.status(404).json({ error: 'NÃ£o encontrado.' });
     const fv = (req as unknown as { fileValidationError?: string }).fileValidationError;
     if (!req.file) {
       return res.status(400).json({ error: fv || 'Envie o campo file.' });
@@ -381,10 +419,17 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
     const mime = req.file.mimetype || '';
     const isPdf = mime.includes('pdf') || origName.endsWith('.pdf');
     const isTxt = mime.startsWith('text/') || origName.endsWith('.txt') || origName.endsWith('.md');
+    const isImage = isImageUploadMimeOrExt(mime, origName);
+    const isVideo = isVideoUploadMimeOrExt(mime, origName);
     const isDocx =
       mime.includes('wordprocessingml') || mime.includes('msword') || origName.endsWith('.docx');
-    if (!isPdf && !isTxt && !isDocx) {
-      return res.status(400).json({ error: 'Tipo inválido. Envie PDF, DOCX, TXT ou MD.' });
+    if (!isPdf && !isTxt && !isDocx && !isImage && !isVideo) {
+      return res
+        .status(400)
+        .json({ error: 'Tipo inválido. Envie PDF, DOCX, TXT, MD, JPG, JPEG, PNG, WEBP, MP4, MOV ou WEBM.' });
+    }
+    if (isImage && req.file.size > IMAGE_MAX_BYTES) {
+      return res.status(400).json({ error: 'Imagem muito grande. Limite de 10 MB por imagem.' });
     }
     const tipoDoc = String(req.body?.tipoDocumento ?? req.body?.tipo_documento ?? '')
       .trim()
@@ -392,22 +437,27 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
     let cat = (req.body?.category as string) || 'outro';
     if (tipoDoc === 'BOOK') cat = 'book';
     if (!FILE_CATEGORIES.includes(cat as FileCategory)) {
-      return res.status(400).json({ error: 'Categoria inválida: book | unidades | tabela_comercial | outro' });
+      return res.status(400).json({ error: 'Categoria inválida.' });
     }
-    const defaults = defaultUploadPermissions(cat as FileCategory);
+    const defaults = (isImage || isVideo)
+      ? { canBeUsedAsKnowledge: false, canBeSentByAna: true, canBeOfferedByAna: false }
+      : defaultUploadPermissions(cat as FileCategory);
     const canBeUsedAsKnowledge = parseUploadBool(req.body?.canBeUsedAsKnowledge, defaults.canBeUsedAsKnowledge);
     const canBeSentByAna = parseUploadBool(req.body?.canBeSentByAna, defaults.canBeSentByAna);
+    const canBeOfferedByAna = canBeSentByAna
+      ? parseUploadBool(req.body?.canBeOfferedByAna, defaults.canBeOfferedByAna)
+      : false;
 
-    // Gera nome do arquivo (mesmo padrão do diskStorage anterior).
+    // Gera nome do arquivo (mesmo padrÃ£o do diskStorage anterior).
     const ext = req.file.originalname.includes('.')
       ? req.file.originalname.slice(req.file.originalname.lastIndexOf('.'))
       : '';
     const storedFilename = `${Date.now()}-${randomBytes(8).toString('hex')}${ext}`;
 
-    // Grava em disco como cache local (necessário para extractText e cache de envio).
+    // Grava em disco como cache local (necessÃ¡rio para extractText e cache de envio).
     if (!isKnowledgeS3Configured()) {
       return res.status(503).json({
-        error: 'KNOWLEDGE_S3_BUCKET não configurado. Upload de conhecimento exige S3.',
+        error: 'KNOWLEDGE_S3_BUCKET nÃ£o configurado. Upload de conhecimento exige S3.',
       });
     }
 
@@ -443,14 +493,14 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
       req.file.originalname,
       mime || 'application/octet-stream',
       req.file.size,
-      { canBeUsedAsKnowledge, canBeSentByAna, storageProvider, storageKey, bucketName, publicUrl }
+      { canBeUsedAsKnowledge, canBeSentByAna, canBeOfferedByAna, storageProvider, storageKey, bucketName, publicUrl }
     );
     const files = await listEnterpriseFiles(id);
     const f = files.find((x) => x.id === fid)!;
     res.status(201).json(mapKnowledgeFileRow(f));
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Erro no upload.';
-    if (typeof msg === 'string' && (msg.includes('Tipo inválido') || msg.toLowerCase().includes('file too large'))) {
+    if (typeof msg === 'string' && (msg.includes('Tipo invÃ¡lido') || msg.toLowerCase().includes('file too large'))) {
       return res.status(400).json({ error: msg });
     }
     console.error('[Projects] knowledge POST:', e);
@@ -463,20 +513,20 @@ router.patch('/:id/knowledge/:fileId', async (req, res) => {
     const projectId = parseInt(req.params.id, 10);
     const fileId = parseInt(req.params.fileId, 10);
     if (Number.isNaN(projectId) || Number.isNaN(fileId)) {
-      return res.status(400).json({ error: 'IDs inválidos.' });
+      return res.status(400).json({ error: 'IDs invÃ¡lidos.' });
     }
     const parsed = patchKnowledgeFileSchema.safeParse(req.body);
     if (!parsed.success) {
-      const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
+      const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados invÃ¡lidos.';
       return res.status(400).json({ error: msg });
     }
     const project = await getEnterpriseById(projectId);
-    if (!project) return res.status(404).json({ error: 'Não encontrado.' });
+    if (!project) return res.status(404).json({ error: 'NÃ£o encontrado.' });
     const ok = await updateEnterpriseFilePermissions(projectId, fileId, parsed.data);
-    if (!ok) return res.status(404).json({ error: 'Arquivo não encontrado.' });
+    if (!ok) return res.status(404).json({ error: 'Arquivo nÃ£o encontrado.' });
     const files = await listEnterpriseFiles(projectId);
     const f = files.find((x) => x.id === fileId);
-    if (!f) return res.status(404).json({ error: 'Arquivo não encontrado.' });
+    if (!f) return res.status(404).json({ error: 'Arquivo nÃ£o encontrado.' });
     res.json(mapKnowledgeFileRow(f));
   } catch (e) {
     console.error('[Projects] knowledge PATCH:', e);
@@ -489,11 +539,11 @@ router.delete('/:id/knowledge/:fileId', async (req, res) => {
     const projectId = parseInt(req.params.id, 10);
     const fileId = parseInt(req.params.fileId, 10);
     if (Number.isNaN(projectId) || Number.isNaN(fileId)) {
-      return res.status(400).json({ error: 'IDs inválidos.' });
+      return res.status(400).json({ error: 'IDs invÃ¡lidos.' });
     }
     const result = await deleteEnterpriseFile(projectId, fileId);
     if (!result.ok) {
-      return res.status(404).json({ error: 'Arquivo não encontrado.' });
+      return res.status(404).json({ error: 'Arquivo nÃ£o encontrado.' });
     }
     return res.status(200).json({
       ok: true,
@@ -510,3 +560,5 @@ router.delete('/:id/knowledge/:fileId', async (req, res) => {
 });
 
 export default router;
+
+

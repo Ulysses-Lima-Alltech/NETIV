@@ -6,6 +6,7 @@ export interface CorretorRow {
   city: string;
   phone: string;
   real_estate_agency: string;
+  email: string | null;
   active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -29,7 +30,7 @@ export async function getCorretorEnterpriseIds(corretorId: number): Promise<numb
     `SELECT enterprise_id FROM corretor_empreendimentos WHERE corretor_id = $1`,
     [corretorId]
   );
-  return rows.map((r) => r.enterprise_id);
+  return rows.map((r: { enterprise_id: number }) => r.enterprise_id);
 }
 
 export async function setCorretorEnterprises(corretorId: number, enterpriseIds: number[]): Promise<void> {
@@ -81,13 +82,14 @@ export async function createCorretor(data: {
   phone: string;
   realEstateAgency: string;
   enterpriseIds?: number[];
+  email?: string | null;
 }): Promise<CorretorRow> {
   const fullName = data.fullName.trim();
   if (!fullName) throw new Error('Nome completo é obrigatório.');
   const { rows } = await query<CorretorRow>(
-    `INSERT INTO corretores (full_name, city, phone, real_estate_agency, active, updated_at)
-     VALUES ($1, $2, $3, $4, true, NOW()) RETURNING *`,
-    [fullName, (data.city || '').trim(), (data.phone || '').trim(), (data.realEstateAgency || '').trim()]
+    `INSERT INTO corretores (full_name, city, phone, real_estate_agency, email, active, updated_at)
+     VALUES ($1, $2, $3, $4, $5, true, NOW()) RETURNING *`,
+    [fullName, (data.city || '').trim(), (data.phone || '').trim(), (data.realEstateAgency || '').trim(), data.email || null]
   );
   const corretor = rows[0];
   const ids = data.enterpriseIds ?? [];
@@ -104,6 +106,7 @@ export async function updateCorretor(
     realEstateAgency?: string;
     active?: boolean;
     enterpriseIds?: number[];
+    email?: string | null;
   }
 ): Promise<CorretorRow | null> {
   const cur = await getCorretorById(id);
@@ -114,9 +117,10 @@ export async function updateCorretor(
   const phone = data.phone !== undefined ? data.phone.trim() : cur.phone;
   const realEstateAgency = data.realEstateAgency !== undefined ? data.realEstateAgency.trim() : cur.real_estate_agency;
   const active = data.active !== undefined ? data.active : cur.active;
+  const email = data.email !== undefined ? data.email : cur.email;
   const { rows } = await query<CorretorRow>(
-    `UPDATE corretores SET full_name = $1, city = $2, phone = $3, real_estate_agency = $4, active = $5, updated_at = NOW() WHERE id = $6 RETURNING *`,
-    [fullName, city, phone, realEstateAgency, active, id]
+    `UPDATE corretores SET full_name = $1, city = $2, phone = $3, real_estate_agency = $4, active = $5, email = $6, updated_at = NOW() WHERE id = $7 RETURNING *`,
+    [fullName, city, phone, realEstateAgency, active, email, id]
   );
   const updated = rows[0] ?? null;
   if (updated && data.enterpriseIds !== undefined) await setCorretorEnterprises(id, data.enterpriseIds);
@@ -134,4 +138,104 @@ export async function inactivateCorretor(id: number): Promise<CorretorRow | null
 export async function deleteCorretor(id: number): Promise<boolean> {
   const { rowCount } = await query(`DELETE FROM corretores WHERE id = $1`, [id]);
   return (rowCount ?? 0) > 0;
+}
+
+export async function findCorretorByPhoneOrEmail(
+  phone: string | null,
+  email: string | null
+): Promise<CorretorRow | null> {
+  if (!phone && !email) return null;
+
+  let conditions: string[] = [];
+  let params: (string | null)[] = [];
+  let paramIndex = 1;
+
+  if (phone) {
+    conditions.push(`phone = $${paramIndex}`);
+    params.push(phone);
+    paramIndex++;
+  }
+
+  if (email) {
+    conditions.push(`LOWER(email) = LOWER($${paramIndex})`);
+    params.push(email);
+    paramIndex++;
+  }
+
+  const sql = `SELECT * FROM corretores WHERE (${conditions.join(' OR ')}) AND active = true LIMIT 1`;
+  const { rows } = await query<CorretorRow>(sql, params);
+  return rows[0] ?? null;
+}
+
+export async function upsertCorretorAndEnterprise(args: {
+  existingBrokerId: number | null;
+  fullName: string;
+  phone: string | null;
+  email: string | null;
+  realEstateAgency: string;
+  enterpriseId: number;
+}): Promise<number> {
+  const { existingBrokerId, fullName, phone, email, realEstateAgency, enterpriseId } = args;
+
+  let corretorId: number;
+
+  if (existingBrokerId) {
+    const existing = await getCorretorById(existingBrokerId);
+    if (existing) {
+      await updateCorretor(existingBrokerId, {
+        fullName,
+        phone: phone ?? existing.phone,
+        email: email ?? existing.email,
+        realEstateAgency,
+      });
+      corretorId = existingBrokerId;
+    } else {
+      const match = await findCorretorByPhoneOrEmail(phone, email);
+      if (match) {
+        await updateCorretor(match.id, {
+          fullName,
+          phone: phone ?? match.phone,
+          email: email ?? match.email,
+          realEstateAgency,
+        });
+        corretorId = match.id;
+      } else {
+        const newCorretor = await createCorretor({
+          fullName,
+          city: '',
+          phone: phone ?? '',
+          realEstateAgency,
+        });
+        corretorId = newCorretor.id;
+      }
+    }
+  } else {
+    const match = await findCorretorByPhoneOrEmail(phone, email);
+    if (match) {
+      await updateCorretor(match.id, {
+        fullName,
+        phone: phone ?? match.phone,
+        email: email ?? match.email,
+        realEstateAgency,
+      });
+      corretorId = match.id;
+    } else {
+      const newCorretor = await createCorretor({
+        fullName,
+        city: '',
+        phone: phone ?? '',
+        realEstateAgency,
+      });
+      corretorId = newCorretor.id;
+    }
+  }
+
+  await query(
+    `INSERT INTO corretor_empreendimentos (corretor_id, enterprise_id)
+     VALUES ($1, $2)
+     ON CONFLICT (corretor_id, enterprise_id) DO NOTHING`,
+    [corretorId, enterpriseId]
+  );
+
+  return corretorId;
 }

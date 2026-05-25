@@ -41,7 +41,8 @@ export const patchKnowledgeFileSchema = z
   .object({
     canBeUsedAsKnowledge: z.boolean().optional(),
     canBeSentByAna: z.boolean().optional(),
+    canBeOfferedByAna: z.boolean().optional(),
   })
-  .refine((d) => d.canBeUsedAsKnowledge !== undefined || d.canBeSentByAna !== undefined, {
+  .refine((d) => d.canBeUsedAsKnowledge !== undefined || d.canBeSentByAna !== undefined || d.canBeOfferedByAna !== undefined, {
     message: 'Informe ao menos um campo.',
   });

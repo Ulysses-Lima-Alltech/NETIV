@@ -68,7 +68,15 @@ router.get('/me', requireAuth, async (req: Request, res: Response): Promise<void
       res.status(401).json({ error: 'Não autenticado.' });
       return;
     }
-    res.json({ user: toPublic(user) });
+    const scope = (user as any).sessionScope;
+    res.json({
+      user: toPublic(user),
+      session: {
+        scopeKind: scope?.kind ?? null,
+        scopeSize: scope?.convIds?.length ?? null,
+        scopeTotal: scope?.totalSize ?? null,
+      },
+    });
   } catch (e) {
     console.error('[Auth] GET me:', e);
     res.status(500).json({ error: 'Erro ao obter usuário.' });

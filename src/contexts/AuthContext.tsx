@@ -1,10 +1,17 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import { AUTH_BYPASS_MOCK_USER, setStoredAuthToken, authApi, type AuthUser } from '../api/client';
 
+export interface SessionScope {
+  scopeKind: string | null;
+  scopeSize: number | null;
+  scopeTotal: number | null;
+}
+
 interface AuthState {
   user: AuthUser | null;
   loading: boolean;
   error: string | null;
+  sessionScope: SessionScope | null;
 }
 
 interface AuthContextValue extends AuthState {
@@ -12,6 +19,8 @@ interface AuthContextValue extends AuthState {
   isAdmin: boolean;
   /** ADMIN ou MANAGERIAL: telas administrativas (exceto configurações sensíveis). */
   hasElevatedAccess: boolean;
+  /** Verdadeiro se o usuário tem escopo de carteira de broker (broker_portfolio). */
+  isBrokerScoped: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
@@ -23,12 +32,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sessionScope, setSessionScope] = useState<SessionScope | null>(null);
 
   // Função para carregar usuário real via API
   const loadRealUser = useCallback(async () => {
     try {
       const response = await authApi.me();
       setUser(response.user);
+      setSessionScope(response.session ?? null);
       setError(null);
     } catch (err) {
       console.error('[Auth] Falha ao carregar usuário:', err);
@@ -43,6 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     console.log('[Auth] Ativando bypass mock user');
     setStoredAuthToken(null);
     setUser(AUTH_BYPASS_MOCK_USER);
+    setSessionScope(null);
     setError(null);
     setLoading(false);
   }, []);
@@ -102,6 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setStoredAuthToken(null);
       setUser(null);
+      setSessionScope(null);
       setLoading(false);
     }
   }, []);
@@ -112,8 +125,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     loading,
     error,
+    sessionScope,
     isAdmin: user?.role === 'ADMIN',
     hasElevatedAccess: user?.role === 'ADMIN' || user?.role === 'MANAGERIAL',
+    isBrokerScoped: sessionScope?.scopeKind === 'broker_portfolio',
     login,
     logout,
     clearError,

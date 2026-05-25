@@ -20,6 +20,7 @@ test('resolve modelo da Ana por DB com gpt-4.1', () => {
   const resolution = resolveAnaOpenAIModel({
     configuredModelFromDb: 'gpt-4.1',
     slot: 'hot_lead',
+    provider: 'openai',
   });
   assert.equal(resolution.blocked, false);
   if (!resolution.blocked) {
@@ -32,6 +33,7 @@ test('resolve modelo da Ana por DB com gpt-5.1', () => {
   const resolution = resolveAnaOpenAIModel({
     configuredModelFromDb: 'gpt-5.1',
     slot: 'hot_lead',
+    provider: 'openai',
   });
   assert.equal(resolution.blocked, false);
   if (!resolution.blocked) {
@@ -46,6 +48,7 @@ test('ignora OPENAI_MODEL quando DB esta definido', () => {
   const resolution = resolveAnaOpenAIModel({
     configuredModelFromDb: 'gpt-5.1',
     slot: 'hot_lead',
+    provider: 'openai',
   });
   if (previous === undefined) delete process.env.OPENAI_MODEL;
   else process.env.OPENAI_MODEL = previous;
@@ -61,6 +64,7 @@ test('bloqueia quando modelo da Ana nao esta configurado no DB', () => {
   const resolution = resolveAnaOpenAIModel({
     configuredModelFromDb: null,
     slot: 'hot_lead',
+    provider: 'openai',
   });
   assert.equal(resolution.blocked, true);
   if (resolution.blocked) {
@@ -73,6 +77,7 @@ test('bloqueia quando modelo da Ana no DB e invalido para slot', () => {
   const resolution = resolveAnaOpenAIModel({
     configuredModelFromDb: 'gpt-foo-invalido',
     slot: 'hot_lead',
+    provider: 'openai',
   });
   assert.equal(resolution.blocked, true);
   if (resolution.blocked) {
@@ -82,8 +87,8 @@ test('bloqueia quando modelo da Ana no DB e invalido para slot', () => {
 });
 
 test('nunca retorna source env/default na resolucao da Ana', () => {
-  const ok = resolveAnaOpenAIModel({ configuredModelFromDb: 'gpt-4.1', slot: 'hot_lead' });
-  const blocked = resolveAnaOpenAIModel({ configuredModelFromDb: null, slot: 'hot_lead' });
+  const ok = resolveAnaOpenAIModel({ configuredModelFromDb: 'gpt-4.1', slot: 'hot_lead', provider: 'openai' });
+  const blocked = resolveAnaOpenAIModel({ configuredModelFromDb: null, slot: 'hot_lead', provider: 'openai' });
 
   assert.equal(ok.sourceOfFinalModel, 'db');
   assert.equal(blocked.sourceOfFinalModel, 'db');
@@ -98,6 +103,7 @@ test('OPENAI_API_KEY e OPENAI_BASE_URL permanecem apenas como infraestrutura', (
   const resolution = resolveAnaOpenAIModel({
     configuredModelFromDb: 'gpt-4.1',
     slot: 'hot_lead',
+    provider: 'openai',
   });
 
   if (prevKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -107,6 +113,70 @@ test('OPENAI_API_KEY e OPENAI_BASE_URL permanecem apenas como infraestrutura', (
 
   assert.equal(resolution.blocked, false);
   if (!resolution.blocked) assert.equal(resolution.finalModel, 'gpt-4.1');
+});
+
+test('aceita gpt-4.1-nano com provider openai', () => {
+  const resolution = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'gpt-4.1-nano',
+    slot: 'hot_lead',
+    provider: 'openai',
+  });
+  assert.equal(resolution.blocked, false);
+});
+
+test('aceita openai/gpt-4.1-nano com provider openrouter', () => {
+  const resolution = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'openai/gpt-4.1-nano',
+    slot: 'hot_lead',
+    provider: 'openrouter',
+  });
+  assert.equal(resolution.blocked, false);
+});
+
+test('bloqueia openai/gpt-4.1-nano com provider openai', () => {
+  const resolution = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'openai/gpt-4.1-nano',
+    slot: 'hot_lead',
+    provider: 'openai',
+  });
+  assert.equal(resolution.blocked, true);
+  if (resolution.blocked) {
+    assert.equal(resolution.reason, 'ana_model_invalid_for_slot');
+  }
+});
+
+test('aceita ana-evora-qwen-8k-v2:latest com baseUrl custom', () => {
+  const resolution = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'ana-evora-qwen-8k-v2:latest',
+    slot: 'hot_lead',
+    baseUrl: 'https://teste.trycloudflare.com/v1',
+  });
+  assert.equal(resolution.blocked, false);
+});
+
+test('aceita qwen2.5:7b-instruct com provider local/custom', () => {
+  const localProvider = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'qwen2.5:7b-instruct',
+    slot: 'cold_lead',
+    provider: 'local',
+  });
+  const customProvider = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'qwen2.5:7b-instruct',
+    slot: 'cold_lead',
+    provider: 'custom',
+  });
+  assert.equal(localProvider.blocked, false);
+  assert.equal(customProvider.blocked, false);
+});
+
+test('bloqueia ana-evora-qwen-8k-v2:latest com baseUrl OpenAI', () => {
+  const resolution = resolveAnaOpenAIModel({
+    configuredModelFromDb: 'ana-evora-qwen-8k-v2:latest',
+    slot: 'hot_lead',
+    baseUrl: 'https://api.openai.com/v1',
+  });
+  assert.equal(resolution.blocked, true);
+  if (resolution.blocked) assert.equal(resolution.reason, 'ana_model_invalid_for_slot');
 });
 
 test('openaiService nao envia configuracao de prioridade de tier', () => {

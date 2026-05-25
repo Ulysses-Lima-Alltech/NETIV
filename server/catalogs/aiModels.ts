@@ -1,4 +1,5 @@
 export type OpenAiModelRecommendedFor = 'hot' | 'cold' | 'advanced' | 'realtime';
+export type AiModelProvider = 'openai' | 'openrouter' | 'local' | 'custom';
 
 export interface OpenAiAllowedModelItem {
   value: string;
@@ -92,10 +93,100 @@ export const OPENAI_ALLOWED_MODELS: readonly OpenAiAllowedModelItem[] = [
   },
 ] as const;
 
-const ALLOWED_MODEL_SET = new Set(OPENAI_ALLOWED_MODELS.map((item) => item.value));
+export const OPENROUTER_ALLOWED_MODELS: readonly OpenAiAllowedModelItem[] = [
+  {
+    value: 'openai/gpt-4.1',
+    label: 'OpenRouter - GPT-4.1',
+    description: 'Slug OpenRouter para GPT-4.1',
+    recommendedFor: 'hot',
+    costTier: 'médio/alto',
+    costHint: 'Use quando o provider/base URL estiver em OpenRouter',
+  },
+  {
+    value: 'openai/gpt-4.1-mini',
+    label: 'OpenRouter - GPT-4.1 mini',
+    description: 'Slug OpenRouter para GPT-4.1 mini',
+    recommendedFor: 'cold',
+    costTier: 'baixo',
+    costHint: 'Use quando o provider/base URL estiver em OpenRouter',
+  },
+  {
+    value: 'openai/gpt-4.1-nano',
+    label: 'OpenRouter - GPT-4.1 nano',
+    description: 'Slug OpenRouter para GPT-4.1 nano',
+    recommendedFor: 'cold',
+    costTier: 'muito baixo',
+    costHint: 'Use quando o provider/base URL estiver em OpenRouter',
+  },
+] as const;
 
-export function isAllowedOpenAiModel(model: string): boolean {
-  return ALLOWED_MODEL_SET.has(String(model).trim());
+const ALLOWED_MODEL_SET_OPENAI = new Set(OPENAI_ALLOWED_MODELS.map((item) => item.value));
+const ALLOWED_MODEL_SET_OPENROUTER = new Set(OPENROUTER_ALLOWED_MODELS.map((item) => item.value));
+const LOCAL_ALLOWED_MODEL_EXACT = new Set([
+  'ana-evora-qwen-8k-v2:latest',
+  'ana-evora-qwen-8k:latest',
+  'qwen2.5:7b-instruct',
+]);
+
+export const LOCAL_ALLOWED_MODELS: readonly OpenAiAllowedModelItem[] = [
+  {
+    value: 'ana-evora-qwen-8k-v2:latest',
+    label: 'Local - Ana Evora Qwen 8K v2',
+    description: 'Modelo local customizado para a Ana (temporario)',
+    recommendedFor: 'hot',
+    costTier: 'baixo',
+    costHint: 'Uso em proxy/tunel local temporario',
+  },
+  {
+    value: 'ana-evora-qwen-8k:latest',
+    label: 'Local - Ana Evora Qwen 8K',
+    description: 'Versao anterior do modelo local da Ana',
+    recommendedFor: 'cold',
+    costTier: 'baixo',
+    costHint: 'Fallback local',
+  },
+  {
+    value: 'qwen2.5:7b-instruct',
+    label: 'Local - Qwen2.5 7B Instruct',
+    description: 'Modelo Qwen local compativel com endpoint OpenAI-like',
+    recommendedFor: 'cold',
+    costTier: 'baixo',
+    costHint: 'Uso local/custom',
+  },
+] as const;
+
+function normalizeProviderOrBaseUrl(input?: string | null): AiModelProvider {
+  const raw = String(input ?? '').trim().toLowerCase();
+  if (raw === 'openrouter' || raw.includes('openrouter.ai')) return 'openrouter';
+  if (raw === 'openai' || raw.includes('api.openai.com')) return 'openai';
+  if (raw === 'local' || raw === 'custom' || raw === 'unknown') return 'local';
+  return 'local';
+}
+
+function isAllowedLocalCustomModel(model: string): boolean {
+  const normalized = String(model).trim().toLowerCase();
+  if (!normalized) return false;
+  if (LOCAL_ALLOWED_MODEL_EXACT.has(normalized)) return true;
+  return (
+    normalized.startsWith('qwen') ||
+    normalized.startsWith('ana-qwen') ||
+    normalized.startsWith('ana-evora-qwen')
+  );
+}
+
+export function getAllowedOpenAiModels(providerOrBaseUrl?: string | null): readonly OpenAiAllowedModelItem[] {
+  const provider = normalizeProviderOrBaseUrl(providerOrBaseUrl);
+  if (provider === 'openrouter') return OPENROUTER_ALLOWED_MODELS;
+  if (provider === 'openai') return OPENAI_ALLOWED_MODELS;
+  return LOCAL_ALLOWED_MODELS;
+}
+
+export function isAllowedOpenAiModel(model: string, providerOrBaseUrl?: string | null): boolean {
+  const normalizedModel = String(model).trim();
+  const provider = normalizeProviderOrBaseUrl(providerOrBaseUrl);
+  if (provider === 'openrouter') return ALLOWED_MODEL_SET_OPENROUTER.has(normalizedModel);
+  if (provider === 'openai') return ALLOWED_MODEL_SET_OPENAI.has(normalizedModel);
+  return isAllowedLocalCustomModel(normalizedModel);
 }
 
 export function getDefaultOpenAiModelHot(): string {

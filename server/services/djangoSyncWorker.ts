@@ -42,6 +42,7 @@ async function selectPending(): Promise<PendingRow[]> {
        FROM conversations c
        LEFT JOIN contacts ct ON ct.id = c.contact_id
       WHERE c.enterprise_id IS NOT NULL
+        AND c.conversation_type = 'CLIENT'
         AND (
           c.synced_to_django_at IS NULL
           OR c.synced_to_django_enterprise_id IS DISTINCT FROM c.enterprise_id

@@ -217,16 +217,14 @@ function normalizeBaseUrl(value: string | null | undefined): string | null {
   return normalized.replace(/\/$/, '');
 }
 
-function validModelOrNull(value: string | null | undefined): string | null {
-  const normalized = trimOrNull(value);
-  if (!normalized) return null;
-  return isAllowedOpenAiModel(normalized) ? normalized : null;
-}
-
-function assertAllowedModelOrNull(model: string | null | undefined, field: string): void {
+function assertAllowedModelOrNull(
+  model: string | null | undefined,
+  field: string,
+  providerOrBaseUrl?: string | null
+): void {
   const normalized = trimOrNull(model);
   if (!normalized) return;
-  if (!isAllowedOpenAiModel(normalized)) {
+  if (!isAllowedOpenAiModel(normalized, providerOrBaseUrl)) {
     const error = new Error(`Modelo inválido para ${field}.`);
     (error as Error & { code?: string }).code = 'INVALID_OPENAI_MODEL';
     throw error;
@@ -304,14 +302,22 @@ function resolveFromRows(
   const ownApiKey = trimOrNull(enterprise?.openaiApiKey);
   const globalApiKey = trimOrNull(global.openaiApiKey);
   const hasOwnApiKey = ownApiKey != null;
-  const modelHotLead = validModelOrNull(enterprise?.modelHotLead) ?? validModelOrNull(global.modelHotLead);
-  const modelColdLead = validModelOrNull(enterprise?.modelColdLead) ?? validModelOrNull(global.modelColdLead);
-  const resolvedModelHotLead = modelHotLead ?? DEFAULT_MODEL_HOT;
-  const resolvedModelColdLead = modelColdLead ?? DEFAULT_MODEL_COLD;
+  const modelHotLeadRaw = trimOrNull(enterprise?.modelHotLead) ?? trimOrNull(global.modelHotLead);
+  const modelColdLeadRaw = trimOrNull(enterprise?.modelColdLead) ?? trimOrNull(global.modelColdLead);
+
+
   const openaiBaseUrl =
     normalizeBaseUrl(enterprise?.openaiBaseUrl) ??
     normalizeBaseUrl(global.openaiBaseUrl) ??
     DEFAULT_OPENAI_BASE_URL;
+  const modelHotLead = modelHotLeadRaw && isAllowedOpenAiModel(modelHotLeadRaw, openaiBaseUrl)
+    ? modelHotLeadRaw
+    : null;
+  const modelColdLead = modelColdLeadRaw && isAllowedOpenAiModel(modelColdLeadRaw, openaiBaseUrl)
+    ? modelColdLeadRaw
+    : null;
+  const resolvedModelHotLead = modelHotLead ?? DEFAULT_MODEL_HOT;
+  const resolvedModelColdLead = modelColdLead ?? DEFAULT_MODEL_COLD;
   const temperature = global.temperature;
   const maxTokens = global.maxTokens;
   const leadScoreThreshold = global.leadScoreThreshold;
@@ -584,8 +590,8 @@ export async function updateGlobalAiSettings(
   const incomingModelCold = payload.model_cold_lead !== undefined
     ? trimOrNull(payload.model_cold_lead)
     : trimOrNull(current.modelColdLead);
-  assertAllowedModelOrNull(incomingModelHot, 'model_hot_lead');
-  assertAllowedModelOrNull(incomingModelCold, 'model_cold_lead');
+  assertAllowedModelOrNull(incomingModelHot, 'model_hot_lead', incomingBaseUrl);
+  assertAllowedModelOrNull(incomingModelCold, 'model_cold_lead', incomingBaseUrl);
   const temperature = payload.temperature ?? current.temperature;
   const maxTokens = payload.max_tokens ?? current.maxTokens;
   const leadScoreThreshold = payload.lead_score_threshold ?? current.leadScoreThreshold;
@@ -709,8 +715,8 @@ export async function upsertEnterpriseAiSettings(
     payload.model_cold_lead !== undefined
       ? trimOrNull(payload.model_cold_lead)
       : trimOrNull(current.modelColdLead);
-  assertAllowedModelOrNull(modelHotLead, 'model_hot_lead');
-  assertAllowedModelOrNull(modelColdLead, 'model_cold_lead');
+  assertAllowedModelOrNull(modelHotLead, 'model_hot_lead', openaiBaseUrl);
+  assertAllowedModelOrNull(modelColdLead, 'model_cold_lead', openaiBaseUrl);
 
   await query(
     `UPDATE enterprise_ai_settings
@@ -925,3 +931,4 @@ export async function getSafeEnterpriseAiSettingsForFrontend(): Promise<Enterpri
     };
   });
 }
+

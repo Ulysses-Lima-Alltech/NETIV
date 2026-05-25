@@ -25,9 +25,12 @@ export type AnaModelResolution = AnaModelResolutionSuccess | AnaModelResolutionB
 export function resolveAnaOpenAIModel(args: {
   configuredModelFromDb: string | null;
   slot?: AnaModelSlot;
+  provider?: string | null;
+  baseUrl?: string | null;
 }): AnaModelResolution {
   const slot = args.slot ?? 'hot_lead';
   const configuredModelFromDb = (args.configuredModelFromDb ?? '').trim() || null;
+  const providerContext = args.baseUrl ?? args.provider ?? null;
 
   if (!configuredModelFromDb) {
     return {
@@ -40,7 +43,7 @@ export function resolveAnaOpenAIModel(args: {
     };
   }
 
-  if (!isAllowedOpenAiModel(configuredModelFromDb)) {
+  if (!isAllowedOpenAiModel(configuredModelFromDb, providerContext)) {
     return {
       blocked: true,
       finalModel: null,

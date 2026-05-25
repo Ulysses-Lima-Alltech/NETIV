@@ -73,6 +73,7 @@ export function initSocketServer(server: HttpServer): SocketIOServer {
         }
         socket.data.userId = user.id;
         socket.data.userRole = user.role;
+        socket.data.sessionScope = (user as any).sessionScope ?? null;
         return next();
       }
 
@@ -84,6 +85,7 @@ export function initSocketServer(server: HttpServer): SocketIOServer {
         }
         socket.data.userId = embeddedUser.id;
         socket.data.userRole = embeddedUser.role;
+        socket.data.sessionScope = null;
         return next();
       }
 
