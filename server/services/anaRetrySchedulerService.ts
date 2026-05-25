@@ -1,3 +1,7 @@
+﻿
+function isAnaEmergencyRetryReengagementDisabled(): boolean {
+  return process.env.ANA_DISABLE_RETRY_REENGAGEMENT !== 'false';
+}
 import { upsertAnaRetryJob } from '../repositories/anaRetryJobRepository.js';
 import {
   computeRetryDelayMs,
@@ -40,3 +44,4 @@ export async function scheduleAnaRetry(params: {
     nextRunAt: nextRunAt.toISOString(),
   });
 }
+

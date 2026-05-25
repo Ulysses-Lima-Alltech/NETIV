@@ -1,4 +1,4 @@
-import 'dotenv/config';
+﻿import 'dotenv/config';
 import './express-augmentation.js';
 import express from 'express';
 import { createServer } from 'http';
@@ -29,7 +29,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/webhook', webhookMetaRouter);
 app.use('/api', apiRouter);
 
-/** Health checks ALB/ECS: corpo fixo, sem dependência de banco ou auth */
+/** Health checks ALB/ECS: corpo fixo, sem dependÃªncia de banco ou auth */
 app.get('/', (_req, res) => {
   res.type('text/plain').status(200).send('ok');
 });
@@ -60,7 +60,7 @@ initPostgres()
     try {
       const synced = await syncAllConversationOwnersFromContacts();
       if (synced > 0) {
-        console.log(`[startup] Sync contacts.owner_user_id → conversations.assigned_broker_id: ${synced} conversa(ões).`);
+        console.log(`[startup] Sync contacts.owner_user_id â†’ conversations.assigned_broker_id: ${synced} conversa(Ãµes).`);
       }
     } catch (e) {
       console.warn('[startup] Sync assigned_broker desde contacts:', e instanceof Error ? e.message : e);
@@ -71,13 +71,13 @@ initPostgres()
       const ai = await getOpenAIConfig();
       console.log('[startup] Config do banco:',
         `WhatsApp=${wa?.enabled ? 'ATIVO' : 'inativo'}`,
-        `(token=${wa?.metaAccessToken ? 'sim' : 'não'},`,
-        `phoneId=${wa?.whatsappPhoneNumberId ? 'sim' : 'não'})`,
+        `(token=${wa?.metaAccessToken ? 'sim' : 'nÃ£o'},`,
+        `phoneId=${wa?.whatsappPhoneNumberId ? 'sim' : 'nÃ£o'})`,
         `| IA=${ai?.aiEnabled ? 'ATIVO' : 'inativo'}`,
-        `(key=${ai?.openaiApiKey ? 'sim' : 'não'})`
+        `(key=${ai?.openaiApiKey ? 'sim' : 'nÃ£o'})`
       );
     } catch (e) {
-      console.warn('[startup] Não foi possível ler config do banco:', e instanceof Error ? e.message : e);
+      console.warn('[startup] NÃ£o foi possÃ­vel ler config do banco:', e instanceof Error ? e.message : e);
     }
     if (realtimeEnabled) {
       console.log('[Realtime] enabled');
@@ -109,3 +109,4 @@ initPostgres()
     console.error('[startup]', e);
     process.exit(1);
   });
+

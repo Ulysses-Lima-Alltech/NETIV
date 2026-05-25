@@ -1,3 +1,7 @@
+﻿
+function isAnaEmergencyRetryReengagementDisabled(): boolean {
+  return process.env.ANA_DISABLE_RETRY_REENGAGEMENT !== 'false';
+}
 import { getPool, query } from '../db/pg.js';
 import { getConversationById, type ConversationRow } from '../repositories/conversationRepository.js';
 import { touchContactInteractionByConversation } from '../repositories/contactsRepository.js';
@@ -20,15 +24,15 @@ import { resolveAnaCommercialFollowupMessage } from './anaCommercialRulesService
 const SCAN_LIMIT = 150;
 
 const BODY_WITH_NAME = [
-  'Oi, {{name}}. Passando só pra não te deixar sem retorno. Se ainda fizer sentido, sigo por aqui.',
+  'Oi, {{name}}. Passando sÃ³ pra nÃ£o te deixar sem retorno. Se ainda fizer sentido, sigo por aqui.',
   'Oi, {{name}}. Vi que nossa conversa ficou em aberto. Quando quiser, continuo daqui.',
-  'Oi, {{name}}. Só retomando por aqui pra não perder seu atendimento. Me chama quando for melhor pra você.',
+  'Oi, {{name}}. SÃ³ retomando por aqui pra nÃ£o perder seu atendimento. Me chama quando for melhor pra vocÃª.',
 ];
 
 const BODY_NO_NAME = [
-  'Oi. Passando só pra não te deixar sem retorno. Se ainda fizer sentido, sigo por aqui.',
+  'Oi. Passando sÃ³ pra nÃ£o te deixar sem retorno. Se ainda fizer sentido, sigo por aqui.',
   'Oi. Vi que nossa conversa ficou em aberto. Quando quiser, continuo daqui.',
-  'Oi. Só retomando por aqui pra não perder seu atendimento. Me chama quando for melhor pra você.',
+  'Oi. SÃ³ retomando por aqui pra nÃ£o perder seu atendimento. Me chama quando for melhor pra vocÃª.',
 ];
 
 function firstName(raw: string | null | undefined): string | null {
@@ -318,3 +322,4 @@ async function trySendReengagementForConversation(conversationId: number): Promi
     client.release();
   }
 }
+

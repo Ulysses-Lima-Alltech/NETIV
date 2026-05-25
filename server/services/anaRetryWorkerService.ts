@@ -1,3 +1,7 @@
+﻿
+function isAnaEmergencyRetryReengagementDisabled(): boolean {
+  return process.env.ANA_DISABLE_RETRY_REENGAGEMENT !== 'false';
+}
 import { getConversationById } from '../repositories/conversationRepository.js';
 import {
   getLastUserMessageRow,
@@ -133,3 +137,4 @@ export async function processAnaRetryJobsTick(): Promise<void> {
     workerRunning = false;
   }
 }
+
