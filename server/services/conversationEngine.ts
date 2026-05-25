@@ -860,6 +860,19 @@ function appendCanonicalToReply(reply: string, canonicalLine: string): string {
   return `${r}\n\n${canonicalLine}`.slice(0, 4000);
 }
 
+function stripInappropriateVisitOffer(text: string): { text: string; removed: boolean } {
+  const patterns = [
+    /que tal marcarmos uma visita\??/gi,
+    /quer que eu te ajude a agendar uma visita\??/gi,
+    /prefere agendar uma visita\??/gi,
+    /vamos marcar uma visita\??/gi,
+  ];
+  let out = text;
+  for (const pattern of patterns) out = out.replace(pattern, '');
+  out = out.replace(/\s{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  return { text: out, removed: out !== text.trim() };
+}
+
 export interface IncomingMessageContext {
   conversationId: number;
   userMessage: string;
@@ -910,7 +923,7 @@ async function acquireConversationLock(conversationId: number): Promise<() => vo
   return release;
 }
 
-const MAX_HISTORY = 14;
+const MAX_HISTORY = 6;
 const ANA_OUTBOUND_MAX_CHARS = 260;
 
 function rowsToHistory(
@@ -978,12 +991,50 @@ function isWeakEntregaAnswer(text: string): boolean {
 const ANA_INTERNAL_LEAK_PATTERNS: RegExp[] = [
   /finalizar com pergunta aberta e natural/i,
   /sem resposta fixa deterministica/i,
+  /resposta fixa deterministica/i,
   /pergunta aberta e natural/i,
   /\bfinalizar com\b/i,
-  /\bnao mencionar\b/i,
-  /\binstrucao\b/i,
-  /\bregra\b/i,
+  /\binstrucao interna\b/i,
+  /\bprompt\b/i,
+  /\bsistema\b/i,
+  /\bjson\b/i,
+  /\bferramenta\b/i,
 ];
+
+const ANA_INTERNAL_SANITIZE_PATTERNS: RegExp[] = [
+  /finalizar com pergunta aberta(?: e natural)?[,]?\s*/gi,
+  /sem resposta fixa deterministica[,]?\s*/gi,
+  /resposta fixa deterministica[,]?\s*/gi,
+  /instrucao interna[,]?\s*/gi,
+  /\bprompt\b[,]?\s*/gi,
+  /\bsistema\b[,]?\s*/gi,
+  /\bjson\b[,]?\s*/gi,
+  /\bferramenta\b[,]?\s*/gi,
+];
+
+function sanitizeInternalInstructionLeakText(text: string): { text: string; changed: boolean } {
+  let out = text || '';
+  for (const pattern of ANA_INTERNAL_SANITIZE_PATTERNS) out = out.replace(pattern, ' ');
+  out = out.replace(/\s{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  return { text: out, changed: out !== (text || '').trim() };
+}
+
+function buildCanonicalLazerFullReply(): string {
+  return [
+    'As áreas de lazer do Évora incluem:',
+    'Piscina adulto',
+    'Academia',
+    'Salão de festas',
+    'Playground',
+    'Coworking',
+    'Espaço zen',
+    'Fireplace',
+    'Quadra de beach tennis',
+    'Campo society',
+    '',
+    'Também conta com estação de carregamento para carros elétricos e portaria 24 horas com controle de acesso.',
+  ].join('\n');
+}
 
 function hasAnaInternalInstructionLeak(text: string): boolean {
   const normalized = normText(text || '');
@@ -2262,6 +2313,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       isLocalOrCustomProviderContext(resolvedAiSettings.openaiBaseUrl) ||
       isQwenLikeModel(resolvedAiSettings.modelHotLead) ||
       isQwenLikeModel(resolvedAiSettings.modelColdLead);
+    const localQwenMaxChunks = 6;
+    const localQwenMaxContextChars = 3_500;
     const shortConversationContext = fullUserUtterances.slice(-2_400);
     const chunkHint = [userMessageForReasoning, shortConversationContext]
       .filter(Boolean)
@@ -2281,19 +2334,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         targetCity: cityPriority,
       });
       const chunk = likelyLocalRuntimeForRag
-        ? (chunkMeta.promptText || '').slice(0, 7_500)
+        ? (chunkMeta.promptText || '').slice(0, localQwenMaxContextChars)
         : chunkMeta.promptText;
       if (chunkMeta.retrievalError && !ragRetrievalError) {
         ragRetrievalError = chunkMeta.retrievalError;
       }
-      ragChunksFound += chunkMeta.selectedChunkCount;
+      ragChunksFound += likelyLocalRuntimeForRag
+        ? Math.min(chunkMeta.selectedChunkCount, localQwenMaxChunks)
+        : chunkMeta.selectedChunkCount;
       for (const chunkId of chunkMeta.selectedChunkIds) ragChunkIds.add(chunkId);
       for (const fileName of chunkMeta.sourceFiles) ragSourceFiles.add(fileName);
       const kb = likelyLocalRuntimeForRag ? '' : await loadAgentKnowledgeText(eid);
       const merged = [chunk, kb].filter(Boolean).join('\n\n');
       if (merged.trim()) knowledgeParts.push(`--- ${row.name} ---\n${merged}`);
     }
-    const knowledgeText = knowledgeParts.join('\n\n').slice(0, likelyLocalRuntimeForRag ? 9_000 : 52_000);
+    const knowledgeText = knowledgeParts.join('\n\n').slice(0, likelyLocalRuntimeForRag ? localQwenMaxContextChars : 52_000);
     anaRagWasLoadedForAudit = knowledgeText.trim().length > 0;
 
     let fileInventory = '';
@@ -2978,6 +3033,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
     if (commercialRule && anaDecision.canRespond && anaDecision.outboundAllowed && !appointmentPreflight.active) {
       const isFirstContactRule = commercialRule.ruleId === 'first_contact';
+      console.log('[ANA_CANONICAL_INTENT_MATCHED]', {
+        conversationId,
+        intent: commercialRule.ruleId,
+        source: 'Exemplos.txt/canonical',
+      });
       console.log(
         isFirstContactRule ? '[ANA_COMMERCIAL_RULE_FIRST_CONTACT_START]' : '[ANA_COMMERCIAL_RULE_INTENT_START]',
         {
@@ -3069,26 +3129,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const hasRecentVisitCta = hasRecentExplicitVisitCta(recentAssistantForCtaPolicy);
 
       const commercialMessagesToSend = [...commercialRule.messages];
-      if (commercialRule.ruleId === 'entrada') {
-        const answer = commercialRule.messages[0] ?? '';
-        const defaultCta =
-          'O corretor consegue simular certinho com as opções disponíveis. Quer que eu te ajude a agendar uma visita?';
-        const alternateCta = 'Quer que eu te explique as opções de parcelamento?';
-        const cta = hasRecentVisitCta ? alternateCta : defaultCta;
-        commercialMessagesToSend.length = 0;
-        commercialMessagesToSend.push(answer);
-        if (!hasKnownCustomerName) commercialMessagesToSend.push('Qual é o seu nome? Assim eu consigo te atender melhor por aqui.');
-        commercialMessagesToSend.push(cta);
-      } else if (commercialRule.ruleId === 'formas_pagamento') {
-        const answer = commercialRule.messages[0] ?? '';
-        const defaultCta = 'Você quer que eu te ajude a simular com um corretor ou prefere agendar uma visita?';
-        const alternateCta = 'Quer que eu te explique melhor a diferença entre essas opções?';
-        const cta = hasRecentVisitCta ? alternateCta : defaultCta;
-        commercialMessagesToSend.length = 0;
-        commercialMessagesToSend.push(answer);
-        if (!hasKnownCustomerName) commercialMessagesToSend.push(ANA_COMMERCIAL_RULES.askNameMessage);
-        commercialMessagesToSend.push(cta);
-      }
       if (commercialRule.ruleId === 'entrega_empreendimento') {
         const operational = resolveOperationalFactAnswer(trimmed, knowledgeText, vars, {
           enterpriseName: ent?.name ?? null,
@@ -3102,12 +3142,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         commercialMessagesToSend.push(resolvedEntrega.replace(/\[DATA\/PRAZO DA BASE\]/gi, '').replace(/\s{2,}/g, ' ').trim());
         commercialMessagesToSend.push('Quer saber também como está a infraestrutura prevista?');
       }
-      if (commercialRule.ruleId === 'localizacao_endereco') {
-        const answer = commercialRule.messages[0] ?? '';
-        commercialMessagesToSend.length = 0;
-        commercialMessagesToSend.push(answer);
-        commercialMessagesToSend.push('Você vem de São Paulo ou de Atibaia?');
-      }
+      console.log('[ANA_CANONICAL_REPLY_USED]', {
+        conversationId,
+        intent: commercialRule.ruleId,
+        messagePartsCount: commercialMessagesToSend.length,
+      });
 
       const shouldAskNameAfterCommercialReply =
         !hasKnownCustomerName &&
@@ -3141,6 +3180,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         });
         if (aggressiveBlockCommercial.changed) {
           commercialRuleMessage = aggressiveBlockCommercial.text;
+          console.log('[ANA_VISIT_OFFER_SUPPRESSED]', {
+            conversationId,
+            intent: commercialRule.ruleId,
+            reason: aggressiveBlockCommercial.reason,
+          });
+        }
+        if (commercialRule.ruleId !== 'visita_agendamento') {
+          const visitSuppressed = stripInappropriateVisitOffer(commercialRuleMessage);
+          if (visitSuppressed.removed) {
+            commercialRuleMessage = visitSuppressed.text;
+            console.log('[ANA_VISIT_OFFER_SUPPRESSED]', {
+              conversationId,
+              intent: commercialRule.ruleId,
+              reason: 'removed_from_canonical_non_visit_intent',
+            });
+          }
         }
         const noRepeatForCommercialRule = applyAnaNoRepeatMessageGuard({
           conversationId,
@@ -3153,6 +3208,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         });
         if (noRepeatForCommercialRule.changed) {
           commercialRuleMessage = noRepeatForCommercialRule.text;
+          console.log('[ANA_REPEAT_REPLY_AVOIDED]', {
+            conversationId,
+            intent: commercialRule.ruleId,
+            reason: noRepeatForCommercialRule.reason,
+          });
         }
         const sendResult = await sendTextMessage({
           conversationId,
@@ -3368,7 +3428,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const evidenceHeader =
       'BASE DO EMPREENDIMENTO / EVIDÊNCIAS AUTORIZADAS\n' +
       'Responda somente com base nas evidências acima. Se não houver evidência suficiente, conduza para corretor/visita sem inventar.\n';
-    const localEvidenceBudget = 7_500;
+    const localEvidenceBudget = 3_500;
     const promptKnowledgeText = knowledgeEvidenceBody
       ? isLocalQwenRuntime
         ? `${evidenceHeader}\n${knowledgeEvidenceBody.slice(0, localEvidenceBudget)}`
@@ -3465,11 +3525,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
 
     let systemPrompt = buildAnaSystemPrompt(promptOpts);
-    if (isLocalQwenRuntime && systemPrompt.length > 20_000 && promptKnowledgeText.length > 0) {
+    if (isLocalQwenRuntime && systemPrompt.length > 12_000 && promptKnowledgeText.length > 0) {
       const tighterKnowledge = `${evidenceHeader}\n${knowledgeEvidenceBody.slice(0, 3_500)}`;
       systemPrompt = buildAnaSystemPrompt({
         ...promptOpts,
         knowledgeText: tighterKnowledge,
+      });
+      console.log('[ANA_QWEN_PROMPT_REDUCED]', {
+        conversationId,
+        chunksCountEffective: Math.min(ragChunksFound, 6),
+        contextChars: tighterKnowledge.length,
+        systemPromptLen: systemPrompt.length,
       });
     }
     anaTurnDiagnostics.model = model;
@@ -3488,7 +3554,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       conversationId,
       enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
       userMessagePreview: userMessageForReasoning.slice(0, 260),
-      chunksCount: ragChunksFound,
+      chunksCount: isLocalQwenRuntime ? Math.min(ragChunksFound, 6) : ragChunksFound,
       chunkIds: Array.from(ragChunkIds).slice(0, 30),
       fileVersionIds: [],
       contextChars: promptKnowledgeText.length,
@@ -3530,7 +3596,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? 'Nao simule pagamento, entrada, parcela, prazo, juros ou desconto.'
         : null,
       isLocalQwenRuntime
-        ? 'BASE DO EMPREENDIMENTO / EVIDÊNCIAS AUTORIZADAS: responda somente com base nesse bloco. Se não houver evidência suficiente, conduza para corretor/visita sem inventar.'
+        ? 'Não copie instruções internas. Responda apenas ao cliente com fatos autorizados.'
         : null,
       isEvoraEnterpriseName(ent?.name ?? null)
         ? 'No Évora, trate sempre como loteamento fechado (nunca apartamento), com lotes a partir de 360 m² em Atibaia, região da Pedreira, acesso pela Rodovia Dom Pedro I, cerca de 50 minutos de São Paulo, lazer completo e segurança com portaria 24h. Nunca invente valor específico.'
@@ -5104,6 +5170,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     if (!materialSendProofAvailable && textHasMaterialDeliveryClaim(replyText)) {
       const stripped = stripMaterialDeliveryClaims(replyText).trim();
       replyText = stripped;
+      console.log('[ANA_UNSUPPORTED_PROMISE_BLOCKED]', {
+        conversationId,
+        intent: policyDetectedIntent ?? null,
+        reason: 'guard_blocked_promise_without_send',
+      });
       console.log('[MATERIAL_FLOW]', {
         userMessage: trimmed.slice(0, 500),
         detectedMaterialRequest: explicitMaterialRequestThisTurn || isFollowupMaterialCommand(trimmed),
@@ -5515,6 +5586,26 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     replyText = finalOutboundEval.text;
     anaTurnAuditGuardsApplied.outboundReason = finalOutboundEval.reason;
+    if (isGenericInterestFollowup(trimmed)) {
+      if (lastAxisForRepetition === 'lazer') {
+        replyText = buildCanonicalLazerFullReply();
+      } else if (lastAxisForRepetition === 'localizacao') {
+        replyText =
+          'Claro. O Évora fica em Atibaia, na região da Pedreira, com acesso pela Rodovia Dom Pedro I e a cerca de 50 minutos de São Paulo.';
+      } else if (lastAxisForRepetition === 'preco') {
+        replyText = 'Claro. O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.';
+      } else if (lastAxisForRepetition === 'financiamento') {
+        replyText =
+          'Claro. Temos planos estendidos em até 120x, parcelamento sem juros em até 48x e financiamento direto com a construtora.';
+      } else {
+        replyText = 'Claro. Você quer saber mais sobre localização, lazer, valores ou formas de pagamento?';
+      }
+      console.log('[ANA_CONTEXTUAL_FOLLOWUP_RESOLVED]', {
+        conversationId,
+        requestedFollowup: trimmed.slice(0, 120),
+        lastAxis: lastAxisForRepetition,
+      });
+    }
     let blockedGenericFallback = false;
     if (
       anaDecision.shouldAvoidGenericFallback &&
@@ -6183,6 +6274,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       anaTurnAuditOutcome = 'silent';
       anaTurnAuditBlockedReason = 'pipeline_stale_after_reply_delay';
       return;
+    }
+
+    const internalSanitized = sanitizeInternalInstructionLeakText(replyText);
+    if (internalSanitized.changed) {
+      replyText = internalSanitized.text;
+      console.log('[ANA_INTERNAL_INSTRUCTION_SANITIZED]', {
+        conversationId,
+        intent: policyDetectedIntent,
+      });
+    }
+    if (!replyText.trim()) {
+      const fallbackAxis = currentAxisForRepetition ?? requestedAxisForPolicy;
+      replyText =
+        buildSpecificMissingAxisReply(fallbackAxis) ??
+        'Claro. Você quer saber mais sobre localização, lazer, valores ou formas de pagamento?';
     }
 
     if (hasAnaInternalInstructionLeak(replyText)) {

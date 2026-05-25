@@ -5,9 +5,12 @@
   | 'formas_pagamento'
   | 'financiamento'
   | 'localizacao_endereco'
+  | 'endereco'
   | 'visita_agendamento'
   | 'entrega_empreendimento'
   | 'valor_condominio'
+  | 'areas_lazer'
+  | 'seguranca_portaria'
   | 'disponibilidade_simulacao_desconto'
   | 'materiais';
 
@@ -25,18 +28,18 @@ export const ANA_COMMERCIAL_RULES = {
     ],
     entrada: [
       'A entrada mínima é de 20% do valor do lote. O valor exato depende da unidade escolhida.',
-      'O corretor consegue simular certinho com as opções disponíveis. Quer que eu te ajude a agendar uma visita?',
     ],
     formas_pagamento: [
-      'Temos algumas formas de pagamento que podem se encaixar na sua realidade. Para parcelas mais baixas, existem planos estendidos em até 120x. Para parcelamento sem juros, há opções em até 48x.',
-      'Você quer que eu te ajude a simular com um corretor ou prefere agendar uma visita?',
+      'Temos algumas formas de pagamento que podem se encaixar na sua realidade.\n\nPara parcelas mais baixas, existem planos estendidos em até 120x.\n\nPara parcelamento sem juros, há opções em até 48x.\n\nO financiamento pode ser direto com a construtora, com menos burocracia e mais facilidade para você.',
     ],
     financiamento: [
-      'O financiamento é facilitado por ser direto com a construtora, com menos burocracia e mais facilidade pra você.',
-      'Quer que eu te ajude a simular com um corretor?',
+      'O financiamento é facilitado por ser direto com a construtora, com menos burocracia e mais facilidade para você.',
     ],
     localizacao_endereco: [
-      'O Évora fica na Estrada dos Pires, s/n, bairro Rio Abaixo, em Atibaia. Fica próximo à região da Pedreira, com acesso pela Rodovia Dom Pedro I.',
+      'O Évora fica em Atibaia, na região bragantina, a cerca de 50 minutos de São Paulo.\n\nEstá na região da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.\n\nA Avenida Lucas Nogueira Garcez é um polo gastronômico e comercial importante da cidade.\n\nAtibaia também é reconhecida pelo segundo melhor clima do mundo, segundo a ONU.',
+    ],
+    endereco: [
+      'O endereço do Évora é Estrada dos Pires, s/n, bairro Rio Abaixo, em Atibaia.\n\nFica na região da Pedreira, com fácil acesso pela Rodovia Dom Pedro I.',
     ],
     visita_agendamento: [
       'Perfeito! Pra agendarmos sua visita, só preciso saber seu nome, dia e horário que prefere.',
@@ -48,8 +51,14 @@ export const ANA_COMMERCIAL_RULES = {
     valor_condominio: [
       'O valor de condomínio vai depender das definições feitas pelos próprios moradores e associação do condomínio, mas temos uma estimativa entre R$400,00 e R$700,00.',
     ],
+    areas_lazer: [
+      'As áreas de lazer do Évora incluem:\n\nPiscina adulto\nAcademia\nSalão de festas\nPlayground\nCoworking\nEspaço zen\nFireplace\nQuadra de beach tennis\nCampo society\n\nTambém conta com estação de carregamento para carros elétricos e portaria 24 horas com controle de acesso.',
+    ],
+    seguranca_portaria: [
+      'O Évora conta com portaria 24 horas com controle de acesso.',
+    ],
     disponibilidade_simulacao_desconto: [
-      'Esses detalhes variam conforme as opções disponíveis. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?',
+      'Esses detalhes variam conforme as opções disponíveis. O corretor te passa tudo certinho no atendimento.',
     ],
     materiais: [
       'Não tenho esse material liberado para envio por aqui. Tem algum detalhe específico que você gostaria de tratar?',

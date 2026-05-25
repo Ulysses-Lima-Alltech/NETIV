@@ -45,10 +45,20 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
   const n = normalizeText(userMessage);
   if (!n) return null;
 
+  if (hasAny(n, [/\b(lazer|areas? de lazer|area comum|amenidades|piscina|academia|playground|coworking|beach tennis|campo society)\b/])) {
+    return 'areas_lazer';
+  }
+  if (hasAny(n, [/\b(seguranca|segurança|portaria|controle de acesso)\b/])) {
+    return 'seguranca_portaria';
+  }
   if (isEntregaEmpreendimentoIntent(n)) return 'entrega_empreendimento';
   if (isValorCondominioIntent(n)) return 'valor_condominio';
 
-  if (hasAny(n, [/\b(qual o preco|quero saber preco|queria saber preco|quanto custa|qual o valor|valor dos lotes|quanto e o lote|a partir de quanto)\b/])) {
+  if (
+    hasAny(n, [
+      /\b(qual o preco|quero saber preco|queria saber preco|quanto custa|qual o valor|valor dos lotes|quanto e o lote|a partir de quanto|preco|valor|investimento|metro quadrado|m2|m²)\b/,
+    ])
+  ) {
     return 'preco_valor_lote';
   }
 
@@ -66,6 +76,9 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
 
   if (hasAny(n, [/\b(onde fica|qual a localizacao|como chegar|me passa o endereco|me enviar a localizacao|me manda a localizacao|fica onde)\b/])) {
     return 'localizacao_endereco';
+  }
+  if (hasAny(n, [/\b(endereco|endereço|qual o endereco|qual é o endereço|me passa o endereço)\b/])) {
+    return 'endereco';
   }
 
   if (hasAny(n, [/\b(quero visitar|pode agendar|quero conhecer|vamos agendar|tenho interesse em visitar|quero marcar|pode marcar)\b/]) || /^(sim|pode ser)$/i.test(userMessage.trim())) {
@@ -91,7 +104,10 @@ export type ResolvedAnaCommercialRule = {
 };
 
 export function splitCommercialRuleMessages(lines: readonly string[]): string[] {
-  return lines.map((line) => line.trim()).filter(Boolean);
+  return lines
+    .flatMap((line) => line.split(/\r?\n\r?\n/))
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 export function isEvoraEnterpriseName(enterpriseName: string | null | undefined): boolean {
