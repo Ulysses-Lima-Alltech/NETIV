@@ -324,6 +324,37 @@ function buildDirectAxisFallbackReply(axis: CommercialAxis): string {
   return '';
 }
 
+function isKnowledgeDependentRequest(message: string, axis: CommercialAxis | null): boolean {
+  if (axis != null) return true;
+  const n = normText(message || '');
+  if (!n) return false;
+  return (
+    /\b(empreendimento|loteamento|localizacao|lazer|seguranca|portaria|valor|preco|metragem|estrutura|condic(?:ao|oes)|rodovia|atibaia|pedreira)\b/.test(
+      n
+    )
+  );
+}
+
+function buildCanonicalSafeReplyForMissingRag(params: {
+  axis: CommercialAxis | null;
+  isEvora: boolean;
+}): string {
+  if (params.axis === 'preco' || params.axis === 'financiamento' || params.axis === 'disponibilidade') {
+    return 'Esses detalhes variam conforme as opções disponíveis. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?';
+  }
+  if (params.isEvora) {
+    return [
+      'O Évora é um loteamento fechado em Atibaia, na região da Pedreira, com fácil acesso pela Rodovia Dom Pedro I.',
+      'Tem lotes a partir de 360 m², lazer completo e segurança com portaria 24h.',
+      'Os detalhes comerciais variam conforme disponibilidade. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?',
+    ].join(' ');
+  }
+  if (params.axis === 'localizacao') {
+    return 'Posso te orientar pela localização geral do empreendimento e o corretor te passa todos os detalhes certinho no atendimento. Que tal marcarmos uma visita?';
+  }
+  return 'Posso te ajudar com as informações gerais do empreendimento e, para os detalhes comerciais variáveis, o corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?';
+}
+
 function axisHumanLabel(axis: CommercialAxis): string {
   if (axis === 'metragem_tipologia') return 'metragem';
   if (axis === 'financiamento') return 'formas de pagamento';
@@ -2227,7 +2258,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
-    const chunkHint = [userMessageForReasoning, fullUserUtterances].filter(Boolean).join('\n').slice(0, 12_000);
+    const likelyLocalRuntimeForRag =
+      isLocalOrCustomProviderContext(resolvedAiSettings.openaiBaseUrl) ||
+      isQwenLikeModel(resolvedAiSettings.modelHotLead) ||
+      isQwenLikeModel(resolvedAiSettings.modelColdLead);
+    const shortConversationContext = fullUserUtterances.slice(-2_400);
+    const chunkHint = [userMessageForReasoning, shortConversationContext]
+      .filter(Boolean)
+      .join('\n')
+      .slice(0, likelyLocalRuntimeForRag ? 3_200 : 12_000);
     const knowledgeParts: string[] = [];
     let ragChunksFound = 0;
     let ragRetrievalError: string | null = null;
@@ -2241,18 +2280,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const chunkMeta = await loadRankedKnowledgeChunksForPromptWithMeta(eid, `${row.name}\n${chunkHint}`, {
         targetCity: cityPriority,
       });
-      const chunk = chunkMeta.promptText;
+      const chunk = likelyLocalRuntimeForRag
+        ? (chunkMeta.promptText || '').slice(0, 7_500)
+        : chunkMeta.promptText;
       if (chunkMeta.retrievalError && !ragRetrievalError) {
         ragRetrievalError = chunkMeta.retrievalError;
       }
       ragChunksFound += chunkMeta.selectedChunkCount;
       for (const chunkId of chunkMeta.selectedChunkIds) ragChunkIds.add(chunkId);
       for (const fileName of chunkMeta.sourceFiles) ragSourceFiles.add(fileName);
-      const kb = await loadAgentKnowledgeText(eid);
+      const kb = likelyLocalRuntimeForRag ? '' : await loadAgentKnowledgeText(eid);
       const merged = [chunk, kb].filter(Boolean).join('\n\n');
       if (merged.trim()) knowledgeParts.push(`--- ${row.name} ---\n${merged}`);
     }
-    const knowledgeText = knowledgeParts.join('\n\n').slice(0, 52_000);
+    const knowledgeText = knowledgeParts.join('\n\n').slice(0, likelyLocalRuntimeForRag ? 9_000 : 52_000);
     anaRagWasLoadedForAudit = knowledgeText.trim().length > 0;
 
     let fileInventory = '';
@@ -3274,12 +3315,70 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       flowState: flowStateParsed,
     };
 
+    const shouldBlockFreeformWithoutRag =
+      ragChunksFound === 0 &&
+      isKnowledgeDependentRequest(userMessageForReasoning, currentAxisForRepetition);
+    if (shouldBlockFreeformWithoutRag) {
+      const canonicalReply = buildCanonicalSafeReplyForMissingRag({
+        axis: currentAxisForRepetition,
+        isEvora: isEvoraEnterpriseName(ent?.name ?? null),
+      });
+      console.log('[ANA_RAG_CONTEXT_MISSING_BLOCKED_FREEFORM]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        userMessagePreview: userMessageForReasoning.slice(0, 260),
+        chunksCount: ragChunksFound,
+        chunkIds: Array.from(ragChunkIds).slice(0, 30),
+        contextChars: knowledgeText.length,
+      });
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_rag_missing_fallback';
+        return;
+      }
+      const sendCanonical = await sendTextMessage({
+        conversationId,
+        to: toPhoneNumber,
+        text: canonicalReply,
+        phase: 'ana_rag_missing_fallback',
+      });
+      if (!sendCanonical.success || !sendCanonical.metaMessageId) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'rag_missing_fallback_send_failed';
+        return;
+      }
+      await insertMessage(conversationId, 'assistant', canonicalReply, sendCanonical.metaMessageId);
+      anaTurnAuditOutcome = 'blocked';
+      anaTurnAuditBlockedReason = 'rag_missing_blocked_freeform';
+      anaTurnDiagnostics.finalResponse.replySource = 'policy_missing_information';
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
+        replySource: 'policy_missing_information',
+        outboundStatus: anaTurnAuditOutcome,
+      });
+      return;
+    }
+
     anaEngineTrace('prompt_build_start', { conversationId, historyCount, mode });
+    const isLocalQwenRuntime =
+      isLocalOrCustomProviderContext(resolvedAiSettings.openaiBaseUrl) ||
+      isQwenLikeModel((resolvedAiSettings?.modelHotLead || '').trim()) ||
+      isQwenLikeModel((resolvedAiSettings?.modelColdLead || '').trim());
+    const knowledgeEvidenceBody = knowledgeText.trim();
+    const evidenceHeader =
+      'BASE DO EMPREENDIMENTO / EVIDÊNCIAS AUTORIZADAS\n' +
+      'Responda somente com base nas evidências acima. Se não houver evidência suficiente, conduza para corretor/visita sem inventar.\n';
+    const localEvidenceBudget = 7_500;
+    const promptKnowledgeText = knowledgeEvidenceBody
+      ? isLocalQwenRuntime
+        ? `${evidenceHeader}\n${knowledgeEvidenceBody.slice(0, localEvidenceBudget)}`
+        : knowledgeEvidenceBody
+      : '';
     const promptOpts: BuildAnaSystemPromptOpts = {
       mode,
       enterprise: ent,
       variablesMap: vars,
-      knowledgeText,
+      knowledgeText: promptKnowledgeText,
       fileInventory,
       allEnterpriseNames,
       requestedProductType: promptProductTypeForPrompt,
@@ -3365,18 +3464,35 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       offeredNames: allEnterpriseNames,
     });
 
-    const systemPrompt = buildAnaSystemPrompt(promptOpts);
+    let systemPrompt = buildAnaSystemPrompt(promptOpts);
+    if (isLocalQwenRuntime && systemPrompt.length > 20_000 && promptKnowledgeText.length > 0) {
+      const tighterKnowledge = `${evidenceHeader}\n${knowledgeEvidenceBody.slice(0, 3_500)}`;
+      systemPrompt = buildAnaSystemPrompt({
+        ...promptOpts,
+        knowledgeText: tighterKnowledge,
+      });
+    }
     anaTurnDiagnostics.model = model;
     anaTurnDiagnostics.llm.model = model;
-    anaTurnDiagnostics.rag.includedInPrompt = knowledgeText.trim().length > 0;
+    anaTurnDiagnostics.rag.includedInPrompt = promptKnowledgeText.trim().length > 0;
     markAnaTurnStage(anaTurnDiagnostics, 'prompt_build', 'passed', {
       mode,
       model,
       modelSelectionReason: 'db_config',
       enterpriseResolvedForModel,
-      knowledgeTextLength: knowledgeText.length,
+      knowledgeTextLength: promptKnowledgeText.length,
       knowledgeIncludedInPrompt: anaTurnDiagnostics.rag.includedInPrompt,
       messagesPlanned: history.length + 2,
+    });
+    console.log('[ANA_RAG_CONTEXT_RESOLVED]', {
+      conversationId,
+      enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+      userMessagePreview: userMessageForReasoning.slice(0, 260),
+      chunksCount: ragChunksFound,
+      chunkIds: Array.from(ragChunkIds).slice(0, 30),
+      fileVersionIds: [],
+      contextChars: promptKnowledgeText.length,
+      systemPromptLen: systemPrompt.length,
     });
 
     console.log('[ANA_HISTORY_LOAD]', {
@@ -3412,6 +3528,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         : null,
       !anaDecision.canMentionPaymentSimulation
         ? 'Nao simule pagamento, entrada, parcela, prazo, juros ou desconto.'
+        : null,
+      isLocalQwenRuntime
+        ? 'BASE DO EMPREENDIMENTO / EVIDÊNCIAS AUTORIZADAS: responda somente com base nesse bloco. Se não houver evidência suficiente, conduza para corretor/visita sem inventar.'
+        : null,
+      isEvoraEnterpriseName(ent?.name ?? null)
+        ? 'No Évora, trate sempre como loteamento fechado (nunca apartamento), com lotes a partir de 360 m² em Atibaia, região da Pedreira, acesso pela Rodovia Dom Pedro I, cerca de 50 minutos de São Paulo, lazer completo e segurança com portaria 24h. Nunca invente valor específico.'
         : null,
     ]
       .filter((line): line is string => Boolean(line))
@@ -3680,7 +3802,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         model,
       });
     }
-    if (!structured) {
+    if (!structured && !isLocalQwenRuntime) {
       const recoveryRaw =
         (retryResult?.success && (retryResult.content || '').trim()
           ? (retryResult.content || '')
@@ -3705,14 +3827,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         }
       }
     }
-    if (!structured) {
+    if (!structured && isLocalQwenRuntime) {
       const recoveryRawText =
         (retryResult?.success && (retryResult.content || '').trim()
           ? (retryResult.content || '')
           : rawContent).trim();
       const canAttemptQwenTextRecovery =
         recoveryRawText.length > 0 &&
-        (isLocalOrCustomProviderContext(aiSettings.openaiBaseUrl) || isQwenLikeModel(model));
+        ragChunksFound > 0 &&
+        enterpriseEvidence.hasUsableKnowledgeChunks === true;
       if (canAttemptQwenTextRecovery) {
         const sanitizedRecoveryReply = sanitizeQwenRecoveryText(recoveryRawText);
         const quality = validateRecoveredReplyQuality(sanitizedRecoveryReply);
@@ -3729,7 +3852,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         }
       }
     }
-    if (!structured) {
+    if (!structured && !isLocalQwenRuntime) {
       const regenMessages: ChatMessage[] = [
         {
           role: 'system',
@@ -3795,7 +3918,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         model,
       });
     }
-    if (!structured) {
+    if (!structured && !isLocalQwenRuntime) {
         const secondaryProvider = getConfiguredAnaSecondaryProvider(
           model,
           aiApiKey,
@@ -3887,6 +4010,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           }
         );
       }
+    }
+    if (!structured && isLocalQwenRuntime) {
+      const canonicalSafeReply = buildCanonicalSafeReplyForMissingRag({
+        axis: currentAxisForRepetition,
+        isEvora: isEvoraEnterpriseName(ent?.name ?? null),
+      });
+      structured = buildRecoveredReplyStructured(canonicalSafeReply, effectiveConv.classification);
+      console.log('[ANA_RAG_CONTEXT_MISSING_BLOCKED_FREEFORM]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        userMessagePreview: userMessageForReasoning.slice(0, 260),
+        chunksCount: ragChunksFound,
+        chunkIds: Array.from(ragChunkIds).slice(0, 30),
+        contextChars: promptKnowledgeText.length,
+        reason: 'local_qwen_json_repair_failed',
+      });
     }
     if (!structured) {
       {
@@ -5858,6 +5997,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         changed: true,
         reason: evoraLocationGuardResult.reason,
       };
+    }
+    if (isEvoraEnterpriseName(ent?.name ?? null) && /\bapartamento\b/i.test(replyText)) {
+      replyText =
+        'O Évora é um loteamento fechado em Atibaia, na região da Pedreira, com fácil acesso pela Rodovia Dom Pedro I. Tem lotes a partir de 360 m², lazer completo e segurança com portaria 24h.';
+      console.log('[ANA_HARD_GUARD_EVORA_APARTAMENTO_BLOCKED]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+      });
+    }
+    if (/\bR\$\s*\d|\b\d{2,3}(?:[.,]\d{3})*(?:[.,]\d{2})?\s*reais?\b/i.test(replyText)) {
+      replyText =
+        'Esses detalhes variam conforme as opções disponíveis. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?';
+      console.log('[ANA_HARD_GUARD_PRICE_VALUE_BLOCKED]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+      });
     }
 
     let appendedVisitOfferMessagesForFinalSend: string[] = [];
