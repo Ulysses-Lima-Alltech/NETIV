@@ -164,6 +164,7 @@ import {
   isVisitSchedulingIntent,
   isVisitSchedulingLoopFallbackReply,
   isVisitSchedulingRefusalMessage,
+  reconstructVisitStateFromRecentMessages,
 } from '../utils/anaDirectVisitScheduling.js';
 import {
   resolveShortConfirmationContext,
@@ -2107,6 +2108,52 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const isFirstAnaReply = !rows.some((m) => m.role === 'assistant');
     const lastAssistantBeforeUser = [...rows].reverse().find((m) => m.role === 'assistant');
     const lastAssistantPlain = lastAssistantBeforeUser?.content?.trim() || null;
+    let visitStateReconstructedThisTurn = false;
+    const visitStateLogPayload = {
+      conversationId,
+      pendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
+      pendingVisitDay: flowStateParsed.pendingVisitDay ?? flowStateParsed.pendingVisitDateLabel ?? null,
+      pendingVisitTime: flowStateParsed.pendingVisitTime ?? null,
+      pendingVisitInvalidTime: flowStateParsed.pendingVisitInvalidTime ?? null,
+      pendingVisitMissingSlot: flowStateParsed.pendingVisitMissingSlot ?? null,
+      pendingVisitCustomerName: flowStateParsed.pendingVisitCustomerName ?? null,
+    };
+    console.log('[ANA_VISIT_STATE_LOADED]', visitStateLogPayload);
+    if (flowStateParsed.pendingVisitScheduling !== true && flowStateParsed.visitScheduling?.active !== true) {
+      const reconstructedVisitState = reconstructVisitStateFromRecentMessages({
+        recentMessages: rows.map((m) => ({
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: m.content,
+        })),
+        flowState: flowStateParsed,
+        referenceNow: new Date(),
+        enterpriseId: conv.enterprise_id ?? null,
+        knownCustomerName: effectiveConv.customer_name ?? null,
+      });
+      if (reconstructedVisitState.reconstructed) {
+        visitStateReconstructedThisTurn = true;
+        flowStateParsed = reconstructedVisitState.nextState;
+        await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+        const reconstructedPayload = {
+          conversationId,
+          pendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
+          pendingVisitDay: flowStateParsed.pendingVisitDay ?? flowStateParsed.pendingVisitDateLabel ?? null,
+          pendingVisitTime: flowStateParsed.pendingVisitTime ?? null,
+          pendingVisitInvalidTime: flowStateParsed.pendingVisitInvalidTime ?? null,
+          pendingVisitMissingSlot: flowStateParsed.pendingVisitMissingSlot ?? null,
+          pendingVisitCustomerName: flowStateParsed.pendingVisitCustomerName ?? null,
+          reason: reconstructedVisitState.reason,
+        };
+        console.log('[ANA_VISIT_STATE_RECONSTRUCTED_FROM_HISTORY]', reconstructedPayload);
+        if (reconstructedVisitState.lowConfidence) {
+          console.log('[ANA_VISIT_STATE_RECONSTRUCTED_LOW_CONFIDENCE]', reconstructedPayload);
+        }
+        console.log('[ANA_VISIT_STATE_SAVED]', {
+          ...reconstructedPayload,
+          source: 'history_reconstruction',
+        });
+      }
+    }
     const shortConfirmationContext = resolveShortConfirmationContext({
       userText: trimmed,
       recentMessages: rows.map((m) => ({
@@ -3309,16 +3356,29 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ...flowStateParsed,
         pendingVisitScheduling: false,
         pendingVisitDateLabel: null,
+        pendingVisitDay: null,
         pendingVisitDate: null,
         pendingVisitTime: null,
         pendingVisitPeriod: null,
         pendingVisitEnterpriseId: null,
         pendingVisitInvalidTime: null,
         pendingVisitMissingSlot: null,
+        pendingVisitCustomerName: null,
+        pendingVisitConfirmationAsked: false,
         updatedAt: new Date().toISOString(),
       };
       await mergeConversationCommercialFlowState(conversationId, cancelledSchedulingState);
       flowStateParsed = cancelledSchedulingState;
+      console.log('[ANA_VISIT_STATE_SAVED]', {
+        conversationId,
+        source: 'visit_cancelled_by_user',
+        pendingVisitScheduling: false,
+        pendingVisitDay: null,
+        pendingVisitTime: null,
+        pendingVisitInvalidTime: null,
+        pendingVisitMissingSlot: null,
+        pendingVisitCustomerName: null,
+      });
       console.log('[APPOINTMENT_FLOW_CANCELLED_BY_USER]', {
         conversationId,
         enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
@@ -3345,7 +3405,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       shortConfirmationContext.lastAssistantQuestionType === 'visit_offer' ||
       isAssistantVisitOfferContextMessage(lastAssistantPlain);
     const visitFlowSuppressedByConfirmationContext =
-      suppressVisitByConfirmationContext && shortConfirmationContext.isShortConfirmation;
+      suppressVisitByConfirmationContext &&
+      shortConfirmationContext.isShortConfirmation &&
+      flowStateParsed.pendingVisitScheduling !== true &&
+      !visitStateReconstructedThisTurn;
     const directVisitSchedulingIntent = visitFlowSuppressedByConfirmationContext
       ? false
       : rawDirectVisitSchedulingIntent;
@@ -3383,12 +3446,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           ...flowStateParsed,
           pendingVisitScheduling: false,
           pendingVisitDateLabel: null,
+          pendingVisitDay: null,
           pendingVisitDate: null,
           pendingVisitTime: null,
           pendingVisitPeriod: null,
           pendingVisitEnterpriseId: null,
           pendingVisitInvalidTime: null,
           pendingVisitMissingSlot: null,
+          pendingVisitCustomerName: null,
+          pendingVisitConfirmationAsked: false,
           visitScheduling: previousVisitScheduling
             ? {
                 ...previousVisitScheduling,
@@ -3417,6 +3483,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         };
         await mergeConversationCommercialFlowState(conversationId, clearedVisitState);
         flowStateParsed = clearedVisitState;
+        console.log('[ANA_VISIT_STATE_SAVED]', {
+          conversationId,
+          source: 'visit_flow_cleared_by_confirmation_context',
+          pendingVisitScheduling: false,
+          pendingVisitDay: null,
+          pendingVisitTime: null,
+          pendingVisitInvalidTime: null,
+          pendingVisitMissingSlot: null,
+          pendingVisitCustomerName: null,
+        });
       }
     }
     const visitSchedulingFlowActiveForTurn =
@@ -3431,11 +3507,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         pendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
         visitStatus: flowStateParsed.visitScheduling?.status ?? null,
       });
+      if (flowStateParsed.pendingVisitScheduling === true) {
+        console.log('[ANA_VISIT_FLOW_CONTINUED_FROM_STATE]', {
+          conversationId,
+          pendingVisitDay: flowStateParsed.pendingVisitDay ?? flowStateParsed.pendingVisitDateLabel ?? null,
+          pendingVisitTime: flowStateParsed.pendingVisitTime ?? null,
+          pendingVisitInvalidTime: flowStateParsed.pendingVisitInvalidTime ?? null,
+          pendingVisitMissingSlot: flowStateParsed.pendingVisitMissingSlot ?? null,
+          pendingVisitCustomerName: flowStateParsed.pendingVisitCustomerName ?? null,
+        });
+      }
       console.log('[ANA_VISIT_FLOW_TURN_LOCKED]', {
         conversationId,
         directVisitSchedulingIntent,
         pendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
         visitStatus: flowStateParsed.visitScheduling?.status ?? null,
+      });
+      console.log('[ANA_VISIT_FLOW_BYPASS_LLM]', {
+        conversationId,
+        reason: 'visit_flow_turn_locked_before_prompt_build',
       });
     }
     const directVisitSchedulingDecision = visitSchedulingFlowActiveForTurn && !userRefusedScheduling
@@ -3495,6 +3585,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       let deterministicVisitReply = directVisitSchedulingDecision.reply;
       await mergeConversationCommercialFlowState(conversationId, directVisitSchedulingDecision.nextState);
       flowStateParsed = directVisitSchedulingDecision.nextState;
+      console.log('[ANA_VISIT_STATE_SAVED]', {
+        conversationId,
+        source: 'direct_visit_decision',
+        pendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
+        pendingVisitDay: flowStateParsed.pendingVisitDay ?? flowStateParsed.pendingVisitDateLabel ?? null,
+        pendingVisitTime: flowStateParsed.pendingVisitTime ?? null,
+        pendingVisitInvalidTime: flowStateParsed.pendingVisitInvalidTime ?? null,
+        pendingVisitMissingSlot: flowStateParsed.pendingVisitMissingSlot ?? null,
+        pendingVisitCustomerName: flowStateParsed.pendingVisitCustomerName ?? null,
+      });
       for (const slot of directVisitSchedulingDecision.capturedSlots) {
         console.log('[ANA_VISIT_SLOT_CAPTURED]', {
           conversationId,
@@ -3506,6 +3606,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         console.log('[ANA_VISIT_MISSING_SLOT_REQUESTED]', {
           conversationId,
           missingSlot: directVisitSchedulingDecision.missingSlot,
+          reason: directVisitSchedulingDecision.reason,
+        });
+      }
+      if (
+        directVisitSchedulingDecision.missingSlot === 'valid_time' &&
+        directVisitSchedulingDecision.capturedSlots.includes('nome')
+      ) {
+        console.log('[ANA_VISIT_NAME_REQUEST_SUPPRESSED_INVALID_TIME]', {
+          conversationId,
+          reason: directVisitSchedulingDecision.reason,
+          pendingVisitInvalidTime: directVisitSchedulingDecision.invalidVisitTime ?? null,
+        });
+      }
+      if (
+        directVisitSchedulingDecision.capturedSlots.includes('nome') &&
+        directVisitSchedulingDecision.missingSlot !== 'nome'
+      ) {
+        console.log('[ANA_VISIT_NAME_ALREADY_KNOWN]', {
+          conversationId,
           reason: directVisitSchedulingDecision.reason,
         });
       }
@@ -3575,12 +3694,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             ...directVisitSchedulingDecision.nextState,
             pendingVisitScheduling: false,
             pendingVisitDateLabel: null,
+            pendingVisitDay: null,
             pendingVisitDate: null,
             pendingVisitTime: null,
             pendingVisitPeriod: null,
             pendingVisitEnterpriseId: null,
             pendingVisitInvalidTime: null,
             pendingVisitMissingSlot: null,
+            pendingVisitCustomerName: null,
+            pendingVisitConfirmationAsked: false,
             visitScheduling: {
               active: false,
               offered: true,
@@ -3605,20 +3727,45 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           };
           await mergeConversationCommercialFlowState(conversationId, scheduledState);
           flowStateParsed = scheduledState;
+          console.log('[ANA_VISIT_STATE_SAVED]', {
+            conversationId,
+            source: 'direct_visit_confirmed',
+            pendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
+            pendingVisitDay: flowStateParsed.pendingVisitDay ?? flowStateParsed.pendingVisitDateLabel ?? null,
+            pendingVisitTime: flowStateParsed.pendingVisitTime ?? null,
+            pendingVisitInvalidTime: flowStateParsed.pendingVisitInvalidTime ?? null,
+            pendingVisitMissingSlot: flowStateParsed.pendingVisitMissingSlot ?? null,
+            pendingVisitCustomerName: flowStateParsed.pendingVisitCustomerName ?? null,
+          });
         } else {
           deterministicVisitReply =
             'Perfeito, ja tenho dia e horario. Me confirma qual empreendimento voce quer visitar?';
-          await mergeConversationCommercialFlowState(conversationId, {
+          const waitingEnterpriseState = {
             ...directVisitSchedulingDecision.nextState,
             pendingVisitScheduling: true,
             pendingVisitDateLabel: directVisitSchedulingDecision.extractedDateLabel,
+            pendingVisitDay: directVisitSchedulingDecision.extractedDateLabel,
             pendingVisitDate: directVisitSchedulingDecision.extractedDateYmd,
             pendingVisitTime: directVisitSchedulingDecision.appointmentTimeHm ?? null,
             pendingVisitPeriod: directVisitSchedulingDecision.extractedPeriod ?? null,
             pendingVisitEnterpriseId: null,
             pendingVisitInvalidTime: null,
             pendingVisitMissingSlot: null,
+            pendingVisitCustomerName: flowStateParsed.pendingVisitCustomerName ?? null,
+            pendingVisitConfirmationAsked: false,
             updatedAt: new Date().toISOString(),
+          };
+          await mergeConversationCommercialFlowState(conversationId, waitingEnterpriseState);
+          flowStateParsed = waitingEnterpriseState;
+          console.log('[ANA_VISIT_STATE_SAVED]', {
+            conversationId,
+            source: 'direct_visit_waiting_enterprise',
+            pendingVisitScheduling: true,
+            pendingVisitDay: directVisitSchedulingDecision.extractedDateLabel ?? null,
+            pendingVisitTime: directVisitSchedulingDecision.appointmentTimeHm ?? null,
+            pendingVisitInvalidTime: null,
+            pendingVisitMissingSlot: null,
+            pendingVisitCustomerName: flowStateParsed.pendingVisitCustomerName ?? null,
           });
         }
       }
@@ -3685,6 +3832,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (visitPolicyResult.changed) {
         flowStateParsed = visitPolicyResult.flowState;
         await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+        console.log('[ANA_VISIT_STATE_SAVED]', {
+          conversationId,
+          source: 'visit_policy_adjustment',
+          pendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
+          pendingVisitDay: flowStateParsed.pendingVisitDay ?? flowStateParsed.pendingVisitDateLabel ?? null,
+          pendingVisitTime: flowStateParsed.pendingVisitTime ?? null,
+          pendingVisitInvalidTime: flowStateParsed.pendingVisitInvalidTime ?? null,
+          pendingVisitMissingSlot: flowStateParsed.pendingVisitMissingSlot ?? null,
+          pendingVisitCustomerName: flowStateParsed.pendingVisitCustomerName ?? null,
+        });
       }
 
       if (isPipelineStale(conversationId, replyPipelineToken)) {
@@ -7059,9 +7216,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const previousVisitSchedulingState = {
       pendingVisitScheduling: flowStateParsed.pendingVisitScheduling ?? false,
       pendingVisitDateLabel: flowStateParsed.pendingVisitDateLabel ?? null,
+      pendingVisitDay: flowStateParsed.pendingVisitDay ?? null,
       pendingVisitDate: flowStateParsed.pendingVisitDate ?? null,
       pendingVisitTime: flowStateParsed.pendingVisitTime ?? null,
       pendingVisitPeriod: flowStateParsed.pendingVisitPeriod ?? null,
+      pendingVisitInvalidTime: flowStateParsed.pendingVisitInvalidTime ?? null,
+      pendingVisitMissingSlot: flowStateParsed.pendingVisitMissingSlot ?? null,
+      pendingVisitCustomerName: flowStateParsed.pendingVisitCustomerName ?? null,
+      pendingVisitConfirmationAsked: flowStateParsed.pendingVisitConfirmationAsked ?? false,
       visitScheduling: flowStateParsed.visitScheduling ?? null,
     };
     const evoraVisitSchedulingGuardResult = applyAnaVisitSchedulingGuard({

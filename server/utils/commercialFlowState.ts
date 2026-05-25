@@ -57,6 +57,8 @@ export interface CommercialFlowState {
   pendingVisitDateLabel?: string | null;
   /** Data pendente normalizada em America/Sao_Paulo (YYYY-MM-DD). */
   pendingVisitDate?: string | null;
+  /** Alias legivel do dia pendente (compat com logs/diagnostico). */
+  pendingVisitDay?: string | null;
   /** Horário pendente normalizado (HH:MM), quando já capturado no fluxo determinístico. */
   pendingVisitTime?: string | null;
   /** Período pendente informado pelo cliente (manhã/tarde/noite), antes de horário exato. */
@@ -67,6 +69,10 @@ export interface CommercialFlowState {
   pendingVisitInvalidTime?: string | null;
   /** Slot faltante no fluxo transacional de visita. */
   pendingVisitMissingSlot?: 'nome' | 'dia' | 'periodo_ou_horario' | 'valid_time' | null;
+  /** Nome capturado no fluxo de visita (quando ainda nao foi confirmado no cadastro principal). */
+  pendingVisitCustomerName?: string | null;
+  /** Marca quando a Ana já perguntou confirmacao final da visita e aguarda resposta curta. */
+  pendingVisitConfirmationAsked?: boolean;
   /** Estado estruturado do fluxo de agendamento de visita. */
   visitScheduling?: {
     active: boolean;
@@ -115,11 +121,14 @@ export function resetCommercialScopeHints(prev: CommercialFlowState | null): Com
   delete next.pendingVisitScheduling;
   delete next.pendingVisitDateLabel;
   delete next.pendingVisitDate;
+  delete next.pendingVisitDay;
   delete next.pendingVisitTime;
   delete next.pendingVisitPeriod;
   delete next.pendingVisitEnterpriseId;
   delete next.pendingVisitInvalidTime;
   delete next.pendingVisitMissingSlot;
+  delete next.pendingVisitCustomerName;
+  delete next.pendingVisitConfirmationAsked;
   delete next.visitScheduling;
   delete next.dialoguePolicy;
   next.clearedAt = new Date().toISOString();

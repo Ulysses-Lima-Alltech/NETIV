@@ -518,7 +518,7 @@ export function applyAnaConversationPolicy(
     });
   }
 
-  if (input.isFirstAnaReply) {
+  if (!visitFlowActive && input.isFirstAnaReply) {
     const greeted = ensureFirstReplyGreeting(reply, input.now);
     if (greeted.changed) {
       reply = greeted.text;
@@ -529,7 +529,7 @@ export function applyAnaConversationPolicy(
         greetingPreview: reply.slice(0, 80),
       });
     }
-  } else {
+  } else if (!visitFlowActive) {
     const hadGreeting = startsWithGreeting(reply);
     const noMidGreeting = stripMidConversationGreeting(reply);
     if (noMidGreeting.changed) {

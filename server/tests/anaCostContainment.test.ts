@@ -22,6 +22,7 @@ import {
 import {
   handleVisitSchedulingDeterministically,
   isVisitSchedulingIntent,
+  reconstructVisitStateFromRecentMessages,
 } from '../utils/anaDirectVisitScheduling.js';
 import {
   extractCustomerNameFromUserUtterance,
@@ -652,7 +653,7 @@ test('"sim" apos pergunta com dois topicos pede escolha e nao visita', () => {
   assert.match(policy.text, /seguran[cç]a|localiza[cç][aã]o|qual dos dois/i);
 });
 
-test('quando confirmacao curta resolve para followup, suprime fluxo de visita no turno', () => {
+test('quando pendingVisitScheduling esta ativo, confirmacao curta nao desliga fluxo de visita', () => {
   const context = resolveShortConfirmationContext({
     userText: 'sim',
     recentMessages: [
@@ -687,12 +688,10 @@ test('quando confirmacao curta resolve para followup, suprime fluxo de visita no
     enterpriseId: 10,
     referenceNow: new Date('2026-05-25T12:00:00.000Z'),
   });
-  assert.equal(directVisitIntent, false);
+  assert.equal(directVisitIntent, true);
 
-  const visitFlowContextActive =
-    !shouldSuppressVisitFlowForConfirmationKind(context.kind) &&
-    (directVisitIntent || true);
-  assert.equal(visitFlowContextActive, false);
+  const visitFlowContextActive = directVisitIntent;
+  assert.equal(visitFlowContextActive, true);
 });
 
 test('estado ausente reconstrói contexto pela última outbound da Ana', () => {
@@ -973,6 +972,8 @@ test('todos os slots validos com "sim" confirmam agendamento', () => {
       pendingVisitPeriod: null,
       pendingVisitInvalidTime: null,
       pendingVisitMissingSlot: null,
+      pendingVisitCustomerName: 'Ulysses',
+      pendingVisitConfirmationAsked: true,
     },
     enterpriseId: 10,
     customerName: 'Ulysses',
@@ -1006,6 +1007,156 @@ test('quando pendingVisitScheduling esta ativo, intencao de visita permanece lig
     referenceNow: new Date('2026-05-25T12:11:00.000Z'),
   });
   assert.equal(intent, true);
+});
+
+test('estado false + historico de horario invalido e nome reconstrui fluxo ativo com valid_time', () => {
+  const reconstructed = reconstructVisitStateFromRecentMessages({
+    flowState: {
+      pendingVisitScheduling: false,
+    },
+    enterpriseId: 10,
+    knownCustomerName: null,
+    referenceNow: new Date('2026-05-25T12:12:00.000Z'),
+    recentMessages: [
+      { role: 'assistant', content: 'Perfeito, amanhã. Qual horário fica melhor para você? Temos disponibilidade de segunda a sábado, das 09h às 18h.' },
+      { role: 'user', content: 'pode ser amanhã às 20?' },
+      { role: 'assistant', content: 'Amanhã às 20h fica fora do horário disponível para visitas. Qual horário entre 09h e 18h você prefere?' },
+      { role: 'user', content: '20' },
+      { role: 'assistant', content: 'Obrigado. Como posso te chamar para confirmar o agendamento?' },
+      { role: 'user', content: 'ulysses' },
+    ],
+  });
+
+  assert.equal(reconstructed.reconstructed, true);
+  assert.equal(reconstructed.nextState.pendingVisitScheduling, true);
+  assert.equal(reconstructed.nextState.pendingVisitMissingSlot, 'valid_time');
+  assert.equal(reconstructed.nextState.pendingVisitInvalidTime, '20h');
+  assert.equal(reconstructed.nextState.pendingVisitCustomerName, 'Ulysses');
+});
+
+test('estado false + historico com pergunta de nome reconstrui visita ativa', () => {
+  const reconstructed = reconstructVisitStateFromRecentMessages({
+    flowState: {
+      pendingVisitScheduling: false,
+    },
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T12:13:00.000Z'),
+    recentMessages: [
+      { role: 'assistant', content: 'Perfeito, amanhã às 10h. Como posso te chamar para confirmar o agendamento?' },
+      { role: 'user', content: 'ulysses' },
+    ],
+  });
+
+  assert.equal(reconstructed.reconstructed, true);
+  assert.equal(reconstructed.nextState.pendingVisitScheduling, true);
+  assert.equal(reconstructed.nextState.pendingVisitCustomerName, 'Ulysses');
+  assert.equal(reconstructed.nextState.pendingVisitConfirmationAsked, false);
+});
+
+test('estado false + historico de confirmacao so confirma com slots validos', () => {
+  const reconstructed = reconstructVisitStateFromRecentMessages({
+    flowState: {
+      pendingVisitScheduling: false,
+    },
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T12:14:00.000Z'),
+    recentMessages: [
+      { role: 'assistant', content: 'Perfeito. Posso confirmar sua visita para amanhã às 10h?' },
+      { role: 'user', content: 'sim' },
+    ],
+  });
+
+  assert.equal(reconstructed.reconstructed, true);
+  const decision = handleVisitSchedulingDeterministically({
+    userMessage: 'sim',
+    flowState: reconstructed.nextState,
+    customerName: 'Ulysses',
+    customerPhone: '11999990000',
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T12:14:30.000Z'),
+  });
+  assert.equal(decision.appointmentConfirmed, true);
+});
+
+test('estado false + historico invalido + "sim" continua pedindo horario valido', () => {
+  const reconstructed = reconstructVisitStateFromRecentMessages({
+    flowState: {
+      pendingVisitScheduling: false,
+    },
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T12:15:00.000Z'),
+    recentMessages: [
+      { role: 'assistant', content: 'Amanhã às 20h fica fora do horário disponível para visitas. Qual horário entre 09h e 18h você prefere?' },
+      { role: 'user', content: 'sim' },
+    ],
+  });
+
+  assert.equal(reconstructed.reconstructed, true);
+  const decision = handleVisitSchedulingDeterministically({
+    userMessage: 'sim',
+    flowState: reconstructed.nextState,
+    customerName: null,
+    customerPhone: '11999990000',
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T12:15:30.000Z'),
+  });
+  assert.equal(decision.appointmentConfirmed, false);
+  assert.equal(decision.missingSlot, 'valid_time');
+  assert.match(decision.reply ?? '', /09h e 18h/i);
+});
+
+test('reconstrucao ativa mantem lock de fluxo e bypass de caminho aberto', () => {
+  const reconstructed = reconstructVisitStateFromRecentMessages({
+    flowState: {
+      pendingVisitScheduling: false,
+    },
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T12:16:00.000Z'),
+    recentMessages: [
+      { role: 'assistant', content: 'Perfeito, sábado de manhã. Qual horário fica melhor para você?' },
+      { role: 'user', content: 'ok' },
+    ],
+  });
+  assert.equal(reconstructed.reconstructed, true);
+
+  const visitIntent = isVisitSchedulingIntent({
+    userMessage: 'ok',
+    flowState: reconstructed.nextState,
+    confirmationContextKind: 'followup_topic_confirmation',
+    resolvedIntent: null,
+    primaryAxis: null,
+    currentAxis: null,
+    requestedAxis: null,
+    lastAssistantMessage: 'Perfeito, sábado de manhã. Qual horário fica melhor para você?',
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T12:16:30.000Z'),
+  });
+  assert.equal(visitIntent, true);
+});
+
+test('nome ja informado no estado nao e perguntado novamente', () => {
+  const decision = handleVisitSchedulingDeterministically({
+    userMessage: 'ok',
+    flowState: {
+      pendingVisitScheduling: true,
+      pendingVisitDateLabel: 'amanha',
+      pendingVisitDate: '2026-05-26',
+      pendingVisitTime: '10:00',
+      pendingVisitPeriod: null,
+      pendingVisitInvalidTime: null,
+      pendingVisitMissingSlot: null,
+      pendingVisitCustomerName: 'Ulysses',
+      pendingVisitConfirmationAsked: false,
+    },
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:17:00.000Z'),
+  });
+
+  assert.equal(decision.missingSlot, null);
+  assert.equal(/como posso te chamar|seu nome/i.test(decision.reply ?? ''), false);
+  assert.match(decision.reply ?? '', /posso confirmar sua visita/i);
 });
 
 

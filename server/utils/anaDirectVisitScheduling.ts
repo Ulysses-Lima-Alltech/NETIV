@@ -74,6 +74,18 @@ export interface VisitSchedulingContinuationInput {
   referenceNow?: Date;
 }
 
+export interface VisitHistoryMessage {
+  role: 'assistant' | 'user';
+  content?: string | null;
+}
+
+export interface ReconstructedVisitStateResult {
+  reconstructed: boolean;
+  lowConfidence: boolean;
+  reason: string;
+  nextState: CommercialFlowState;
+}
+
 function norm(s: string): string {
   return s
     .toLowerCase()
@@ -253,10 +265,10 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
     lastAssistantMessage: input.lastAssistantMessage,
     referenceNow: input.referenceNow,
   });
-  if (shortConfirmationSuppressesVisit) return false;
   if (input.flowState.pendingVisitScheduling === true) {
     return true;
   }
+  if (shortConfirmationSuppressesVisit) return false;
   if (axisRequestedVisit) {
     if (ackOnlyMessage) return confirmationContextKind === 'visit_confirmation' || hasVisitOfferContext;
     return schedulingContinuation || hasVisitSchedulingWords(input.userMessage);
@@ -437,6 +449,13 @@ function confirmReply(label: string | null, timeHm: string): string {
   return `Perfeito, sua visita ficou agendada para ${label ?? 'o dia escolhido'} Ã s ${displayTime}.`;
 }
 
+function askVisitConfirmationReply(label: string | null, timeHm: string): string {
+  const hh = parseInt(timeHm.slice(0, 2), 10);
+  const mm = timeHm.slice(3, 5);
+  const displayTime = mm === '00' ? `${hh}h` : `${hh}h${mm}`;
+  return `Perfeito. Posso confirmar sua visita para ${label ?? 'o dia escolhido'} Ã s ${displayTime}?`;
+}
+
 function buildPendingState(
   prev: CommercialFlowState,
   patch: {
@@ -448,15 +467,20 @@ function buildPendingState(
     enterpriseId: number | null;
     invalidTime?: string | null;
     missingSlot?: 'nome' | 'dia' | 'periodo_ou_horario' | 'valid_time' | null;
+    customerName?: string | null;
+    confirmationAsked?: boolean;
   }
 ): CommercialFlowState {
   const hasInvalidTimePatch = Object.prototype.hasOwnProperty.call(patch, 'invalidTime');
   const hasMissingSlotPatch = Object.prototype.hasOwnProperty.call(patch, 'missingSlot');
+  const hasCustomerNamePatch = Object.prototype.hasOwnProperty.call(patch, 'customerName');
+  const hasConfirmationAskedPatch = Object.prototype.hasOwnProperty.call(patch, 'confirmationAsked');
   return {
     ...prev,
     pendingVisitScheduling: patch.pending,
     pendingVisitDateLabel: patch.pending ? patch.dateLabel : null,
     pendingVisitDate: patch.pending ? patch.dateYmd : null,
+    pendingVisitDay: patch.pending ? patch.dateLabel : null,
     pendingVisitTime: patch.pending ? (patch.timeHm ?? prev.pendingVisitTime ?? null) : null,
     pendingVisitPeriod: patch.pending ? (patch.period ?? prev.pendingVisitPeriod ?? null) : null,
     pendingVisitEnterpriseId: patch.pending ? patch.enterpriseId : null,
@@ -470,6 +494,16 @@ function buildPendingState(
         ? (patch.missingSlot ?? null)
         : (prev.pendingVisitMissingSlot ?? null)
       : null,
+    pendingVisitCustomerName: patch.pending
+      ? hasCustomerNamePatch
+        ? (patch.customerName ?? null)
+        : (prev.pendingVisitCustomerName ?? null)
+      : null,
+    pendingVisitConfirmationAsked: patch.pending
+      ? hasConfirmationAskedPatch
+        ? Boolean(patch.confirmationAsked)
+        : Boolean(prev.pendingVisitConfirmationAsked)
+      : false,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -477,6 +511,8 @@ function buildPendingState(
 function knownNameFromContext(input: DirectVisitSchedulingInput): string | null {
   const fromContext = (input.customerName || '').trim();
   if (fromContext.length >= 2) return fromContext;
+  const fromFlowState = (input.flowState.pendingVisitCustomerName || '').trim();
+  if (fromFlowState.length >= 2) return fromFlowState;
   const fromMessage = extractCustomerNameFromUserUtterance(input.userMessage, {
     lastAssistantPlain: input.lastAssistantMessage ?? null,
   });
@@ -498,11 +534,13 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
   const pendingTimeHm = input.flowState.pendingVisitTime ?? null;
   const pendingPeriod = normalizeVisitPeriod(input.flowState.pendingVisitPeriod ?? null);
   const pendingInvalidTime = (input.flowState.pendingVisitInvalidTime || '').trim() || null;
+  const pendingCustomerName = (input.flowState.pendingVisitCustomerName || '').trim() || null;
+  const pendingConfirmationAsked = input.flowState.pendingVisitConfirmationAsked === true;
   const effectiveDateLabel = dateMention?.label ?? pendingDateLabel;
   const effectiveDateYmd = dateMention?.ymd ?? pendingDateYmd;
   const effectiveTimeHm = timeHm ?? pendingTimeHm;
   const effectivePeriod = period ?? pendingPeriod;
-  const effectiveName = knownNameFromContext(input);
+  const effectiveName = explicitNameFromMessage || pendingCustomerName || knownNameFromContext(input);
   const userAckOnly = isVisitSchedulingAckOnlyMessage(input.userMessage);
   const userConfusion = isEmpatheticConfusionMessage(input.userMessage);
 
@@ -554,6 +592,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
       enterpriseId: input.enterpriseId,
       invalidTime: pendingInvalidTime,
       missingSlot: 'valid_time',
+      customerName: effectiveName ?? null,
+      confirmationAsked: false,
     });
     if (userConfusion) {
       return finish(
@@ -591,6 +631,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
         enterpriseId: input.enterpriseId,
         invalidTime: null,
         missingSlot: 'dia',
+        customerName: effectiveName ?? null,
+        confirmationAsked: false,
       });
       return finish('start_collecting_date', askDayReply(), nextState, 'dia');
     }
@@ -603,6 +645,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
       enterpriseId: input.enterpriseId,
       invalidTime: pendingInvalidTime,
       missingSlot: pendingInvalidTime ? 'valid_time' : 'periodo_ou_horario',
+      customerName: effectiveName ?? null,
+      confirmationAsked: false,
     });
     return finish(
       userAckOnly ? 'pending_without_time_ack' : 'pending_without_time',
@@ -624,6 +668,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
       enterpriseId: input.enterpriseId,
       invalidTime: null,
       missingSlot: 'dia',
+      customerName: effectiveName ?? null,
+      confirmationAsked: false,
     });
     return finish('time_or_period_without_date', askDayReply(), nextState, 'dia');
   }
@@ -639,6 +685,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
       enterpriseId: input.enterpriseId,
       invalidTime: null,
       missingSlot: weekday === 0 ? 'dia' : 'periodo_ou_horario',
+      customerName: effectiveName ?? null,
+      confirmationAsked: false,
     });
     if (weekday === 0) {
       return finish(
@@ -669,6 +717,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
           enterpriseId: input.enterpriseId,
           invalidTime: null,
           missingSlot: 'dia',
+          customerName: effectiveName ?? null,
+          confirmationAsked: false,
         });
         return finish(
           'sunday_not_allowed',
@@ -687,6 +737,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
         enterpriseId: input.enterpriseId,
         invalidTime: invalidDisplay,
         missingSlot: 'valid_time',
+        customerName: effectiveName ?? null,
+        confirmationAsked: false,
       });
       if (pending && !dateMention && !period && timeHm) {
         return finish(
@@ -715,12 +767,35 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
         enterpriseId: input.enterpriseId,
         invalidTime: null,
         missingSlot: 'nome',
+        customerName: null,
+        confirmationAsked: false,
       });
       return finish(
         'date_time_without_name',
         askNameReply(combineDateAndPeriodLabel(effectiveDateLabel, effectivePeriod), effectiveTimeHm),
         nextState,
         'nome'
+      );
+    }
+    const shouldConfirmNow = userAckOnly && pendingConfirmationAsked;
+    if (!shouldConfirmNow) {
+      const nextState = buildPendingState(input.flowState, {
+        pending: true,
+        dateLabel: effectiveDateLabel,
+        dateYmd: effectiveDateYmd,
+        timeHm: effectiveTimeHm,
+        period: effectivePeriod,
+        enterpriseId: input.enterpriseId,
+        invalidTime: null,
+        missingSlot: null,
+        customerName: effectiveName,
+        confirmationAsked: true,
+      });
+      return finish(
+        'ready_to_confirm_visit',
+        askVisitConfirmationReply(combineDateAndPeriodLabel(effectiveDateLabel, effectivePeriod), effectiveTimeHm),
+        nextState,
+        null
       );
     }
     const nextState = buildPendingState(input.flowState, {
@@ -732,6 +807,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
       enterpriseId: null,
       invalidTime: null,
       missingSlot: null,
+      customerName: effectiveName,
+      confirmationAsked: false,
     });
     return finish(
       'date_and_time_confirmed',
@@ -753,6 +830,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
     enterpriseId: input.enterpriseId,
     invalidTime: pendingInvalidTime,
     missingSlot: pendingInvalidTime ? 'valid_time' : 'periodo_ou_horario',
+    customerName: effectiveName ?? null,
+    confirmationAsked: false,
   });
   return finish(
     'fallback_pending',
@@ -763,6 +842,178 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
     pendingInvalidTime ? 'valid_time' : 'periodo_ou_horario'
   );
 }
+
+function isAssistantVisitFlowCueMessage(text: string): boolean {
+  const n = norm(text);
+  if (!n) return false;
+  return (
+    /\b(para qual dia voce prefere agendar a visita|qual horario fica melhor|qual horario entre 09h e 18h|como posso te chamar|posso confirmar sua visita|fic(a|ou) fora do horario|segunda a sabado|agendar a visita)\b/.test(
+      n
+    ) ||
+    isAssistantVisitOfferContextMessage(text)
+  );
+}
+
+function extractVisitNameFromUserMessage(text: string): string | null {
+  return extractCustomerNameFromUserUtterance(text, {
+    lastAssistantPlain: 'Como posso te chamar para confirmar o agendamento?',
+  }) || extractLooseVisitNameCandidate(text);
+}
+
+export function reconstructVisitStateFromRecentMessages(input: {
+  recentMessages: VisitHistoryMessage[];
+  flowState: CommercialFlowState;
+  referenceNow?: Date;
+  enterpriseId?: number | null;
+  knownCustomerName?: string | null;
+}): ReconstructedVisitStateResult {
+  if (input.flowState.pendingVisitScheduling === true) {
+    return {
+      reconstructed: false,
+      lowConfidence: false,
+      reason: 'already_pending',
+      nextState: input.flowState,
+    };
+  }
+  const referenceNow = input.referenceNow ?? new Date();
+  const recent = input.recentMessages.slice(-16);
+  const assistantMessages = recent
+    .filter((m) => m.role === 'assistant')
+    .map((m) => String(m.content ?? '').trim())
+    .filter((text) => text.length > 0);
+  const userMessages = recent
+    .filter((m) => m.role === 'user')
+    .map((m) => String(m.content ?? '').trim())
+    .filter((text) => text.length > 0);
+
+  const cueMessages = assistantMessages.filter((text) => isAssistantVisitFlowCueMessage(text));
+  if (cueMessages.length === 0) {
+    return {
+      reconstructed: false,
+      lowConfidence: false,
+      reason: 'no_visit_cues',
+      nextState: input.flowState,
+    };
+  }
+
+  let dateLabel: string | null = input.flowState.pendingVisitDateLabel ?? input.flowState.pendingVisitDay ?? null;
+  let dateYmd: string | null = input.flowState.pendingVisitDate ?? null;
+  let timeHm: string | null = input.flowState.pendingVisitTime ?? null;
+  let period: VisitPeriod | null = normalizeVisitPeriod(input.flowState.pendingVisitPeriod ?? null);
+  let invalidTime: string | null = (input.flowState.pendingVisitInvalidTime || '').trim() || null;
+  let customerName: string | null =
+    (input.knownCustomerName || '').trim() ||
+    (input.flowState.pendingVisitCustomerName || '').trim() ||
+    null;
+  let confirmationAsked = input.flowState.pendingVisitConfirmationAsked === true;
+
+  for (const rawUserMessage of userMessages) {
+    const dateMention = parseDateMention(rawUserMessage, referenceNow);
+    if (dateMention) {
+      dateLabel = dateMention.label;
+      dateYmd = dateMention.ymd;
+    }
+    const parsedTime = parseTimeHmFromText(rawUserMessage, { allowStandaloneHour: true });
+    if (parsedTime) timeHm = parsedTime;
+    const parsedPeriod = parsePeriodFromText(rawUserMessage);
+    if (parsedPeriod) period = parsedPeriod;
+    const parsedName = extractVisitNameFromUserMessage(rawUserMessage);
+    if (parsedName) customerName = parsedName;
+    if (isVisitSchedulingAckOnlyMessage(rawUserMessage)) {
+      // Mantem estado de confirmação como estava; apenas evita zerar.
+      confirmationAsked = confirmationAsked || false;
+    }
+  }
+
+  for (const rawAssistantMessage of assistantMessages) {
+    if (!dateYmd) {
+      const assistantDate = parseDateMention(rawAssistantMessage, referenceNow);
+      if (assistantDate) {
+        dateLabel = assistantDate.label;
+        dateYmd = assistantDate.ymd;
+      }
+    }
+    if (!timeHm) {
+      const assistantTime = parseTimeHmFromText(rawAssistantMessage, { allowStandaloneHour: true });
+      if (assistantTime) timeHm = assistantTime;
+    }
+    if (!period) {
+      const assistantPeriod = parsePeriodFromText(rawAssistantMessage);
+      if (assistantPeriod) period = assistantPeriod;
+    }
+  }
+
+  const lastAssistantMessage = assistantMessages[assistantMessages.length - 1] ?? '';
+  const assistantAskedName = /\b(como posso te chamar|qual seu nome|me passa seu nome)\b/.test(norm(lastAssistantMessage));
+  const assistantAskedConfirmation = /\b(posso confirmar sua visita)\b/.test(norm(lastAssistantMessage));
+  const assistantAskedTime = /\b(qual horario|qual horário)\b/.test(norm(lastAssistantMessage));
+  const assistantReportedInvalidTime = /\b(fora do horario|fora do horário|09h.*18h)\b/.test(norm(lastAssistantMessage));
+
+  if (assistantAskedConfirmation) confirmationAsked = true;
+
+  if (dateYmd && timeHm) {
+    const slotValidation = validateVisitDateTimeSlot(dateYmd, timeHm);
+    if (!slotValidation.valid) {
+      invalidTime = displayTimeHm(timeHm) ?? invalidTime ?? 'esse horário';
+      timeHm = null;
+      confirmationAsked = false;
+    } else {
+      invalidTime = null;
+    }
+  }
+
+  if (!invalidTime && assistantReportedInvalidTime) {
+    invalidTime = input.flowState.pendingVisitInvalidTime ?? (timeHm ? displayTimeHm(timeHm) : null);
+    if (invalidTime) {
+      timeHm = null;
+      confirmationAsked = false;
+    }
+  }
+
+  let missingSlot: 'nome' | 'dia' | 'periodo_ou_horario' | 'valid_time' | null = null;
+  if (invalidTime) missingSlot = 'valid_time';
+  else if (!dateYmd) missingSlot = 'dia';
+  else if (!timeHm) missingSlot = 'periodo_ou_horario';
+  else if (!customerName || customerName.trim().length < 2) missingSlot = 'nome';
+
+  if (missingSlot === 'nome' && assistantAskedName) {
+    confirmationAsked = false;
+  }
+  if (missingSlot != null && !(assistantAskedConfirmation && missingSlot === 'nome')) confirmationAsked = false;
+  if (assistantAskedTime && missingSlot == null && !confirmationAsked) {
+    missingSlot = 'periodo_ou_horario';
+  }
+
+  const scheduleSignalsFromUser = userMessages.some(
+    (msg) =>
+      hasVisitSchedulingWords(msg) ||
+      parseDateMention(msg, referenceNow) != null ||
+      parseTimeHmFromText(msg, { allowStandaloneHour: true }) != null
+  );
+  const lowConfidence = cueMessages.length < 2 && !scheduleSignalsFromUser;
+  const reason = lowConfidence ? 'assistant_visit_prompt_low_confidence' : 'assistant_visit_prompt_detected';
+
+  const reconstructedState = buildPendingState(input.flowState, {
+    pending: true,
+    dateLabel,
+    dateYmd,
+    timeHm,
+    period,
+    enterpriseId: input.enterpriseId ?? input.flowState.pendingVisitEnterpriseId ?? null,
+    invalidTime,
+    missingSlot,
+    customerName: customerName ?? null,
+    confirmationAsked,
+  });
+
+  return {
+    reconstructed: true,
+    lowConfidence,
+    reason,
+    nextState: reconstructedState,
+  };
+}
+
 export function hasProhibitedVisitSchedulingPhrase(text: string): boolean {
   const n = norm(text);
   return PROHIBITED_VISIT_SCHEDULING_PHRASES.some((phrase) => n.includes(phrase));
