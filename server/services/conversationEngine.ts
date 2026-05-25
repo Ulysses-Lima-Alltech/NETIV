@@ -741,6 +741,32 @@ function diagnosticsHasTechnicalGenerationFailure(diagnostics: AnaTurnDiagnostic
   );
 }
 
+function isLocalOrCustomProviderContext(baseUrl: string | null | undefined): boolean {
+  const provider = detectLlmProvider(baseUrl ?? null);
+  return provider !== 'openai' && provider !== 'openrouter';
+}
+
+function isQwenLikeModel(model: string | null | undefined): boolean {
+  const normalized = String(model ?? '').trim().toLowerCase();
+  return (
+    normalized.startsWith('qwen') ||
+    normalized.startsWith('ana-qwen') ||
+    normalized.startsWith('ana-evora-qwen')
+  );
+}
+
+function sanitizeQwenRecoveryText(raw: string): string {
+  const forbidden =
+    /\b(netiv|log|logs|erro|error|openai|qwen|json|sistema|prompt|ferramenta|instru[cç][aã]o(?:\s+interna)?)\b/i;
+  const lines = String(raw ?? '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`/g, ' ')
+    .split(/\r?\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !forbidden.test(line));
+  return lines.join('\n').replace(/\s{2,}/g, ' ').trim().slice(0, 4000);
+}
+
 function anaPhoneTail(raw: string | null | undefined, len = 6): string | null {
   const d = String(raw ?? '').replace(/\D/g, '');
   return d.length ? d.slice(-len) : null;
@@ -3675,6 +3701,30 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             source: retryResult?.success ? 'retry_raw' : 'first_raw',
             reason: quality.reason,
             preview: recoveredReply.slice(0, 180),
+          });
+        }
+      }
+    }
+    if (!structured) {
+      const recoveryRawText =
+        (retryResult?.success && (retryResult.content || '').trim()
+          ? (retryResult.content || '')
+          : rawContent).trim();
+      const canAttemptQwenTextRecovery =
+        recoveryRawText.length > 0 &&
+        (isLocalOrCustomProviderContext(aiSettings.openaiBaseUrl) || isQwenLikeModel(model));
+      if (canAttemptQwenTextRecovery) {
+        const sanitizedRecoveryReply = sanitizeQwenRecoveryText(recoveryRawText);
+        const quality = validateRecoveredReplyQuality(sanitizedRecoveryReply);
+        if (quality.ok) {
+          const classificationHint = (effectiveConv.classification || '').trim() || 'Qualificado';
+          structured = buildRecoveredReplyStructured(sanitizedRecoveryReply, classificationHint);
+          console.log('[ANA_QWEN_TEXT_RECOVERY]', {
+            conversationId,
+            model,
+            baseUrl: aiSettings.openaiBaseUrl,
+            source: retryResult?.success ? 'retry_raw' : 'first_raw',
+            replyLen: sanitizedRecoveryReply.length,
           });
         }
       }
