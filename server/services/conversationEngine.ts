@@ -3285,7 +3285,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const modelResolution = resolveAnaOpenAIModel({
       configuredModelFromDb,
       slot: 'hot_lead',
-      provider: resolvedAiSettings?.provider ?? anaTurnDiagnostics.provider,
+      provider: anaTurnDiagnostics.provider,
       baseUrl: resolvedAiSettings?.openaiBaseUrl ?? null,
     });
     if (modelResolution.blocked) {
