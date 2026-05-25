@@ -30,7 +30,7 @@ export function resolveAnaOpenAIModel(args: {
 }): AnaModelResolution {
   const slot = args.slot ?? 'hot_lead';
   const configuredModelFromDb = (args.configuredModelFromDb ?? '').trim() || null;
-  const providerContext = args.provider ?? args.baseUrl ?? null;
+  const providerContext = args.baseUrl ?? args.provider ?? null;
 
   if (!configuredModelFromDb) {
     return {
