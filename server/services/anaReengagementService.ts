@@ -20,6 +20,8 @@ import { isAnaEmergencyHandoffEnabled } from '../utils/anaEmergencyHandoff.js';
 import { getActiveEnterpriseById } from '../repositories/enterpriseRepository.js';
 import { resolveAiSettingsForEnterprise } from './enterpriseAiSettingsService.js';
 import { resolveAnaCommercialFollowupMessage } from './anaCommercialRulesService.js';
+import { parseCommercialFlowState } from '../utils/commercialFlowState.js';
+import { evaluateAnaReengagementPolicy } from '../utils/anaConversationPolicy.js';
 
 const SCAN_LIMIT = 150;
 
@@ -56,6 +58,30 @@ export function buildReengagementMessageText(conv: ConversationRow): string {
 function isBlockedClassification(c: string): boolean {
   const x = (c || '').trim();
   return x === 'Handoff' || x === 'Carteira';
+}
+
+function resolveMinReengagementIdleMinutes(): number {
+  const raw = Number.parseInt(String(process.env.ANA_REENGAGEMENT_MIN_IDLE_MINUTES ?? ''), 10);
+  if (!Number.isFinite(raw) || raw <= 0) return 60;
+  return raw;
+}
+
+async function getConversationLastInboundOutboundAt(
+  conversationId: number
+): Promise<{ lastInboundAt: Date | null; lastOutboundAt: Date | null }> {
+  const { rows } = await query<{ last_inbound_at: Date | null; last_outbound_at: Date | null }>(
+    `SELECT
+       MAX(CASE WHEN role = 'user' THEN created_at END) AS last_inbound_at,
+       MAX(CASE WHEN role = 'assistant' THEN created_at END) AS last_outbound_at
+     FROM messages
+     WHERE conversation_id = $1
+       AND deleted_at IS NULL`,
+    [conversationId]
+  );
+  return {
+    lastInboundAt: rows[0]?.last_inbound_at ?? null,
+    lastOutboundAt: rows[0]?.last_outbound_at ?? null,
+  };
 }
 
 /**
@@ -111,6 +137,31 @@ async function trySendReengagementForConversation(conversationId: number): Promi
     console.log('[ANA_REENGAGE_SKIP]', { conversationId, reason: 'manual_closed' });
     return;
   }
+  const flowState = parseCommercialFlowState(conv.commercial_flow_state);
+  if (flowState?.dialoguePolicy?.brokerHandoffAcceptedAt) {
+    console.log('[ANA_REENGAGEMENT_SUPPRESSED_ACTIVE_CONVERSATION]', {
+      conversationId,
+      reason: 'broker_handoff_pending',
+      brokerHandoffAcceptedAt: flowState.dialoguePolicy.brokerHandoffAcceptedAt,
+    });
+    return;
+  }
+  if (flowState?.pendingVisitScheduling === true || flowState?.visitScheduling?.active === true) {
+    console.log('[ANA_REENGAGEMENT_SUPPRESSED_ACTIVE_CONVERSATION]', {
+      conversationId,
+      reason: 'visit_flow_active',
+      visitStatus: flowState?.visitScheduling?.status ?? null,
+    });
+    return;
+  }
+  if (flowState?.pending_action === 'send_material') {
+    console.log('[ANA_REENGAGEMENT_SUPPRESSED_ACTIVE_CONVERSATION]', {
+      conversationId,
+      reason: 'material_flow_pending',
+      pendingMaterialType: flowState?.pending_material_type ?? null,
+    });
+    return;
+  }
 
   const lastUser = await getLastUserMessageRow(conversationId);
   if (!lastUser?.created_at) {
@@ -126,6 +177,43 @@ async function trySendReengagementForConversation(conversationId: number): Promi
 
   if (await conversationHasActiveAppointmentForReengageBlock(conversationId)) {
     console.log('[ANA_REENGAGE_SKIP]', { conversationId, reason: 'active_appointment' });
+    return;
+  }
+
+  const timestamps = await getConversationLastInboundOutboundAt(conversationId);
+  const minIdleMinutes = resolveMinReengagementIdleMinutes();
+  const recencyPolicy = evaluateAnaReengagementPolicy({
+    lastInboundAt: timestamps.lastInboundAt,
+    lastOutboundAt: timestamps.lastOutboundAt,
+    now: new Date(),
+    minIdleMinutes,
+  });
+  if (!recencyPolicy.allowed) {
+    if (recencyPolicy.reason === 'recent_inbound') {
+      console.log('[ANA_REENGAGEMENT_SKIPPED_RECENT_INBOUND]', {
+        conversationId,
+        minIdleMinutes,
+        lastInboundAt: timestamps.lastInboundAt?.toISOString() ?? null,
+        lastOutboundAt: timestamps.lastOutboundAt?.toISOString() ?? null,
+      });
+      return;
+    }
+    if (recencyPolicy.reason === 'recent_outbound') {
+      console.log('[ANA_REENGAGEMENT_SKIPPED_RECENT_OUTBOUND]', {
+        conversationId,
+        minIdleMinutes,
+        lastInboundAt: timestamps.lastInboundAt?.toISOString() ?? null,
+        lastOutboundAt: timestamps.lastOutboundAt?.toISOString() ?? null,
+      });
+      return;
+    }
+    console.log('[ANA_REENGAGEMENT_SUPPRESSED_ACTIVE_CONVERSATION]', {
+      conversationId,
+      minIdleMinutes,
+      reason: recencyPolicy.reason,
+      lastInboundAt: timestamps.lastInboundAt?.toISOString() ?? null,
+      lastOutboundAt: timestamps.lastOutboundAt?.toISOString() ?? null,
+    });
     return;
   }
 
@@ -243,6 +331,55 @@ async function trySendReengagementForConversation(conversationId: number): Promi
       return;
     }
 
+    const lockedTsRow = await client.query<{ last_inbound_at: Date | null; last_outbound_at: Date | null }>(
+      `SELECT
+         MAX(CASE WHEN role = 'user' THEN created_at END) AS last_inbound_at,
+         MAX(CASE WHEN role = 'assistant' THEN created_at END) AS last_outbound_at
+       FROM messages
+       WHERE conversation_id = $1
+         AND deleted_at IS NULL`,
+      [conversationId]
+    );
+    const lockedLastInboundAt = lockedTsRow.rows[0]?.last_inbound_at ?? null;
+    const lockedLastOutboundAt = lockedTsRow.rows[0]?.last_outbound_at ?? null;
+    const minIdleMinutes = resolveMinReengagementIdleMinutes();
+    const lockedRecencyPolicy = evaluateAnaReengagementPolicy({
+      lastInboundAt: lockedLastInboundAt,
+      lastOutboundAt: lockedLastOutboundAt,
+      now: new Date(),
+      minIdleMinutes,
+    });
+    if (!lockedRecencyPolicy.allowed) {
+      await client.query('ROLLBACK');
+      if (lockedRecencyPolicy.reason === 'recent_inbound') {
+        console.log('[ANA_REENGAGEMENT_SKIPPED_RECENT_INBOUND]', {
+          conversationId,
+          minIdleMinutes,
+          lastInboundAt: lockedLastInboundAt?.toISOString() ?? null,
+          lastOutboundAt: lockedLastOutboundAt?.toISOString() ?? null,
+          phase: 'locked',
+        });
+      } else if (lockedRecencyPolicy.reason === 'recent_outbound') {
+        console.log('[ANA_REENGAGEMENT_SKIPPED_RECENT_OUTBOUND]', {
+          conversationId,
+          minIdleMinutes,
+          lastInboundAt: lockedLastInboundAt?.toISOString() ?? null,
+          lastOutboundAt: lockedLastOutboundAt?.toISOString() ?? null,
+          phase: 'locked',
+        });
+      } else {
+        console.log('[ANA_REENGAGEMENT_SUPPRESSED_ACTIVE_CONVERSATION]', {
+          conversationId,
+          minIdleMinutes,
+          reason: lockedRecencyPolicy.reason,
+          lastInboundAt: lockedLastInboundAt?.toISOString() ?? null,
+          lastOutboundAt: lockedLastOutboundAt?.toISOString() ?? null,
+          phase: 'locked',
+        });
+      }
+      return;
+    }
+
     const outboundText = lockedCommercialFollowupText ?? body;
     const sendRes = await sendAnaTextMessageWithQuota({
       conversationId,
@@ -314,6 +451,13 @@ async function trySendReengagementForConversation(conversationId: number): Promi
       userMessageId: u.id,
       metaMessageId: sendRes.metaMessageId,
       textLen: body.length,
+    });
+    console.log('[ANA_REENGAGEMENT_SENT]', {
+      conversationId,
+      userMessageId: u.id,
+      metaMessageId: sendRes.metaMessageId,
+      textLen: body.length,
+      kind: lockedCommercialFollowupText ? 'commercial_followup' : 'reengagement',
     });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});

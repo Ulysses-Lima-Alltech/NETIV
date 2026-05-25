@@ -86,6 +86,27 @@ const SHORT_REPLY_NAME_FORBIDDEN = new Set(
   ].map((s) => s.toLowerCase())
 );
 
+/** Apelidos/brincadeiras que não devem ser persistidos automaticamente como nome real. */
+const UNCERTAIN_NICKNAME_TOKENS = new Set(
+  [
+    'mestre',
+    'idolo',
+    'ídolo',
+    'meu idolo',
+    'meu ídolo',
+    'chefe',
+    'patrao',
+    'patrão',
+    'boss',
+    'amigo',
+    'parceiro',
+    'kkk',
+    'rs',
+    'haha',
+    'hehe',
+  ].map((s) => s.toLowerCase())
+);
+
 export type ExtractCustomerNameContext = {
   /** Conteúdo da última mensagem da assistente antes desta mensagem do usuário (para autoidentificação curta após pergunta de nome). */
   lastAssistantPlain?: string | null;
@@ -109,8 +130,12 @@ function sanitizeNameCandidate(raw: string): string | null {
   if (words.some((w) => w.length > 22)) return null;
   if (words.some((w) => /\d/.test(w))) return null;
   for (const w of words) {
-    if (NAME_BLOCKLIST.has(w.toLowerCase())) return null;
+    const lower = w.toLowerCase();
+    if (NAME_BLOCKLIST.has(lower)) return null;
+    if (UNCERTAIN_NICKNAME_TOKENS.has(lower)) return null;
   }
+  const normalizedPhrase = words.map((w) => w.toLowerCase()).join(' ');
+  if (UNCERTAIN_NICKNAME_TOKENS.has(normalizedPhrase)) return null;
   return titleCaseWords(s);
 }
 
@@ -193,10 +218,19 @@ function extractNameShortReplyAfterAssistantAsked(
   for (const w of words) {
     if (!/^[A-Za-zÀ-ÿ'-]+$/.test(w) || w.length < 2 || w.length > 22) return null;
     const low = normToken(w);
-    if (SHORT_REPLY_NAME_FORBIDDEN.has(low) || NAME_BLOCKLIST.has(low)) return null;
+    if (SHORT_REPLY_NAME_FORBIDDEN.has(low) || NAME_BLOCKLIST.has(low) || UNCERTAIN_NICKNAME_TOKENS.has(low)) return null;
   }
+  const phrase = words.map((w) => normToken(w)).join(' ');
+  if (UNCERTAIN_NICKNAME_TOKENS.has(phrase)) return null;
   if (isGreetingOrVocativeToAgentAna(compact)) return null;
   return sanitizeNameCandidate(compact);
+}
+
+export function isUncertainCustomerNameCue(text: string): boolean {
+  const n = normalizeForHeuristic(text);
+  if (!n) return false;
+  if (/\b(kkk|rs|haha|hehe)\b/.test(n)) return true;
+  return /\b(mestre|meu idolo|meu idol|chefe|patrao|boss|amigo|parceiro)\b/.test(n);
 }
 
 /**

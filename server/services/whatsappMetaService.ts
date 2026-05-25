@@ -1,4 +1,4 @@
-﻿import { isAnaEmergencyBlockedOutboundMessage } from './anaEmergencyOutboundBlocklist';
+﻿import { isAnaEmergencyBlockedOutboundMessage } from './anaEmergencyOutboundBlocklist.js';
 import type { WhatsAppIntegrationConfig } from '../types/settings.js';
 import type { MetaSendMessageResponse, MetaErrorResponse } from '../types/whatsapp.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
@@ -9,6 +9,15 @@ import { getMediaSetting } from '../repositories/whatsappTemplateMediaSettingsRe
 
 const META_GRAPH_BASE = 'https://graph.facebook.com';
 const REQUEST_TIMEOUT_MS = 120000;
+
+function shouldBlockEmergencyOutboundText(value: unknown): boolean {
+  return typeof value === 'string' && isAnaEmergencyBlockedOutboundMessage(value);
+}
+
+function buildEmergencyBlockedResponse(): any {
+  console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
+  return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
+}
 
 async function getCfg(): Promise<WhatsAppIntegrationConfig | null> {
   const c = await getWhatsAppConfig();
@@ -87,13 +96,7 @@ export async function uploadWhatsAppMedia(params: {
   form.append('type', params.mimeType);
   form.append('file', new Blob([Uint8Array.from(params.buffer)], { type: params.mimeType }), params.filename);
   try {
-    const res = 
-  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
-  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
-    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
-    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
-  }
-  await fetch(url, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${config.metaAccessToken}` },
       body: form,
@@ -145,6 +148,8 @@ export function buildTemplateParams(
 }
 
 export async function sendTextMessage(to: string, text: string): Promise<SendTextResult> {
+  if (shouldBlockEmergencyOutboundText(text)) return buildEmergencyBlockedResponse();
+
   const devDisableWhatsAppSend =
     String(process.env.ANA_DEV_DISABLE_WHATSAPP_SEND || '').trim().toLowerCase() === 'true';
 
@@ -201,13 +206,7 @@ export async function sendTextMessage(to: string, text: string): Promise<SendTex
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = 
-  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
-  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
-    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
-    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
-  }
-  await fetch(url, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.metaAccessToken}`,
@@ -284,6 +283,9 @@ export async function sendTemplateMessage(
 
   const url = `${META_GRAPH_BASE}/${config.apiVersion}/${config.whatsappPhoneNumberId}/messages`;
   const bodyParams = buildTemplateParams(template, ctx);
+  if (bodyParams.some((param) => shouldBlockEmergencyOutboundText(param.text))) {
+    return buildEmergencyBlockedResponse();
+  }
   // Nome na Meta = `key` do catÃ¡logo (snake_case); o campo `name` legÃ­vel do catÃ¡logo nÃ£o Ã© o ID do template.
   const components: Array<Record<string, unknown>> = [];
   const persisted = await getMediaSetting(template.key, template.languageCode);
@@ -359,13 +361,7 @@ export async function sendTemplateMessage(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = 
-  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
-  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
-    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
-    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
-  }
-  await fetch(url, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.metaAccessToken}`,
@@ -544,13 +540,7 @@ export async function sendDocumentMessage(
     let upRaw: string;
     let up: Response;
     try {
-      up = 
-  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
-  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
-    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
-    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
-  }
-  await fetch(effectiveMediaUrl, {
+      up = await fetch(effectiveMediaUrl, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: form,
@@ -599,6 +589,9 @@ export async function sendDocumentMessage(
     mediaId = uploadedId;
 
     const cap = (caption ?? '').trim().slice(0, 1024);
+    if (cap.length > 0 && shouldBlockEmergencyOutboundText(cap)) {
+      return buildEmergencyBlockedResponse();
+    }
     const messageBody: Record<string, unknown> = {
       messaging_product: 'whatsapp',
       to: normalizedTo,
@@ -617,13 +610,7 @@ export async function sendDocumentMessage(
     let resRaw: string;
     let res: Response;
     try {
-      res = 
-  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
-  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
-    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
-    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
-  }
-  await fetch(msgUrl, {
+      res = await fetch(msgUrl, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -794,13 +781,7 @@ export async function sendVideoMessage(
     let upRaw: string;
     let up: Response;
     try {
-      up = 
-  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
-  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
-    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
-    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
-  }
-  await fetch(effectiveMediaUrl, {
+      up = await fetch(effectiveMediaUrl, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: form,
@@ -835,6 +816,9 @@ export async function sendVideoMessage(
     mediaId = uploadedId;
 
     const cap = (caption ?? '').trim().slice(0, 1024);
+    if (cap.length > 0 && shouldBlockEmergencyOutboundText(cap)) {
+      return buildEmergencyBlockedResponse();
+    }
     const messageBody: Record<string, unknown> = {
       messaging_product: 'whatsapp',
       to: normalizedTo,
@@ -847,13 +831,7 @@ export async function sendVideoMessage(
     let resRaw: string;
     let res: Response;
     try {
-      res = 
-  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
-  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
-    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
-    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
-  }
-  await fetch(msgUrl, {
+      res = await fetch(msgUrl, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -960,13 +938,7 @@ export async function sendImageMessage(
     let upRaw: string;
     let up: Response;
     try {
-      up = 
-  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
-  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
-    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
-    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
-  }
-  await fetch(effectiveMediaUrl, {
+      up = await fetch(effectiveMediaUrl, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: form,
@@ -1001,6 +973,9 @@ export async function sendImageMessage(
     mediaId = uploadedId;
 
     const cap = (caption ?? '').trim().slice(0, 1024);
+    if (cap.length > 0 && shouldBlockEmergencyOutboundText(cap)) {
+      return buildEmergencyBlockedResponse();
+    }
     const messageBody: Record<string, unknown> = {
       messaging_product: 'whatsapp',
       to: normalizedTo,
@@ -1021,13 +996,7 @@ export async function sendImageMessage(
     let resRaw: string;
     let res: Response;
     try {
-      res = 
-  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
-  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
-    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
-    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
-  }
-  await fetch(msgUrl, {
+      res = await fetch(msgUrl, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -1105,13 +1074,7 @@ export async function testConnection(): Promise<{ success: boolean; error?: stri
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const res = 
-  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
-  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
-    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
-    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
-  }
-  await fetch(url, {
+    const res = await fetch(url, {
       method: 'GET',
       headers: { Authorization: `Bearer ${config.metaAccessToken}` },
       signal: controller.signal,
@@ -1125,5 +1088,6 @@ export async function testConnection(): Promise<{ success: boolean; error?: stri
     return { success: false, error: 'Erro de conexÃ£o.', detail: e instanceof Error ? e.message : String(e) };
   }
 }
+
 
 

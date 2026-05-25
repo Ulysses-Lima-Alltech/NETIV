@@ -53,7 +53,10 @@ export interface AnaTurnDiagnostics {
     primaryAxis: string | null;
     pendingVisitScheduling: boolean;
     extractedDateLabel: string | null;
+    extractedPeriod?: string | null;
     extractedTime: string | null;
+    capturedSlots?: string[];
+    missingSlot?: string | null;
     deterministicSchedulingHandled: boolean;
     schedulingHandledReason: string | null;
   };

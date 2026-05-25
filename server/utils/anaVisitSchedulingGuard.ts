@@ -8,6 +8,7 @@ type VisitState = {
   accepted: boolean;
   requestedDateText: string | null;
   requestedTimeText: string | null;
+  requestedPeriodText?: string | null;
   normalizedDate: string | null;
   normalizedTime: string | null;
   nameCollected: boolean;
@@ -21,6 +22,7 @@ const DEFAULT_STATE: VisitState = {
   accepted: false,
   requestedDateText: null,
   requestedTimeText: null,
+  requestedPeriodText: null,
   normalizedDate: null,
   normalizedTime: null,
   nameCollected: false,
@@ -156,6 +158,8 @@ function hydrate(state: CommercialFlowState, customerName: string | null | undef
     customerName: v?.customerName ?? (name.length > 0 ? name : null),
     active: (v?.active ?? false) || state.pendingVisitScheduling === true,
     normalizedDate: v?.normalizedDate ?? state.pendingVisitDate ?? null,
+    normalizedTime: v?.normalizedTime ?? state.pendingVisitTime ?? null,
+    requestedPeriodText: v?.requestedPeriodText ?? (state.pendingVisitPeriod ?? null),
     requestedDateText: v?.requestedDateText ?? state.pendingVisitDateLabel ?? null,
   };
 }
@@ -166,6 +170,8 @@ function persist(base: CommercialFlowState, v: VisitState, enterpriseId: number 
     pendingVisitScheduling: v.active,
     pendingVisitDateLabel: v.requestedDateText,
     pendingVisitDate: v.normalizedDate,
+    pendingVisitTime: v.normalizedTime,
+    pendingVisitPeriod: (v.requestedPeriodText as string | null | undefined) ?? null,
     pendingVisitEnterpriseId: v.active ? enterpriseId : null,
     visitScheduling: v,
     updatedAt: new Date().toISOString(),

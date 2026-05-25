@@ -378,7 +378,7 @@ function applyShortMaterialReplyPolicy(
 }
 
 const BROKER_DETAIL_ROUTING_TEXT =
-  'Esses detalhes variam conforme as opcoes disponiveis. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?';
+  'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?';
 
 function removeInternalLimitationSentences(text: string): { text: string; changed: boolean } {
   const lines = (text || '')
@@ -501,6 +501,12 @@ function isGreetingLikeReply(text: string): boolean {
   if (!n || n.length > 120) return false;
   const greetingStart = /^(oi|ola|bom dia|boa tarde|boa noite|opa|e ai)\b/.test(n);
   if (!greetingStart) return false;
+  if (/\b(empreendimento|cidade|regiao|localizacao|qual empreendimento|qual cidade|te ajudo)\b/.test(n)) {
+    return false;
+  }
+  if ((text.match(/\?/g) || []).length >= 1 && /\b(qual|quais|prefere|quer)\b/.test(n)) {
+    return false;
+  }
   if (/\b(preco|valor|lazer|portaria|metragem|localizacao|financiamento|visita|agenda|endereco)\b/.test(n)) {
     return false;
   }
@@ -720,8 +726,21 @@ function replyStartsWithGreeting(text: string): boolean {
   return /^(oi|ola|olá|bom dia|boa tarde|boa noite|opa)\b/i.test((text || '').trim());
 }
 
+function startsWithComposedCordialGreeting(text: string): boolean {
+  const n = normFinalGuard(text || '');
+  return /^(oi|ola)\s*[!,.]?\s*(bom dia|boa tarde|boa noite)\s*[!,.]?\s*tudo bem\s*\?/.test(n);
+}
+
+function stripOpeningGreetingPrefix(text: string): string {
+  let next = (text || '').trim();
+  next = next.replace(/^(oi|ol[aá])(?:[!,. ]+)?/i, '').trim();
+  next = next.replace(/^(bom dia|boa tarde|boa noite)(?:[!,. ]+)?/i, '').trim();
+  next = next.replace(/^tudo bem\s*\?\s*/i, '').trim();
+  return next;
+}
+
 function countQuestions(text: string): number {
-  return ((text || '').match(/\?/g) || []).length;
+  return ((text || '').match(/\?(?=\s+[A-ZÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇ]|$)/g) || []).length;
 }
 
 export function sanitizeTooManyQuestionsReply(reply: string): string {
@@ -839,7 +858,7 @@ export function evaluateAnaEmptyFallbackGuard(opts: {
   if (countQuestions(opts.reply || '') > 1) {
     return { blocked: true, reason: 'too_many_questions' };
   }
-  if (opts.isFirstAnaReply === true && !replyStartsWithGreeting(opts.reply || '')) {
+  if (opts.isFirstAnaReply === true && !startsWithComposedCordialGreeting(opts.reply || '')) {
     return { blocked: true, reason: 'first_reply_missing_greeting' };
   }
   if (/^(oi|ola|bom dia|boa tarde|boa noite)[!. ]*(eu sou|sou)?\s*(a\s*)?ana[!. ]*$/.test(n)) {
@@ -896,10 +915,9 @@ export function applyFirstUsefulGreetingStyle(opts: {
   referenceNow?: Date | string | null;
 }): { text: string; changed: boolean; greeting: string | null } {
   const raw = (opts.text || '').trim();
-  void opts.referenceNow;
   if (!raw) return { text: raw, changed: false, greeting: null };
   if (opts.isFirstAnaReply !== true) return { text: raw, changed: false, greeting: null };
-  if (replyStartsWithGreeting(raw)) return { text: raw, changed: false, greeting: null };
+  if (startsWithComposedCordialGreeting(raw)) return { text: raw, changed: false, greeting: null };
 
   const compact = raw.replace(/\s+/g, ' ').trim();
   const words = compact.split(/\s+/).filter(Boolean);
@@ -909,8 +927,16 @@ export function applyFirstUsefulGreetingStyle(opts: {
     /[\p{L}\p{N}]/u.test(compact);
   if (!hasUsefulAndReasonableContent) return { text: raw, changed: false, greeting: null };
 
-  const greeting = 'Oi';
-  return { text: `${greeting}! ${raw}`, changed: true, greeting };
+  const greetingPeriod = contextualGreeting(opts.referenceNow).toLowerCase();
+  const greeting = `Olá, ${greetingPeriod}, tudo bem?`;
+  const withoutLeadingGreeting = stripOpeningGreetingPrefix(raw) || raw;
+  const separator = /\r?\n/.test(withoutLeadingGreeting) ? '\n\n' : ' ';
+  const merged = `${greeting}${separator}${withoutLeadingGreeting}`;
+  const next =
+    separator === '\n\n'
+      ? merged.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+      : merged.replace(/\s{2,}/g, ' ').trim();
+  return { text: next, changed: next !== raw, greeting };
 }
 
 /**

@@ -15,6 +15,16 @@ import {
   sanitizeTooManyQuestionsReply,
 } from '../utils/anaReplyFinalize.js';
 import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
+import {
+  applyAnaConversationPolicy,
+  evaluateAnaReengagementPolicy,
+} from '../utils/anaConversationPolicy.js';
+import { handleVisitSchedulingDeterministically } from '../utils/anaDirectVisitScheduling.js';
+import {
+  extractCustomerNameFromUserUtterance,
+  isUncertainCustomerNameCue,
+} from '../utils/extractCustomerNameFromMessage.js';
+import type { CommercialFlowState } from '../utils/commercialFlowState.js';
 
 test('resolve modelo da Ana por DB com gpt-4.1', () => {
   const resolution = resolveAnaOpenAIModel({
@@ -210,12 +220,12 @@ test('saudacao inicial seca ou robotica e bloqueada', () => {
     isFirstAnaReply: true,
   });
   const good = evaluateAnaEmptyFallbackGuard({
-    reply: 'Boa noite! Tudo bem? Me fala qual empreendimento vocÃª quer conhecer que eu te ajudo por aqui.',
+    reply: 'Olá, boa noite, tudo bem? Me fala qual empreendimento voce quer conhecer que eu te ajudo por aqui.',
     userMessage: 'Oi',
     isFirstAnaReply: true,
   });
   const multipleQuestions = evaluateAnaEmptyFallbackGuard({
-    reply: 'Boa noite! Tudo bem? VocÃª quer loteamento ou apartamento? Ã para morar ou investir?',
+    reply: 'Olá, boa noite, tudo bem? Voce quer loteamento ou apartamento? E para morar ou investir?',
     userMessage: 'Oi',
     isFirstAnaReply: true,
   });
@@ -246,8 +256,8 @@ test('primeira resposta comercial util sem saudacao recebe patch local', () => {
   assert.equal(blocked.blocked, true);
   assert.equal(blocked.reason, 'first_reply_missing_greeting');
   assert.equal(patched.changed, true);
-  assert.equal(patched.greeting, 'Oi');
-  assert.equal(patched.text.startsWith('Oi! '), true);
+  assert.match(patched.greeting ?? '', /^Olá, (bom dia|boa tarde|boa noite), tudo bem\?$/i);
+  assert.match(patched.text, /^Olá, (bom dia|boa tarde|boa noite), tudo bem\?\s+/i);
   assert.equal(afterPatch.blocked, false);
 });
 
@@ -355,6 +365,143 @@ test('sanitiza resposta valida com perguntas finais em excesso sem esvaziar cont
     output.includes('Quer que eu te fale mais sobre a localizacao?') ||
     output.includes('Quer saber mais sobre a localizacao ou prefere falar com um corretor?');
   assert.equal(hasSafeQuestion, true);
+});
+
+test('reengagement bloqueia inbound e outbound recentes', () => {
+  const now = new Date('2026-05-25T15:00:00.000Z');
+  const inboundRecent = evaluateAnaReengagementPolicy({
+    now,
+    minIdleMinutes: 60,
+    lastInboundAt: new Date('2026-05-25T14:35:00.000Z'),
+    lastOutboundAt: new Date('2026-05-25T12:00:00.000Z'),
+  });
+  const outboundRecent = evaluateAnaReengagementPolicy({
+    now,
+    minIdleMinutes: 60,
+    lastInboundAt: new Date('2026-05-25T11:00:00.000Z'),
+    lastOutboundAt: new Date('2026-05-25T14:40:00.000Z'),
+  });
+  const idleEnough = evaluateAnaReengagementPolicy({
+    now,
+    minIdleMinutes: 60,
+    lastInboundAt: new Date('2026-05-25T11:00:00.000Z'),
+    lastOutboundAt: new Date('2026-05-25T12:10:00.000Z'),
+  });
+
+  assert.equal(inboundRecent.allowed, false);
+  assert.equal(inboundRecent.reason, 'recent_inbound');
+  assert.equal(outboundRecent.allowed, false);
+  assert.equal(outboundRecent.reason, 'recent_outbound');
+  assert.equal(idleEnough.allowed, true);
+});
+
+test('captura sabado de manha e pergunta apenas horario', () => {
+  const baseState: CommercialFlowState = {};
+  const decision = handleVisitSchedulingDeterministically({
+    userMessage: 'Acho que consigo no sábado de manhã',
+    flowState: baseState,
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:00:00.000Z'),
+  });
+
+  assert.equal(decision.handled, true);
+  assert.equal(decision.extractedPeriod, 'manha');
+  assert.equal(decision.missingSlot, 'periodo_ou_horario');
+  assert.equal(decision.pendingVisitScheduling, true);
+  assert.match(decision.reply ?? '', /qual horário fica melhor para você/i);
+});
+
+test('apelido nao vira nome automaticamente', () => {
+  const extracted = extractCustomerNameFromUserUtterance('Pode me chamar de Mestre');
+  const uncertain = isUncertainCustomerNameCue('Mestre kkk');
+
+  assert.equal(extracted, null);
+  assert.equal(uncertain, true);
+});
+
+test('apos responder lazer, follow-up evita visita e corretor por padrao', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 1,
+    userMessage: 'Quais areas de lazer tem?',
+    replyText: 'Tem piscinas, academia, playground e areas de convivencia.',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [
+      { role: 'user', content: 'Quais areas de lazer tem?' },
+    ],
+    knownCustomerName: null,
+    probableCustomerName: null,
+    disableFollowupQuestion: false,
+  });
+
+  assert.match(policy.text, /\?/);
+  assert.equal(/agendar|visita|corretor/i.test(policy.text), false);
+});
+
+test('pedido de simulacao puxa pergunta de corretor', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 2,
+    userMessage: 'Consegue simular uma parcela personalizada?',
+    replyText: 'Esse é o valor inicial do lote.',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [
+      { role: 'user', content: 'Consegue simular uma parcela personalizada?' },
+    ],
+    knownCustomerName: null,
+    probableCustomerName: null,
+    disableFollowupQuestion: false,
+  });
+
+  assert.match(policy.text, /quer que eu encaminhe para um corretor te passar certinho\?/i);
+});
+
+test('fluxo de visita ativo suprime oferta de midia e ancora no slot faltante', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 3,
+    userMessage: 'Tá bom',
+    replyText: 'Posso te enviar um vídeo e o book também.',
+    isFirstAnaReply: false,
+    flowState: {
+      pendingVisitScheduling: true,
+      pendingVisitDateLabel: 'sábado',
+      pendingVisitDate: '2026-05-30',
+      pendingVisitPeriod: 'manha',
+      pendingVisitTime: null,
+    },
+    recentMessages: [
+      { role: 'assistant', content: 'Perfeito, sábado de manhã. Qual horário fica melhor para você?' },
+      { role: 'user', content: 'Tá bom' },
+    ],
+    knownCustomerName: null,
+    probableCustomerName: null,
+    disableFollowupQuestion: true,
+    visitFlowActive: true,
+  });
+
+  assert.equal(/vídeo|video|book/i.test(policy.text), false);
+  assert.match(policy.text, /qual horário fica melhor para você/i);
+});
+
+test('cta repetido em sequencia e suprimido', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 4,
+    userMessage: 'Entendi',
+    replyText: 'O valor inicial é esse. Se quiser, posso te ajudar a agendar uma visita.',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [
+      { role: 'assistant', content: 'Se fizer sentido para você, posso te ajudar a agendar uma visita.' },
+      { role: 'user', content: 'Entendi' },
+    ],
+    knownCustomerName: null,
+    probableCustomerName: null,
+    disableFollowupQuestion: true,
+  });
+
+  assert.equal(/agendar uma visita/i.test(policy.text), false);
 });
 
 

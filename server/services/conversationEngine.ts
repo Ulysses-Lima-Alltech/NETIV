@@ -111,6 +111,7 @@ import {
 } from '../utils/anaCommercialAxisGuard.js';
 import {
   extractCustomerNameFromUserUtterance,
+  isUncertainCustomerNameCue,
   replyExplicitlyAsksCustomerName,
 } from '../utils/extractCustomerNameFromMessage.js';
 import {
@@ -162,6 +163,7 @@ import {
   isVisitSchedulingLoopFallbackReply,
   isVisitSchedulingRefusalMessage,
 } from '../utils/anaDirectVisitScheduling.js';
+import { applyAnaConversationPolicy } from '../utils/anaConversationPolicy.js';
 import { applyOperationalFactGuard } from '../utils/anaOperationalFactGuard.js';
 import {
   resolveOperationalFactAnswer,
@@ -1399,6 +1401,13 @@ async function sendAnaEnterpriseMediaFirst(params: {
         fileName: file.originalName,
         messageKind: mk,
       });
+      console.log('[ANA_MEDIA_OFFER_SENT]', {
+        conversationId,
+        enterpriseId: enterpriseIdForFile,
+        mediaType: mk,
+        fileId: file.id,
+        phase: 'media_delivery',
+      });
       if (mk === 'video') {
         console.log('[ANA_VIDEO_DIRECT_SENT]', { conversationId, enterpriseId: enterpriseIdForFile, fileId: file.id });
       }
@@ -2008,7 +2017,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       trustedCustomerName =
         extractCustomerNameFromUserUtterance(trimmed, { lastAssistantPlain: 'Como posso te chamar?' }) || null;
     }
+    if (!trustedCustomerName && isUncertainCustomerNameCue(trimmed)) {
+      console.log('[ANA_CONTACT_NAME_UNCERTAIN]', {
+        conversationId,
+        userMessagePreview: trimmed.slice(0, 160),
+      });
+      console.log('[ANA_CONTACT_NICKNAME_IGNORED]', {
+        conversationId,
+        userMessagePreview: trimmed.slice(0, 160),
+      });
+    }
     if (trustedCustomerName) {
+      console.log('[ANA_CONTACT_NAME_ACCEPTED]', {
+        conversationId,
+        customerName: trustedCustomerName,
+      });
       const mergedName = await mergeConfirmedCustomerNameIfEmpty(conversationId, trustedCustomerName);
       if (mergedName) {
         const refreshedAfterName = await getConversationById(conversationId);
@@ -2350,14 +2373,34 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     );
 
     const proactiveVideoIntent = isProactiveVideoOfferIntent(trimmed) && !isVideoMaterialRequest(trimmed);
+    const visitFlowContextActive =
+      appointmentPreflight.active ||
+      flowStateParsed.pendingVisitScheduling === true ||
+      flowStateParsed.visitScheduling?.active === true;
     const alreadyOfferedOrSentVideo = flowStateParsed.last_material_sent_id != null || flowStateParsed.last_requested_material_type === 'video';
     if (proactiveVideoIntent && ent) {
-      if (alreadyOfferedOrSentVideo) {
+      if (visitFlowContextActive) {
+        console.log('[ANA_MEDIA_OFFER_SUPPRESSED_VISIT_FLOW]', {
+          conversationId,
+          enterpriseId: ent.id,
+          visitStatus: flowStateParsed.visitScheduling?.status ?? null,
+        });
+      } else if (alreadyOfferedOrSentVideo) {
         console.log('[ANA_PROACTIVE_VIDEO_OFFER_SUPPRESSED_REPEAT]', { conversationId, enterpriseId: ent.id });
+        console.log('[ANA_MEDIA_OFFER_SUPPRESSED_REPEAT]', {
+          conversationId,
+          enterpriseId: ent.id,
+          mediaType: 'video',
+        });
       } else {
         const offerableVideos = await resolveSendableEnterpriseVideoFilesCurrentVersion(ent.id, 1, { requireOfferable: true });
         if (offerableVideos.length > 0) {
           console.log('[ANA_PROACTIVE_VIDEO_OFFER_AVAILABLE]', { conversationId, enterpriseId: ent.id, fileId: offerableVideos[0]?.id ?? null });
+          console.log('[ANA_MEDIA_OFFER_CONTEXT_ALLOWED]', {
+            conversationId,
+            enterpriseId: ent.id,
+            mediaType: 'video',
+          });
           const offerText = 'Tenho um vídeo do empreendimento que ajuda a visualizar melhor a estrutura. Posso te enviar?';
           const offerSend = await sendTextMessage({
             conversationId,
@@ -2368,6 +2411,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           if (offerSend.success && offerSend.metaMessageId) {
             await insertMessage(conversationId, 'assistant', offerText, offerSend.metaMessageId);
             console.log('[ANA_PROACTIVE_VIDEO_OFFER_SENT]', { conversationId, enterpriseId: ent.id });
+            console.log('[ANA_MEDIA_OFFER_SENT]', {
+              conversationId,
+              enterpriseId: ent.id,
+              mediaType: 'video',
+              phase: 'offer_prompt',
+            });
             await mergeConversationCommercialFlowState(conversationId, {
               pending_material_type: 'video',
               pending_action: 'send_material',
@@ -3127,6 +3176,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         pendingVisitScheduling: false,
         pendingVisitDateLabel: null,
         pendingVisitDate: null,
+        pendingVisitTime: null,
+        pendingVisitPeriod: null,
         pendingVisitEnterpriseId: null,
         updatedAt: new Date().toISOString(),
       };
@@ -3152,6 +3203,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
       referenceNow: lastUserMessageAt,
     });
+    if (
+      directVisitSchedulingIntent ||
+      flowStateParsed.pendingVisitScheduling === true ||
+      flowStateParsed.visitScheduling?.active === true
+    ) {
+      console.log('[ANA_VISIT_FLOW_ACTIVE]', {
+        conversationId,
+        directVisitSchedulingIntent,
+        pendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
+        visitStatus: flowStateParsed.visitScheduling?.status ?? null,
+      });
+    }
     const directVisitSchedulingDecision = directVisitSchedulingIntent && !userRefusedScheduling
       ? handleVisitSchedulingDeterministically({
           userMessage: trimmed,
@@ -3162,6 +3225,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           requestedAxis: requestedAxisForPolicy,
           lastAssistantMessage: lastAssistantPlain,
           enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+          customerName: trustedCustomerName || effectiveConv.customer_name || null,
+          customerPhone: (effectiveConv.contact_phone || effectiveConv.external_contact_id || '').replace(/\D/g, ''),
           referenceNow: lastUserMessageAt,
         })
       : null;
@@ -3175,7 +3240,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       pendingVisitScheduling:
         directVisitSchedulingDecision?.pendingVisitScheduling ?? flowStateParsed.pendingVisitScheduling === true,
       extractedDateLabel: directVisitSchedulingDecision?.extractedDateLabel ?? null,
+      extractedPeriod: directVisitSchedulingDecision?.extractedPeriod ?? null,
       extractedTime: directVisitSchedulingDecision?.extractedTime ?? null,
+      capturedSlots: directVisitSchedulingDecision?.capturedSlots ?? [],
+      missingSlot: directVisitSchedulingDecision?.missingSlot ?? null,
       deterministicSchedulingHandled: directVisitSchedulingDecision?.handled === true,
       schedulingHandledReason: directVisitSchedulingDecision?.reason ?? null,
     };
@@ -3186,7 +3254,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       primaryAxis: directVisitSchedulingAudit.primaryAxis,
       pendingVisitScheduling: directVisitSchedulingAudit.pendingVisitScheduling,
       extractedDateLabel: directVisitSchedulingAudit.extractedDateLabel,
+      extractedPeriod: directVisitSchedulingAudit.extractedPeriod,
       extractedTime: directVisitSchedulingAudit.extractedTime,
+      capturedSlots: directVisitSchedulingAudit.capturedSlots,
+      missingSlot: directVisitSchedulingAudit.missingSlot,
       deterministicSchedulingHandled: directVisitSchedulingAudit.deterministicSchedulingHandled,
       schedulingHandledReason: directVisitSchedulingAudit.schedulingHandledReason,
     };
@@ -3201,6 +3272,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       let deterministicVisitReply = directVisitSchedulingDecision.reply;
       await mergeConversationCommercialFlowState(conversationId, directVisitSchedulingDecision.nextState);
       flowStateParsed = directVisitSchedulingDecision.nextState;
+      for (const slot of directVisitSchedulingDecision.capturedSlots) {
+        console.log('[ANA_VISIT_SLOT_CAPTURED]', {
+          conversationId,
+          slot,
+          reason: directVisitSchedulingDecision.reason,
+        });
+      }
+      if (directVisitSchedulingDecision.missingSlot) {
+        console.log('[ANA_VISIT_MISSING_SLOT_REQUESTED]', {
+          conversationId,
+          missingSlot: directVisitSchedulingDecision.missingSlot,
+          reason: directVisitSchedulingDecision.reason,
+        });
+      }
 
       if (directVisitSchedulingDecision.appointmentConfirmed) {
         if (ent) {
@@ -3241,6 +3326,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             pendingVisitScheduling: false,
             pendingVisitDateLabel: null,
             pendingVisitDate: null,
+            pendingVisitTime: null,
+            pendingVisitPeriod: null,
             pendingVisitEnterpriseId: null,
             visitScheduling: {
               active: false,
@@ -3248,6 +3335,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               accepted: true,
               requestedDateText: directVisitSchedulingDecision.extractedDateLabel ?? null,
               requestedTimeText: scheduledTimeText,
+              requestedPeriodText:
+                directVisitSchedulingDecision.extractedPeriod === 'manha'
+                  ? 'de manhã'
+                  : directVisitSchedulingDecision.extractedPeriod === 'tarde'
+                    ? 'à tarde'
+                    : directVisitSchedulingDecision.extractedPeriod === 'noite'
+                      ? 'à noite'
+                      : null,
               normalizedDate: directVisitSchedulingDecision.appointmentDateYmd ?? null,
               normalizedTime: scheduledHm,
               nameCollected: scheduledCustomerName.length > 0,
@@ -3266,6 +3361,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             pendingVisitScheduling: true,
             pendingVisitDateLabel: directVisitSchedulingDecision.extractedDateLabel,
             pendingVisitDate: directVisitSchedulingDecision.extractedDateYmd,
+            pendingVisitTime: directVisitSchedulingDecision.appointmentTimeHm ?? null,
+            pendingVisitPeriod: directVisitSchedulingDecision.extractedPeriod ?? null,
             pendingVisitEnterpriseId: null,
             updatedAt: new Date().toISOString(),
           });
@@ -3301,6 +3398,31 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             ? 'Perfeito. Visita agendada. Se quiser, também posso te ajudar com valores, pagamento ou localização.'
             : 'Perfeito. Se quiser, seguimos com outros detalhes do Évora por aqui.';
         }
+      }
+
+      const visitPolicyResult = applyAnaConversationPolicy({
+        conversationId,
+        userMessage: trimmed,
+        replyText: deterministicVisitReply,
+        isFirstAnaReply,
+        flowState: flowStateParsed,
+        recentMessages: rows.map((m) => ({
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: m.content,
+        })),
+        knownCustomerName: trustedCustomerName || effectiveConv.customer_name || null,
+        probableCustomerName:
+          !(trustedCustomerName || effectiveConv.customer_name || '').trim()
+            ? linkedContact?.first_name ?? linkedContact?.full_name ?? null
+            : null,
+        now: lastUserMessageAt,
+        disableFollowupQuestion: true,
+        visitFlowActive: true,
+      });
+      deterministicVisitReply = visitPolicyResult.text;
+      if (visitPolicyResult.changed) {
+        flowStateParsed = visitPolicyResult.flowState;
+        await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
       }
 
       if (isPipelineStale(conversationId, replyPipelineToken)) {
@@ -3560,12 +3682,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
 
       const knownNameFromConversation = toFirstName(effectiveConv.customer_name || null);
-      const knownNameFromWhatsApp = toFirstName(effectiveConv.whatsapp_display_name || null);
       const knownNameFromContact =
         toFirstName(linkedContact?.first_name || null) || toFirstName(linkedContact?.full_name || null);
       const knownNameFromCurrentTurn = toFirstName(trustedCustomerName || null);
       const hasKnownCustomerName = Boolean(
-        knownNameFromConversation || knownNameFromWhatsApp || knownNameFromContact || knownNameFromCurrentTurn
+        knownNameFromConversation || knownNameFromContact || knownNameFromCurrentTurn
       );
 
       const recentAssistantForCtaPolicy = [...rows]
@@ -3641,6 +3762,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             intent: effectiveCommercialRule.ruleId,
             reason: aggressiveBlockCommercial.reason,
           });
+          if (hasRecentVisitCta) {
+            console.log('[ANA_CTA_REPEAT_SUPPRESSED]', {
+              conversationId,
+              ctaType: 'visit_offer',
+              reason: aggressiveBlockCommercial.reason,
+              phase: 'commercial_rule_message',
+            });
+          }
         }
         if (effectiveCommercialRule.ruleId !== 'visita_agendamento') {
           const visitSuppressed = stripInappropriateVisitOffer(commercialRuleMessage);
@@ -3652,6 +3781,35 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               reason: 'removed_from_canonical_non_visit_intent',
             });
           }
+        }
+        const commercialPolicyResult = applyAnaConversationPolicy({
+          conversationId,
+          userMessage: trimmed,
+          replyText: commercialRuleMessage,
+          isFirstAnaReply: isFirstAnaReply && index === 0,
+          flowState: flowStateParsed,
+          recentMessages: rows.map((m) => ({
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content: m.content,
+          })),
+          knownCustomerName: trustedCustomerName || effectiveConv.customer_name || null,
+          probableCustomerName:
+            !(trustedCustomerName || effectiveConv.customer_name || '').trim()
+              ? linkedContact?.first_name ?? linkedContact?.full_name ?? null
+              : null,
+          now: lastUserMessageAt,
+          disableFollowupQuestion:
+            effectiveCommercialRule.ruleId === 'visita_agendamento' || commercialMessagesToSend.length > 1,
+          visitFlowActive:
+            effectiveCommercialRule.ruleId === 'visita_agendamento' ||
+            appointmentPreflight.active ||
+            flowStateParsed.pendingVisitScheduling === true ||
+            flowStateParsed.visitScheduling?.active === true,
+        });
+        commercialRuleMessage = commercialPolicyResult.text;
+        if (commercialPolicyResult.changed) {
+          flowStateParsed = commercialPolicyResult.flowState;
+          await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
         }
         const noRepeatForCommercialRule = applyAnaNoRepeatMessageGuard({
           conversationId,
@@ -3668,6 +3826,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             conversationId,
             intent: effectiveCommercialRule.ruleId,
             reason: noRepeatForCommercialRule.reason,
+          });
+          console.log('[ANA_REPEAT_SUPPRESSED]', {
+            conversationId,
+            reason: noRepeatForCommercialRule.reason,
+            phase: 'commercial_rule_message',
           });
         }
         const sendResult = await sendTextMessage({
@@ -3725,6 +3888,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           semanticallySimilar: repliesSemanticallySimilar,
         });
         if (noRepeatVisitOffer.changed) safeVisitOfferMessage = noRepeatVisitOffer.text;
+        if (noRepeatVisitOffer.changed) {
+          console.log('[ANA_REPEAT_SUPPRESSED]', {
+            conversationId,
+            reason: noRepeatVisitOffer.reason,
+            phase: 'commercial_rule_visit_offer',
+          });
+          console.log('[ANA_CTA_REPEAT_SUPPRESSED]', {
+            conversationId,
+            ctaType: 'visit_offer',
+            reason: noRepeatVisitOffer.reason,
+            phase: 'commercial_rule_visit_offer',
+          });
+        }
         await sleepMs(900);
         if (isPipelineStale(conversationId, replyPipelineToken)) {
           anaTurnAuditOutcome = 'silent';
@@ -3900,7 +4076,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       requestedProductType: promptProductTypeForPrompt,
       knownCustomerName: effectiveConv.customer_name,
       probableCustomerName:
-        !(effectiveConv.customer_name || '').trim() ? effectiveConv.whatsapp_display_name ?? null : null,
+        !(effectiveConv.customer_name || '').trim()
+          ? linkedContact?.first_name ?? linkedContact?.full_name ?? null
+          : null,
       customerNameMentionsSoFar: effectiveConv.ana_customer_name_mentions ?? 0,
       anaAskedCustomerName: effectiveConv.ana_asked_customer_name === true,
       conversationClassification: effectiveConv.classification,
@@ -5820,6 +5998,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         requestedAxis: requestedAxisForPolicy,
         lastAssistantMessage: lastAssistantPlain,
         enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        customerName: trustedCustomerName || effectiveConv.customer_name || null,
+        customerPhone: (effectiveConv.contact_phone || effectiveConv.external_contact_id || '').replace(/\D/g, ''),
         referenceNow: lastUserMessageAt,
       });
       if (guardDecision.handled && guardDecision.reply) {
@@ -5835,7 +6015,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           blocked: true,
           replacementReason: guardDecision.reason,
           extractedDateLabel: guardDecision.extractedDateLabel,
+          extractedPeriod: guardDecision.extractedPeriod,
           extractedTime: guardDecision.extractedTime,
+          missingSlot: guardDecision.missingSlot,
         };
         anaTurnDiagnostics.scheduling = {
           enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
@@ -5844,10 +6026,27 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           primaryAxis: anaDecision.primaryAxis,
           pendingVisitScheduling: guardDecision.pendingVisitScheduling,
           extractedDateLabel: guardDecision.extractedDateLabel,
+          extractedPeriod: guardDecision.extractedPeriod,
           extractedTime: guardDecision.extractedTime,
+          capturedSlots: guardDecision.capturedSlots,
+          missingSlot: guardDecision.missingSlot,
           deterministicSchedulingHandled: true,
           schedulingHandledReason: `final_guard_${guardDecision.reason}`,
         };
+        for (const slot of guardDecision.capturedSlots) {
+          console.log('[ANA_VISIT_SLOT_CAPTURED]', {
+            conversationId,
+            slot,
+            reason: `final_guard_${guardDecision.reason}`,
+          });
+        }
+        if (guardDecision.missingSlot) {
+          console.log('[ANA_VISIT_MISSING_SLOT_REQUESTED]', {
+            conversationId,
+            missingSlot: guardDecision.missingSlot,
+            reason: `final_guard_${guardDecision.reason}`,
+          });
+        }
         console.log('[ANA_VISIT_SCHEDULING_FORBIDDEN_PHRASE_GUARD]', {
           conversationId,
           contactId: effectiveConv.contact_id ?? null,
@@ -6577,6 +6776,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       pendingVisitScheduling: flowStateParsed.pendingVisitScheduling ?? false,
       pendingVisitDateLabel: flowStateParsed.pendingVisitDateLabel ?? null,
       pendingVisitDate: flowStateParsed.pendingVisitDate ?? null,
+      pendingVisitTime: flowStateParsed.pendingVisitTime ?? null,
+      pendingVisitPeriod: flowStateParsed.pendingVisitPeriod ?? null,
       visitScheduling: flowStateParsed.visitScheduling ?? null,
     };
     const evoraVisitSchedulingGuardResult = applyAnaVisitSchedulingGuard({
@@ -6596,6 +6797,27 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
       const extractedDate = flowStateParsed.visitScheduling?.normalizedDate ?? flowStateParsed.pendingVisitDate ?? null;
       const extractedTime = flowStateParsed.visitScheduling?.normalizedTime ?? null;
+      if (extractedDate) {
+        console.log('[ANA_VISIT_SLOT_CAPTURED]', {
+          conversationId,
+          slot: 'dia',
+          reason: evoraVisitSchedulingGuardResult.reason,
+        });
+      }
+      if (extractedTime) {
+        console.log('[ANA_VISIT_SLOT_CAPTURED]', {
+          conversationId,
+          slot: 'horario',
+          reason: evoraVisitSchedulingGuardResult.reason,
+        });
+      }
+      if (evoraVisitSchedulingGuardResult.nextMissingField) {
+        console.log('[ANA_VISIT_MISSING_SLOT_REQUESTED]', {
+          conversationId,
+          missingSlot: evoraVisitSchedulingGuardResult.nextMissingField,
+          reason: evoraVisitSchedulingGuardResult.reason,
+        });
+      }
       console.log('[ANA_VISIT_SCHEDULING_GUARD]', {
         conversationId,
         enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
@@ -6633,7 +6855,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     if (/\bR\$\s*\d|\b\d{2,3}(?:[.,]\d{3})*(?:[.,]\d{2})?\s*reais?\b/i.test(replyText)) {
       replyText =
-        'Esses detalhes variam conforme as opções disponíveis. O corretor te passa tudo certinho no atendimento. Que tal marcarmos uma visita?';
+        'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?';
       console.log('[ANA_HARD_GUARD_PRICE_VALUE_BLOCKED]', {
         conversationId,
         enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
@@ -6681,6 +6903,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         changed: true,
         reason: noRepeatGuardResult.reason,
       };
+      console.log('[ANA_REPEAT_SUPPRESSED]', {
+        conversationId,
+        reason: noRepeatGuardResult.reason,
+        phase: 'final_no_repeat_guard',
+      });
     }
     const inferredIntentForFinalGuard =
       inferUserRequestedAxis(trimmed) === 'localizacao'
@@ -6704,6 +6931,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         changed: true,
         reason: aggressiveBlockFinal.reason,
       };
+      if (recentHasVisitCta) {
+        console.log('[ANA_CTA_REPEAT_SUPPRESSED]', {
+          conversationId,
+          ctaType: 'visit_offer',
+          reason: aggressiveBlockFinal.reason,
+          phase: 'final_legacy_visit_cta_guard',
+        });
+      }
     }
 
     anaEngineTrace('final_reply_choice_after', {
@@ -6765,6 +7000,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       console.warn('[ANA_REPEATED_RESPONSE_BLOCKED]', {
         conversationId,
         blockedReply: replyText,
+        alternativeAlreadyRepeated,
+      });
+      console.log('[ANA_REPEAT_SUPPRESSED]', {
+        conversationId,
+        reason: 'outbound_repeat_guard',
         alternativeAlreadyRepeated,
       });
       if (!alternativeAlreadyRepeated) {
@@ -6846,6 +7086,40 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         blockedReason: anaTurnAuditBlockedReason,
       });
       return;
+    }
+
+    const finalPolicyResult = applyAnaConversationPolicy({
+      conversationId,
+      userMessage: trimmed,
+      replyText,
+      isFirstAnaReply,
+      flowState: flowStateParsed,
+      recentMessages: rowsBeforeSend.map((m) => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: m.content,
+      })),
+      knownCustomerName: trustedCustomerName || effectiveConv.customer_name || null,
+      probableCustomerName:
+        !(trustedCustomerName || effectiveConv.customer_name || '').trim()
+          ? linkedContact?.first_name ?? linkedContact?.full_name ?? null
+          : null,
+      now: lastUserMessageAt,
+      disableFollowupQuestion:
+        shouldAttemptDocSend ||
+        appointmentPreflight.active ||
+        flowStateParsed.pendingVisitScheduling === true ||
+        directVisitSchedulingIntent,
+      visitFlowActive:
+        schedulingGuardHandled ||
+        appointmentPreflight.active ||
+        flowStateParsed.pendingVisitScheduling === true ||
+        flowStateParsed.visitScheduling?.active === true ||
+        directVisitSchedulingIntent,
+    });
+    replyText = finalPolicyResult.text;
+    if (finalPolicyResult.changed) {
+      flowStateParsed = finalPolicyResult.flowState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
     }
 
     const shouldForceEvoraLocationTriplet = isEvoraLocationQuestion(trimmed);

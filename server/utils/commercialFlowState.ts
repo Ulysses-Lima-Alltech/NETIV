@@ -57,6 +57,10 @@ export interface CommercialFlowState {
   pendingVisitDateLabel?: string | null;
   /** Data pendente normalizada em America/Sao_Paulo (YYYY-MM-DD). */
   pendingVisitDate?: string | null;
+  /** Horário pendente normalizado (HH:MM), quando já capturado no fluxo determinístico. */
+  pendingVisitTime?: string | null;
+  /** Período pendente informado pelo cliente (manhã/tarde/noite), antes de horário exato. */
+  pendingVisitPeriod?: string | null;
   /** Empreendimento usado no fluxo pendente de visita. */
   pendingVisitEnterpriseId?: number | null;
   /** Estado estruturado do fluxo de agendamento de visita. */
@@ -68,9 +72,20 @@ export interface CommercialFlowState {
     requestedTimeText: string | null;
     normalizedDate: string | null;
     normalizedTime: string | null;
+    requestedPeriodText?: string | null;
     nameCollected: boolean;
     customerName: string | null;
     status: 'none' | 'collecting_date' | 'collecting_time' | 'collecting_name' | 'ready_to_confirm' | 'scheduled';
+  };
+  /** Memória leve de orquestração comportamental global da Ana (reaproveitável entre empreendimentos). */
+  dialoguePolicy?: {
+    greetedAt?: string | null;
+    lastFollowupQuestion?: string | null;
+    recentlyDiscussedTopics?: string[];
+    recentlyAskedTopics?: string[];
+    lastBrokerHandoffAskedAt?: string | null;
+    brokerHandoffAcceptedAt?: string | null;
+    nameUncertainAt?: string | null;
   };
 }
 
@@ -93,8 +108,11 @@ export function resetCommercialScopeHints(prev: CommercialFlowState | null): Com
   delete next.pendingVisitScheduling;
   delete next.pendingVisitDateLabel;
   delete next.pendingVisitDate;
+  delete next.pendingVisitTime;
+  delete next.pendingVisitPeriod;
   delete next.pendingVisitEnterpriseId;
   delete next.visitScheduling;
+  delete next.dialoguePolicy;
   next.clearedAt = new Date().toISOString();
   next.updatedAt = new Date().toISOString();
   return next;
