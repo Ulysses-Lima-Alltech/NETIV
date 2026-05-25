@@ -74,10 +74,14 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
     return 'financiamento';
   }
 
-  if (hasAny(n, [/\b(onde fica|qual a localizacao|como chegar|me passa o endereco|me enviar a localizacao|me manda a localizacao|fica onde)\b/])) {
+  if (
+    hasAny(n, [
+      /\b(localizacao|localização|regiao|região|onde fica|fica onde|bairro|pedreira|rio abaixo|como chegar|me enviar a localizacao|me manda a localizacao)\b/,
+    ])
+  ) {
     return 'localizacao_endereco';
   }
-  if (hasAny(n, [/\b(endereco|endereço|qual o endereco|qual é o endereço|me passa o endereço)\b/])) {
+  if (hasAny(n, [/\b(endereco|endereço|qual o endereco|qual é o endereço|me passa o endereço|me passa o endereco)\b/])) {
     return 'endereco';
   }
 
@@ -104,8 +108,17 @@ export type ResolvedAnaCommercialRule = {
 };
 
 export function splitCommercialRuleMessages(lines: readonly string[]): string[] {
-  return lines
-    .flatMap((line) => line.split(/\r?\n\r?\n/))
+  const raw = lines.map((line) => line.trim()).filter(Boolean);
+  if (raw.length === 0) return [];
+  if (raw.length > 1) return raw;
+
+  const only = raw[0] ?? '';
+  if (/as áreas de lazer do évora incluem:/i.test(only)) {
+    return [only];
+  }
+
+  return only
+    .split(/---MSG---|\r?\n\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
 }

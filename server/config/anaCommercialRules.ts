@@ -36,7 +36,9 @@ export const ANA_COMMERCIAL_RULES = {
       'O financiamento é facilitado por ser direto com a construtora, com menos burocracia e mais facilidade para você.',
     ],
     localizacao_endereco: [
-      'O Évora fica em Atibaia, na região bragantina, a cerca de 50 minutos de São Paulo.\n\nEstá na região da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.\n\nA Avenida Lucas Nogueira Garcez é um polo gastronômico e comercial importante da cidade.\n\nAtibaia também é reconhecida pelo segundo melhor clima do mundo, segundo a ONU.',
+      'Atibaia faz parte da região bragantina, uma das regiões mais valorizadas e desenvolvidas do estado. Fica a cerca de 50 minutos de São Paulo.',
+      'O Évora fica na região da Pedreira, no bairro Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I.',
+      'Atibaia também se destaca pela gastronomia e pela Avenida Lucas Nogueira Garcez, com restaurantes, bares e comércio em uma região bem valorizada.',
     ],
     endereco: [
       'O endereço do Évora é Estrada dos Pires, s/n, bairro Rio Abaixo, em Atibaia.\n\nFica na região da Pedreira, com fácil acesso pela Rodovia Dom Pedro I.',
@@ -52,7 +54,7 @@ export const ANA_COMMERCIAL_RULES = {
       'O valor de condomínio vai depender das definições feitas pelos próprios moradores e associação do condomínio, mas temos uma estimativa entre R$400,00 e R$700,00.',
     ],
     areas_lazer: [
-      'As áreas de lazer do Évora incluem:\n\nPiscina adulto\nAcademia\nSalão de festas\nPlayground\nCoworking\nEspaço zen\nFireplace\nQuadra de beach tennis\nCampo society\n\nTambém conta com estação de carregamento para carros elétricos e portaria 24 horas com controle de acesso.',
+      'As áreas de lazer do Évora incluem:\nPiscina adulto\nAcademia\nSalão de festas\nPlayground\nCoworking\nEspaço zen\nFireplace\nQuadra de beach tennis\nCampo society\n\nTambém conta com estação de carregamento para carros elétricos e portaria 24 horas com controle de acesso.',
     ],
     seguranca_portaria: [
       'O Évora conta com portaria 24 horas com controle de acesso.',

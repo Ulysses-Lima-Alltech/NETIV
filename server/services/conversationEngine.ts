@@ -209,6 +209,7 @@ import {
   isUserIrritated,
   isVisitSchedulingRefusal,
   resolveAnaCommercialRule,
+  splitCommercialRuleMessages,
 } from './anaCommercialRulesService.js';
 import { ANA_COMMERCIAL_RULES } from '../config/anaCommercialRules.js';
 
@@ -1002,9 +1003,11 @@ const ANA_INTERNAL_LEAK_PATTERNS: RegExp[] = [
 ];
 
 const ANA_INTERNAL_SANITIZE_PATTERNS: RegExp[] = [
-  /finalizar com pergunta aberta(?: e natural)?[,]?\s*/gi,
-  /sem resposta fixa deterministica[,]?\s*/gi,
-  /resposta fixa deterministica[,]?\s*/gi,
+  /finalizar\s+com\s+pergunta\s+aberta(?:\s+e\s+natural)?[,]?\s*/gi,
+  /sem\s+resposta\s+fixa\s+determin[ií]stic[ao]\.?[,]?\s*/gi,
+  /sem\s+resposta\s+fixa\s+determin[\wÃÂáàâãéêíóôõúç]*[,]?\s*/gi,
+  /resposta\s+fixa\s+determin[ií]stic[ao]\.?[,]?\s*/gi,
+  /resposta\s+fixa\s+determin[\wÃÂáàâãéêíóôõúç]*[,]?\s*/gi,
   /instrucao interna[,]?\s*/gi,
   /\bprompt\b[,]?\s*/gi,
   /\bsistema\b[,]?\s*/gi,
@@ -3031,11 +3034,30 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       isFirstAnaReply,
       previousAssistantMessage: lastAssistantPlain,
     });
-    if (commercialRule && anaDecision.canRespond && anaDecision.outboundAllowed && !appointmentPreflight.active) {
-      const isFirstContactRule = commercialRule.ruleId === 'first_contact';
+    const normalizedUserForCanonical = normText(trimmed);
+    const locationLikeIntent =
+      requestedAxisForPolicy === 'localizacao' ||
+      anaDecision.currentAxis === 'localizacao' ||
+      anaDecision.resolvedIntent === 'localizacao' ||
+      /\b(localizacao|localização|regiao|região|onde fica|bairro|pedreira|rio abaixo)\b/.test(normalizedUserForCanonical);
+    const addressLikeIntent = /\b(endereco|endereço)\b/.test(normalizedUserForCanonical);
+    const canonicalLocationFallbackRule =
+      !commercialRule && isEvoraEnterpriseName(ent?.name ?? null) && (locationLikeIntent || addressLikeIntent)
+        ? {
+            ruleId: addressLikeIntent ? 'endereco' : 'localizacao_endereco',
+            messages: splitCommercialRuleMessages(
+              ANA_COMMERCIAL_RULES.byIntent[addressLikeIntent ? 'endereco' : 'localizacao_endereco']
+            ),
+            replySource: 'commercial_rules_intent' as const,
+            inheritedIntent: null,
+          }
+        : null;
+    const effectiveCommercialRule = commercialRule ?? canonicalLocationFallbackRule;
+    if (effectiveCommercialRule && anaDecision.canRespond && anaDecision.outboundAllowed) {
+      const isFirstContactRule = effectiveCommercialRule.ruleId === 'first_contact';
       console.log('[ANA_CANONICAL_INTENT_MATCHED]', {
         conversationId,
-        intent: commercialRule.ruleId,
+        intent: effectiveCommercialRule.ruleId,
         source: 'Exemplos.txt/canonical',
       });
       console.log(
@@ -3045,41 +3067,45 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
           enterpriseName: ent?.name ?? null,
           userMessagePreview: trimmed.slice(0, 180),
-          ruleId: commercialRule.ruleId,
-          messagesCount: commercialRule.messages.length,
+          ruleId: effectiveCommercialRule.ruleId,
+          messagesCount: effectiveCommercialRule.messages.length,
         }
       );
-      if (commercialRule.ruleId === 'disponibilidade_simulacao_desconto') {
+      if (effectiveCommercialRule.ruleId === 'disponibilidade_simulacao_desconto') {
         console.log('[ANA_COMMERCIAL_RULE_LOT_DETAILS]', {
           conversationId,
           enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
           userMessagePreview: trimmed.slice(0, 220),
         });
       }
-      if (commercialRule.ruleId === 'formas_pagamento') {
+      if (effectiveCommercialRule.ruleId === 'formas_pagamento') {
         console.log('[ANA_COMMERCIAL_RULE_PAYMENT_PLANS]', {
           conversationId,
           enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
           userMessagePreview: trimmed.slice(0, 220),
         });
       }
-      if (commercialRule.inheritedIntent === 'payment_terms') {
+      if (effectiveCommercialRule.inheritedIntent === 'payment_terms') {
         console.log('[ANA_PAYMENT_INTENT_CONTEXT_GUARD]', {
           conversationId,
           enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
           previousAssistantMessage: (lastAssistantPlain ?? '').slice(0, 240),
           customerMessage: trimmed.slice(0, 240),
-          inheritedIntent: commercialRule.inheritedIntent,
-          finalAnswer: commercialRule.messages.join('\n'),
+          inheritedIntent: effectiveCommercialRule.inheritedIntent,
+          finalAnswer: effectiveCommercialRule.messages.join('\n'),
         });
       }
 
       const commercialRuleVisitOfferDecision =
-        commercialRule.ruleId === 'visita_agendamento' ||
-        commercialRule.ruleId === 'localizacao_endereco' ||
-        commercialRule.ruleId === 'preco_valor_lote' ||
-        commercialRule.ruleId === 'valor_condominio' ||
-        commercialRule.ruleId === 'entrega_empreendimento'
+        effectiveCommercialRule.ruleId === 'visita_agendamento' ||
+        effectiveCommercialRule.ruleId === 'localizacao_endereco' ||
+        effectiveCommercialRule.ruleId === 'endereco' ||
+        effectiveCommercialRule.ruleId === 'areas_lazer' ||
+        effectiveCommercialRule.ruleId === 'seguranca_portaria' ||
+        effectiveCommercialRule.ruleId === 'preco_valor_lote' ||
+        effectiveCommercialRule.ruleId === 'formas_pagamento' ||
+        effectiveCommercialRule.ruleId === 'valor_condominio' ||
+        effectiveCommercialRule.ruleId === 'entrega_empreendimento'
           ? {
               appendedVisitOfferMessages: [] as string[],
               appendedVisitOffer: false,
@@ -3090,7 +3116,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
               enterpriseName: ent?.name ?? null,
               userMessage: trimmed,
-              answer: commercialRule.messages.join('\n'),
+              answer: effectiveCommercialRule.messages.join('\n'),
               rowsBeforeSend: rows,
               isSchedulingFlow: appointmentPreflight.active || flowStateParsed.pendingVisitScheduling === true,
               isHandoff: Boolean(effectiveConv.handoff || effectiveConv.classification === 'Handoff'),
@@ -3098,14 +3124,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             });
       const visitOfferMessagesFromCommercialRule =
         commercialRuleVisitOfferDecision.appendedVisitOfferMessages ?? [];
+      if (commercialRuleVisitOfferDecision.appendedVisitOfferMessages.length > 0) {
+        console.log('[ANA_VISIT_OFFER_SUPPRESSED]', {
+          conversationId,
+          intent: effectiveCommercialRule.ruleId,
+          reason: 'canonical_intent_disallows_auto_visit_offer',
+        });
+      }
 
       if (isPipelineStale(conversationId, replyPipelineToken)) {
         anaTurnAuditOutcome = 'silent';
         anaTurnAuditBlockedReason = 'pipeline_stale_before_commercial_rule_send';
-        anaTurnDiagnostics.finalResponse.replySource = commercialRule.replySource;
+        anaTurnDiagnostics.finalResponse.replySource = effectiveCommercialRule.replySource;
         anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
         markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-          replySource: commercialRule.replySource,
+          replySource: effectiveCommercialRule.replySource,
           outboundStatus: anaTurnAuditOutcome,
           blockedReason: anaTurnAuditBlockedReason,
         });
@@ -3128,8 +3161,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         .slice(-8);
       const hasRecentVisitCta = hasRecentExplicitVisitCta(recentAssistantForCtaPolicy);
 
-      const commercialMessagesToSend = [...commercialRule.messages];
-      if (commercialRule.ruleId === 'entrega_empreendimento') {
+      const commercialMessagesToSend = [...effectiveCommercialRule.messages];
+      if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessagesToSend.length === 0) {
+        commercialMessagesToSend.push(
+          'Atibaia faz parte da região bragantina e fica a cerca de 50 minutos de São Paulo.',
+          'O Évora fica na região da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.'
+        );
+      }
+      if (effectiveCommercialRule.ruleId === 'entrega_empreendimento') {
         const operational = resolveOperationalFactAnswer(trimmed, knowledgeText, vars, {
           enterpriseName: ent?.name ?? null,
           hintedTopic: 'entrega_prazo',
@@ -3144,15 +3183,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
       console.log('[ANA_CANONICAL_REPLY_USED]', {
         conversationId,
-        intent: commercialRule.ruleId,
+        intent: effectiveCommercialRule.ruleId,
         messagePartsCount: commercialMessagesToSend.length,
       });
 
       const shouldAskNameAfterCommercialReply =
         !hasKnownCustomerName &&
-        commercialRule.ruleId !== 'visita_agendamento' &&
-        commercialRule.ruleId !== 'entrada' &&
-        commercialRule.ruleId !== 'formas_pagamento';
+        effectiveCommercialRule.ruleId !== 'visita_agendamento' &&
+        effectiveCommercialRule.ruleId !== 'entrada' &&
+        effectiveCommercialRule.ruleId !== 'formas_pagamento';
       if (shouldAskNameAfterCommercialReply) {
         commercialMessagesToSend.push(ANA_COMMERCIAL_RULES.askNameMessage);
       }
@@ -3168,31 +3207,31 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         if (isPipelineStale(conversationId, replyPipelineToken)) {
           anaTurnAuditOutcome = 'silent';
           anaTurnAuditBlockedReason = `pipeline_stale_before_commercial_rule_message_${index + 1}`;
-          anaTurnDiagnostics.finalResponse.replySource = commercialRule.replySource;
+          anaTurnDiagnostics.finalResponse.replySource = effectiveCommercialRule.replySource;
           anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
           return;
         }
         let commercialRuleMessage = commercialRuleMessageRaw;
         const aggressiveBlockCommercial = blockLegacyAggressiveVisitCtaByIntent({
           text: commercialRuleMessage,
-          intent: commercialRule.ruleId,
+          intent: effectiveCommercialRule.ruleId,
           hasRecentVisitCta,
         });
         if (aggressiveBlockCommercial.changed) {
           commercialRuleMessage = aggressiveBlockCommercial.text;
           console.log('[ANA_VISIT_OFFER_SUPPRESSED]', {
             conversationId,
-            intent: commercialRule.ruleId,
+            intent: effectiveCommercialRule.ruleId,
             reason: aggressiveBlockCommercial.reason,
           });
         }
-        if (commercialRule.ruleId !== 'visita_agendamento') {
+        if (effectiveCommercialRule.ruleId !== 'visita_agendamento') {
           const visitSuppressed = stripInappropriateVisitOffer(commercialRuleMessage);
           if (visitSuppressed.removed) {
             commercialRuleMessage = visitSuppressed.text;
             console.log('[ANA_VISIT_OFFER_SUPPRESSED]', {
               conversationId,
-              intent: commercialRule.ruleId,
+              intent: effectiveCommercialRule.ruleId,
               reason: 'removed_from_canonical_non_visit_intent',
             });
           }
@@ -3210,7 +3249,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           commercialRuleMessage = noRepeatForCommercialRule.text;
           console.log('[ANA_REPEAT_REPLY_AVOIDED]', {
             conversationId,
-            intent: commercialRule.ruleId,
+            intent: effectiveCommercialRule.ruleId,
             reason: noRepeatForCommercialRule.reason,
           });
         }
@@ -3223,17 +3262,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         if (!sendResult.success || !sendResult.metaMessageId) {
           anaTurnAuditOutcome = 'send_failed';
           anaTurnAuditBlockedReason = 'commercial_rule_send_failed';
-          anaTurnDiagnostics.finalResponse.replySource = commercialRule.replySource;
+          anaTurnDiagnostics.finalResponse.replySource = effectiveCommercialRule.replySource;
           anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
           markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-            replySource: commercialRule.replySource,
+            replySource: effectiveCommercialRule.replySource,
             outboundStatus: anaTurnAuditOutcome,
             blockedReason: `${anaTurnAuditBlockedReason}_index_${index + 1}`,
           });
           console.error('[ANA_COMMERCIAL_RULE_SEND_FAILED]', {
             conversationId,
             failedMessageIndex: index + 1,
-            ruleId: commercialRule.ruleId,
+            ruleId: effectiveCommercialRule.ruleId,
             result: sendResult,
           });
           return;
@@ -3244,7 +3283,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         recentAssistantForNoRepeat.push(commercialRuleMessage);
         console.log('[ANA_COMMERCIAL_RULE_MESSAGE_SENT]', {
           conversationId,
-          ruleId: commercialRule.ruleId,
+          ruleId: effectiveCommercialRule.ruleId,
           messageIndex: index + 1,
           messagesCount: commercialMessagesToSend.length,
           outboundMetaMessageId: sendResult.metaMessageId,
@@ -3255,7 +3294,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         let safeVisitOfferMessage = visitOfferMessage;
         const aggressiveBlockVisitOffer = blockLegacyAggressiveVisitCtaByIntent({
           text: safeVisitOfferMessage,
-          intent: commercialRule.ruleId,
+          intent: effectiveCommercialRule.ruleId,
           hasRecentVisitCta: true,
         });
         if (aggressiveBlockVisitOffer.changed) safeVisitOfferMessage = aggressiveBlockVisitOffer.text;
@@ -3273,7 +3312,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         if (isPipelineStale(conversationId, replyPipelineToken)) {
           anaTurnAuditOutcome = 'silent';
           anaTurnAuditBlockedReason = `pipeline_stale_before_visit_offer_message_${visitIndex + 1}`;
-          anaTurnDiagnostics.finalResponse.replySource = commercialRule.replySource;
+          anaTurnDiagnostics.finalResponse.replySource = effectiveCommercialRule.replySource;
           anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
           return;
         }
@@ -3286,10 +3325,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         if (!visitSendResult.success || !visitSendResult.metaMessageId) {
           anaTurnAuditOutcome = 'send_failed';
           anaTurnAuditBlockedReason = 'commercial_rule_visit_offer_send_failed';
-          anaTurnDiagnostics.finalResponse.replySource = commercialRule.replySource;
+          anaTurnDiagnostics.finalResponse.replySource = effectiveCommercialRule.replySource;
           anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
           markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-            replySource: commercialRule.replySource,
+            replySource: effectiveCommercialRule.replySource,
             outboundStatus: anaTurnAuditOutcome,
             blockedReason: `${anaTurnAuditBlockedReason}_index_${visitIndex + 1}`,
           });
@@ -3321,24 +3360,24 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       anaTurnAuditBlockedReason = null;
       anaTurnAuditLlmStatus = 'skipped';
       anaTurnAuditModel = 'commercial_rules';
-      anaTurnAuditGuardsApplied.outboundReason = `commercial_rule_${commercialRule.ruleId}`;
-      anaTurnDiagnostics.finalResponse.replySource = commercialRule.replySource;
+      anaTurnAuditGuardsApplied.outboundReason = `commercial_rule_${effectiveCommercialRule.ruleId}`;
+      anaTurnDiagnostics.finalResponse.replySource = effectiveCommercialRule.replySource;
       anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
       markAnaTurnStage(anaTurnDiagnostics, 'llm_generation', 'skipped', {
-        reason: `commercial_rule_${commercialRule.ruleId}`,
+        reason: `commercial_rule_${effectiveCommercialRule.ruleId}`,
       });
       markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
-        replySource: commercialRule.replySource,
+        replySource: effectiveCommercialRule.replySource,
         outboundStatus: anaTurnAuditOutcome,
-        messagesCount: commercialRule.messages.length + visitOfferMessagesFromCommercialRule.length,
+        messagesCount: effectiveCommercialRule.messages.length + visitOfferMessagesFromCommercialRule.length,
       });
       console.log(
         isFirstContactRule ? '[ANA_COMMERCIAL_RULE_FIRST_CONTACT_SENT]' : '[ANA_COMMERCIAL_RULE_INTENT_SENT]',
         {
           conversationId,
           enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
-          ruleId: commercialRule.ruleId,
-          messagesCount: commercialRule.messages.length,
+          ruleId: effectiveCommercialRule.ruleId,
+          messagesCount: effectiveCommercialRule.messages.length,
           outboundMetaMessageId: lastCommercialRuleMetaMessageId,
         }
       );
