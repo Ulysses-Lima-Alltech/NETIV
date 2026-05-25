@@ -1,4 +1,5 @@
-﻿import type { WhatsAppIntegrationConfig } from '../types/settings.js';
+﻿import { isAnaEmergencyBlockedOutboundMessage } from './anaEmergencyOutboundBlocklist';
+import type { WhatsAppIntegrationConfig } from '../types/settings.js';
 import type { MetaSendMessageResponse, MetaErrorResponse } from '../types/whatsapp.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { readFile } from 'fs/promises';
@@ -86,7 +87,13 @@ export async function uploadWhatsAppMedia(params: {
   form.append('type', params.mimeType);
   form.append('file', new Blob([Uint8Array.from(params.buffer)], { type: params.mimeType }), params.filename);
   try {
-    const res = await fetch(url, {
+    const res = 
+  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
+  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
+    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
+    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
+  }
+  await fetch(url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${config.metaAccessToken}` },
       body: form,
@@ -194,7 +201,13 @@ export async function sendTextMessage(to: string, text: string): Promise<SendTex
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
+    const res = 
+  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
+  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
+    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
+    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
+  }
+  await fetch(url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.metaAccessToken}`,
@@ -346,7 +359,13 @@ export async function sendTemplateMessage(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
+    const res = 
+  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
+  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
+    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
+    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
+  }
+  await fetch(url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.metaAccessToken}`,
@@ -525,7 +544,13 @@ export async function sendDocumentMessage(
     let upRaw: string;
     let up: Response;
     try {
-      up = await fetch(effectiveMediaUrl, {
+      up = 
+  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
+  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
+    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
+    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
+  }
+  await fetch(effectiveMediaUrl, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: form,
@@ -592,7 +617,13 @@ export async function sendDocumentMessage(
     let resRaw: string;
     let res: Response;
     try {
-      res = await fetch(msgUrl, {
+      res = 
+  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
+  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
+    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
+    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
+  }
+  await fetch(msgUrl, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -763,7 +794,13 @@ export async function sendVideoMessage(
     let upRaw: string;
     let up: Response;
     try {
-      up = await fetch(effectiveMediaUrl, {
+      up = 
+  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
+  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
+    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
+    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
+  }
+  await fetch(effectiveMediaUrl, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: form,
@@ -810,7 +847,13 @@ export async function sendVideoMessage(
     let resRaw: string;
     let res: Response;
     try {
-      res = await fetch(msgUrl, {
+      res = 
+  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
+  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
+    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
+    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
+  }
+  await fetch(msgUrl, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -917,7 +960,13 @@ export async function sendImageMessage(
     let upRaw: string;
     let up: Response;
     try {
-      up = await fetch(effectiveMediaUrl, {
+      up = 
+  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
+  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
+    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
+    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
+  }
+  await fetch(effectiveMediaUrl, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: form,
@@ -972,7 +1021,13 @@ export async function sendImageMessage(
     let resRaw: string;
     let res: Response;
     try {
-      res = await fetch(msgUrl, {
+      res = 
+  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
+  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
+    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
+    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
+  }
+  await fetch(msgUrl, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -1050,7 +1105,13 @@ export async function testConnection(): Promise<{ success: boolean; error?: stri
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const res = await fetch(url, {
+    const res = 
+  // ANA_EMERGENCY_BLOCK_RESCUE_LOOP
+  if (isAnaEmergencyBlockedOutboundMessage(typeof message !== 'undefined' ? message : typeof text !== 'undefined' ? text : typeof body !== 'undefined' ? body : '')) {
+    console.warn('[ANA_EMERGENCY_BLOCK_RESCUE_LOOP] blocked outbound rescue/nudge message');
+    return { blocked: true, reason: 'ANA_EMERGENCY_BLOCK_RESCUE_LOOP' } as any;
+  }
+  await fetch(url, {
       method: 'GET',
       headers: { Authorization: `Bearer ${config.metaAccessToken}` },
       signal: controller.signal,
@@ -1064,4 +1125,5 @@ export async function testConnection(): Promise<{ success: boolean; error?: stri
     return { success: false, error: 'Erro de conexÃ£o.', detail: e instanceof Error ? e.message : String(e) };
   }
 }
+
 

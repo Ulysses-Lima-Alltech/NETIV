@@ -67,10 +67,11 @@ export const ANA_COMMERCIAL_RULES = {
     ],
   } satisfies Record<Exclude<AnaCommercialIntent, 'first_contact'>, string[]>,
   followupWhileNoResponseMessages: [
-    'Só passando para te lembrar que posso te ajudar com todos os detalhes do Évora.',
+    '',
     'Se quiser, eu te explico opções de tamanho de lote, localização e condições de pagamento.',
     'Também posso te mostrar os diferenciais de lazer e infraestrutura para você comparar com calma.',
     'Se preferir, já adianto as melhores condições disponíveis hoje para facilitar sua análise.',
     'Você deu uma sumida. Se quiser posso te enviar o Book pra você analisar, o que acha?',
   ],
 } as const;
+
