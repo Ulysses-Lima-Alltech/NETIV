@@ -295,6 +295,196 @@ function logAnaOutboundBlocked(params: {
   console.log(`[ANA_OUTBOUND_BLOCKED] reply_candidate=${params.replyCandidate.slice(0, 500)}`);
 }
 
+type AnaTurnTopic =
+  | 'localizacao'
+  | 'lazer'
+  | 'seguranca'
+  | 'valores'
+  | 'pagamento'
+  | 'lotes'
+  | 'visita'
+  | 'corretor'
+  | 'rota'
+  | 'geral';
+
+type AnaTurnContextResolved = {
+  conversationId: number;
+  currentUserText: string;
+  recentHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
+  lastInboundText: string | null;
+  lastOutboundText: string | null;
+  lastAssistantQuestionText: string | null;
+  lastAssistantQuestionType: string | null;
+  lastOfferedTopics: string[];
+  topicsAlreadyAnswered: string[];
+  currentTopic: AnaTurnTopic | null;
+  requestedTopic: AnaTurnTopic | null;
+  acceptedOfferTopic: AnaTurnTopic | null;
+  commercialAxis: CommercialAxis | null;
+  visitState: {
+    active: boolean;
+    pendingVisitScheduling: boolean;
+    status: string | null;
+  };
+  brokerState: {
+    pendingBrokerHandoff: boolean;
+  };
+  mediaState: {
+    pendingMaterialType: string | null;
+    lastRequestedMaterialType: string | null;
+  };
+  shouldCallQwen: boolean;
+  deterministicCandidate: string | null;
+  finalDecisionReason: string | null;
+  decisionPath: string[];
+};
+
+function isAffirmativeForTurn(text: string): boolean {
+  const n = normText(text || '').replace(/[.!?]+$/g, '').trim();
+  if (!n) return false;
+  return /^(sim|quero|pode|claro|com certeza|ok|beleza|blz|isso|por favor|manda)$/.test(n);
+}
+
+function normalizeOfferedTopicForTurn(topic: string | null | undefined): AnaTurnTopic | null {
+  const n = normText(topic || '');
+  if (!n) return null;
+  if (n === 'localizacao' || n === 'endereco') return 'localizacao';
+  if (n === 'lazer') return 'lazer';
+  if (n === 'seguranca') return 'seguranca';
+  if (n === 'valores') return 'valores';
+  if (n === 'pagamento' || n === 'formas_pagamento' || n === 'formas de pagamento') return 'pagamento';
+  if (n === 'visita') return 'visita';
+  if (n === 'corretor') return 'corretor';
+  return null;
+}
+
+function detectRequestedTopicForTurn(text: string): AnaTurnTopic | null {
+  const n = normText(text || '');
+  if (!n) return null;
+  if (/\b(quantos?\s+lotes?|numero\s+de\s+lotes?|vai\s+ter\s+quantos?\s+lotes?)\b/.test(n)) return 'lotes';
+  if (/\b(link da localizacao|link de localizacao|google maps|rota|como chegar|manda localizacao|manda a localizacao)\b/.test(n)) {
+    return 'rota';
+  }
+  if (/\b(onde fica|localizacao|endereco|regiao|bairro|pedreira|rio abaixo)\b/.test(n)) return 'localizacao';
+  if (/\b(seguranca|portaria|controle de acesso|monitoramento)\b/.test(n)) return 'seguranca';
+  if (/\b(lazer|areas? de lazer|piscina|academia|playground|quadra|coworking|fireplace)\b/.test(n)) return 'lazer';
+  if (/\b(formas? de pagamento|pagamento|entrada|parcela|parcelamento|financiamento)\b/.test(n)) return 'pagamento';
+  if (/\b(preco|valor|quanto custa|investimento|metro quadrado|m2)\b/.test(n)) return 'valores';
+  if (/\b(visita|agendar|agendamento|marcar visita)\b/.test(n)) return 'visita';
+  if (/\b(corretor|consultor|encaminha)\b/.test(n)) return 'corretor';
+  return null;
+}
+
+function detectTopicFromAssistantAnswer(text: string): AnaTurnTopic | null {
+  const n = normText(text || '');
+  if (!n) return null;
+  if (/\b(portaria 24 horas|seguranca|controle de acesso)\b/.test(n)) return 'seguranca';
+  if (/\b(areas? de lazer|piscina adulto|academia|campo society|quadra de beach tennis)\b/.test(n)) return 'lazer';
+  if (/\b(rodovia dom pedro i|regiao da pedreira|rio abaixo|atibaia)\b/.test(n)) return 'localizacao';
+  if (/\b(120x|48x|financiamento direto)\b/.test(n)) return 'pagamento';
+  if (/\b(r\$\s*279|r\$\s*775|valor inicial)\b/.test(n)) return 'valores';
+  if (/\b(quantos?\s+lotes?|informacao exata liberada)\b/.test(n)) return 'lotes';
+  return null;
+}
+
+function resolveAnaConversationTurn(input: {
+  conversationId: number;
+  currentUserText: string;
+  rows: Array<{ role: string; content: string }>;
+  flowState: CommercialFlowState;
+  lastAssistantQuestionText: string | null;
+  lastAssistantQuestionType: string | null;
+  lastOfferedTopics: string[];
+  requestedAxis: CommercialAxis | null;
+}): AnaTurnContextResolved {
+  const recentHistory = input.rows
+    .map((row) => ({
+      role: row.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+      content: String(row.content ?? ''),
+    }))
+    .slice(-12);
+  const lastInboundText = [...recentHistory].reverse().find((row) => row.role === 'user')?.content?.trim() || null;
+  const lastOutboundText = [...recentHistory].reverse().find((row) => row.role === 'assistant')?.content?.trim() || null;
+  const requestedTopic = detectRequestedTopicForTurn(input.currentUserText);
+  const offeredTopics = (input.lastOfferedTopics ?? [])
+    .map((topic) => normalizeOfferedTopicForTurn(topic))
+    .filter((topic): topic is AnaTurnTopic => topic != null);
+  const uniqueOfferedTopics = [...new Set(offeredTopics)];
+  const isAffirmative = isAffirmativeForTurn(input.currentUserText);
+  let acceptedOfferTopic: AnaTurnTopic | null = null;
+  if (isAffirmative && uniqueOfferedTopics.length === 1) {
+    acceptedOfferTopic = uniqueOfferedTopics[0] ?? null;
+  } else if (
+    isAffirmative &&
+    uniqueOfferedTopics.length === 0 &&
+    /(corretor|consultor)/.test(normText(input.lastAssistantQuestionText || ''))
+  ) {
+    acceptedOfferTopic = 'corretor';
+  } else if (
+    isAffirmative &&
+    uniqueOfferedTopics.length === 0 &&
+    /(visita|agendar|marcar)/.test(normText(input.lastAssistantQuestionText || ''))
+  ) {
+    acceptedOfferTopic = 'visita';
+  }
+
+  const topicsAlreadyAnswered: string[] = [];
+  for (const row of recentHistory) {
+    if (row.role !== 'assistant') continue;
+    const detected = detectTopicFromAssistantAnswer(row.content);
+    if (detected && !topicsAlreadyAnswered.includes(detected)) topicsAlreadyAnswered.push(detected);
+  }
+  const currentTopic = requestedTopic ?? (topicsAlreadyAnswered[topicsAlreadyAnswered.length - 1] as AnaTurnTopic | undefined) ?? null;
+
+  const decisionPath: string[] = [];
+  if (requestedTopic) decisionPath.push(`requested:${requestedTopic}`);
+  if (acceptedOfferTopic) decisionPath.push(`accepted_offer:${acceptedOfferTopic}`);
+  if (input.requestedAxis) decisionPath.push(`axis:${input.requestedAxis}`);
+  if (!requestedTopic && !acceptedOfferTopic) decisionPath.push('fallback:qwen_candidate');
+
+  const deterministicCandidate =
+    requestedTopic != null
+      ? requestedTopic === 'rota'
+        ? 'location_link_handler'
+        : 'topic_handler'
+      : acceptedOfferTopic != null
+        ? 'accepted_offer_handler'
+        : null;
+  const shouldCallQwen = deterministicCandidate == null;
+
+  return {
+    conversationId: input.conversationId,
+    currentUserText: input.currentUserText,
+    recentHistory,
+    lastInboundText,
+    lastOutboundText,
+    lastAssistantQuestionText: input.lastAssistantQuestionText,
+    lastAssistantQuestionType: input.lastAssistantQuestionType,
+    lastOfferedTopics: [...input.lastOfferedTopics],
+    topicsAlreadyAnswered,
+    currentTopic,
+    requestedTopic,
+    acceptedOfferTopic,
+    commercialAxis: input.requestedAxis,
+    visitState: {
+      active: input.flowState.pendingVisitScheduling === true || input.flowState.visitScheduling?.active === true,
+      pendingVisitScheduling: input.flowState.pendingVisitScheduling === true,
+      status: input.flowState.visitScheduling?.status ?? null,
+    },
+    brokerState: {
+      pendingBrokerHandoff: /(corretor|consultor)/.test(normText(input.lastAssistantQuestionText || '')),
+    },
+    mediaState: {
+      pendingMaterialType: input.flowState.pending_material_type ?? null,
+      lastRequestedMaterialType: input.flowState.last_requested_material_type ?? null,
+    },
+    shouldCallQwen,
+    deterministicCandidate,
+    finalDecisionReason: null,
+    decisionPath,
+  };
+}
+
 function isProviderFailureClassifiedError(
   classifiedError: LlmClassifiedError | null | undefined
 ): boolean {
@@ -647,12 +837,44 @@ function isBrokenEnumeratedReply(text: string): boolean {
 function dedupeMessageParts(parts: string[], logContext: { conversationId: number; stage: string }): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
+  const accepted: string[] = [];
+
+  const tokenize = (value: string): string[] =>
+    normalizeAnaLocalTextForRules(value)
+      .replace(/[.!?,;:()/\\[\]{}"'`´~^*+-]+/g, ' ')
+      .split(/\s+/)
+      .map((x) => x.trim())
+      .filter((x) => x.length >= 3);
+
+  const jaccard = (a: string[], b: string[]): number => {
+    if (a.length === 0 || b.length === 0) return 0;
+    const sa = new Set(a);
+    const sb = new Set(b);
+    let inter = 0;
+    for (const token of sa) {
+      if (sb.has(token)) inter += 1;
+    }
+    const union = new Set([...sa, ...sb]).size;
+    return union === 0 ? 0 : inter / union;
+  };
+
+  const isNearDuplicate = (candidate: string, existing: string): boolean => {
+    const cNorm = normalizeAnaLocalTextForRules(candidate).replace(/[.!?]+$/g, '').trim();
+    const eNorm = normalizeAnaLocalTextForRules(existing).replace(/[.!?]+$/g, '').trim();
+    if (!cNorm || !eNorm) return false;
+    if (cNorm === eNorm) return true;
+    if ((cNorm.includes(eNorm) || eNorm.includes(cNorm)) && Math.min(cNorm.length, eNorm.length) >= 24) {
+      return true;
+    }
+    return jaccard(tokenize(cNorm), tokenize(eNorm)) >= 0.9;
+  };
+
   for (const raw of parts) {
     const clean = (raw || '').trim();
     if (!clean) continue;
     const key = normalizeAnaLocalTextForRules(clean).replace(/[.!?]+$/g, '').trim();
-    if (seen.has(key)) {
-      console.log('[ANA_MULTIPART_DUPLICATE_SUPPRESSED]', {
+    if (seen.has(key) || accepted.some((prev) => isNearDuplicate(clean, prev))) {
+      console.log('[ANA_DUPLICATE_RESPONSE_PART_SUPPRESSED]', {
         conversationId: logContext.conversationId,
         stage: logContext.stage,
         suppressedPreview: clean.slice(0, 120),
@@ -660,6 +882,7 @@ function dedupeMessageParts(parts: string[], logContext: { conversationId: numbe
       continue;
     }
     seen.add(key);
+    accepted.push(clean);
     out.push(clean);
   }
   return out;
@@ -1149,13 +1372,11 @@ function isEvoraLocationQuestion(userMessage: string): boolean {
   const asksLocation =
     /\b(onde fica|localizacao|localizacao do|fica onde|qual o endereco|endereco|acesso)\b/.test(n) ||
     /\b(evora)\b/.test(n);
-  return asksLocation && /\bevora\b/.test(n);
+  return asksLocation && (/\bevora\b/.test(n) || /\bloteamento\b/.test(n));
 }
 
 const EVORA_LOCATION_REPLY_CHUNKS = [
-  'O Évora fica em Atibaia, próximo à região da Pedreira.',
-  'Tem fácil acesso pela Rodovia Dom Pedro I, em uma localização que combina tranquilidade, natureza e boa conexão com a cidade.',
-  'Atibaia também se destaca pela gastronomia e pela Avenida Lucas Nogueira Garcez, com restaurantes, bares e comércio em uma região bem valorizada.',
+  'O Évora fica em Atibaia, na região da Pedreira, próximo ao bairro Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I.',
 ];
 
 function hasExplicitHandoffIntent(message: string): boolean {
@@ -2081,6 +2302,68 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   };
   let anaRagWasLoadedForAudit = false;
   let anaTurnDiagnostics: AnaTurnDiagnostics = createAnaTurnDiagnostics({});
+  let anaTurnContextResolved: AnaTurnContextResolved | null = null;
+  let turnResponseCommitted = false;
+  let turnCommittedHandler: string | null = null;
+  const selectTurnDecision = (params: {
+    handler: string;
+    reason: string;
+    requestedTopic: string | null;
+    commercialAxis: CommercialAxis | null;
+    shouldCallQwen: boolean;
+  }): void => {
+    console.log('[ANA_TURN_DECISION_SELECTED]', {
+      conversationId,
+      handler: params.handler,
+      reason: params.reason,
+      requestedTopic: params.requestedTopic,
+      commercialAxis: params.commercialAxis,
+      shouldCallQwen: params.shouldCallQwen,
+    });
+  };
+  const commitTurnResponse = (params: {
+    handler: string;
+    reason: string;
+    parts: string[];
+    stage: string;
+    requestedTopic: string | null;
+    commercialAxis: CommercialAxis | null;
+    shouldCallQwen: boolean;
+  }): { committed: boolean; text: string; parts: string[] } => {
+    if (turnResponseCommitted) {
+      console.log('[ANA_TURN_EXTRA_HANDLER_SUPPRESSED]', {
+        conversationId,
+        committedHandler: turnCommittedHandler,
+        suppressedHandler: params.handler,
+        reason: params.reason,
+      });
+      return { committed: false, text: '', parts: [] };
+    }
+    const dedupedParts = dedupeMessageParts(params.parts, {
+      conversationId,
+      stage: params.stage,
+    });
+    if (dedupedParts.length === 0) {
+      return { committed: false, text: '', parts: [] };
+    }
+    const text = dedupedParts.join('\n\n').trim();
+    turnResponseCommitted = true;
+    turnCommittedHandler = params.handler;
+    console.log('[ANA_TURN_RESPONSE_COMMITTED]', {
+      conversationId,
+      handler: params.handler,
+      partsCount: dedupedParts.length,
+      preview: text.slice(0, 260),
+    });
+    selectTurnDecision({
+      handler: params.handler,
+      reason: params.reason,
+      requestedTopic: params.requestedTopic,
+      commercialAxis: params.commercialAxis,
+      shouldCallQwen: params.shouldCallQwen,
+    });
+    return { committed: true, text, parts: dedupedParts };
+  };
   try {
     console.log('[ANA_PIPELINE] engine_start', {
       conversationId,
@@ -3306,6 +3589,41 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         : requestedAxisForPolicy ??
           (asksForMoreThisTurnNormalized && lastAxisForRepetition != null ? lastAxisForRepetition : null) ??
           (isCommercialAxis(anaDecision.primaryAxis) ? anaDecision.primaryAxis : null);
+    anaTurnContextResolved = resolveAnaConversationTurn({
+      conversationId,
+      currentUserText: trimmed,
+      rows: rows.map((row) => ({ role: row.role, content: String(row.content ?? '') })),
+      flowState: flowStateParsed,
+      lastAssistantQuestionText: shortConfirmationContext.lastAssistantQuestionText ?? null,
+      lastAssistantQuestionType: shortConfirmationContext.lastAssistantQuestionType ?? null,
+      lastOfferedTopics: shortConfirmationContext.lastOfferedTopics ?? [],
+      requestedAxis: currentAxisForRepetition,
+    });
+    const offeredTopicsFromHistory = (anaTurnContextResolved.lastOfferedTopics ?? [])
+      .map((topic) => normalizeOfferedTopicForTurn(topic))
+      .filter((topic): topic is AnaTurnTopic => topic != null);
+    const staleTopicsIgnored = offeredTopicsFromHistory.filter(
+      (topic) => anaTurnContextResolved?.requestedTopic && topic !== anaTurnContextResolved.requestedTopic
+    );
+    if (staleTopicsIgnored.length > 0 && anaTurnContextResolved.requestedTopic) {
+      console.log('[ANA_CONTEXT_STALE_TOPIC_IGNORED]', {
+        conversationId,
+        requestedTopic: anaTurnContextResolved.requestedTopic,
+        ignoredTopics: [...new Set(staleTopicsIgnored)],
+      });
+      anaTurnContextResolved.decisionPath.push('stale_topic_ignored');
+    }
+    console.log('[ANA_TURN_CONTEXT_RESOLVED]', {
+      conversationId: anaTurnContextResolved.conversationId,
+      currentUserText: anaTurnContextResolved.currentUserText.slice(0, 220),
+      requestedTopic: anaTurnContextResolved.requestedTopic,
+      acceptedOfferTopic: anaTurnContextResolved.acceptedOfferTopic,
+      commercialAxis: anaTurnContextResolved.commercialAxis,
+      lastAssistantQuestionType: anaTurnContextResolved.lastAssistantQuestionType,
+      lastOfferedTopics: anaTurnContextResolved.lastOfferedTopics,
+      topicsAlreadyAnswered: anaTurnContextResolved.topicsAlreadyAnswered,
+      decisionPath: anaTurnContextResolved.decisionPath,
+    });
     const evidenceFoundForCurrentAxis =
       currentAxisForRepetition != null
         ? hasAnaEvidenceForNeed(enterpriseEvidence, currentAxisForRepetition)
@@ -4028,6 +4346,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           pendingVisitCustomerName: flowStateParsed.pendingVisitCustomerName ?? null,
         });
       }
+      const committedVisitReply = commitTurnResponse({
+        handler: 'deterministic_visit_scheduling',
+        reason: directVisitSchedulingDecision.reason,
+        parts: [deterministicVisitReply],
+        stage: 'deterministic_visit_scheduling',
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+        shouldCallQwen: false,
+      });
+      if (!committedVisitReply.committed || !committedVisitReply.text.trim()) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'deterministic_visit_commit_blocked';
+        return;
+      }
+      deterministicVisitReply = committedVisitReply.text;
 
       if (isPipelineStale(conversationId, replyPipelineToken)) {
         anaTurnAuditOutcome = 'silent';
@@ -4118,47 +4451,45 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     if (isLocationLinkRequest(trimmed) && isEvoraEnterpriseName(ent?.name ?? null)) {
       const locationLinkMessages = authorizedLocationLink
-        ? [authorizedLocationLink]
+        ? [
+            authorizedLocationLink,
+            'O Évora fica em Atibaia, na região da Pedreira, próximo ao bairro Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I.',
+          ]
         : [
             'Não tenho um link de localização liberado para envio por aqui.',
-            'O Évora fica na região da Pedreira, no bairro Rio Abaixo, em Atibaia, com fácil acesso pela Rodovia Dom Pedro I.',
+            'O Évora fica em Atibaia, na região da Pedreira, próximo ao bairro Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I.',
           ];
-      const dedupedLocationLinkMessages = dedupeMessageParts(locationLinkMessages, {
-        conversationId,
+      const committedLocationLink = commitTurnResponse({
+        handler: 'deterministic_location_link',
+        reason: 'location_link_request',
+        parts: locationLinkMessages,
         stage: 'location_link_intent',
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: anaTurnContextResolved?.commercialAxis ?? null,
+        shouldCallQwen: false,
       });
-      if (dedupedLocationLinkMessages.length > 0) {
-        console.log('[ANA_CANONICAL_INTENT_MATCHED]', {
-          conversationId,
-          intent: 'localizacao_endereco',
-          source: 'Exemplos.txt/canonical',
-        });
-        console.log('[ANA_CANONICAL_REPLY_USED]', {
-          conversationId,
-          intent: 'localizacao_endereco',
-          messagePartsCount: dedupedLocationLinkMessages.length,
-        });
+      if (!committedLocationLink.committed || !committedLocationLink.text.trim()) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'location_link_commit_blocked';
+        return;
       }
-      for (const [index, message] of dedupedLocationLinkMessages.entries()) {
-        if (index > 0) await sleepMs(900);
-        if (isPipelineStale(conversationId, replyPipelineToken)) {
-          anaTurnAuditOutcome = 'silent';
-          anaTurnAuditBlockedReason = `pipeline_stale_before_location_link_message_${index + 1}`;
-          return;
-        }
-        const sendResult = await sendTextMessage({
-          conversationId,
-          to: toPhoneNumber,
-          text: message,
-          phase: 'commercial_rules',
-        });
-        if (!sendResult.success || !sendResult.metaMessageId) {
-          anaTurnAuditOutcome = 'send_failed';
-          anaTurnAuditBlockedReason = 'location_link_send_failed';
-          return;
-        }
-        await insertMessage(conversationId, 'assistant', message, sendResult.metaMessageId);
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_location_link_message';
+        return;
       }
+      const sendResult = await sendTextMessage({
+        conversationId,
+        to: toPhoneNumber,
+        text: committedLocationLink.text,
+        phase: 'commercial_rules',
+      });
+      if (!sendResult.success || !sendResult.metaMessageId) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'location_link_send_failed';
+        return;
+      }
+      await insertMessage(conversationId, 'assistant', committedLocationLink.text, sendResult.metaMessageId);
       anaTurnAuditOutcome = 'sent';
       anaTurnAuditBlockedReason = null;
       anaTurnAuditLlmStatus = 'skipped';
@@ -4174,6 +4505,50 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       isFirstAnaReply,
       previousAssistantMessage: lastAssistantPlain,
     });
+    const forcedIntentFromTurnContext = (() => {
+      if (!isEvoraEnterpriseName(ent?.name ?? null)) return null;
+      const topic = anaTurnContextResolved?.requestedTopic ?? null;
+      if (topic === 'localizacao' || topic === 'rota') return 'localizacao_endereco' as const;
+      if (topic === 'lotes') return 'quantidade_lotes_info_gap' as const;
+      if (topic === 'lazer') return 'areas_lazer' as const;
+      if (topic === 'seguranca') return 'seguranca_portaria' as const;
+      if (topic === 'pagamento') return 'formas_pagamento' as const;
+      if (topic === 'valores') return 'preco_valor_lote' as const;
+      return null;
+    })();
+    const forcedCommercialRule =
+      forcedIntentFromTurnContext != null
+        ? {
+            ruleId: forcedIntentFromTurnContext,
+            commercialAxis:
+              forcedIntentFromTurnContext === 'localizacao_endereco'
+                ? ('location' as const)
+                : forcedIntentFromTurnContext === 'quantidade_lotes_info_gap'
+                  ? ('availability' as const)
+                  : forcedIntentFromTurnContext === 'areas_lazer'
+                    ? ('leisure' as const)
+                    : forcedIntentFromTurnContext === 'seguranca_portaria'
+                      ? ('security' as const)
+                      : forcedIntentFromTurnContext === 'formas_pagamento'
+                        ? ('payment_terms' as const)
+                        : ('price' as const),
+            messages: splitCommercialRuleMessages(ANA_COMMERCIAL_RULES.byIntent[forcedIntentFromTurnContext]),
+            replySource: 'commercial_rules_intent' as const,
+            inheritedIntent: null,
+          }
+        : null;
+    if (
+      forcedCommercialRule &&
+      commercialRule &&
+      commercialRule.ruleId !== forcedCommercialRule.ruleId
+    ) {
+      console.log('[ANA_CONTEXT_STALE_TOPIC_IGNORED]', {
+        conversationId,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        ignoredRule: commercialRule.ruleId,
+        forcedRule: forcedCommercialRule.ruleId,
+      });
+    }
     const normalizedUserForCanonical = normText(trimmed);
     const locationLikeIntent =
       requestedAxisForPolicy === 'localizacao' ||
@@ -4193,7 +4568,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             inheritedIntent: null,
           }
         : null;
-    const effectiveCommercialRule = commercialRule ?? canonicalLocationFallbackRule;
+    const effectiveCommercialRule = forcedCommercialRule ?? commercialRule ?? canonicalLocationFallbackRule;
     if (effectiveCommercialRule && anaDecision.canRespond && anaDecision.outboundAllowed) {
       console.log('[ANA_LLM_DECISION]', {
         conversationId,
@@ -4411,15 +4786,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         .map((m) => (m.content || '').trim())
         .filter((msg) => msg.length > 0)
         .slice(-8);
+      const processedCommercialRuleMessages: string[] = [];
       for (const [index, commercialRuleMessageRaw] of commercialMessagesToSend.entries()) {
-        if (index > 0) await sleepMs(900);
-        if (isPipelineStale(conversationId, replyPipelineToken)) {
-          anaTurnAuditOutcome = 'silent';
-          anaTurnAuditBlockedReason = `pipeline_stale_before_commercial_rule_message_${index + 1}`;
-          anaTurnDiagnostics.finalResponse.replySource = effectiveCommercialRule.replySource;
-          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-          return;
-        }
         let commercialRuleMessage = commercialRuleMessageRaw;
         const aggressiveBlockCommercial = blockLegacyAggressiveVisitCtaByIntent({
           text: commercialRuleMessage,
@@ -4514,115 +4882,52 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             phase: 'commercial_rule_message',
           });
         }
-        const sendResult = await sendTextMessage({
-          conversationId,
-          to: toPhoneNumber,
-          text: commercialRuleMessage,
-          phase: 'commercial_rules',
-        });
-        if (!sendResult.success || !sendResult.metaMessageId) {
-          anaTurnAuditOutcome = 'send_failed';
-          anaTurnAuditBlockedReason = 'commercial_rule_send_failed';
-          anaTurnDiagnostics.finalResponse.replySource = effectiveCommercialRule.replySource;
-          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-          markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-            replySource: effectiveCommercialRule.replySource,
-            outboundStatus: anaTurnAuditOutcome,
-            blockedReason: `${anaTurnAuditBlockedReason}_index_${index + 1}`,
-          });
-          console.error('[ANA_COMMERCIAL_RULE_SEND_FAILED]', {
-            conversationId,
-            failedMessageIndex: index + 1,
-            ruleId: effectiveCommercialRule.ruleId,
-            result: sendResult,
-          });
-          return;
+        if (commercialRuleMessage.trim()) {
+          processedCommercialRuleMessages.push(commercialRuleMessage.trim());
+          recentAssistantForNoRepeat.push(commercialRuleMessage.trim());
         }
-
-        lastCommercialRuleMetaMessageId = sendResult.metaMessageId;
-        await insertMessage(conversationId, 'assistant', commercialRuleMessage, sendResult.metaMessageId);
-        recentAssistantForNoRepeat.push(commercialRuleMessage);
-        console.log('[ANA_COMMERCIAL_RULE_MESSAGE_SENT]', {
-          conversationId,
-          ruleId: effectiveCommercialRule.ruleId,
-          messageIndex: index + 1,
-          messagesCount: commercialMessagesToSend.length,
-          outboundMetaMessageId: sendResult.metaMessageId,
-        });
       }
-
-      for (const [visitIndex, visitOfferMessage] of visitOfferMessagesFromCommercialRule.entries()) {
-        let safeVisitOfferMessage = visitOfferMessage;
-        const aggressiveBlockVisitOffer = blockLegacyAggressiveVisitCtaByIntent({
-          text: safeVisitOfferMessage,
-          intent: effectiveCommercialRule.ruleId,
-          hasRecentVisitCta: true,
-        });
-        if (aggressiveBlockVisitOffer.changed) safeVisitOfferMessage = aggressiveBlockVisitOffer.text;
-        const noRepeatVisitOffer = applyAnaNoRepeatMessageGuard({
-          conversationId,
-          enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
-          enterpriseName: ent?.name ?? null,
-          userMessage: trimmed,
-          answer: safeVisitOfferMessage,
-          recentAssistantReplies: recentAssistantForNoRepeat,
-          semanticallySimilar: repliesSemanticallySimilar,
-        });
-        if (noRepeatVisitOffer.changed) safeVisitOfferMessage = noRepeatVisitOffer.text;
-        if (noRepeatVisitOffer.changed) {
-          console.log('[ANA_REPEAT_SUPPRESSED]', {
-            conversationId,
-            reason: noRepeatVisitOffer.reason,
-            phase: 'commercial_rule_visit_offer',
-          });
-          console.log('[ANA_CTA_REPEAT_SUPPRESSED]', {
-            conversationId,
-            ctaType: 'visit_offer',
-            reason: noRepeatVisitOffer.reason,
-            phase: 'commercial_rule_visit_offer',
-          });
-        }
-        await sleepMs(900);
-        if (isPipelineStale(conversationId, replyPipelineToken)) {
-          anaTurnAuditOutcome = 'silent';
-          anaTurnAuditBlockedReason = `pipeline_stale_before_visit_offer_message_${visitIndex + 1}`;
-          anaTurnDiagnostics.finalResponse.replySource = effectiveCommercialRule.replySource;
-          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-          return;
-        }
-        const visitSendResult = await sendTextMessage({
-          conversationId,
-          to: toPhoneNumber,
-          text: safeVisitOfferMessage,
-          phase: 'commercial_rules_visit_offer',
-        });
-        if (!visitSendResult.success || !visitSendResult.metaMessageId) {
-          anaTurnAuditOutcome = 'send_failed';
-          anaTurnAuditBlockedReason = 'commercial_rule_visit_offer_send_failed';
-          anaTurnDiagnostics.finalResponse.replySource = effectiveCommercialRule.replySource;
-          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-          markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-            replySource: effectiveCommercialRule.replySource,
-            outboundStatus: anaTurnAuditOutcome,
-            blockedReason: `${anaTurnAuditBlockedReason}_index_${visitIndex + 1}`,
-          });
-          console.error('[ANA_COMMERCIAL_RULE_VISIT_OFFER_SEND_FAILED]', {
-            conversationId,
-            failedMessageIndex: visitIndex + 1,
-            result: visitSendResult,
-          });
-          return;
-        }
-        lastCommercialRuleMetaMessageId = visitSendResult.metaMessageId;
-        await insertMessage(conversationId, 'assistant', safeVisitOfferMessage, visitSendResult.metaMessageId);
-        recentAssistantForNoRepeat.push(safeVisitOfferMessage);
-        console.log('[ANA_COMMERCIAL_RULE_VISIT_OFFER_MESSAGE_SENT]', {
-          conversationId,
-          messageIndex: visitIndex + 1,
-          messagesCount: visitOfferMessagesFromCommercialRule.length,
-          outboundMetaMessageId: visitSendResult.metaMessageId,
-        });
+      const committedCommercialRule = commitTurnResponse({
+        handler: 'deterministic_commercial_rule',
+        reason: `rule_${effectiveCommercialRule.ruleId}`,
+        parts: [...processedCommercialRuleMessages, ...visitOfferMessagesFromCommercialRule],
+        stage: 'commercial_rule_messages_final',
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+        shouldCallQwen: false,
+      });
+      if (!committedCommercialRule.committed || !committedCommercialRule.text.trim()) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'commercial_rule_commit_blocked';
+        return;
       }
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_commercial_rule_send';
+        anaTurnDiagnostics.finalResponse.replySource = effectiveCommercialRule.replySource;
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        return;
+      }
+      const sendResult = await sendTextMessage({
+        conversationId,
+        to: toPhoneNumber,
+        text: committedCommercialRule.text,
+        phase: 'commercial_rules',
+      });
+      if (!sendResult.success || !sendResult.metaMessageId) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'commercial_rule_send_failed';
+        anaTurnDiagnostics.finalResponse.replySource = effectiveCommercialRule.replySource;
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+          replySource: effectiveCommercialRule.replySource,
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: anaTurnAuditBlockedReason,
+        });
+        return;
+      }
+      lastCommercialRuleMetaMessageId = sendResult.metaMessageId;
+      await insertMessage(conversationId, 'assistant', committedCommercialRule.text, sendResult.metaMessageId);
 
       await applyAnaConversationUpdate(conversationId, {
         classification: 'Qualificado',
@@ -7877,76 +8182,32 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
     }
 
-    const shouldForceEvoraLocationTriplet = isEvoraLocationQuestion(trimmed);
+    const shouldForceEvoraLocationTriplet =
+      isEvoraEnterpriseName(ent?.name ?? null) && isEvoraLocationQuestion(trimmed);
+    const finalReplyParts = shouldForceEvoraLocationTriplet ? [...EVORA_LOCATION_REPLY_CHUNKS] : [replyText];
     if (shouldForceEvoraLocationTriplet) {
-      const sentChunks: string[] = [];
-      const locationChunks = dedupeMessageParts(EVORA_LOCATION_REPLY_CHUNKS, {
+      console.log('[ANA_EVORA_LOCATION_TRIPLET_SELECTED]', {
         conversationId,
-        stage: 'evora_location_chunks',
+        chunks: EVORA_LOCATION_REPLY_CHUNKS.length,
       });
-      for (const chunk of locationChunks) {
-        anaEngineTrace('final_send_start', {
-          conversationId,
-          phase: 'ana_main_reply_evora_location_chunk',
-          replyLen: chunk.length,
-        });
-        const chunkSendResult = await sendTextMessage({
-          conversationId,
-          to: toPhoneNumber,
-          text: chunk,
-          phase: 'ana_main_reply',
-        });
-        if (!chunkSendResult.success || !chunkSendResult.metaMessageId) {
-          anaTurnAuditOutcome = 'send_failed';
-          anaTurnAuditBlockedReason = 'main_reply_send_failed';
-          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-          markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
-            replySource,
-            outboundStatus: anaTurnAuditOutcome,
-            blockedReason: anaTurnAuditBlockedReason,
-          });
-          return;
-        }
-        await insertMessage(conversationId, 'assistant', chunk, chunkSendResult.metaMessageId);
-        sentChunks.push(chunk);
-      }
-      for (const [visitIndex, visitOfferMessage] of appendedVisitOfferMessagesForFinalSend.entries()) {
-        if (isPipelineStale(conversationId, replyPipelineToken)) {
-          anaTurnAuditOutcome = 'silent';
-          anaTurnAuditBlockedReason = `pipeline_stale_before_visit_offer_message_${visitIndex + 1}`;
-          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-          return;
-        }
-        await sleepMs(900);
-        const visitChunkSendResult = await sendTextMessage({
-          conversationId,
-          to: toPhoneNumber,
-          text: visitOfferMessage,
-          phase: 'ana_main_reply_visit_offer',
-        });
-        if (!visitChunkSendResult.success || !visitChunkSendResult.metaMessageId) {
-          anaTurnAuditOutcome = 'send_failed';
-          anaTurnAuditBlockedReason = `main_reply_visit_offer_send_failed_${visitIndex + 1}`;
-          anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-          return;
-        }
-        await insertMessage(conversationId, 'assistant', visitOfferMessage, visitChunkSendResult.metaMessageId);
-      }
-      replyText = sentChunks.join('\n');
-      anaTurnAuditOutcome = shouldAttemptDocSend ? 'material_failed' : 'sent';
-      anaTurnAuditBlockedReason = null;
+    }
+    const committedFinalReply = commitTurnResponse({
+      handler: openAiCalled ? 'qwen_or_llm_final' : 'deterministic_final',
+      reason: shouldForceEvoraLocationTriplet ? 'evora_location_triplet' : 'main_reply',
+      parts: [...finalReplyParts, ...appendedVisitOfferMessagesForFinalSend],
+      stage: 'final_reply_commit',
+      requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+      commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+      shouldCallQwen: openAiCalled,
+    });
+    if (!committedFinalReply.committed || !committedFinalReply.text.trim()) {
+      anaTurnAuditOutcome = 'blocked';
+      anaTurnAuditBlockedReason = 'final_reply_commit_blocked';
       anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-      markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
-        replySource,
-        outboundStatus: anaTurnAuditOutcome,
-        fallbackUsed: anaTurnDiagnostics.fallbackUsed,
-      });
-      console.log('[ANA_EVORA_LOCATION_TRIPLET_SENT]', {
-        conversationId,
-        chunks: locationChunks.length,
-      });
       return;
     }
+    replyText = committedFinalReply.text;
+    appendedVisitOfferMessagesForFinalSend = [];
 
     anaEngineTrace('final_send_start', {
       conversationId,
@@ -7961,26 +8222,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
     if (sendResult.success && sendResult.metaMessageId) {
       await insertMessage(conversationId, 'assistant', replyText, sendResult.metaMessageId);
-      for (const [visitIndex, visitOfferMessage] of appendedVisitOfferMessagesForFinalSend.entries()) {
-        if (isPipelineStale(conversationId, replyPipelineToken)) {
-          anaTurnAuditOutcome = 'silent';
-          anaTurnAuditBlockedReason = `pipeline_stale_before_visit_offer_message_${visitIndex + 1}`;
-          return;
-        }
-        await sleepMs(900);
-        const visitOfferSendResult = await sendTextMessage({
-          conversationId,
-          to: toPhoneNumber,
-          text: visitOfferMessage,
-          phase: 'ana_main_reply_visit_offer',
-        });
-        if (!visitOfferSendResult.success || !visitOfferSendResult.metaMessageId) {
-          anaTurnAuditOutcome = 'send_failed';
-          anaTurnAuditBlockedReason = `main_reply_visit_offer_send_failed_${visitIndex + 1}`;
-          return;
-        }
-        await insertMessage(conversationId, 'assistant', visitOfferMessage, visitOfferSendResult.metaMessageId);
-      }
       anaEngineTrace('final_send_success', {
         conversationId,
         phase: 'ana_main_reply',

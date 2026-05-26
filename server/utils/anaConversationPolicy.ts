@@ -647,10 +647,7 @@ function buildCanonicalSegurancaReply(opts: { shouldOfferLazer: boolean }): stri
 }
 
 function buildCanonicalLocalizacaoReply(): string {
-  return [
-    'Atibaia faz parte da regiao bragantina, uma das regioes mais valorizadas e desenvolvidas do estado. Fica a cerca de 50 minutos de Sao Paulo.',
-    'O Evora fica na regiao da Pedreira, no bairro Rio Abaixo, com facil acesso pela Rodovia Dom Pedro I.',
-  ].join('\n');
+  return 'O Evora fica em Atibaia, na regiao da Pedreira, proximo ao bairro Rio Abaixo, com facil acesso pela Rodovia Dom Pedro I.';
 }
 
 function buildCanonicalValoresReply(): string {

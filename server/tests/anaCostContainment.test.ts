@@ -37,6 +37,7 @@ import {
   shouldSuppressVisitFlowForConfirmationKind,
 } from '../utils/anaShortConfirmationContext.js';
 import { resolveAnaCommercialRule } from '../services/anaCommercialRulesService.js';
+import { applyAnaNoRepeatMessageGuard } from '../utils/anaEvoraCommercialGuards.js';
 import type { CommercialFlowState } from '../utils/commercialFlowState.js';
 
 test('resolve modelo da Ana por DB com gpt-4.1', () => {
@@ -1653,6 +1654,94 @@ test('observabilidade de topicos criticos registra logs novos', () => {
 
   const engineSource = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
   assert.match(engineSource, /\[ANA_LOT_COUNT_INFO_GAP_HANDLED\]/);
+});
+
+test('onde fica esse loteamento resolve localizacao e nao preco', () => {
+  const rule = resolveAnaCommercialRule({
+    enterpriseName: 'Evora',
+    userMessage: 'onde fica esse loteamento?',
+    isFirstAnaReply: false,
+  });
+  assert.equal(rule?.ruleId, 'localizacao_endereco');
+  assert.equal(rule?.commercialAxis, 'location');
+  assert.equal(/valor inicial|parcela|simulacao/i.test((rule?.messages ?? []).join(' ')), false);
+});
+
+test('depois de pergunta de valor, onde fica continua localizacao', () => {
+  const first = resolveAnaCommercialRule({
+    enterpriseName: 'Evora',
+    userMessage: 'qual o valor?',
+    isFirstAnaReply: false,
+  });
+  const second = resolveAnaCommercialRule({
+    enterpriseName: 'Evora',
+    userMessage: 'onde fica?',
+    isFirstAnaReply: false,
+  });
+  assert.equal(first?.ruleId, 'preco_valor_lote');
+  assert.equal(second?.ruleId, 'localizacao_endereco');
+});
+
+test('oferta antiga de lazer e ignorada quando cliente pede localizacao', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 901,
+    userMessage: 'onde fica?',
+    replyText: 'Quer que eu te explique as areas de lazer?',
+    isFirstAnaReply: false,
+    flowState: {
+      dialoguePolicy: {
+        lastAssistantQuestionType: 'followup_topic',
+        lastAssistantQuestionText: 'Quer que eu te explique as areas de lazer?',
+        lastOfferedTopics: ['lazer'],
+      },
+    },
+    recentMessages: [
+      { role: 'assistant', content: 'Quer que eu te explique as areas de lazer?' },
+      { role: 'user', content: 'onde fica?' },
+    ],
+    disableFollowupQuestion: true,
+    shortConfirmationContext: {
+      kind: 'followup_topic_confirmation',
+      lastAssistantQuestionType: 'followup_topic',
+      lastAssistantQuestionText: 'Quer que eu te explique as areas de lazer?',
+      lastOfferedTopics: ['lazer'],
+    },
+  });
+  assert.match(policy.text, /atibaia|pedreira|rodovia dom pedro i/i);
+  assert.equal(/quer que eu te explique as areas de lazer/i.test(policy.text), false);
+});
+
+test('pedido de rota sem link autorizado nao repete promessa de referencia', () => {
+  const guarded = applyAnaNoRepeatMessageGuard({
+    conversationId: 902,
+    enterpriseId: 10,
+    enterpriseName: 'Evora',
+    userMessage: 'me manda a localizacao para rota',
+    answer: 'O Evora fica em Atibaia, na regiao da Pedreira, com acesso pela Rodovia Dom Pedro I.',
+    recentAssistantReplies: ['O Evora fica em Atibaia, na regiao da Pedreira, com acesso pela Rodovia Dom Pedro I.'],
+    semanticallySimilar: (a, b) => a.toLowerCase() === b.toLowerCase(),
+  });
+  assert.equal(guarded.changed, true);
+  assert.match(guarded.text, /n[aã]o tenho um link de localiza[cç][aã]o liberado/i);
+  assert.match(guarded.text, /atibaia/i);
+  assert.equal(/referencia de acesso/i.test(guarded.text), false);
+});
+
+test('logs de orquestracao de turno estao presentes', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  assert.match(source, /\[ANA_TURN_CONTEXT_RESOLVED\]/);
+  assert.match(source, /\[ANA_TURN_DECISION_SELECTED\]/);
+  assert.match(source, /\[ANA_TURN_RESPONSE_COMMITTED\]/);
+  assert.match(source, /\[ANA_TURN_EXTRA_HANDLER_SUPPRESSED\]/);
+  assert.match(source, /\[ANA_DUPLICATE_RESPONSE_PART_SUPPRESSED\]/);
+  assert.match(source, /\[ANA_CONTEXT_STALE_TOPIC_IGNORED\]/);
+});
+
+test('qwen e deterministico passam pelo mesmo commit final sem envio extra', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  assert.match(source, /commitTurnResponse\(/);
+  assert.match(source, /\[ANA_QWEN_SKIPPED_BY_DETERMINISTIC\]/);
+  assert.equal(source.includes('ana_main_reply_visit_offer'), false);
 });
 
 

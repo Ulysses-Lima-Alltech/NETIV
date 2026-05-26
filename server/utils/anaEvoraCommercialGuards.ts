@@ -343,6 +343,9 @@ export function applyAnaNoRepeatMessageGuard(params: {
   if (/(quantos?\s+lotes?|numero\s+de\s+lotes?|vai\s+ter\s+quantos?\s+lotes?)/.test(nUser)) {
     text =
       'Ainda não tenho essa informação exata liberada por aqui.\nQuer que eu encaminhe para um corretor te passar certinho?';
+  } else if (/(localizacao|endereco|onde fica|como chegar|regiao|bairro|pedreira|rio abaixo|rota|maps|link)/.test(nUser)) {
+    text =
+      'Não tenho um link de localização liberado para envio por aqui.\nO Évora fica em Atibaia, na região da Pedreira, próximo ao bairro Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I.';
   } else if (/(seguranca|portaria|controle de acesso)/.test(nUser)) {
     text = 'O Évora conta com portaria 24 horas com controle de acesso.';
   } else if (/(lazer|areas? de lazer|piscina|academia|playground|quadra|coworking)/.test(nUser)) {
@@ -366,10 +369,8 @@ export function applyAnaNoRepeatMessageGuard(params: {
     text = 'Temos planos estendidos em até 120x, parcelamento sem juros em até 48x e financiamento direto com a construtora.';
   } else if (/(condominio|taxa condominial)/.test(nUser)) {
     text = 'O condomínio tem estimativa entre R$400 e R$700, conforme definições da associação.';
-  } else if (/(preco|valor|quanto custa|lote)/.test(nUser)) {
+  } else if (/(preco|valor|quanto custa|\blote\b)/.test(nUser)) {
     text = 'Esse é o valor inicial mesmo. Se quiser, o corretor pode simular conforme o lote disponível.';
-  } else if (/(localizacao|endereco|onde fica|como chegar)/.test(nUser)) {
-    text = 'Se quiser, te passo a referência de acesso de forma mais direta para sua rota.';
   }
 
   const reason = alreadyExact ? 'exact_duplicate_blocked' : 'semantic_duplicate_blocked';

@@ -41,9 +41,7 @@ export const ANA_COMMERCIAL_RULES = {
       'O financiamento é facilitado por ser direto com a construtora, com menos burocracia e mais facilidade para você.',
     ],
     localizacao_endereco: [
-      'Atibaia faz parte da região bragantina, uma das regiões mais valorizadas e desenvolvidas do estado. Fica a cerca de 50 minutos de São Paulo.',
-      'O Évora fica na região da Pedreira, no bairro Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I.',
-      'Atibaia também se destaca pela gastronomia e pela Avenida Lucas Nogueira Garcez, com restaurantes, bares e comércio em uma região bem valorizada.',
+      'O Évora fica em Atibaia, na região da Pedreira, próximo ao bairro Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I.',
     ],
     endereco: [
       'O endereço do Évora é Estrada dos Pires, s/n, bairro Rio Abaixo, em Atibaia.\n\nFica na região da Pedreira, com fácil acesso pela Rodovia Dom Pedro I.',
