@@ -19,11 +19,13 @@ import {
   applyAnaConversationPolicy,
   evaluateAnaReengagementPolicy,
 } from '../utils/anaConversationPolicy.js';
+import { selectSingleSafeNextTopic } from '../utils/anaFollowupQuestionService.js';
 import {
   handleVisitSchedulingDeterministically,
   isVisitSchedulingIntent,
   reconstructVisitStateFromRecentMessages,
 } from '../utils/anaDirectVisitScheduling.js';
+import { __testOnlyResolveMediaPostSendFollowup } from '../services/conversationEngine.js';
 import {
   extractCustomerNameFromUserUtterance,
   isUncertainCustomerNameCue,
@@ -32,6 +34,7 @@ import {
   resolveShortConfirmationContext,
   shouldSuppressVisitFlowForConfirmationKind,
 } from '../utils/anaShortConfirmationContext.js';
+import { resolveAnaCommercialRule } from '../services/anaCommercialRulesService.js';
 import type { CommercialFlowState } from '../utils/commercialFlowState.js';
 
 test('resolve modelo da Ana por DB com gpt-4.1', () => {
@@ -1009,6 +1012,48 @@ test('quando pendingVisitScheduling esta ativo, intencao de visita permanece lig
   assert.equal(intent, true);
 });
 
+test('comercial: "qual o valor?" responde valor inicial e metro quadrado', () => {
+  const rule = resolveAnaCommercialRule({
+    enterpriseName: 'Évora',
+    userMessage: 'qual o valor?',
+    isFirstAnaReply: false,
+    previousAssistantMessage: null,
+  });
+  const text = (rule?.messages ?? []).join(' ');
+  assert.equal(rule?.ruleId, 'preco_valor_lote');
+  assert.match(text, /R\$279\.000,00/);
+  assert.match(text, /R\$775,00/);
+});
+
+test('comercial: "parcela?" não repete valor inicial e oferece corretor para simulação', () => {
+  const rule = resolveAnaCommercialRule({
+    enterpriseName: 'Évora',
+    userMessage: 'parcela?',
+    isFirstAnaReply: false,
+    previousAssistantMessage: 'O valor inicial do Évora é a partir de R$279.000,00...',
+  });
+  const text = (rule?.messages ?? []).join(' ');
+  assert.equal(rule?.ruleId, 'parcela_simulacao');
+  assert.equal(/R\$279\.000,00/.test(text), false);
+  assert.match(text, /encaminhe para um corretor/i);
+  assert.equal((text.match(/\?/g) ?? []).length, 1);
+  assert.equal(/agendar|visita/i.test(text), false);
+});
+
+test('comercial: "formas de pagamento" responde 120x, 48x e financiamento direto', () => {
+  const rule = resolveAnaCommercialRule({
+    enterpriseName: 'Évora',
+    userMessage: 'formas de pagamento',
+    isFirstAnaReply: false,
+    previousAssistantMessage: null,
+  });
+  const text = (rule?.messages ?? []).join(' ');
+  assert.equal(rule?.ruleId, 'formas_pagamento');
+  assert.match(text, /120x/);
+  assert.match(text, /48x/);
+  assert.match(text, /financiamento pode ser direto com a construtora/i);
+});
+
 test('estado false + historico de horario invalido e nome reconstrui fluxo ativo com valid_time', () => {
   const reconstructed = reconstructVisitStateFromRecentMessages({
     flowState: {
@@ -1157,6 +1202,155 @@ test('nome ja informado no estado nao e perguntado novamente', () => {
   assert.equal(decision.missingSlot, null);
   assert.equal(/como posso te chamar|seu nome/i.test(decision.reply ?? ''), false);
   assert.match(decision.reply ?? '', /posso confirmar sua visita/i);
+});
+
+test('resposta de localizacao nao termina com duas perguntas', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 120,
+    userMessage: 'onde fica?',
+    replyText:
+      'Evora fica em Atibaia, com acesso pela Rodovia Dom Pedro I. Me conta, quais sao suas duvidas? Vou responder todas. Quer saber tambem sobre valores ou areas de lazer?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'user', content: 'onde fica?' }],
+    disableFollowupQuestion: true,
+    safeTopicAvailability: {
+      localizacao: true,
+      valores: true,
+      lazer: true,
+      seguranca: true,
+      pagamento: true,
+    },
+  });
+
+  const questions = (policy.text.match(/\?/g) || []).length;
+  assert.equal(questions <= 1, true);
+  assert.equal(/quais sao suas duvidas/i.test(policy.text), false);
+});
+
+test('remove pergunta generica quando ja existe pergunta especifica', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 121,
+    userMessage: 'quero localizacao',
+    replyText:
+      'Fica em Atibaia. Me conta, quais sao suas duvidas? Vou responder todas. Quer saber tambem sobre valores?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'user', content: 'quero localizacao' }],
+    disableFollowupQuestion: true,
+    safeTopicAvailability: {
+      valores: true,
+      localizacao: true,
+      lazer: true,
+      seguranca: true,
+      pagamento: true,
+    },
+  });
+
+  assert.equal(/me conta,\s*quais sao suas duvidas/i.test(policy.text), false);
+  assert.match(policy.text, /quer saber tambem sobre valores\?/i);
+});
+
+test('nao oferece topico sem base autorizada', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 122,
+    userMessage: 'ok',
+    replyText: 'Quer saber tambem sobre valores?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'assistant', content: 'Posso te explicar localizacao.' }],
+    disableFollowupQuestion: true,
+    safeTopicAvailability: {
+      valores: false,
+      localizacao: true,
+      lazer: true,
+      seguranca: true,
+      pagamento: true,
+    },
+  });
+
+  assert.equal(/valores/i.test(policy.text), false);
+  assert.match(policy.text, /ponto especifico/i);
+});
+
+test('selectSingleSafeNextTopic escolhe apenas um topico seguro', () => {
+  const selected = selectSingleSafeNextTopic({
+    currentTopic: 'localizacao',
+    recentlyDiscussedTopics: ['lazer', 'seguranca', 'localizacao', 'valores'],
+    recentlyAskedTopics: ['lazer', 'seguranca', 'localizacao'],
+    recentAssistantReplies: [],
+    allowedTopics: {
+      valores: false,
+      pagamento: true,
+      localizacao: true,
+      lazer: true,
+      seguranca: true,
+    },
+  });
+
+  assert.equal(selected.topic, 'pagamento');
+  assert.match(selected.question ?? '', /formas de pagamento/i);
+  assert.equal(/\bou\b/i.test(selected.question ?? ''), false);
+});
+
+test('apos envio de fotos, prepara follow-up com "o que achou"', () => {
+  const decision = __testOnlyResolveMediaPostSendFollowup({
+    flowState: {},
+    mediaKind: 'image',
+    mediaCategory: 'outro',
+    mediaFileName: 'galeria-evora.jpg',
+    recentAssistantReplies: [],
+  });
+
+  assert.equal(decision.shouldSend, true);
+  assert.match(decision.text, /fotos do empreendimento/i);
+  assert.match(decision.text, /o que achou\?/i);
+});
+
+test('apos envio de video, prepara follow-up com "o que achou"', () => {
+  const decision = __testOnlyResolveMediaPostSendFollowup({
+    flowState: {},
+    mediaKind: 'video',
+    mediaCategory: 'outro',
+    mediaFileName: 'tour-evora.mp4',
+    recentAssistantReplies: [],
+  });
+
+  assert.equal(decision.shouldSend, true);
+  assert.match(decision.text, /video do empreendimento/i);
+  assert.match(decision.text, /o que achou\?/i);
+});
+
+test('nao envia follow-up pos-midia durante fluxo de visita', () => {
+  const decision = __testOnlyResolveMediaPostSendFollowup({
+    flowState: {
+      pendingVisitScheduling: true,
+      pendingVisitDateLabel: 'amanha',
+      pendingVisitDate: '2026-05-26',
+    },
+    mediaKind: 'image',
+    mediaCategory: 'outro',
+    mediaFileName: 'fotos-evora.jpg',
+    recentAssistantReplies: [],
+  });
+
+  assert.equal(decision.shouldSend, false);
+  assert.equal(decision.reason, 'visit_flow');
+});
+
+test('nao repete follow-up pos-midia quando ja houve envio recente equivalente', () => {
+  const decision = __testOnlyResolveMediaPostSendFollowup({
+    flowState: {},
+    mediaKind: 'video',
+    mediaCategory: 'outro',
+    mediaFileName: 'video-evora.mp4',
+    recentAssistantReplies: [
+      'Te enviei o video do empreendimento. O que achou?',
+    ],
+  });
+
+  assert.equal(decision.shouldSend, false);
+  assert.equal(decision.reason, 'repeat');
 });
 
 

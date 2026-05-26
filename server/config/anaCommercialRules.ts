@@ -1,6 +1,7 @@
 ﻿export type AnaCommercialIntent =
   | 'first_contact'
   | 'preco_valor_lote'
+  | 'parcela_simulacao'
   | 'entrada'
   | 'formas_pagamento'
   | 'financiamento'
@@ -24,7 +25,10 @@ export const ANA_COMMERCIAL_RULES = {
   ],
   byIntent: {
     preco_valor_lote: [
-      'O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.',
+      'O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.\n\nQuer que eu te explique também as formas de pagamento?',
+    ],
+    parcela_simulacao: [
+      'A parcela depende da forma de pagamento e da opção escolhida.\n\nTemos planos estendidos em até 120x para parcelas mais baixas, parcelamento sem juros em até 48x e financiamento direto com a construtora.\n\nQuer que eu encaminhe para um corretor fazer uma simulação certinha pra você?',
     ],
     entrada: [
       'A entrada mínima é de 20% do valor do lote. O valor exato depende da unidade escolhida.',

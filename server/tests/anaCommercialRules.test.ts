@@ -50,6 +50,7 @@ test('entrada não cai em formas de pagamento', () => {
 test('formas de pagamento mantém 120x e 48x', () => {
   const rule = resolve('Formas de pagamento');
   assert.equal(rule?.ruleId, 'formas_pagamento');
+  assert.equal(rule?.commercialAxis, 'payment_terms');
   const all = (rule?.messages ?? []).join(' ');
   assert.match(all, /120x/);
   assert.match(all, /48x/);
@@ -58,7 +59,24 @@ test('formas de pagamento mantém 120x e 48x', () => {
 test('preço responde valor inicial e metro quadrado', () => {
   const rule = resolve('Queria saber preço');
   assert.equal(rule?.ruleId, 'preco_valor_lote');
+  assert.equal(rule?.commercialAxis, 'price');
   const text = (rule?.messages ?? []).join(' ');
   assert.match(text, /R\$279\.000,00/);
   assert.match(text, /R\$775,00/);
+  assert.match(text, /formas de pagamento/i);
+});
+
+test('"o valor parcela" cai em eixo de parcela/simulação', () => {
+  const rule = resolve('o valor parcela?');
+  assert.equal(rule?.ruleId, 'parcela_simulacao');
+  assert.equal(rule?.commercialAxis, 'installment');
+  const text = (rule?.messages ?? []).join(' ');
+  assert.equal(/R\$279\.000,00/.test(text), false);
+  assert.match(text, /simula[cç][aã]o/i);
+});
+
+test('"quanto fica por mês" cai em installment', () => {
+  const rule = resolve('quanto fica por mês?');
+  assert.equal(rule?.ruleId, 'parcela_simulacao');
+  assert.equal(rule?.commercialAxis, 'installment');
 });

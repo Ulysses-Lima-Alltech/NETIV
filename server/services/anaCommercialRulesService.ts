@@ -1,4 +1,20 @@
-ï»¿import { ANA_COMMERCIAL_RULES, type AnaCommercialIntent } from '../config/anaCommercialRules.js';
+import { ANA_COMMERCIAL_RULES, type AnaCommercialIntent } from '../config/anaCommercialRules.js';
+
+export type AnaCommercialAxis =
+  | 'price'
+  | 'installment'
+  | 'payment_terms'
+  | 'custom_simulation'
+  | 'entry'
+  | 'location'
+  | 'visit'
+  | 'delivery'
+  | 'condo_fee'
+  | 'leisure'
+  | 'security'
+  | 'availability'
+  | 'materials'
+  | 'unknown';
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? '')
@@ -44,19 +60,32 @@ function isValorCondominioIntent(n: string): boolean {
 function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_contact'> | null {
   const n = normalizeText(userMessage);
   if (!n) return null;
+  const installmentTerms = [
+    /\bvalor\s+da?\s+parcela\b/,
+    /\bvalor\s+parcela\b/,
+    /\bparcela(s)?\b/,
+    /\bparcelamento\s+mensal\b/,
+    /\bpor\s+mes\b/,
+    /\bmensalidade\b/,
+    /\bsimulac(?:ao|oes|a|o)\b/,
+    /\bfinanciamento\s+mensal\b/,
+    /\bquanto\s+fica\s+por\s+mes\b/,
+    /\bquanto\s+vou\s+pagar\s+por\s+mes\b/,
+  ];
 
   if (hasAny(n, [/\b(lazer|areas? de lazer|area comum|amenidades|piscina|academia|playground|coworking|beach tennis|campo society)\b/])) {
     return 'areas_lazer';
   }
-  if (hasAny(n, [/\b(seguranca|seguranÃ§a|portaria|controle de acesso)\b/])) {
+  if (hasAny(n, [/\b(seguranca|segurança|portaria|controle de acesso)\b/])) {
     return 'seguranca_portaria';
   }
   if (isEntregaEmpreendimentoIntent(n)) return 'entrega_empreendimento';
   if (isValorCondominioIntent(n)) return 'valor_condominio';
+  if (hasAny(n, installmentTerms)) return 'parcela_simulacao';
 
   if (
     hasAny(n, [
-      /\b(qual o preco|quero saber preco|queria saber preco|quanto custa|qual o valor|valor dos lotes|quanto e o lote|a partir de quanto|preco|valor|investimento|metro quadrado|m2|mÂ²)\b/,
+      /\b(qual o preco|quero saber preco|queria saber preco|quanto custa|qual o valor|valor do lote|valor dos lotes|quanto e o lote|a partir de quanto|preco|valor|investimento|metro quadrado|m2|m²)\b/,
     ])
   ) {
     return 'preco_valor_lote';
@@ -76,12 +105,12 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
 
   if (
     hasAny(n, [
-      /\b(localizacao|localizaÃ§Ã£o|regiao|regiÃ£o|onde fica|fica onde|bairro|pedreira|rio abaixo|como chegar|me enviar a localizacao|me manda a localizacao)\b/,
+      /\b(localizacao|localização|regiao|região|onde fica|fica onde|bairro|pedreira|rio abaixo|como chegar|me enviar a localizacao|me manda a localizacao)\b/,
     ])
   ) {
     return 'localizacao_endereco';
   }
-  if (hasAny(n, [/\b(endereco|endereÃ§o|qual o endereco|qual Ã© o endereÃ§o|me passa o endereÃ§o|me passa o endereco)\b/])) {
+  if (hasAny(n, [/\b(endereco|endereço|qual o endereco|qual é o endereço|me passa o endereço|me passa o endereco)\b/])) {
     return 'endereco';
   }
 
@@ -102,10 +131,27 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
 
 export type ResolvedAnaCommercialRule = {
   ruleId: AnaCommercialIntent;
+  commercialAxis: AnaCommercialAxis;
   messages: string[];
   replySource: 'commercial_rules_first_contact' | 'commercial_rules_intent';
   inheritedIntent: 'payment_terms' | null;
 };
+
+function axisFromIntent(intent: AnaCommercialIntent): AnaCommercialAxis {
+  if (intent === 'preco_valor_lote') return 'price';
+  if (intent === 'parcela_simulacao') return 'installment';
+  if (intent === 'formas_pagamento' || intent === 'financiamento') return 'payment_terms';
+  if (intent === 'entrada') return 'entry';
+  if (intent === 'localizacao_endereco' || intent === 'endereco') return 'location';
+  if (intent === 'visita_agendamento') return 'visit';
+  if (intent === 'entrega_empreendimento') return 'delivery';
+  if (intent === 'valor_condominio') return 'condo_fee';
+  if (intent === 'areas_lazer') return 'leisure';
+  if (intent === 'seguranca_portaria') return 'security';
+  if (intent === 'disponibilidade_simulacao_desconto') return 'availability';
+  if (intent === 'materiais') return 'materials';
+  return 'unknown';
+}
 
 export function splitCommercialRuleMessages(lines: readonly string[]): string[] {
   const raw = lines.map((line) => line.trim()).filter(Boolean);
@@ -113,7 +159,7 @@ export function splitCommercialRuleMessages(lines: readonly string[]): string[] 
   if (raw.length > 1) return raw;
 
   const only = raw[0] ?? '';
-  if (/as Ã¡reas de lazer do Ã©vora incluem:/i.test(only)) {
+  if (/as áreas de lazer do évora incluem:/i.test(only)) {
     return [only];
   }
 
@@ -154,6 +200,7 @@ export function resolveAnaCommercialRule(params: {
   if (params.isFirstAnaReply && isGreetingInitialInterest(params.userMessage)) {
     return {
       ruleId: 'first_contact',
+      commercialAxis: 'unknown',
       messages: splitCommercialRuleMessages(ANA_COMMERCIAL_RULES.firstContactMessages),
       replySource: 'commercial_rules_first_contact',
       inheritedIntent: null,
@@ -165,6 +212,7 @@ export function resolveAnaCommercialRule(params: {
 
   return {
     ruleId: intent,
+    commercialAxis: axisFromIntent(intent),
     messages: splitCommercialRuleMessages(ANA_COMMERCIAL_RULES.byIntent[intent]),
     replySource: 'commercial_rules_intent',
     inheritedIntent: null,

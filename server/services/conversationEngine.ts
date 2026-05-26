@@ -118,6 +118,7 @@ import {
   buildAnaEnterpriseEvidence,
   hasAnaEvidenceForNeed,
   applyAnaEvidenceGuardToReply,
+  type AnaEnterpriseEvidence,
 } from '../utils/anaEnterpriseEvidence.js';
 import {
   buildAnaDecisionPolicy,
@@ -154,7 +155,6 @@ import {
   userAskedAboutMaterialTopic,
   inferPreferredCategoryFromUserText,
   buildDocCategoryTryOrder,
-  pickPostMediaAckText,
 } from '../utils/anaDocSendIntent.js';
 import {
   handleVisitSchedulingDeterministically,
@@ -1350,7 +1350,11 @@ const ANA_MEDIA_THEN_TEXT_GAP_MS = 2200;
 
 type ResolvedEnterpriseFile = NonNullable<Awaited<ReturnType<typeof getFileForSend>>>;
 
-type AnaMediaFirstResult = { ok: true } | { ok: false; error: string; code?: number; fileName: string };
+type AnaDeliveredMediaKind = 'image' | 'video' | 'document';
+
+type AnaMediaFirstResult =
+  | { ok: true; messageKind: AnaDeliveredMediaKind; sentCategory: FileCategory; fileName: string }
+  | { ok: false; error: string; code?: number; fileName: string };
 
 type MaterialRequestTurnStatus =
   | 'MATERIAL_SENT'
@@ -1400,6 +1404,162 @@ type MaterialRequestTurnResult =
       log: MaterialFlowLogPayload;
     };
 
+type AnaConversationSafeTopicAvailability = {
+  lazer: boolean;
+  seguranca: boolean;
+  localizacao: boolean;
+  valores: boolean;
+  pagamento: boolean;
+  fotos: boolean;
+  video: boolean;
+  book: boolean;
+};
+
+type AnaPostMediaFollowupKind = 'fotos' | 'video' | 'book' | 'material';
+
+function hasSendableCategory(sendableCategories: readonly FileCategory[], category: FileCategory): boolean {
+  return sendableCategories.includes(category);
+}
+
+function buildSafeTopicAvailabilityForPolicy(params: {
+  evidence: AnaEnterpriseEvidence;
+  sendableCategories: readonly FileCategory[];
+}): AnaConversationSafeTopicAvailability {
+  const hasKnowledge = params.evidence.hasUsableKnowledgeChunks;
+  const hasOtherSendable = hasSendableCategory(params.sendableCategories, 'outro');
+  return {
+    lazer: hasKnowledge,
+    seguranca: hasKnowledge,
+    localizacao: params.evidence.hasExactLocation || hasKnowledge,
+    valores: params.evidence.hasPricingInfo,
+    pagamento: params.evidence.hasFinancingInfo,
+    fotos: hasOtherSendable,
+    video: hasOtherSendable,
+    book: params.evidence.hasSendableBook,
+  };
+}
+
+function normalizeMediaPostSendText(value: string | null | undefined): string {
+  return String(value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function inferPostMediaFollowupKindFromText(text: string | null | undefined): AnaPostMediaFollowupKind | null {
+  const n = normalizeMediaPostSendText(text);
+  if (!n) return null;
+  if (/\bbook\b/.test(n)) return 'book';
+  if (/\bvideo\b/.test(n)) return 'video';
+  if (/\b(foto|fotos|imagem|imagens)\b/.test(n)) return 'fotos';
+  if (/\bte enviei\b/.test(n) && /\bo que achou\b/.test(n)) return 'material';
+  return null;
+}
+
+function pickPostMediaFollowupText(params: {
+  kind: AnaDeliveredMediaKind;
+  category: FileCategory;
+  fileName?: string | null;
+}): { kind: AnaPostMediaFollowupKind; text: string } {
+  const fileNameNorm = normalizeMediaPostSendText(params.fileName ?? '');
+  if (params.kind === 'image') {
+    return {
+      kind: 'fotos',
+      text: 'Te enviei algumas fotos do empreendimento. O que achou?',
+    };
+  }
+  if (params.kind === 'video') {
+    return {
+      kind: 'video',
+      text: 'Te enviei o video do empreendimento. O que achou?',
+    };
+  }
+  if (params.category === 'book' || /\bbook\b/.test(fileNameNorm)) {
+    return {
+      kind: 'book',
+      text: 'Te enviei o Book para voce analisar com calma. Quer que eu te ajude com algum ponto dele?',
+    };
+  }
+  return {
+    kind: 'material',
+    text: 'Te enviei o material para voce analisar com calma. O que achou?',
+  };
+}
+
+export function __testOnlyResolveMediaPostSendFollowup(params: {
+  flowState: CommercialFlowState;
+  mediaKind: AnaDeliveredMediaKind;
+  mediaCategory: FileCategory;
+  mediaFileName?: string | null;
+  recentAssistantReplies: string[];
+}): { shouldSend: boolean; reason: 'ok' | 'visit_flow' | 'broker_handoff' | 'repeat'; text: string; kind: AnaPostMediaFollowupKind } {
+  const visitFlowActive =
+    params.flowState.pendingVisitScheduling === true || params.flowState.visitScheduling?.active === true;
+  const brokerHandoffActive = Boolean(params.flowState.dialoguePolicy?.brokerHandoffAcceptedAt);
+  const followup = pickPostMediaFollowupText({
+    kind: params.mediaKind,
+    category: params.mediaCategory,
+    fileName: params.mediaFileName ?? null,
+  });
+  if (visitFlowActive) {
+    return { shouldSend: false, reason: 'visit_flow', text: followup.text, kind: followup.kind };
+  }
+  if (brokerHandoffActive) {
+    return { shouldSend: false, reason: 'broker_handoff', text: followup.text, kind: followup.kind };
+  }
+  const repeated = params.recentAssistantReplies
+    .slice(-4)
+    .some((reply) => inferPostMediaFollowupKindFromText(reply) === followup.kind);
+  if (repeated) {
+    return { shouldSend: false, reason: 'repeat', text: followup.text, kind: followup.kind };
+  }
+  return { shouldSend: true, reason: 'ok', text: followup.text, kind: followup.kind };
+}
+
+async function maybeSendAnaMediaPostSendFollowup(params: {
+  conversationId: number;
+  toPhoneNumber: string;
+  flowState: CommercialFlowState;
+  mediaKind: AnaDeliveredMediaKind;
+  mediaCategory: FileCategory;
+  mediaFileName?: string | null;
+  recentAssistantReplies: string[];
+  replyPipelineToken?: number;
+}): Promise<{ sent: boolean; text: string | null }> {
+  const followupDecision = __testOnlyResolveMediaPostSendFollowup({
+    flowState: params.flowState,
+    mediaKind: params.mediaKind,
+    mediaCategory: params.mediaCategory,
+    mediaFileName: params.mediaFileName ?? null,
+    recentAssistantReplies: params.recentAssistantReplies,
+  });
+  if (!followupDecision.shouldSend) {
+    if (followupDecision.reason === 'repeat') {
+      console.log('[ANA_MEDIA_POST_SEND_FOLLOWUP_SUPPRESSED_REPEAT]', {
+        conversationId: params.conversationId,
+        kind: followupDecision.kind,
+      });
+    }
+    return { sent: false, text: null };
+  }
+
+  if (isPipelineStale(params.conversationId, params.replyPipelineToken)) return { sent: false, text: null };
+  const send = await sendTextMessage({
+    conversationId: params.conversationId,
+    to: params.toPhoneNumber,
+    text: followupDecision.text,
+    phase: 'ana_media_post_send_followup',
+  });
+  if (!send.success || !send.metaMessageId) return { sent: false, text: null };
+  await insertMessage(params.conversationId, 'assistant', followupDecision.text, send.metaMessageId);
+  console.log('[ANA_MEDIA_POST_SEND_FOLLOWUP_SENT]', {
+    conversationId: params.conversationId,
+    kind: followupDecision.kind,
+  });
+  return { sent: true, text: followupDecision.text };
+}
 /**
  * Envio de mídia ANTES do texto da Ana. Só persiste no histórico se a Meta aceitar.
  * Em falha, não grava mensagem de sucesso; o chamador ajusta o texto ao cliente.
@@ -1508,7 +1668,7 @@ async function sendAnaEnterpriseMediaFirst(params: {
       if (mk === 'video') {
         console.log('[ANA_VIDEO_DIRECT_SENT]', { conversationId, enterpriseId: enterpriseIdForFile, fileId: file.id });
       }
-      return { ok: true };
+      return { ok: true, messageKind: mk, sentCategory: cat, fileName: file.originalName };
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
       console.error('[ANA_DOC_POST_UPLOAD_FAILED]', {
@@ -1549,7 +1709,7 @@ async function sendAnaEnterpriseMediaFirst(params: {
       if (linkSend.success && linkSend.metaMessageId) {
         console.log('[ANA_VIDEO_LINK_SENT]', { conversationId, enterpriseId: enterpriseIdForFile, fileId: file.id });
         await insertMessage(conversationId, 'assistant', linkText, linkSend.metaMessageId);
-        return { ok: true };
+        return { ok: true, messageKind: 'document', sentCategory: cat, fileName: file.originalName };
       }
     }
     const safeText =
@@ -1563,7 +1723,7 @@ async function sendAnaEnterpriseMediaFirst(params: {
     if (safeSend.success && safeSend.metaMessageId) {
       console.log('[ANA_VIDEO_TOO_LARGE_FOR_WHATSAPP]', { conversationId, enterpriseId: enterpriseIdForFile, fileId: file.id });
       await insertMessage(conversationId, 'assistant', safeText, safeSend.metaMessageId);
-      return { ok: true };
+      return { ok: true, messageKind: 'document', sentCategory: cat, fileName: file.originalName };
     }
   }
   return {
@@ -1637,28 +1797,6 @@ function buildMaterialFlowState(
     last_material_send_status: toMaterialSendStatus(patch.status),
     updatedAt: nowIso,
   };
-}
-
-async function sendMaterialFlowTextMessage(params: {
-  conversationId: number;
-  toPhoneNumber: string;
-  text: string;
-  replyPipelineToken?: number;
-}): Promise<boolean> {
-  if (isPipelineStale(params.conversationId, params.replyPipelineToken)) {
-    return false;
-  }
-  const sendResult = await sendTextMessage({
-    conversationId: params.conversationId,
-    to: params.toPhoneNumber,
-    text: params.text,
-    phase: 'material_flow_text',
-  });
-  if (!sendResult.success || !sendResult.metaMessageId) {
-    return false;
-  }
-  await insertMessage(params.conversationId, 'assistant', params.text, sendResult.metaMessageId);
-  return true;
 }
 
 async function handleMaterialRequestTurn(params: {
@@ -1820,27 +1958,22 @@ async function handleMaterialRequestTurn(params: {
     return { handled: true, status: 'SEND_FAILED', log: logPayload };
   }
 
-  const ackSent = await sendMaterialFlowTextMessage({
+  const rowsAfterMaterial = await getMessagesByConversationId(params.conversationId);
+  const recentAssistantReplies = rowsAfterMaterial
+    .filter((msg) => msg.role === 'assistant')
+    .map((msg) => String(msg.content ?? '').trim())
+    .filter((msg) => msg.length > 0)
+    .slice(-6);
+  await maybeSendAnaMediaPostSendFollowup({
     conversationId: params.conversationId,
     toPhoneNumber: params.toPhoneNumber,
-    text: 'Enviei o material aqui para voce.',
+    flowState: params.flowState,
+    mediaKind: mediaOutcome.messageKind,
+    mediaCategory: mediaOutcome.sentCategory,
+    mediaFileName: mediaOutcome.fileName,
+    recentAssistantReplies,
     replyPipelineToken: params.replyPipelineToken,
   });
-
-  if (!ackSent) {
-    logPayload.failureReason = 'outbound_send_failed';
-    const state = buildMaterialFlowState(params.flowState, {
-      pendingAction: 'send_material',
-      pendingMaterialType: requestedMaterialType,
-      pendingEnterpriseId: resolvedEnterprise.id,
-      lastRequestedMaterialType: requestedMaterialType,
-      status: 'SEND_FAILED',
-      lastMaterialSentId: selectedFile.id,
-    });
-    await mergeConversationCommercialFlowState(params.conversationId, state);
-    console.log('[MATERIAL_FLOW]', logPayload);
-    return { handled: true, status: 'SEND_FAILED', log: logPayload };
-  }
 
   logPayload.sendSucceeded = true;
   logPayload.failureReason = 'llm_bypassed';
@@ -2671,6 +2804,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         count: videoFiles.length,
       });
       let sentCount = 0;
+      let lastSentVideo: (typeof videoFiles)[number] | null = null;
       for (const [idx, video] of videoFiles.entries()) {
         if (idx > 0) await sleepMs(900);
         const mediaOutcome = await sendAnaEnterpriseMediaFirst({
@@ -2683,8 +2817,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         });
         if (!mediaOutcome.ok) continue;
         sentCount += 1;
+        lastSentVideo = video;
       }
       if (sentCount > 0) {
+        const rowsAfterVideoSend = await getMessagesByConversationId(conversationId);
+        const recentAssistantReplies = rowsAfterVideoSend
+          .filter((msg) => msg.role === 'assistant')
+          .map((msg) => String(msg.content ?? '').trim())
+          .filter((msg) => msg.length > 0)
+          .slice(-8);
+        await maybeSendAnaMediaPostSendFollowup({
+          conversationId,
+          toPhoneNumber,
+          flowState: flowStateParsed,
+          mediaKind: 'video',
+          mediaCategory: (lastSentVideo?.category ?? 'outro') as FileCategory,
+          mediaFileName: lastSentVideo?.originalName ?? null,
+          recentAssistantReplies,
+          replyPipelineToken,
+        });
         console.log('[ANA_VIDEO_MATERIAL_SENT]', {
           conversationId,
           enterpriseId: ent.id,
@@ -2779,6 +2930,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         count: imageFiles.length,
       });
       let sentCount = 0;
+      let lastSentImage: (typeof imageFiles)[number] | null = null;
       for (const [idx, img] of imageFiles.entries()) {
         if (idx > 0) await sleepMs(900);
         const mediaOutcome = await sendAnaEnterpriseMediaFirst({
@@ -2791,8 +2943,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         });
         if (!mediaOutcome.ok) continue;
         sentCount += 1;
+        lastSentImage = img;
       }
       if (sentCount > 0) {
+        const rowsAfterImageSend = await getMessagesByConversationId(conversationId);
+        const recentAssistantReplies = rowsAfterImageSend
+          .filter((msg) => msg.role === 'assistant')
+          .map((msg) => String(msg.content ?? '').trim())
+          .filter((msg) => msg.length > 0)
+          .slice(-8);
+        await maybeSendAnaMediaPostSendFollowup({
+          conversationId,
+          toPhoneNumber,
+          flowState: flowStateParsed,
+          mediaKind: 'image',
+          mediaCategory: (lastSentImage?.category ?? 'outro') as FileCategory,
+          mediaFileName: lastSentImage?.originalName ?? null,
+          recentAssistantReplies,
+          replyPipelineToken,
+        });
         console.log('[ANA_IMAGE_MATERIAL_SENT]', {
           conversationId,
           enterpriseId: ent.id,
@@ -3013,6 +3182,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       hasPricingInfo: enterpriseEvidence.hasPricingInfo,
       hasFinancingInfo: enterpriseEvidence.hasFinancingInfo,
       hasUsableKnowledgeChunks: enterpriseEvidence.hasUsableKnowledgeChunks,
+    });
+    const safeTopicAvailabilityForPolicy = buildSafeTopicAvailabilityForPolicy({
+      evidence: enterpriseEvidence,
+      sendableCategories: sendableAnaCategories,
     });
     const validatedEvidenceBlock = [
       `book_enviavel_disponivel: ${enterpriseEvidence.hasSendableBook ? 'sim' : 'não'}`,
@@ -3827,6 +4000,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               lastOfferedTopics: shortConfirmationContext.lastOfferedTopics,
             }
           : undefined,
+        safeTopicAvailability: safeTopicAvailabilityForPolicy,
       });
       deterministicVisitReply = visitPolicyResult.text;
       if (visitPolicyResult.changed) {
@@ -4000,6 +4174,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       !commercialRule && isEvoraEnterpriseName(ent?.name ?? null) && (locationLikeIntent || addressLikeIntent)
         ? {
             ruleId: addressLikeIntent ? 'endereco' : 'localizacao_endereco',
+            commercialAxis: 'location' as const,
             messages: splitCommercialRuleMessages(
               ANA_COMMERCIAL_RULES.byIntent[addressLikeIntent ? 'endereco' : 'localizacao_endereco']
             ),
@@ -4013,7 +4188,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       console.log('[ANA_CANONICAL_INTENT_MATCHED]', {
         conversationId,
         intent: effectiveCommercialRule.ruleId,
+        axis: effectiveCommercialRule.commercialAxis,
         source: 'Exemplos.txt/canonical',
+      });
+      console.log('[ANA_COMMERCIAL_AXIS_CLASSIFIED]', {
+        conversationId,
+        axis: effectiveCommercialRule.commercialAxis,
+        userText: trimmed.slice(0, 260),
       });
       console.log(
         isFirstContactRule ? '[ANA_COMMERCIAL_RULE_FIRST_CONTACT_START]' : '[ANA_COMMERCIAL_RULE_INTENT_START]',
@@ -4039,6 +4220,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
           userMessagePreview: trimmed.slice(0, 220),
         });
+        console.log('[ANA_PAYMENT_TERMS_REQUEST_HANDLED]', {
+          conversationId,
+          axis: effectiveCommercialRule.commercialAxis,
+        });
+      }
+      if (effectiveCommercialRule.ruleId === 'parcela_simulacao') {
+        console.log('[ANA_INSTALLMENT_REQUEST_HANDLED]', {
+          conversationId,
+          axis: effectiveCommercialRule.commercialAxis,
+        });
+      }
+      if (effectiveCommercialRule.ruleId === 'preco_valor_lote') {
+        console.log('[ANA_PRICE_REQUEST_HANDLED]', {
+          conversationId,
+          axis: effectiveCommercialRule.commercialAxis,
+        });
       }
       if (effectiveCommercialRule.inheritedIntent === 'payment_terms') {
         console.log('[ANA_PAYMENT_INTENT_CONTEXT_GUARD]', {
@@ -4058,6 +4255,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         effectiveCommercialRule.ruleId === 'areas_lazer' ||
         effectiveCommercialRule.ruleId === 'seguranca_portaria' ||
         effectiveCommercialRule.ruleId === 'preco_valor_lote' ||
+        effectiveCommercialRule.ruleId === 'parcela_simulacao' ||
         effectiveCommercialRule.ruleId === 'formas_pagamento' ||
         effectiveCommercialRule.ruleId === 'valor_condominio' ||
         effectiveCommercialRule.ruleId === 'entrega_empreendimento'
@@ -4159,6 +4357,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const shouldAskNameAfterCommercialReply =
         !hasKnownCustomerName &&
         effectiveCommercialRule.ruleId !== 'visita_agendamento' &&
+        effectiveCommercialRule.ruleId !== 'preco_valor_lote' &&
+        effectiveCommercialRule.ruleId !== 'parcela_simulacao' &&
         effectiveCommercialRule.ruleId !== 'entrada' &&
         effectiveCommercialRule.ruleId !== 'formas_pagamento';
       if (shouldAskNameAfterCommercialReply) {
@@ -4245,6 +4445,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
                 lastOfferedTopics: shortConfirmationContext.lastOfferedTopics,
               }
             : undefined,
+          safeTopicAvailability: safeTopicAvailabilityForPolicy,
         });
         commercialRuleMessage = commercialPolicyResult.text;
         if (commercialPolicyResult.changed) {
@@ -6083,155 +6284,65 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
-    /** Envio OK + ACK: um unico texto e encerra o turno - sem delay longo nem pos-processamento duplicado. */
-    if (shouldAttemptDocSend && canClaimMaterialWasSent) {
-      console.log('[ANA_DOC_PIPELINE_START]', {
-        conversationId,
-        replyPipelineToken: replyPipelineToken ?? null,
-        phase: 'material_ack_only_turn_end',
-      });
+    if (shouldAttemptDocSend && canClaimMaterialWasSent && mediaOutcome?.ok === true) {
       if (isPipelineStale(conversationId, replyPipelineToken)) {
-        console.log('[ANA_DOC_PIPELINE_STALE_ABORT]', {
-          conversationId,
-          phase: 'before_ack_text',
-          replyPipelineToken: replyPipelineToken ?? null,
-        });
         anaTurnAuditOutcome = 'silent';
-        anaTurnAuditBlockedReason = 'pipeline_stale_before_ack_text';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_media_post_send_followup';
         return;
       }
-      const ackTextRaw = pickPostMediaAckText(lastAsstDup?.content ?? null);
-      const ackAxisGuard = applyAnaCommercialSingleAxisGuard({
-        reply: ackTextRaw,
-        userMessage: trimmed,
-        isFirstAnaReply,
-        enterpriseName: ent?.name ?? null,
+      const rowsAfterMediaSend = await getMessagesByConversationId(conversationId);
+      const recentAssistantReplies = rowsAfterMediaSend
+        .filter((msg) => msg.role === 'assistant')
+        .map((msg) => String(msg.content ?? '').trim())
+        .filter((msg) => msg.length > 0)
+        .slice(-8);
+      const postMediaFollowup = await maybeSendAnaMediaPostSendFollowup({
         conversationId,
-        resolvedPurchaseIntent: resolvedPurchaseIntentForTurn,
-        lastAssistantMessage: lastAssistantPlain,
+        toPhoneNumber,
+        flowState: flowStateParsed,
+        mediaKind: mediaOutcome.messageKind,
+        mediaCategory: mediaOutcome.sentCategory,
+        mediaFileName: mediaOutcome.fileName,
+        recentAssistantReplies,
+        replyPipelineToken,
       });
-      const ackFinalText = finalizeAnaReplyText(ackAxisGuard.text, {
-        userMessage: trimmed,
-        conversationMode: mode,
-        isFirstAnaReply,
-      });
-      const ackHardLimited = applyAnaHardLengthGuard({
-        text: ackFinalText,
-        enterpriseName: ent?.name ?? null,
-        maxChars: ANA_OUTBOUND_MAX_CHARS,
-      });
-      const ackOutboundEval = evaluateAnaOutboundText({
-        reply: ackHardLimited,
-        technicalFallbackText: ANA_TECHNICAL_FALLBACK_NEUTRAL,
-        conversationType: effectiveConv.conversation_type ?? 'CLIENT',
-        enterpriseName: ent?.name ?? null,
-      });
-      anaTurnAuditGuardsApplied.outboundReason = ackOutboundEval.reason;
-      if (!ackOutboundEval.valid) {
-        logAnaOutboundBlocked({
-          reason: ackOutboundEval.reason,
+      if (postMediaFollowup.sent && postMediaFollowup.text) {
+        anaEngineTrace('final_send_success', {
+          conversationId,
+          phase: 'doc_post_send_followup',
+          replyLen: postMediaFollowup.text.length,
+        });
+        const convAfterFollowup = await getConversationById(conversationId);
+        const nameConfirmedForCount = (convAfterFollowup?.customer_name || '').trim();
+        const deltaFollowup =
+          nameConfirmedForCount.length >= 2
+            ? countCustomerNameMentionsInText(postMediaFollowup.text, nameConfirmedForCount)
+            : 0;
+        if (deltaFollowup > 0) await incrementAnaCustomerNameMentions(conversationId, deltaFollowup);
+        if (!nameConfirmedForCount && replyExplicitlyAsksCustomerName(postMediaFollowup.text)) {
+          await markAnaAskedForCustomerName(conversationId);
+        }
+        const prevForFlowAck = parseCommercialFlowState(convAfterFollowup?.commercial_flow_state) ?? flowStateParsed;
+        const nextFlowAck = computeNextCommercialFlowState(prevForFlowAck, postMediaFollowup.text, {
+          conversationPhase,
+          enterpriseIdResolved: effectiveConv.enterprise_id ?? null,
+          enterprises: allActiveEnterprises,
+          productTypeHint:
+            mode === 'scoped' && ent
+              ? ent.tipo
+              : triageRequestedProductType === 'INDEFINIDO'
+                ? undefined
+                : triageRequestedProductType,
           userMessage: trimmed,
-          conversationId,
-          replyCandidate: ackAxisGuard.text,
         });
-        anaTurnAuditOutcome = 'blocked';
-        anaTurnAuditBlockedReason = ackOutboundEval.reason;
-        anaTurnAuditGuardsApplied.outboundReason = ackOutboundEval.reason;
-        return;
-      }
-      const ackText = ackOutboundEval.text;
-      const lastContentPreAck = (lastAsstDup?.content || '').trim();
-      const ageDupPreAck = lastAsstDup ? Date.now() - new Date(lastAsstDup.created_at).getTime() : Infinity;
-      if (lastContentPreAck && lastContentPreAck === ackText.trim() && ageDupPreAck < 55_000) {
-        console.log('[ANA_DOC_DUPLICATE_SUPPRESSED]', {
+        await mergeConversationCommercialFlowState(conversationId, nextFlowAck);
+        console.log('[ANA_PIPELINE] engine_send_success', {
           conversationId,
-          reason: 'ack_would_duplicate_last_assistant',
+          phase: 'ana_doc_post_send_followup',
+          inboundMetaMessageId,
+          replyLen: postMediaFollowup.text.length,
         });
-        anaTurnAuditOutcome = 'silent';
-        anaTurnAuditBlockedReason = 'ack_duplicate_suppressed';
-        return;
       }
-      anaEngineTrace('final_send_start', { conversationId, phase: 'doc_ack', replyLen: ackText.length });
-      const sendAckResult = await sendTextMessage({
-        conversationId,
-        to: toPhoneNumber,
-        text: ackText,
-        phase: 'doc_ack_after_media',
-      });
-      if (isPipelineStale(conversationId, replyPipelineToken)) {
-        console.log('[ANA_DOC_PIPELINE_STALE_ABORT]', {
-          conversationId,
-          phase: 'after_ack_sendTextMessage',
-          replyPipelineToken: replyPipelineToken ?? null,
-        });
-        anaTurnAuditOutcome = 'silent';
-        anaTurnAuditBlockedReason = 'pipeline_stale_after_ack_send';
-        return;
-      }
-      if (!sendAckResult.success || !sendAckResult.metaMessageId) {
-        anaEngineTrace('final_send_error', {
-          conversationId,
-          phase: 'doc_ack',
-          error: sendAckResult.error ?? null,
-          code: sendAckResult.code ?? null,
-        });
-        console.log('[ANA_PIPELINE] engine_send_fail', {
-          conversationId,
-          phase: 'doc_ack_after_media',
-          error: sendAckResult.error ?? null,
-          code: sendAckResult.code ?? null,
-        });
-        anaTurnAuditOutcome = 'send_failed';
-        anaTurnAuditBlockedReason = 'doc_ack_send_failed';
-        return;
-      }
-      await insertMessage(conversationId, 'assistant', ackText, sendAckResult.metaMessageId);
-      anaEngineTrace('final_send_success', {
-        conversationId,
-        phase: 'doc_ack',
-        outboundMetaMessageId: sendAckResult.metaMessageId,
-      });
-      console.log('[ANA_DOC_ACK_SENT]', {
-        conversationId,
-        outboundMetaMessageId: sendAckResult.metaMessageId,
-        replyLen: ackText.length,
-      });
-      const convAfterAck = await getConversationById(conversationId);
-      const nameConfirmedForCount = (convAfterAck?.customer_name || '').trim();
-      const deltaAck =
-        nameConfirmedForCount.length >= 2
-          ? countCustomerNameMentionsInText(ackText, nameConfirmedForCount)
-          : 0;
-      if (deltaAck > 0) await incrementAnaCustomerNameMentions(conversationId, deltaAck);
-      if (!nameConfirmedForCount && replyExplicitlyAsksCustomerName(ackText)) {
-        await markAnaAskedForCustomerName(conversationId);
-      }
-      const prevForFlowAck = parseCommercialFlowState(convAfterAck?.commercial_flow_state) ?? flowStateParsed;
-      const nextFlowAck = computeNextCommercialFlowState(prevForFlowAck, ackText, {
-        conversationPhase,
-        enterpriseIdResolved: effectiveConv.enterprise_id ?? null,
-        enterprises: allActiveEnterprises,
-        productTypeHint:
-          mode === 'scoped' && ent
-            ? ent.tipo
-            : triageRequestedProductType === 'INDEFINIDO'
-              ? undefined
-              : triageRequestedProductType,
-        userMessage: trimmed,
-      });
-      await mergeConversationCommercialFlowState(conversationId, nextFlowAck);
-      console.log('[ANA_DOC_POST_SEND_STATE_CLEARED]', {
-        conversationId,
-        note: 'flow_state_merged_after_doc_ack_then_return',
-      });
-      console.log('[ANA_DOC_SEND_SUCCESS_RETURNING]', { conversationId });
-      console.log('[ANA_PIPELINE] engine_send_success', {
-        conversationId,
-        phase: 'ana_doc_ack_only',
-        inboundMetaMessageId,
-        outboundMetaMessageId: sendAckResult.metaMessageId,
-        replyLen: ackText.length,
-      });
       if (structured.classification === 'Carteira' && prevClassification !== 'Carteira') {
         const convRef = await getConversationById(conversationId);
         void extractLeadDataFromConversation(
@@ -7572,6 +7683,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             lastOfferedTopics: shortConfirmationContext.lastOfferedTopics,
           }
         : undefined,
+      safeTopicAvailability: safeTopicAvailabilityForPolicy,
     });
     replyText = finalPolicyResult.text;
     if (finalPolicyResult.changed) {
