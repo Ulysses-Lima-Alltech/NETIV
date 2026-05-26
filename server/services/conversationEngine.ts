@@ -786,6 +786,7 @@ function containsProhibitedTechnicalFallbackText(text: string): boolean {
   const n = normText(text || '');
   if (!n) return false;
   return [
+    'posso te responder de forma mais objetiva nesse ponto',
     'posso te explicar os principais pontos por aqui de forma objetiva',
     'posso te ajudar com informacoes comerciais',
     'tem algum ponto especifico que voce gostaria de saber primeiro',
@@ -4245,6 +4246,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           userMessagePreview: trimmed.slice(0, 220),
         });
       }
+      if (effectiveCommercialRule.ruleId === 'quantidade_lotes_info_gap') {
+        console.log('[ANA_LOT_COUNT_INFO_GAP_HANDLED]', {
+          conversationId,
+          source: 'commercial_rule',
+        });
+      }
       if (effectiveCommercialRule.ruleId === 'formas_pagamento') {
         console.log('[ANA_COMMERCIAL_RULE_PAYMENT_PLANS]', {
           conversationId,
@@ -4285,6 +4292,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         effectiveCommercialRule.ruleId === 'endereco' ||
         effectiveCommercialRule.ruleId === 'areas_lazer' ||
         effectiveCommercialRule.ruleId === 'seguranca_portaria' ||
+        effectiveCommercialRule.ruleId === 'quantidade_lotes_info_gap' ||
         effectiveCommercialRule.ruleId === 'preco_valor_lote' ||
         effectiveCommercialRule.ruleId === 'parcela_simulacao' ||
         effectiveCommercialRule.ruleId === 'formas_pagamento' ||
@@ -4388,6 +4396,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const shouldAskNameAfterCommercialReply =
         !hasKnownCustomerName &&
         effectiveCommercialRule.ruleId !== 'visita_agendamento' &&
+        effectiveCommercialRule.ruleId !== 'quantidade_lotes_info_gap' &&
         effectiveCommercialRule.ruleId !== 'preco_valor_lote' &&
         effectiveCommercialRule.ruleId !== 'parcela_simulacao' &&
         effectiveCommercialRule.ruleId !== 'entrada' &&

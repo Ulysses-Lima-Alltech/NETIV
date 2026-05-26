@@ -12,6 +12,7 @@
   | 'valor_condominio'
   | 'areas_lazer'
   | 'seguranca_portaria'
+  | 'quantidade_lotes_info_gap'
   | 'disponibilidade_simulacao_desconto'
   | 'materiais';
 
@@ -62,6 +63,9 @@ export const ANA_COMMERCIAL_RULES = {
     ],
     seguranca_portaria: [
       'O Évora conta com portaria 24 horas com controle de acesso.',
+    ],
+    quantidade_lotes_info_gap: [
+      'Ainda não tenho essa informação exata liberada por aqui.\n\nQuer que eu encaminhe para um corretor te passar certinho?',
     ],
     disponibilidade_simulacao_desconto: [
       'Esses detalhes variam conforme as opções disponíveis. O corretor te passa tudo certinho no atendimento.',

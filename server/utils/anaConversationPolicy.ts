@@ -2,6 +2,7 @@ import type { CommercialFlowState } from './commercialFlowState.js';
 import {
   detectAnaDialogueTopics,
   selectAnaNextFollowupQuestion,
+  type AnaSafeTopicAvailability,
   type AnaDialogueTopic,
 } from './anaFollowupQuestionService.js';
 import {
@@ -12,8 +13,28 @@ import {
 
 const BROKER_HANDOFF_ASK =
   'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?';
-const VISIT_SLOT_WINDOW = 'Temos disponibilidade de segunda a sábado, das 09h às 18h.';
-const SPECIFIC_DETAIL_FALLBACK_QUESTION = 'Tem algum ponto específico que você quer que eu detalhe melhor?';
+const VISIT_SLOT_WINDOW = 'Temos disponibilidade de segunda a sabado, das 09h as 18h.';
+
+const SPECIFIC_DETAIL_FALLBACK_QUESTION = 'Tem algum ponto especifico que voce quer que eu detalhe melhor?';
+
+const GENERIC_SINGLE_QUESTION_FALLBACK = 'Tem algum ponto especifico que voce quer saber?';
+const TOPIC_CLARIFICATION_FALLBACK =
+  'Me confirma so qual ponto voce quer que eu detalhe: lazer, seguranca, localizacao ou formas de pagamento?';
+const BANNED_GENERIC_FALLBACK = 'Posso te responder de forma mais objetiva nesse ponto.';
+
+type RequestedTopicActionType =
+  | 'direct_topic_request'
+  | 'accepted_topic_offer'
+  | 'proactive_next_topic_offer'
+  | 'ambiguous_followup';
+
+type DeterministicTopic = 'lazer' | 'seguranca' | 'localizacao' | 'valores' | 'pagamento' | 'lot_count';
+
+type RequestedTopicAction = {
+  type: RequestedTopicActionType;
+  topic: DeterministicTopic | null;
+  offeredTopics: AnaDialogueTopic[];
+};
 
 function norm(value: string): string {
   return String(value ?? '')
@@ -52,6 +73,25 @@ function stripLeadingGreetingPrefix(text: string): string {
   next = next.replace(/^(bom dia|boa tarde|boa noite)(?:[!,. ]+)?/i, '').trim();
   next = next.replace(/^tudo bem\s*\?\s*/i, '').trim();
   return next;
+}
+
+function stripLeadingStaleTopicCta(text: string): { text: string; changed: boolean } {
+  const raw = (text || '').trim();
+  if (!raw) return { text: raw, changed: false };
+  const next = raw
+    .replace(
+      /^(quer\s+(?:que eu te explique|saber tambem sobre)[^?]*\?\s*)+/i,
+      ''
+    )
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  if (!next) {
+    return {
+      text: 'O Evora e um loteamento fechado em Atibaia, com lotes a partir de 360 m2, infraestrutura planejada, lazer completo e seguranca 24 horas.',
+      changed: true,
+    };
+  }
+  return { text: next, changed: next !== raw };
 }
 
 function periodHumanLabel(period: string | null | undefined): string | null {
@@ -292,8 +332,8 @@ function extractFollowupOfferedTopicsFromQuestion(text: string | null | undefine
 
 function topicLabel(topic: AnaDialogueTopic): string {
   if (topic === 'lazer') return 'lazer';
-  if (topic === 'seguranca') return 'segurança';
-  if (topic === 'localizacao') return 'localização';
+  if (topic === 'seguranca') return 'seguranca';
+  if (topic === 'localizacao') return 'localizacao';
   if (topic === 'valores') return 'valores';
   if (topic === 'pagamento') return 'formas de pagamento';
   return 'detalhes';
@@ -302,7 +342,7 @@ function topicLabel(topic: AnaDialogueTopic): string {
 function buildFollowupTopicChoiceQuestion(topics: AnaDialogueTopic[], includeReminder: boolean): string {
   const unique = dedupeTopics(topics).slice(0, 2);
   if (unique.length === 0) {
-    return 'Claro. Você quer saber mais sobre valores, lazer, localização, segurança ou formas de pagamento?';
+    return 'Claro. Voce quer saber mais sobre valores, lazer, localizacao, seguranca ou formas de pagamento?';
   }
   if (unique.length === 1) {
     return `Claro. Quer que eu te explique mais sobre ${topicLabel(unique[0] ?? 'outro')}?`;
@@ -310,9 +350,9 @@ function buildFollowupTopicChoiceQuestion(topics: AnaDialogueTopic[], includeRem
   const first = topicLabel(unique[0] ?? 'outro');
   const second = topicLabel(unique[1] ?? 'outro');
   if (includeReminder) {
-    return `Claro. Eu tinha comentado que poderia te explicar mais sobre ${first} ou ${second}. Qual dos dois você prefere ver agora?`;
+    return `Claro. Eu tinha comentado que poderia te explicar mais sobre ${first} ou ${second}. Qual dos dois voce prefere ver agora?`;
   }
-  return `Claro. Você prefere que eu te explique sobre ${first} ou ${second}?`;
+  return `Claro. Voce prefere que eu te explique sobre ${first} ou ${second}?`;
 }
 
 function isAssistantVisitOfferQuestion(text: string | null | undefined): boolean {
@@ -410,6 +450,412 @@ function resolveCurrentTopic(userMessage: string, replyText: string): AnaDialogu
   return topics[0] ?? 'outro';
 }
 
+type AnaOfferTopic = 'lazer' | 'seguranca' | 'localizacao' | 'valores' | 'pagamento' | 'fotos' | 'video' | 'book';
+
+type AnaOfferAvailability = AnaSafeTopicAvailability & {
+  fotos?: boolean;
+  video?: boolean;
+  book?: boolean;
+};
+
+type AnaQuestionSentence = {
+  raw: string;
+  normalized: string;
+  topics: AnaOfferTopic[];
+};
+
+function extractQuestionSentences(text: string): AnaQuestionSentence[] {
+  const raw = String(text || '');
+  const matches = raw.match(/[^?]*\?/g) ?? [];
+  const out: AnaQuestionSentence[] = [];
+  for (const piece of matches) {
+    const sentence = piece.trim();
+    if (!sentence) continue;
+    out.push({
+      raw: sentence,
+      normalized: norm(sentence),
+      topics: detectOfferedTopicsInSentence(sentence),
+    });
+  }
+  return out;
+}
+
+function detectOfferedTopicsInSentence(text: string): AnaOfferTopic[] {
+  const n = norm(text);
+  const topics: AnaOfferTopic[] = [];
+  if (/\b(lazer|areas? de lazer|piscina|academia|playground|quadra)\b/.test(n)) topics.push('lazer');
+  if (/\b(seguranca|portaria|controle de acesso|monitoramento)\b/.test(n)) topics.push('seguranca');
+  if (/\b(localizacao|onde fica|bairro|regiao|acesso|endereco|rodovia)\b/.test(n)) topics.push('localizacao');
+  if (/\b(valores?|preco|quanto custa|r\$)\b/.test(n)) topics.push('valores');
+  if (/\b(formas? de pagamento|pagamento|entrada|parcela|parcelamento|financiamento)\b/.test(n)) topics.push('pagamento');
+  if (/\b(fotos?|imagens?|galeria)\b/.test(n)) topics.push('fotos');
+  if (/\b(video|videos|v[�i]deo|v[�i]deos)\b/.test(n)) topics.push('video');
+  if (/\b(book|catalogo|cat[�a]logo|pdf|material)\b/.test(n)) topics.push('book');
+  return [...new Set(topics)];
+}
+
+function isGenericQuestionSentence(sentence: string): boolean {
+  const n = norm(sentence);
+  return (
+    /\b(me conta|quais sao suas duvidas|quais sao as suas duvidas|vou responder todas|qualquer duvida)\b/.test(n) ||
+    /\b(quer saber mais|o que mais)\b/.test(n)
+  );
+}
+
+function isOfferTopicAllowed(topic: AnaOfferTopic, availability: AnaOfferAvailability | null | undefined): boolean {
+  if (!availability) return true;
+  if (topic === 'lazer') return availability.lazer !== false;
+  if (topic === 'seguranca') return availability.seguranca !== false;
+  if (topic === 'localizacao') return availability.localizacao !== false;
+  if (topic === 'valores') return availability.valores !== false;
+  if (topic === 'pagamento') return availability.pagamento !== false;
+  if (topic === 'fotos') return availability.fotos !== false;
+  if (topic === 'video') return availability.video !== false;
+  return availability.book !== false;
+}
+
+function buildQuestionForOfferTopic(topic: AnaOfferTopic): string {
+  if (topic === 'lazer') return 'Quer que eu te explique as areas de lazer?';
+  if (topic === 'seguranca') return 'Quer que eu te explique a seguranca do empreendimento?';
+  if (topic === 'localizacao') return 'Quer saber tambem sobre localizacao?';
+  if (topic === 'valores') return 'Quer saber tambem sobre valores?';
+  if (topic === 'pagamento') return 'Quer que eu te explique as formas de pagamento?';
+  if (topic === 'fotos') return 'Quer que eu te envie algumas fotos?';
+  if (topic === 'video') return 'Quer que eu te envie o video?';
+  return 'Quer que eu te envie o Book?';
+}
+
+function topicFromFollowupLabel(topic: string | null | undefined): DeterministicTopic | null {
+  const n = norm(topic || '');
+  if (!n) return null;
+  if (n === 'lazer') return 'lazer';
+  if (n === 'seguranca') return 'seguranca';
+  if (n === 'localizacao') return 'localizacao';
+  if (n === 'valores') return 'valores';
+  if (n === 'pagamento' || n === 'formas_pagamento' || n === 'formas de pagamento') return 'pagamento';
+  return null;
+}
+
+function normalizeOfferedTopics(topics: AnaDialogueTopic[]): DeterministicTopic[] {
+  const out: DeterministicTopic[] = [];
+  for (const topic of topics) {
+    const mapped = topicFromFollowupLabel(topic);
+    if (!mapped || out.includes(mapped)) continue;
+    out.push(mapped);
+  }
+  return out;
+}
+
+function detectLotCountInfoGapRequest(userMessage: string): boolean {
+  const n = norm(userMessage);
+  if (!n) return false;
+  return (
+    /\bquantos?\s+lotes?\b/.test(n) ||
+    /\bnumero\s+de\s+lotes?\b/.test(n) ||
+    /\bvai\s+ter\s+quantos?\s+lotes?\b/.test(n)
+  );
+}
+
+function detectDirectDeterministicTopicRequest(userMessage: string): DeterministicTopic | null {
+  if (detectLotCountInfoGapRequest(userMessage)) return 'lot_count';
+  if (isAffirmativeUserReply(userMessage) || isAckLikeMessage(userMessage)) return null;
+  const n = norm(userMessage);
+  if (!n) return null;
+  if (isContinuationDemandUserReply(userMessage)) return null;
+
+  if (/\b(seguranca|portaria|controle de acesso|monitoramento)\b/.test(n)) return 'seguranca';
+  if (/\b(lazer|areas? de lazer|piscina|academia|playground|quadra|coworking|espaco zen|fireplace)\b/.test(n)) {
+    return 'lazer';
+  }
+  if (/\b(localizacao|onde fica|bairro|regiao|acesso|endereco|rodovia)\b/.test(n)) return 'localizacao';
+  if (/\b(formas? de pagamento|pagamento|entrada|parcela|parcelamento|financiamento)\b/.test(n)) {
+    return 'pagamento';
+  }
+  if (/\b(valores?|preco|quanto custa|r\$)\b/.test(n)) return 'valores';
+  return null;
+}
+
+function replyLooksLikeTopicOfferLoop(text: string): boolean {
+  const n = norm(text);
+  if (!n) return false;
+  return (
+    /\bquer que eu te explique\b/.test(n) ||
+    /\bquer saber tambem sobre\b/.test(n) ||
+    /\bvoce quer saber mais sobre\b/.test(n)
+  );
+}
+
+function replyAnswersDeterministicTopic(replyText: string, topic: DeterministicTopic): boolean {
+  const n = norm(replyText);
+  if (!n) return false;
+  if (topic === 'lot_count') {
+    return /\bainda nao tenho essa informacao exata liberada por aqui\b/.test(n);
+  }
+  if (topic === 'seguranca') {
+    return /\bportaria 24 horas com controle de acesso\b/.test(n);
+  }
+  if (topic === 'lazer') {
+    return (
+      /\bpiscina adulto\b/.test(n) &&
+      /\bacademia\b/.test(n) &&
+      /\bsalao de festas\b/.test(n) &&
+      /\bcampo society\b/.test(n)
+    );
+  }
+  if (topic === 'pagamento') {
+    return /\b120x\b/.test(n) && /\b48x\b/.test(n);
+  }
+  if (topic === 'localizacao') {
+    return /\batibaia\b/.test(n) && /\b(rodovia dom pedro i|pedreira)\b/.test(n);
+  }
+  return /\br\$\s*279\.000,00\b/i.test(replyText) || /\br\$\s*775,00\b/i.test(replyText);
+}
+
+function buildCanonicalLazerReply(): string {
+  return [
+    'As areas de lazer do Evora incluem:',
+    'Piscina adulto',
+    'Academia',
+    'Salao de festas',
+    'Playground',
+    'Coworking',
+    'Espaco zen',
+    'Fireplace',
+    'Quadra de beach tennis',
+    'Campo society',
+    '',
+    'Tambem conta com estacao de carregamento para carros eletricos e portaria 24 horas com controle de acesso.',
+  ].join('\n');
+}
+
+function buildCanonicalPagamentoReply(): string {
+  return [
+    'Temos algumas formas de pagamento que podem se encaixar na sua realidade.',
+    '',
+    'Para parcelas mais baixas, existem planos estendidos em ate 120x.',
+    '',
+    'Para parcelamento sem juros, ha opcoes em ate 48x.',
+    '',
+    'O financiamento pode ser direto com a construtora, com menos burocracia e mais facilidade para voce.',
+  ].join('\n');
+}
+
+function buildCanonicalSegurancaReply(opts: { shouldOfferLazer: boolean }): string {
+  const base = 'O Evora conta com portaria 24 horas com controle de acesso.';
+  if (!opts.shouldOfferLazer) return base;
+  return `${base} Quer que eu te fale tambem sobre lazer?`;
+}
+
+function buildCanonicalLocalizacaoReply(): string {
+  return [
+    'Atibaia faz parte da regiao bragantina, uma das regioes mais valorizadas e desenvolvidas do estado. Fica a cerca de 50 minutos de Sao Paulo.',
+    'O Evora fica na regiao da Pedreira, no bairro Rio Abaixo, com facil acesso pela Rodovia Dom Pedro I.',
+  ].join('\n');
+}
+
+function buildCanonicalValoresReply(): string {
+  return 'O valor inicial do Evora e a partir de R$279.000,00, e o metro quadrado comeca em R$775,00.';
+}
+
+function buildLotCountInfoGapReply(): string {
+  return [
+    'Ainda nao tenho essa informacao exata liberada por aqui.',
+    'Quer que eu encaminhe para um corretor te passar certinho?',
+  ].join('\n');
+}
+
+function buildDeterministicTopicReply(params: {
+  topic: DeterministicTopic;
+  recentlyDiscussedTopics: string[];
+}): string {
+  if (params.topic === 'lot_count') return buildLotCountInfoGapReply();
+  if (params.topic === 'lazer') return buildCanonicalLazerReply();
+  if (params.topic === 'seguranca') {
+    const discussed = (params.recentlyDiscussedTopics ?? []).map((topic) => norm(topic));
+    const shouldOfferLazer = !discussed.includes('lazer');
+    return buildCanonicalSegurancaReply({ shouldOfferLazer });
+  }
+  if (params.topic === 'pagamento') return buildCanonicalPagamentoReply();
+  if (params.topic === 'localizacao') return buildCanonicalLocalizacaoReply();
+  return buildCanonicalValoresReply();
+}
+
+export function resolveRequestedTopicAction(input: {
+  userMessage: string;
+  replyText: string;
+  lastAssistantQuestionContext: LastAssistantQuestionContext;
+}): RequestedTopicAction {
+  const directTopic = detectDirectDeterministicTopicRequest(input.userMessage);
+  if (directTopic) {
+    return {
+      type: 'direct_topic_request',
+      topic: directTopic,
+      offeredTopics: input.lastAssistantQuestionContext.offeredTopics,
+    };
+  }
+
+  const userAffirmative = isAffirmativeUserReply(input.userMessage) || isAckLikeMessage(input.userMessage);
+  const offeredTopics = normalizeOfferedTopics(input.lastAssistantQuestionContext.offeredTopics);
+  if (
+    userAffirmative &&
+    input.lastAssistantQuestionContext.askedFollowupTopics &&
+    !input.lastAssistantQuestionContext.askedVisitOffer &&
+    !input.lastAssistantQuestionContext.askedBrokerHandoff
+  ) {
+    if (offeredTopics.length === 1) {
+      return {
+        type: 'accepted_topic_offer',
+        topic: offeredTopics[0] ?? null,
+        offeredTopics: input.lastAssistantQuestionContext.offeredTopics,
+      };
+    }
+    return {
+      type: 'ambiguous_followup',
+      topic: null,
+      offeredTopics: input.lastAssistantQuestionContext.offeredTopics,
+    };
+  }
+
+  if (replyLooksLikeTopicOfferLoop(input.replyText)) {
+    return {
+      type: 'proactive_next_topic_offer',
+      topic: null,
+      offeredTopics: input.lastAssistantQuestionContext.offeredTopics,
+    };
+  }
+
+  return {
+    type: 'ambiguous_followup',
+    topic: null,
+    offeredTopics: input.lastAssistantQuestionContext.offeredTopics,
+  };
+}
+
+function ensureSingleFinalQuestion(params: {
+  text: string;
+  currentTopic: AnaDialogueTopic;
+  safeTopicAvailability?: AnaOfferAvailability | null;
+  recentlyDiscussedTopics: string[];
+  recentlyAskedTopics: string[];
+  recentAssistantReplies: string[];
+}): { text: string; changed: boolean; unsupportedTopics: AnaOfferTopic[] } {
+  const raw = String(params.text || '').trim();
+  if (!raw) return { text: raw, changed: false, unsupportedTopics: [] };
+
+  let next = raw;
+  let changed = false;
+  const removedUnsupportedTopics: AnaOfferTopic[] = [];
+  const genericLeadRemoved = next
+    .replace(/\bme conta,\s*quais sao suas duvidas\?\s*vou responder todas\.?/i, '')
+    .replace(/\bme conta,\s*quais s[a�]o suas d[u�]vidas\?\s*vou responder todas\.?/i, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  if (genericLeadRemoved !== next) {
+    next = genericLeadRemoved;
+    changed = true;
+  }
+  const questions = extractQuestionSentences(next);
+  if (questions.length === 0) {
+    return { text: next, changed: false, unsupportedTopics: [] };
+  }
+
+  const allowedQuestions = questions.filter((q) => {
+    const blockedTopics = q.topics.filter((topic) => !isOfferTopicAllowed(topic, params.safeTopicAvailability));
+    if (blockedTopics.length === 0) return true;
+    for (const topic of blockedTopics) {
+      if (!removedUnsupportedTopics.includes(topic)) removedUnsupportedTopics.push(topic);
+    }
+    return false;
+  });
+
+  if (allowedQuestions.length !== questions.length) {
+    for (const question of questions) {
+      if (!allowedQuestions.includes(question)) {
+        next = next.replace(question.raw, '').replace(/\s{2,}/g, ' ').trim();
+      }
+    }
+    changed = true;
+  }
+
+  let normalizedQuestions = extractQuestionSentences(next);
+  if (normalizedQuestions.length === 0) {
+    const fallback = GENERIC_SINGLE_QUESTION_FALLBACK;
+    if (next.length > 0 && !/[.!?]$/.test(next)) next = `${next}.`;
+    next = `${next} ${fallback}`.replace(/\s{2,}/g, ' ').trim();
+    return { text: next, changed: true, unsupportedTopics: removedUnsupportedTopics };
+  }
+
+  const nonGeneric = normalizedQuestions.filter((q) => !isGenericQuestionSentence(q.raw));
+  if (nonGeneric.length > 0 && nonGeneric.length !== normalizedQuestions.length) {
+    for (const question of normalizedQuestions) {
+      if (isGenericQuestionSentence(question.raw)) {
+        next = next.replace(question.raw, '').replace(/\s{2,}/g, ' ').trim();
+      }
+    }
+    changed = true;
+    normalizedQuestions = extractQuestionSentences(next);
+  }
+
+  if (normalizedQuestions.length === 0) {
+    const fallback = GENERIC_SINGLE_QUESTION_FALLBACK;
+    if (next.length > 0 && !/[.!?]$/.test(next)) next = `${next}.`;
+    next = `${next} ${fallback}`.replace(/\s{2,}/g, ' ').trim();
+    return { text: next, changed: true, unsupportedTopics: removedUnsupportedTopics };
+  }
+
+  let selectedQuestion = normalizedQuestions[normalizedQuestions.length - 1] ?? null;
+  const hasMultipleTopicsInSelected = (selectedQuestion?.topics?.length ?? 0) > 1;
+  if (selectedQuestion && hasMultipleTopicsInSelected) {
+    const preferredTopic =
+      selectedQuestion.topics.find((topic) => isOfferTopicAllowed(topic, params.safeTopicAvailability)) ?? null;
+    const replacement = preferredTopic ? buildQuestionForOfferTopic(preferredTopic) : null;
+    if (replacement) {
+      next = next.replace(selectedQuestion.raw, replacement).replace(/\s{2,}/g, ' ').trim();
+      changed = true;
+      normalizedQuestions = extractQuestionSentences(next);
+      selectedQuestion = normalizedQuestions[normalizedQuestions.length - 1] ?? null;
+    }
+  }
+
+  if ((selectedQuestion?.topics.length ?? 0) === 0) {
+    const selectedFromPolicy = selectAnaNextFollowupQuestion({
+      currentTopic: params.currentTopic,
+      recentlyDiscussedTopics: params.recentlyDiscussedTopics,
+      recentlyAskedTopics: params.recentlyAskedTopics,
+      recentAssistantReplies: params.recentAssistantReplies,
+      allowedTopics: params.safeTopicAvailability ?? null,
+    });
+    if (selectedFromPolicy.question) {
+      next = next.replace(selectedQuestion?.raw ?? '', selectedFromPolicy.question).replace(/\s{2,}/g, ' ').trim();
+      changed = true;
+      normalizedQuestions = extractQuestionSentences(next);
+      selectedQuestion = normalizedQuestions[normalizedQuestions.length - 1] ?? null;
+    }
+  }
+
+  if (normalizedQuestions.length > 1) {
+    for (const question of normalizedQuestions.slice(0, -1)) {
+      next = next.replace(question.raw, '').replace(/\s{2,}/g, ' ').trim();
+    }
+    changed = true;
+  }
+
+  if (!/\?\s*$/.test(next)) {
+    const chosen = extractQuestionSentences(next).slice(-1)[0] ?? null;
+    if (!chosen) {
+      if (next.length > 0 && !/[.!?]$/.test(next)) next = `${next}.`;
+      next = `${next} ${GENERIC_SINGLE_QUESTION_FALLBACK}`.replace(/\s{2,}/g, ' ').trim();
+      changed = true;
+    }
+  }
+
+  return {
+    text: next,
+    changed,
+    unsupportedTopics: removedUnsupportedTopics,
+  };
+}
+
 export interface ApplyAnaConversationPolicyInput {
   conversationId: number;
   userMessage: string;
@@ -435,6 +881,7 @@ export interface ApplyAnaConversationPolicyInput {
     lastAssistantQuestionText?: string | null;
     lastOfferedTopics?: string[] | null;
   };
+  safeTopicAvailability?: AnaOfferAvailability | null;
 }
 
 export interface ApplyAnaConversationPolicyResult {
@@ -489,7 +936,8 @@ export function applyAnaConversationPolicy(
     .filter((msg) => msg.length > 0)
     .slice(-6);
   let nextState = input.flowState;
-  const state = getAnaDialoguePolicyState(input.flowState);
+  const initialState = getAnaDialoguePolicyState(nextState);
+  let state = initialState;
   const hasKnownName = (input.knownCustomerName || '').trim().length >= 2;
   const visitFlowActive =
     input.visitFlowActive === true ||
@@ -501,14 +949,7 @@ export function applyAnaConversationPolicy(
   const overrideQuestionType = shortConfirmationContext?.lastAssistantQuestionType ?? null;
   const overrideQuestionText = shortConfirmationContext?.lastAssistantQuestionText ?? null;
   const overrideOfferedTopics = shortConfirmationContext?.lastOfferedTopics ?? null;
-  const lastAssistantQuestionContext = resolveLastAssistantQuestionContext(
-    overrideQuestionText || lastAssistantQuestionFromHistory,
-    overrideQuestionText || (state.lastAssistantQuestionText ?? null),
-    overrideQuestionType || (state.lastAssistantQuestionType ?? null),
-    overrideOfferedTopics ?? state.lastOfferedTopics ?? []
-  );
-  const userAffirmative = isAffirmativeUserReply(input.userMessage) || isAckLikeMessage(input.userMessage);
-  const userContinuationDemand = isContinuationDemandUserReply(input.userMessage);
+  const safeTopicAvailability = input.safeTopicAvailability ?? null;
 
   if (visitFlowActive) {
     console.log('[ANA_VISIT_FLOW_ACTIVE]', {
@@ -517,6 +958,46 @@ export function applyAnaConversationPolicy(
       visitStatus: input.flowState.visitScheduling?.status ?? null,
     });
   }
+
+  if (!visitFlowActive && input.isFirstAnaReply) {
+    const hadStaleQuestionContext =
+      (state.lastAssistantQuestionType ?? null) != null ||
+      (state.lastAssistantQuestionText ?? null) != null ||
+      (state.lastOfferedTopics ?? []).length > 0;
+    const staleLeadingCta = stripLeadingStaleTopicCta(reply);
+    if (hadStaleQuestionContext || staleLeadingCta.changed) {
+      if (staleLeadingCta.changed) reply = staleLeadingCta.text;
+      nextState = mergeAnaDialoguePolicyState(nextState, {
+        lastFollowupQuestion: null,
+        recentlyAskedTopics: [],
+        lastAssistantQuestionType: null,
+        lastAssistantQuestionText: null,
+        lastOfferedTopics: [],
+      });
+      state = getAnaDialoguePolicyState(nextState);
+      appliedRules.push('first_greeting_stale_cta_suppressed');
+      console.log('[ANA_FIRST_GREETING_STALE_CTA_SUPPRESSED]', {
+        conversationId: input.conversationId,
+        hadStaleQuestionContext,
+        staleLeadingCtaRemoved: staleLeadingCta.changed,
+      });
+    }
+  }
+
+  const lastAssistantQuestionContext = resolveLastAssistantQuestionContext(
+    overrideQuestionText || lastAssistantQuestionFromHistory,
+    overrideQuestionText || (state.lastAssistantQuestionText ?? null),
+    overrideQuestionType || (state.lastAssistantQuestionType ?? null),
+    overrideOfferedTopics ?? state.lastOfferedTopics ?? []
+  );
+  const userAffirmative = isAffirmativeUserReply(input.userMessage) || isAckLikeMessage(input.userMessage);
+  const userContinuationDemand = isContinuationDemandUserReply(input.userMessage);
+  const requestedTopicAction = resolveRequestedTopicAction({
+    userMessage: input.userMessage,
+    replyText: reply,
+    lastAssistantQuestionContext,
+  });
+  let resolvedTopicAction: DeterministicTopic | null = null;
 
   if (!visitFlowActive && input.isFirstAnaReply) {
     const greeted = ensureFirstReplyGreeting(reply, input.now);
@@ -561,6 +1042,94 @@ export function applyAnaConversationPolicy(
     });
   }
 
+  if (
+    !visitFlowActive &&
+    (requestedTopicAction.type === 'direct_topic_request' || requestedTopicAction.type === 'accepted_topic_offer') &&
+    requestedTopicAction.topic
+  ) {
+    const deterministicReply = buildDeterministicTopicReply({
+      topic: requestedTopicAction.topic,
+      recentlyDiscussedTopics: state.recentlyDiscussedTopics ?? [],
+    });
+    const suppressedLoop = replyLooksLikeTopicOfferLoop(reply);
+    const alreadyAnswered = replyAnswersDeterministicTopic(reply, requestedTopicAction.topic);
+    if (!alreadyAnswered || suppressedLoop || norm(reply) === norm(BANNED_GENERIC_FALLBACK)) {
+      reply = deterministicReply;
+      resolvedTopicAction = requestedTopicAction.topic;
+      if (suppressedLoop) {
+        console.log('[ANA_TOPIC_OFFER_LOOP_SUPPRESSED]', {
+          conversationId: input.conversationId,
+          actionType: requestedTopicAction.type,
+          topic: requestedTopicAction.topic,
+        });
+      }
+      if (requestedTopicAction.type === 'direct_topic_request') {
+        appliedRules.push('direct_topic_request_answered');
+        console.log('[ANA_DIRECT_TOPIC_REQUEST_ANSWERED]', {
+          conversationId: input.conversationId,
+          topic: requestedTopicAction.topic,
+        });
+      } else {
+        appliedRules.push('accepted_topic_offer_answered');
+        console.log('[ANA_ACCEPTED_TOPIC_OFFER_ANSWERED]', {
+          conversationId: input.conversationId,
+          topic: requestedTopicAction.topic,
+          offeredTopics: requestedTopicAction.offeredTopics,
+        });
+      }
+      if (requestedTopicAction.topic === 'lot_count') {
+        console.log('[ANA_LOT_COUNT_INFO_GAP_HANDLED]', {
+          conversationId: input.conversationId,
+          source: requestedTopicAction.type,
+        });
+      }
+    } else {
+      resolvedTopicAction = requestedTopicAction.topic;
+      if (requestedTopicAction.type === 'direct_topic_request') {
+        console.log('[ANA_DIRECT_TOPIC_REQUEST_ANSWERED]', {
+          conversationId: input.conversationId,
+          topic: requestedTopicAction.topic,
+          source: 'already_answered',
+        });
+      } else {
+        console.log('[ANA_ACCEPTED_TOPIC_OFFER_ANSWERED]', {
+          conversationId: input.conversationId,
+          topic: requestedTopicAction.topic,
+          source: 'already_answered',
+        });
+      }
+      if (requestedTopicAction.topic === 'lot_count') {
+        console.log('[ANA_LOT_COUNT_INFO_GAP_HANDLED]', {
+          conversationId: input.conversationId,
+          source: 'already_answered',
+        });
+      }
+    }
+  }
+
+  if (norm(reply).includes(norm(BANNED_GENERIC_FALLBACK))) {
+    const replacementTopic = resolvedTopicAction ?? detectDirectDeterministicTopicRequest(input.userMessage);
+    if (replacementTopic) {
+      reply = buildDeterministicTopicReply({
+        topic: replacementTopic,
+        recentlyDiscussedTopics: state.recentlyDiscussedTopics ?? [],
+      });
+      if (replacementTopic === 'lot_count') {
+        console.log('[ANA_LOT_COUNT_INFO_GAP_HANDLED]', {
+          conversationId: input.conversationId,
+          source: 'banned_generic_fallback_replacement',
+        });
+      }
+    } else {
+      reply = TOPIC_CLARIFICATION_FALLBACK;
+    }
+    appliedRules.push('bad_generic_fallback_blocked');
+    console.log('[ANA_BAD_GENERIC_FALLBACK_BLOCKED]', {
+      conversationId: input.conversationId,
+      replacementTopic: replacementTopic ?? null,
+    });
+  }
+
   if (!visitFlowActive && (userAffirmative || userContinuationDemand)) {
     const replyLooksVisitScheduling = containsVisitOffer(reply) || looksLikeVisitFlowReply(reply);
     if (userAffirmative && replyLooksVisitScheduling && !lastAssistantQuestionContext.askedVisitOffer) {
@@ -575,12 +1144,12 @@ export function applyAnaConversationPolicy(
     if (
       !lastAssistantQuestionContext.askedVisitOffer &&
       !lastAssistantQuestionContext.askedBrokerHandoff &&
-      lastAssistantQuestionContext.askedFollowupTopics
+      lastAssistantQuestionContext.askedFollowupTopics &&
+      !userAffirmative
     ) {
       const shouldResolvePendingFollowup =
         shortConfirmationKind === 'followup_topic_confirmation' ||
         userContinuationDemand ||
-        userAffirmative ||
         lastAssistantQuestionContext.offeredTopics.length > 1 ||
         replyLooksVisitScheduling ||
         isGenericDetailPromiseReply(reply);
@@ -593,17 +1162,28 @@ export function applyAnaConversationPolicy(
         console.log('[ANA_PENDING_FOLLOWUP_RESOLVED]', {
           conversationId: input.conversationId,
           offeredTopics: lastAssistantQuestionContext.offeredTopics,
-          trigger: userContinuationDemand ? 'continuation_request' : 'affirmative_or_guard',
+          trigger: userContinuationDemand ? 'continuation_request' : 'guard',
         });
       }
-    } else if (
-      (userContinuationDemand || userAffirmative || shortConfirmationKind === 'ambiguous_confirmation') &&
-      !lastAssistantQuestionContext.askedVisitOffer &&
-      !lastAssistantQuestionContext.askedBrokerHandoff &&
-      !lastAssistantQuestionContext.askedFollowupTopics
-    ) {
-      reply = 'Claro. Você quer saber mais sobre valores, lazer, localização, segurança ou formas de pagamento?';
-      appliedRules.push('pending_followup_ambiguous');
+    } else if (requestedTopicAction.type === 'ambiguous_followup') {
+      const pendingTopics = lastAssistantQuestionContext.offeredTopics;
+      if (
+        !lastAssistantQuestionContext.askedVisitOffer &&
+        !lastAssistantQuestionContext.askedBrokerHandoff &&
+        lastAssistantQuestionContext.askedFollowupTopics &&
+        pendingTopics.length > 1
+      ) {
+        reply = buildFollowupTopicChoiceQuestion(pendingTopics, userContinuationDemand);
+        appliedRules.push('pending_followup_resolved_ambiguous_multi_topic');
+      } else if (
+        (userContinuationDemand || userAffirmative || shortConfirmationKind === 'ambiguous_confirmation') &&
+        !lastAssistantQuestionContext.askedVisitOffer &&
+        !lastAssistantQuestionContext.askedBrokerHandoff &&
+        !lastAssistantQuestionContext.askedFollowupTopics
+      ) {
+        reply = 'Claro. Voce quer saber mais sobre valores, lazer, localizacao, seguranca ou formas de pagamento?';
+        appliedRules.push('pending_followup_ambiguous');
+      }
       console.log('[ANA_PENDING_FOLLOWUP_AMBIGUOUS]', {
         conversationId: input.conversationId,
         trigger: userContinuationDemand ? 'continuation_request_without_pending_topic' : 'affirmative_without_pending_topic',
@@ -728,6 +1308,8 @@ export function applyAnaConversationPolicy(
     !/\?\s*$/.test(reply) &&
     !brokerAskAlreadyPresent(reply) &&
     !userAffirmative &&
+    requestedTopicAction.type !== 'direct_topic_request' &&
+    requestedTopicAction.type !== 'accepted_topic_offer' &&
     !suppressNextQuestionForInfoGap;
 
   if (shouldSelectNextQuestion) {
@@ -738,6 +1320,7 @@ export function applyAnaConversationPolicy(
       recentlyDiscussedTopics: latest.recentlyDiscussedTopics ?? [],
       recentlyAskedTopics: latest.recentlyAskedTopics ?? [],
       recentAssistantReplies,
+      allowedTopics: safeTopicAvailability,
     });
     if (nextQuestion.question) {
       reply = `${reply} ${nextQuestion.question}`.replace(/\s{2,}/g, ' ').trim();
@@ -755,6 +1338,14 @@ export function applyAnaConversationPolicy(
         nextTopic: nextQuestion.selectedTopic ?? null,
         question: nextQuestion.question,
       });
+      if (nextQuestion.selectedTopic) {
+        console.log('[ANA_SAFE_NEXT_TOPIC_SELECTED]', {
+          conversationId: input.conversationId,
+          currentTopic,
+          selectedTopic: nextQuestion.selectedTopic,
+          question: nextQuestion.question,
+        });
+      }
       if (nextQuestion.topicRepeatAvoided) {
         console.log('[ANA_TOPIC_REPEAT_AVOIDED]', {
           conversationId: input.conversationId,
@@ -762,10 +1353,62 @@ export function applyAnaConversationPolicy(
           nextTopic: nextQuestion.selectedTopic ?? null,
         });
       }
+      if (nextQuestion.suppressedUnsupported) {
+        console.log('[ANA_UNSUPPORTED_TOPIC_OFFER_SUPPRESSED]', {
+          conversationId: input.conversationId,
+          currentTopic,
+          source: 'next_question_selection',
+        });
+      }
     } else if (nextQuestion.suppressedByRepeat) {
       console.log('[ANA_NEXT_QUESTION_SUPPRESSED_REPEAT]', {
         conversationId: input.conversationId,
         currentTopic,
+      });
+    } else if (nextQuestion.suppressedUnsupported) {
+      console.log('[ANA_UNSUPPORTED_TOPIC_OFFER_SUPPRESSED]', {
+        conversationId: input.conversationId,
+        currentTopic,
+        source: 'next_question_selection_no_candidate',
+      });
+    }
+  }
+
+  const shouldEnforceSingleQuestion =
+    !input.isFirstAnaReply &&
+    !visitFlowActive &&
+    !brokerAskAlreadyPresent(reply) &&
+    !containsVisitOffer(reply) &&
+    !looksLikeVisitFlowReply(reply) &&
+    shortConfirmationKind !== 'followup_topic_confirmation' &&
+    requestedTopicAction.type !== 'direct_topic_request' &&
+    requestedTopicAction.type !== 'accepted_topic_offer' &&
+    !userContinuationDemand;
+  if (shouldEnforceSingleQuestion) {
+    const currentTopicForSingleQuestion = resolveCurrentTopic(input.userMessage, reply);
+    const stateBeforeSingleQuestion = getAnaDialoguePolicyState(nextState);
+    const singleQuestion = ensureSingleFinalQuestion({
+      text: reply,
+      currentTopic: currentTopicForSingleQuestion,
+      safeTopicAvailability,
+      recentlyDiscussedTopics: stateBeforeSingleQuestion.recentlyDiscussedTopics ?? [],
+      recentlyAskedTopics: stateBeforeSingleQuestion.recentlyAskedTopics ?? [],
+      recentAssistantReplies,
+    });
+    if (singleQuestion.changed && singleQuestion.text !== reply) {
+      reply = singleQuestion.text;
+      appliedRules.push('single_question_enforced');
+      console.log('[ANA_SINGLE_QUESTION_ENFORCED]', {
+        conversationId: input.conversationId,
+        currentTopic: currentTopicForSingleQuestion,
+      });
+    }
+    if (singleQuestion.unsupportedTopics.length > 0) {
+      console.log('[ANA_UNSUPPORTED_TOPIC_OFFER_SUPPRESSED]', {
+        conversationId: input.conversationId,
+        currentTopic: currentTopicForSingleQuestion,
+        topics: singleQuestion.unsupportedTopics,
+        source: 'single_question_enforcement',
       });
     }
   }
@@ -803,7 +1446,7 @@ export function applyAnaConversationPolicy(
     console.log('[ANA_DIALOGUE_POLICY_APPLIED]', {
       conversationId: input.conversationId,
       rules: appliedRules,
-      previousBrokerAskAt: state.lastBrokerHandoffAskedAt ?? null,
+      previousBrokerAskAt: initialState.lastBrokerHandoffAskedAt ?? null,
     });
   }
 
@@ -813,4 +1456,6 @@ export function applyAnaConversationPolicy(
     changed: reply !== (input.replyText || '').trim() || appliedRules.length > 0 || shouldPersistQuestionContext,
   };
 }
+
+
 

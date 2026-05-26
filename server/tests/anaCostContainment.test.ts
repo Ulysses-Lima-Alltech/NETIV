@@ -19,6 +19,7 @@ import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
 import {
   applyAnaConversationPolicy,
   evaluateAnaReengagementPolicy,
+  resolveRequestedTopicAction,
 } from '../utils/anaConversationPolicy.js';
 import { selectSingleSafeNextTopic } from '../utils/anaFollowupQuestionService.js';
 import {
@@ -461,7 +462,7 @@ test('apelido nao vira nome automaticamente', () => {
   assert.equal(uncertain, true);
 });
 
-test('apos responder lazer, follow-up evita visita e corretor por padrao', () => {
+test('pedido direto de lazer responde conteudo sem loop de oferta', () => {
   const policy = applyAnaConversationPolicy({
     conversationId: 1,
     userMessage: 'Quais areas de lazer tem?',
@@ -476,10 +477,10 @@ test('apos responder lazer, follow-up evita visita e corretor por padrao', () =>
     disableFollowupQuestion: false,
   });
 
-  assert.match(policy.text, /\?/);
+  assert.match(policy.text, /as areas de lazer do evora incluem|piscina adulto/i);
+  assert.equal(/quer que eu te explique as areas de lazer/i.test(policy.text), false);
   assert.equal(/agendar|visita|corretor/i.test(policy.text), false);
 });
-
 test('pedido de simulacao puxa pergunta de corretor', () => {
   const policy = applyAnaConversationPolicy({
     conversationId: 2,
@@ -789,12 +790,11 @@ test('info gap de lotes pede permissao para corretor e nao troca para infraestru
     disableFollowupQuestion: false,
   });
 
-  assert.match(policy.text, /ainda n[aã]o tenho essa previs[aã]o exata liberada/i);
+  assert.match(policy.text, /ainda nao tenho essa informacao exata liberada por aqui/i);
   assert.match(policy.text, /quer que eu encaminhe para um corretor te passar certinho\?/i);
   assert.equal(/infraestrutura/i.test(policy.text), false);
   assert.equal(/agendar|visita/i.test(policy.text), false);
 });
-
 test('apos info gap com corretor, "sim" resolve broker_confirmation e nao visit_confirmation', () => {
   const assistantReply =
     'Ainda nao tenho essa informacao exata liberada por aqui. Quer que eu encaminhe para um corretor te passar certinho?';
@@ -1277,9 +1277,9 @@ test('remove pergunta generica quando ja existe pergunta especifica', () => {
   });
 
   assert.equal(/me conta,\s*quais sao suas duvidas/i.test(policy.text), false);
-  assert.match(policy.text, /quer saber tambem sobre valores\?/i);
+  assert.match(policy.text, /rodovia dom pedro i|regiao da pedreira/i);
+  assert.equal(/quer saber tambem sobre valores\?/i.test(policy.text), false);
 });
-
 test('nao oferece topico sem base autorizada', () => {
   const policy = applyAnaConversationPolicy({
     conversationId: 122,
@@ -1381,5 +1381,279 @@ test('nao repete follow-up pos-midia quando ja houve envio recente equivalente',
   assert.equal(decision.shouldSend, false);
   assert.equal(decision.reason, 'repeat');
 });
+
+
+
+
+
+test('resolveRequestedTopicAction classifica pedido direto de topico', () => {
+  const action = resolveRequestedTopicAction({
+    userMessage: 'e a seguranca?',
+    replyText: 'Quer que eu te explique a seguranca do empreendimento?',
+    lastAssistantQuestionContext: {
+      questionType: 'other',
+      offeredTopics: [],
+      questionText: null,
+      askedVisitOffer: false,
+      askedBrokerHandoff: false,
+      askedFollowupTopics: false,
+    },
+  });
+
+  assert.equal(action.type, 'direct_topic_request');
+  assert.equal(action.topic, 'seguranca');
+});
+
+test('resolveRequestedTopicAction classifica aceite de oferta de topico', () => {
+  const action = resolveRequestedTopicAction({
+    userMessage: 'sim',
+    replyText: 'Claro. Quer que eu te explique mais sobre seguranca?',
+    lastAssistantQuestionContext: {
+      questionType: 'followup_topic',
+      offeredTopics: ['seguranca'],
+      questionText: 'Quer que eu te explique a seguranca do empreendimento?',
+      askedVisitOffer: false,
+      askedBrokerHandoff: false,
+      askedFollowupTopics: true,
+    },
+  });
+
+  assert.equal(action.type, 'accepted_topic_offer');
+  assert.equal(action.topic, 'seguranca');
+});
+
+test('resolveRequestedTopicAction classifica follow-up ambiguo com dois topicos', () => {
+  const action = resolveRequestedTopicAction({
+    userMessage: 'sim',
+    replyText: 'Claro. Quer que eu te explique mais sobre seguranca?',
+    lastAssistantQuestionContext: {
+      questionType: 'followup_topics',
+      offeredTopics: ['lazer', 'seguranca'],
+      questionText: 'Quer que eu te fale tambem sobre lazer ou seguranca?',
+      askedVisitOffer: false,
+      askedBrokerHandoff: false,
+      askedFollowupTopics: true,
+    },
+  });
+
+  assert.equal(action.type, 'ambiguous_followup');
+  assert.equal(action.topic, null);
+});
+
+test('pedido direto "e a seguranca?" responde seguranca sem pedir permissao', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 201,
+    userMessage: 'e a seguranca?',
+    replyText: 'Quer que eu te explique a seguranca do empreendimento?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'user', content: 'e a seguranca?' }],
+    disableFollowupQuestion: true,
+  });
+
+  assert.match(policy.text, /portaria 24 horas com controle de acesso/i);
+  assert.equal(/quer que eu te explique a seguranca/i.test(policy.text), false);
+});
+
+test('pedido direto "seguranca" responde seguranca', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 202,
+    userMessage: 'seguranca',
+    replyText: 'Claro. Quer que eu te explique a seguranca do empreendimento?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'user', content: 'seguranca' }],
+    disableFollowupQuestion: true,
+  });
+
+  assert.match(policy.text, /portaria 24 horas com controle de acesso/i);
+  assert.equal(/quer que eu te explique a seguranca/i.test(policy.text), false);
+});
+
+test('"sim" apos oferta de seguranca responde seguranca e nao repete pergunta', () => {
+  const recentMessages = [
+    { role: 'assistant' as const, content: 'Quer que eu te explique a seguranca do empreendimento?' },
+    { role: 'user' as const, content: 'sim' },
+  ];
+  const context = resolveShortConfirmationContext({
+    userText: 'sim',
+    recentMessages,
+    lastAssistantMessage: recentMessages[0].content,
+    flowState: {},
+  });
+
+  const policy = applyAnaConversationPolicy({
+    conversationId: 203,
+    userMessage: 'sim',
+    replyText: 'Claro. Quer que eu te explique mais sobre seguranca?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages,
+    disableFollowupQuestion: true,
+    shortConfirmationContext: {
+      kind: context.kind,
+      lastAssistantQuestionType: context.lastAssistantQuestionType,
+      lastAssistantQuestionText: context.lastAssistantQuestionText,
+      lastOfferedTopics: context.lastOfferedTopics,
+    },
+  });
+
+  assert.match(policy.text, /portaria 24 horas com controle de acesso/i);
+  assert.equal(/quer que eu te explique a seguranca/i.test(policy.text), false);
+});
+
+test('"sim" apos oferta de lazer responde lazer completo', () => {
+  const recentMessages = [
+    { role: 'assistant' as const, content: 'Quer que eu te explique as areas de lazer?' },
+    { role: 'user' as const, content: 'sim' },
+  ];
+  const context = resolveShortConfirmationContext({
+    userText: 'sim',
+    recentMessages,
+    lastAssistantMessage: recentMessages[0].content,
+    flowState: {},
+  });
+
+  const policy = applyAnaConversationPolicy({
+    conversationId: 204,
+    userMessage: 'sim',
+    replyText: 'Claro. Quer que eu te explique mais sobre lazer?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages,
+    disableFollowupQuestion: true,
+    shortConfirmationContext: {
+      kind: context.kind,
+      lastAssistantQuestionType: context.lastAssistantQuestionType,
+      lastAssistantQuestionText: context.lastAssistantQuestionText,
+      lastOfferedTopics: context.lastOfferedTopics,
+    },
+  });
+
+  for (const expected of [
+    'Piscina adulto',
+    'Academia',
+    'Salao de festas',
+    'Playground',
+    'Coworking',
+    'Espaco zen',
+    'Fireplace',
+    'Quadra de beach tennis',
+    'Campo society',
+  ]) {
+    assert.match(policy.text, new RegExp(expected, 'i'));
+  }
+  assert.equal(/quer que eu te explique as areas de lazer/i.test(policy.text), false);
+});
+
+test('pedido direto "lazer" responde lista completa sem pedir permissao', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 205,
+    userMessage: 'lazer',
+    replyText: 'Quer que eu te explique as areas de lazer?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'user', content: 'lazer' }],
+    disableFollowupQuestion: true,
+  });
+
+  assert.match(policy.text, /as areas de lazer do evora incluem/i);
+  assert.match(policy.text, /estacao de carregamento para carros eletricos/i);
+  assert.equal(/quer que eu te explique as areas de lazer/i.test(policy.text), false);
+});
+
+test('"quantos lotes vai ter" aplica info gap canonico e oferta de corretor', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 206,
+    userMessage: 'quantos lotes vai ter?',
+    replyText: 'O projeto ainda esta em andamento e nao sabemos.',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'user', content: 'quantos lotes vai ter?' }],
+    disableFollowupQuestion: true,
+  });
+
+  assert.match(policy.text, /ainda nao tenho essa informacao exata liberada por aqui/i);
+  assert.match(policy.text, /quer que eu encaminhe para um corretor te passar certinho\?/i);
+  assert.equal(/projeto em andamento|ainda nao sabemos/i.test(policy.text), false);
+});
+
+test('primeira saudacao suprime CTA de topico antigo no inicio da resposta', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 207,
+    userMessage: 'oi',
+    replyText: 'Quer saber tambem sobre localizacao? O Evora e um loteamento fechado em Atibaia.',
+    isFirstAnaReply: true,
+    flowState: {
+      dialoguePolicy: {
+        lastAssistantQuestionType: 'followup_topic',
+        lastAssistantQuestionText: 'Quer saber tambem sobre localizacao?',
+        lastOfferedTopics: ['localizacao'],
+        recentlyAskedTopics: ['localizacao'],
+      },
+    },
+    recentMessages: [{ role: 'user', content: 'oi' }],
+    disableFollowupQuestion: true,
+  });
+
+  assert.equal(/^\s*quer saber tambem sobre/i.test(policy.text), false);
+  assert.match(policy.text, /^ol.*,\s*(bom dia|boa tarde|boa noite),\s*tudo bem\?/i);
+});
+
+test('frase de fallback ruim nunca fica na resposta final', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 208,
+    userMessage: 'e a seguranca?',
+    replyText: 'Posso te responder de forma mais objetiva nesse ponto.',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'user', content: 'e a seguranca?' }],
+    disableFollowupQuestion: true,
+  });
+
+  assert.equal(/posso te responder de forma mais objetiva nesse ponto/i.test(policy.text), false);
+  assert.match(policy.text, /portaria 24 horas com controle de acesso/i);
+});
+
+test('conversa aberta "me convence" nao cai em regra deterministica e segue trilha Qwen', () => {
+  const rule = resolveAnaCommercialRule({
+    enterpriseName: 'Evora',
+    userMessage: 'me convence',
+    isFirstAnaReply: false,
+  });
+  assert.equal(rule, null);
+
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  assert.match(source, /\[ANA_LLM_DECISION\]/);
+  assert.match(source, /willCallQwen:\s*true/);
+  assert.match(source, /\[ANA_QWEN_REQUEST_CONTEXT\]/);
+  assert.match(source, /\[ANA_QWEN_RAW_RESPONSE\]/);
+});
+
+test('quando Qwen e pulado por deterministica, log inclui eixo correto', () => {
+  const rule = resolveAnaCommercialRule({
+    enterpriseName: 'Evora',
+    userMessage: 'e a seguranca?',
+    isFirstAnaReply: false,
+  });
+  assert.equal(rule?.commercialAxis, 'security');
+
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  assert.match(source, /\[ANA_QWEN_SKIPPED_BY_DETERMINISTIC\]/);
+  assert.match(source, /axis:\s*effectiveCommercialRule\.commercialAxis/);
+});
+
+test('observabilidade de topicos criticos registra logs novos', () => {
+  const policySource = readFileSync(path.resolve(process.cwd(), 'utils/anaConversationPolicy.ts'), 'utf8');
+  assert.match(policySource, /\[ANA_DIRECT_TOPIC_REQUEST_ANSWERED\]/);
+  assert.match(policySource, /\[ANA_ACCEPTED_TOPIC_OFFER_ANSWERED\]/);
+  assert.match(policySource, /\[ANA_TOPIC_OFFER_LOOP_SUPPRESSED\]/);
+  assert.match(policySource, /\[ANA_BAD_GENERIC_FALLBACK_BLOCKED\]/);
+  assert.match(policySource, /\[ANA_FIRST_GREETING_STALE_CTA_SUPPRESSED\]/);
+
+  const engineSource = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  assert.match(engineSource, /\[ANA_LOT_COUNT_INFO_GAP_HANDLED\]/);
+});
+
 
 

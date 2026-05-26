@@ -76,8 +76,11 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
   if (hasAny(n, [/\b(lazer|areas? de lazer|area comum|amenidades|piscina|academia|playground|coworking|beach tennis|campo society)\b/])) {
     return 'areas_lazer';
   }
-  if (hasAny(n, [/\b(seguranca|segurança|portaria|controle de acesso)\b/])) {
+  if (hasAny(n, [/\b(seguranca|portaria|controle de acesso)\b/])) {
     return 'seguranca_portaria';
+  }
+  if (hasAny(n, [/\b(quantos lotes|numero de lotes|vai ter quantos lotes)\b/])) {
+    return 'quantidade_lotes_info_gap';
   }
   if (isEntregaEmpreendimentoIntent(n)) return 'entrega_empreendimento';
   if (isValorCondominioIntent(n)) return 'valor_condominio';
@@ -85,7 +88,7 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
 
   if (
     hasAny(n, [
-      /\b(qual o preco|quero saber preco|queria saber preco|quanto custa|qual o valor|valor do lote|valor dos lotes|quanto e o lote|a partir de quanto|preco|valor|investimento|metro quadrado|m2|m²)\b/,
+      /\b(qual o preco|quero saber preco|queria saber preco|quanto custa|qual o valor|valor do lote|valor dos lotes|quanto e o lote|a partir de quanto|preco|valor|investimento|metro quadrado|m2)\b/,
     ])
   ) {
     return 'preco_valor_lote';
@@ -105,12 +108,12 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
 
   if (
     hasAny(n, [
-      /\b(localizacao|localização|regiao|região|onde fica|fica onde|bairro|pedreira|rio abaixo|como chegar|me enviar a localizacao|me manda a localizacao)\b/,
+      /\b(localizacao|regiao|onde fica|fica onde|bairro|pedreira|rio abaixo|como chegar|me enviar a localizacao|me manda a localizacao)\b/,
     ])
   ) {
     return 'localizacao_endereco';
   }
-  if (hasAny(n, [/\b(endereco|endereço|qual o endereco|qual é o endereço|me passa o endereço|me passa o endereco)\b/])) {
+  if (hasAny(n, [/\b(endereco|qual o endereco|me passa o endereco)\b/])) {
     return 'endereco';
   }
 
@@ -148,6 +151,7 @@ function axisFromIntent(intent: AnaCommercialIntent): AnaCommercialAxis {
   if (intent === 'valor_condominio') return 'condo_fee';
   if (intent === 'areas_lazer') return 'leisure';
   if (intent === 'seguranca_portaria') return 'security';
+  if (intent === 'quantidade_lotes_info_gap') return 'availability';
   if (intent === 'disponibilidade_simulacao_desconto') return 'availability';
   if (intent === 'materiais') return 'materials';
   return 'unknown';
@@ -159,7 +163,7 @@ export function splitCommercialRuleMessages(lines: readonly string[]): string[] 
   if (raw.length > 1) return raw;
 
   const only = raw[0] ?? '';
-  if (/as áreas de lazer do évora incluem:/i.test(only)) {
+  if (/^as areas de lazer do evora incluem:/.test(normalizeText(only))) {
     return [only];
   }
 
@@ -235,3 +239,5 @@ export function computeCommercialFollowupEligibleAtUtc(lastUserMessageAt: Date, 
   const minuteOffset = cycleCount + 1;
   return new Date(lastUserMessageAt.getTime() + minuteOffset * 60_000);
 }
+
+

@@ -338,8 +338,29 @@ export function applyAnaNoRepeatMessageGuard(params: {
   }
 
   const nUser = normalizeText(params.userMessage ?? '');
-  let text = 'Posso te responder de forma mais objetiva nesse ponto.';
-  if (/(entrega|obra|prazo|lotes|construir|libera)/.test(nUser)) {
+  let text =
+    'Me confirma só qual ponto você quer que eu detalhe: lazer, segurança, localização ou formas de pagamento?';
+  if (/(quantos?\s+lotes?|numero\s+de\s+lotes?|vai\s+ter\s+quantos?\s+lotes?)/.test(nUser)) {
+    text =
+      'Ainda não tenho essa informação exata liberada por aqui.\nQuer que eu encaminhe para um corretor te passar certinho?';
+  } else if (/(seguranca|portaria|controle de acesso)/.test(nUser)) {
+    text = 'O Évora conta com portaria 24 horas com controle de acesso.';
+  } else if (/(lazer|areas? de lazer|piscina|academia|playground|quadra|coworking)/.test(nUser)) {
+    text = [
+      'As áreas de lazer do Évora incluem:',
+      'Piscina adulto',
+      'Academia',
+      'Salão de festas',
+      'Playground',
+      'Coworking',
+      'Espaço zen',
+      'Fireplace',
+      'Quadra de beach tennis',
+      'Campo society',
+      '',
+      'Também conta com estação de carregamento para carros elétricos e portaria 24 horas com controle de acesso.',
+    ].join('\n');
+  } else if (/(entrega|obra|prazo|construir|libera)/.test(nUser)) {
     text = 'A previsão de entrega do Évora é dezembro de 2027, e as obras estão avançadas com 55% executado.';
   } else if (/(entrada)/.test(nUser)) {
     text = 'Temos planos estendidos em até 120x, parcelamento sem juros em até 48x e financiamento direto com a construtora.';
