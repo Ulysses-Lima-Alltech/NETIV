@@ -231,6 +231,7 @@ const ANA_ENGINE_DIAGNOSTIC_TEXT = 'Diagnóstico: cheguei no conversation engine
 const ANA_PROVIDER_FAILURE_HANDOFF_REPLY =
   'Vou encaminhar seu atendimento para um consultor te ajudar com essa informação certinho.';
 const MAX_ANA_GENERATION_ATTEMPTS = 5;
+const ANA_DEBUG_QWEN_RAW = String(process.env.ANA_DEBUG_QWEN_RAW || '').trim().toLowerCase() === 'true';
 
 type AnaEmergencyHandoffTransport = {
   sendTextMessage: (to: string, text: string) => Promise<AnaEmergencyHandoffSendResult>;
@@ -271,6 +272,15 @@ const logger = {
 function anaEngineTrace(tag: string, payload: Record<string, unknown>): void {
   if (!ANA_ENGINE_TRACE) return;
   console.log(`[ANA_ENGINE_TRACE] ${tag}`, payload);
+}
+
+function maskBaseUrl(baseUrl: string | null | undefined): string | null {
+  const raw = String(baseUrl || '').trim();
+  if (!raw) return null;
+  return raw.replace(/(https?:\/\/)([^/]+)(.*)?/i, (_m, scheme: string, host: string, path: string) => {
+    const safeHost = host.length <= 8 ? host : `${host.slice(0, 4)}***${host.slice(-3)}`;
+    return `${scheme}${safeHost}${path ?? ''}`;
+  });
 }
 function logAnaOutboundBlocked(params: {
   reason: string;
@@ -4184,6 +4194,27 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         : null;
     const effectiveCommercialRule = commercialRule ?? canonicalLocationFallbackRule;
     if (effectiveCommercialRule && anaDecision.canRespond && anaDecision.outboundAllowed) {
+      console.log('[ANA_LLM_DECISION]', {
+        conversationId,
+        willCallQwen: false,
+        reason: 'deterministic_rule_matched',
+        deterministicMatched: true,
+        deterministicAxis: effectiveCommercialRule.commercialAxis,
+        replySourceBeforeLlm: effectiveCommercialRule.replySource,
+        provider: aiSettings.provider,
+        model: null,
+        baseUrl: aiSettings.openaiBaseUrl,
+        responseFormatJson: null,
+        historyCount: history.length,
+        messagesCount: 0,
+        systemPromptLen: 0,
+      });
+      console.log('[ANA_QWEN_SKIPPED_BY_DETERMINISTIC]', {
+        conversationId,
+        axis: effectiveCommercialRule.commercialAxis,
+        ruleName: effectiveCommercialRule.ruleId,
+        replyPreview: effectiveCommercialRule.messages.join(' ').slice(0, 260),
+      });
       const isFirstContactRule = effectiveCommercialRule.ruleId === 'first_contact';
       console.log('[ANA_CANONICAL_INTENT_MATCHED]', {
         conversationId,
@@ -4879,7 +4910,35 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     ]
       .filter((line): line is string => Boolean(line))
       .join('\n');
-    const conversationalQwenMode = isLocalQwenRuntime && isConversationalGenericFollowup(trimmed);
+    const conversationalQwenMode =
+      isLocalQwenRuntime &&
+      (
+        isConversationalGenericFollowup(trimmed) ||
+        anaDecision.isGenericOpenQuestion === true ||
+        (requestedAxisForPolicy == null && !anaDecision.shouldAnswerDirectly)
+      );
+    const responseFormatJsonForTurn = !conversationalQwenMode;
+    const knownTopics = Array.from(
+      new Set([
+        ...detectCommercialAxes(userMessageForReasoning),
+        ...detectCommercialAxes(lastAssistantPlain || ''),
+      ])
+    );
+    console.log('[ANA_LLM_DECISION]', {
+      conversationId,
+      willCallQwen: true,
+      reason: conversationalQwenMode ? 'no_clear_deterministic_use_qwen_conversational' : 'no_deterministic_rule_use_llm_structured',
+      deterministicMatched: false,
+      deterministicAxis: requestedAxisForPolicy ?? null,
+      replySourceBeforeLlm: null,
+      provider: aiSettings.provider,
+      model,
+      baseUrl: aiSettings.openaiBaseUrl,
+      responseFormatJson: responseFormatJsonForTurn,
+      historyCount: history.length,
+      messagesCount: history.length + 2,
+      systemPromptLen: systemPrompt.length,
+    });
     const messages: ChatMessage[] = [];
     if (conversationalQwenMode) {
       const conversationalPrompt = [
@@ -4911,6 +4970,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       conversationId,
       systemPromptLen: systemPrompt.length,
       messagesCount: messages.length,
+    });
+    console.log('[ANA_QWEN_REQUEST_CONTEXT]', {
+      conversationId,
+      model,
+      baseUrlMasked: maskBaseUrl(aiSettings.openaiBaseUrl),
+      responseFormatJson: responseFormatJsonForTurn,
+      historyCount: history.length,
+      messagesCount: messages.length,
+      systemPromptLen: systemPrompt.length,
+      lastUserText: trimmed.slice(0, 400),
+      lastAssistantText: (lastAssistantPlain || '').slice(0, 400),
+      knownTopics,
+      enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+      chunksCount: ragChunksFound,
+      contextChars: promptKnowledgeText.length,
     });
 
     console.log('[ANA MODEL] modelo_final_selecionado', {
@@ -4950,12 +5024,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       messages,
       temperature: Math.min(aiSettings.temperature, 0.75),
       maxTokens: Math.max(aiSettings.maxTokens, 800),
-      responseFormatJson: !conversationalQwenMode,
+      responseFormatJson: responseFormatJsonForTurn,
       costTracking: aiSettings.costTrackingEnabled ? {
         ...baseAnaCostTracking,
         purpose: 'ana_main_reply',
         metadata: {
-            responseFormatJson: !conversationalQwenMode,
+            responseFormatJson: responseFormatJsonForTurn,
             attempt: 1,
             strategy: conversationalQwenMode ? 'conversational_text' : 'primary_json',
           },
@@ -5028,6 +5102,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     let fallbackReason: string | null = null;
     const rawContent = result.content ?? '';
     const rawTrimmed = rawContent.trim();
+    console.log('[ANA_QWEN_RAW_RESPONSE]', {
+      conversationId,
+      rawLen: rawContent.length,
+      rawPreview: ANA_DEBUG_QWEN_RAW ? rawContent.slice(0, 1200) : rawContent.slice(0, 280),
+      finishReason: null,
+      usage: result.usage ?? null,
+    });
     const parseAttempted = result.success && rawTrimmed.length > 0 && !conversationalQwenMode;
     anaEngineTrace('parse_start', {
       conversationId,
@@ -5039,9 +5120,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       rawLen: rawTrimmed.length,
       willCallParse: parseAttempted,
     });
+    let recoveredTextUsed = false;
     let structured: AnaStructuredReply | null = parseAttempted
       ? parseAnaJson(rawContent, { conversationId, messageId: inboundMetaMessageId })
       : null;
+    console.log('[ANA_QWEN_PARSE_RESULT]', {
+      conversationId,
+      parseOk: structured != null,
+      expectedJson: responseFormatJsonForTurn,
+      hasStructuredReply: Boolean(structured?.reply?.trim()),
+      parseError:
+        !result.success ? result.error ?? 'llm_failed' : (!parseAttempted ? null : (structured ? null : 'parse_rejected_or_null')),
+      recoveredTextUsed,
+    });
     if (conversationalQwenMode && result.success && rawTrimmed.length > 0) {
       const rawNatural = rawTrimmed;
       const blockedUnsupportedPromise = hasConversationalUnsupportedPromise(rawNatural) && !authorizedLocationLink;
@@ -5058,13 +5149,38 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         const sanitizedVisit = stripInappropriateVisitOffer(rawNatural);
         const naturalReply = sanitizedVisit.text.trim();
         if (naturalReply.length > 0 && naturalReply !== '{}') {
+          console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
+            conversationId,
+            accepted: true,
+            rejectedReason: null,
+            guardName: 'conversational_raw_guard',
+            originalRawPreview: rawNatural.slice(0, 300),
+            finalReplyPreview: naturalReply.slice(0, 300),
+          });
           structured = buildRecoveredReplyStructured(naturalReply, effectiveConv.classification);
+          recoveredTextUsed = true;
           console.log('[ANA_CONVERSATIONAL_QWEN_SUCCESS]', {
             conversationId,
             lastAxis: currentAxisForRepetition,
             replyLen: naturalReply.length,
           });
         }
+      }
+      if (forbiddenByGuardrails) {
+        console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
+          conversationId,
+          accepted: false,
+          rejectedReason: 'conversational_raw_guard_forbidden_content',
+          guardName: 'conversational_raw_guard',
+          originalRawPreview: rawNatural.slice(0, 300),
+          finalReplyPreview: null,
+        });
+        console.log('[ANA_QWEN_RESPONSE_REPLACED]', {
+          conversationId,
+          reason: 'conversational_raw_guard_forbidden_content',
+          rawPreview: rawNatural.slice(0, 300),
+          replacementPreview: buildConversationalCanonicalFallback(currentAxisForRepetition).slice(0, 300),
+        });
       }
       if (!structured && blockedUnsupportedPromise) {
         console.log('[ANA_CONVERSATIONAL_UNSUPPORTED_PROMISE_BLOCKED]', {
@@ -5216,6 +5332,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         const quality = validateRecoveredReplyQuality(recoveredReply);
         if (quality.ok) {
           structured = buildRecoveredReplyStructured(recoveredReply, effectiveConv.classification);
+          recoveredTextUsed = true;
           console.log('[ANA_RECOVERED_REPLY_ACCEPTED]', {
             conversationId,
             source: retryResult?.success ? 'retry_raw' : 'first_raw',
@@ -5246,6 +5363,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         if (quality.ok) {
           const classificationHint = (effectiveConv.classification || '').trim() || 'Qualificado';
           structured = buildRecoveredReplyStructured(sanitizedRecoveryReply, classificationHint);
+          recoveredTextUsed = true;
           console.log('[ANA_QWEN_TEXT_RECOVERY]', {
             conversationId,
             model,
@@ -5308,6 +5426,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
       if (regenResult.success && regenQuality.ok) {
         structured = buildRecoveredReplyStructured(regenRaw, effectiveConv.classification);
+        recoveredTextUsed = true;
       }
       recordAnaGenerationAttempt({
         diagnostics: anaTurnDiagnostics,
@@ -5421,6 +5540,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         isEvora: isEvoraEnterpriseName(ent?.name ?? null),
       });
       structured = buildRecoveredReplyStructured(canonicalSafeReply, effectiveConv.classification);
+      recoveredTextUsed = true;
       console.log('[ANA_RAG_CONTEXT_MISSING_BLOCKED_FREEFORM]', {
         conversationId,
         enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
@@ -5433,13 +5553,28 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     if (!structured && conversationalQwenMode) {
       const conversationalFallback = buildConversationalCanonicalFallback(currentAxisForRepetition);
+      console.log('[ANA_QWEN_RESPONSE_REPLACED]', {
+        conversationId,
+        reason: 'structured_missing_after_conversational_attempt',
+        rawPreview: rawTrimmed.slice(0, 300),
+        replacementPreview: conversationalFallback.slice(0, 300),
+      });
       structured = buildRecoveredReplyStructured(conversationalFallback, effectiveConv.classification);
+      recoveredTextUsed = true;
       console.log('[ANA_CONVERSATIONAL_CANONICAL_FALLBACK]', {
         conversationId,
         lastAxis: currentAxisForRepetition,
         fallbackLen: conversationalFallback.length,
       });
     }
+    console.log('[ANA_QWEN_PARSE_RESULT]', {
+      conversationId,
+      parseOk: structured != null,
+      expectedJson: responseFormatJsonForTurn,
+      hasStructuredReply: Boolean(structured?.reply?.trim()),
+      parseError: structured ? null : (result.success ? 'structured_missing_after_recovery' : (result.error ?? 'llm_failed')),
+      recoveredTextUsed,
+    });
     if (!structured) {
       {
         const blockingLatestFailure = latestAnaGenerationFailureResult(generationResults);
@@ -6864,6 +6999,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       // EMERGENCIAL: bypass do bloqueio final para não travar resposta da Ana em produção.
     }
     replyText = finalOutboundEval.text;
+    console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
+      conversationId,
+      accepted: true,
+      rejectedReason: null,
+      guardName: 'final_outbound_eval',
+      originalRawPreview: (result.content || '').slice(0, 260),
+      finalReplyPreview: replyText.slice(0, 260),
+    });
     anaTurnAuditGuardsApplied.outboundReason = finalOutboundEval.reason;
     if (isGenericInterestFollowup(trimmed)) {
       if (lastAxisForRepetition === 'lazer') {
@@ -7173,12 +7316,32 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       diagnosticsHasTechnicalGenerationFailure(anaTurnDiagnostics) &&
       containsProhibitedTechnicalFallbackText(replyText)
     ) {
+      console.log('[ANA_BAD_GENERIC_FALLBACK_USED]', {
+        conversationId,
+        reason: 'technical_fallback_phrase_detected',
+        replyPreview: replyText.slice(0, 260),
+      });
       if (isMultiTopicCommercialMessage(trimmed)) {
-        replyText = buildSafeCommercialPartialReply({
+        const replacement = buildSafeCommercialPartialReply({
           userMessage: trimmed,
           enterpriseName: ent?.name ?? null,
           enterpriseCity: ent?.city ?? null,
         });
+        console.log('[ANA_QWEN_RESPONSE_REPLACED]', {
+          conversationId,
+          reason: 'technical_fallback_phrase_guard_multi_topic',
+          rawPreview: replyText.slice(0, 260),
+          replacementPreview: replacement.slice(0, 260),
+        });
+        console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
+          conversationId,
+          accepted: false,
+          rejectedReason: 'technical_fallback_phrase_guard',
+          guardName: 'technical_fallback_phrase_guard',
+          originalRawPreview: replyText.slice(0, 260),
+          finalReplyPreview: replacement.slice(0, 260),
+        });
+        replyText = replacement;
         console.log('ANA_MULTI_TOPIC_MESSAGE_HANDLED', { conversationId, phase: 'technical_fallback_phrase_rescue' });
         console.log('ANA_PARTIAL_COMMERCIAL_REPLY_ALLOWED', { conversationId, reason: 'technical_fallback_phrase_guard' });
       } else {
@@ -7227,6 +7390,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
       replyText =
         'Não tenho essa informação exata liberada por aqui, mas posso te ajudar com valores, localização ou formas de pagamento.';
+      console.log('[ANA_QWEN_RESPONSE_REPLACED]', {
+        conversationId,
+        reason: 'technical_fallback_phrase_guard_blocked',
+        rawPreview: (result.content || '').slice(0, 260),
+        replacementPreview: replyText.slice(0, 260),
+      });
+      console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
+        conversationId,
+        accepted: false,
+        rejectedReason: 'technical_fallback_phrase_guard',
+        guardName: 'technical_fallback_phrase_guard',
+        originalRawPreview: (result.content || '').slice(0, 260),
+        finalReplyPreview: replyText.slice(0, 260),
+      });
       anaTurnAuditOutcome = 'sent';
       anaTurnDiagnostics.finalResponse.replySource = 'deterministic_fallback';
       anaTurnDiagnostics.finalResponse.handoffUsed = false;

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 import {
   ANA_HUMAN_ATTENDANCE_POLICY,
@@ -270,6 +271,34 @@ test('primeira resposta comercial util sem saudacao recebe patch local', () => {
   assert.match(patched.greeting ?? '', /^Olá, (bom dia|boa tarde|boa noite), tudo bem\?$/i);
   assert.match(patched.text, /^Olá, (bom dia|boa tarde|boa noite), tudo bem\?\s+/i);
   assert.equal(afterPatch.blocked, false);
+});
+
+test('observabilidade: engine registra decisão de chamada do Qwen e contexto', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  assert.match(source, /\[ANA_LLM_DECISION\]/);
+  assert.match(source, /\[ANA_QWEN_REQUEST_CONTEXT\]/);
+  assert.match(source, /\[ANA_QWEN_RAW_RESPONSE\]/);
+  assert.match(source, /\[ANA_QWEN_PARSE_RESULT\]/);
+  assert.match(source, /\[ANA_QWEN_GUARDRAIL_DECISION\]/);
+  assert.match(source, /\[ANA_QWEN_RESPONSE_REPLACED\]/);
+  assert.match(source, /\[ANA_QWEN_SKIPPED_BY_DETERMINISTIC\]/);
+});
+
+test('modo conversacional local/Qwen permite texto natural com responseFormatJson false', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  assert.match(source, /const responseFormatJsonForTurn = !conversationalQwenMode/);
+  assert.match(source, /responseFormatJson: responseFormatJsonForTurn/);
+});
+
+test('fallback genérico ruim é rastreado explicitamente', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  assert.match(source, /\[ANA_BAD_GENERIC_FALLBACK_USED\]/);
+  assert.match(source, /technical_fallback_phrase_guard/);
+});
+
+test('debug raw do Qwen pode ser ligado por variável de ambiente', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  assert.match(source, /ANA_DEBUG_QWEN_RAW/);
 });
 
 test('patch local de saudacao nao mascara resposta curta e pouco util', () => {
