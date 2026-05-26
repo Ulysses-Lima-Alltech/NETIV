@@ -1601,6 +1601,27 @@ test('primeira saudacao suprime CTA de topico antigo no inicio da resposta', () 
   assert.match(policy.text, /^ol.*,\s*(bom dia|boa tarde|boa noite),\s*tudo bem\?/i);
 });
 
+test('primeira saudacao nunca retorna "Quer saber tambem sobre localizacao? Vou responder todas."', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 2071,
+    userMessage: 'oi',
+    replyText: 'Quer saber tambem sobre localizacao? Vou responder todas.',
+    isFirstAnaReply: true,
+    flowState: {
+      dialoguePolicy: {
+        lastAssistantQuestionType: 'followup_topic',
+        lastAssistantQuestionText: 'Quer saber tambem sobre localizacao?',
+        lastOfferedTopics: ['localizacao'],
+      },
+    },
+    recentMessages: [{ role: 'user', content: 'oi' }],
+    disableFollowupQuestion: true,
+  });
+
+  assert.equal(/quer saber tambem sobre localizacao\?/i.test(policy.text), false);
+  assert.equal(/vou responder todas/i.test(policy.text), false);
+});
+
 test('frase de fallback ruim nunca fica na resposta final', () => {
   const policy = applyAnaConversationPolicy({
     conversationId: 208,
@@ -1667,6 +1688,44 @@ test('onde fica esse loteamento resolve localizacao e nao preco', () => {
   assert.equal(/valor inicial|parcela|simulacao/i.test((rule?.messages ?? []).join(' ')), false);
 });
 
+test('pedido direto "localizacao" responde localizacao normal e nao fluxo de link', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 910,
+    userMessage: 'localizacao',
+    replyText: 'Nao tenho um link de localizacao liberado para envio por aqui.',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'user', content: 'localizacao' }],
+    disableFollowupQuestion: true,
+  });
+
+  assert.match(policy.text, /atibaia|pedreira|rodovia dom pedro i/i);
+  assert.equal(/nao tenho um link de localizacao liberado/i.test(policy.text), false);
+});
+
+test('onde fica esse loteamento responde localizacao normal, nao preco e nao link', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 911,
+    userMessage: 'onde fica esse loteamento?',
+    replyText: 'O valor inicial e esse.',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'user', content: 'onde fica esse loteamento?' }],
+    disableFollowupQuestion: true,
+  });
+
+  assert.match(policy.text, /atibaia|pedreira|rodovia dom pedro i/i);
+  assert.equal(/valor inicial|parcela|simulacao/i.test(policy.text), false);
+  assert.equal(/link de localizacao|google maps|rota/i.test(policy.text), false);
+});
+
+test('pedido explicito de link de localizacao permanece no fluxo de link/rota', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  assert.match(source, /tem link da localizacao/);
+  assert.match(source, /google maps/);
+  assert.match(source, /me envia a localizacao/);
+});
+
 test('depois de pergunta de valor, onde fica continua localizacao', () => {
   const first = resolveAnaCommercialRule({
     enterpriseName: 'Evora',
@@ -1711,6 +1770,131 @@ test('oferta antiga de lazer e ignorada quando cliente pede localizacao', () => 
   assert.equal(/quer que eu te explique as areas de lazer/i.test(policy.text), false);
 });
 
+test('"sim" usa estado commitado de oferta unica (qwen/policy) e responde lazer', () => {
+  const context = resolveShortConfirmationContext({
+    userText: 'sim',
+    recentMessages: [{ role: 'user', content: 'sim' }],
+    flowState: {
+      dialoguePolicy: {
+        lastAssistantQuestionType: 'single_topic_offer',
+        lastAssistantQuestionText: 'Quer que eu te explique as areas de lazer?',
+        lastOfferedTopics: ['lazer'],
+      },
+    },
+  });
+  assert.equal(context.kind, 'followup_topic_confirmation');
+  assert.equal(context.source, 'state');
+  assert.deepEqual(context.lastOfferedTopics, ['lazer']);
+
+  const policy = applyAnaConversationPolicy({
+    conversationId: 2041,
+    userMessage: 'sim',
+    replyText: 'Me confirma so qual ponto voce quer que eu detalhe: lazer, seguranca, localizacao ou formas de pagamento?',
+    isFirstAnaReply: false,
+    flowState: {
+      dialoguePolicy: {
+        lastAssistantQuestionType: 'single_topic_offer',
+        lastAssistantQuestionText: 'Quer que eu te explique as areas de lazer?',
+        lastOfferedTopics: ['lazer'],
+      },
+    },
+    recentMessages: [{ role: 'user', content: 'sim' }],
+    disableFollowupQuestion: true,
+    shortConfirmationContext: {
+      kind: context.kind,
+      lastAssistantQuestionType: context.lastAssistantQuestionType,
+      lastAssistantQuestionText: context.lastAssistantQuestionText,
+      lastOfferedTopics: context.lastOfferedTopics,
+    },
+  });
+
+  assert.match(policy.text, /piscina adulto/i);
+  assert.equal(/me confirma so qual ponto/i.test(policy.text), false);
+});
+
+test('"sim" usa estado commitado de oferta unica de seguranca e responde seguranca', () => {
+  const context = resolveShortConfirmationContext({
+    userText: 'sim',
+    recentMessages: [{ role: 'user', content: 'sim' }],
+    flowState: {
+      dialoguePolicy: {
+        lastAssistantQuestionType: 'single_topic_offer',
+        lastAssistantQuestionText: 'Quer que eu te explique a seguranca do empreendimento?',
+        lastOfferedTopics: ['seguranca'],
+      },
+    },
+  });
+  assert.equal(context.kind, 'followup_topic_confirmation');
+  assert.equal(context.source, 'state');
+
+  const policy = applyAnaConversationPolicy({
+    conversationId: 2042,
+    userMessage: 'sim',
+    replyText: 'Me confirma so qual ponto voce quer que eu detalhe: lazer, seguranca, localizacao ou formas de pagamento?',
+    isFirstAnaReply: false,
+    flowState: {
+      dialoguePolicy: {
+        lastAssistantQuestionType: 'single_topic_offer',
+        lastAssistantQuestionText: 'Quer que eu te explique a seguranca do empreendimento?',
+        lastOfferedTopics: ['seguranca'],
+      },
+    },
+    recentMessages: [{ role: 'user', content: 'sim' }],
+    disableFollowupQuestion: true,
+    shortConfirmationContext: {
+      kind: context.kind,
+      lastAssistantQuestionType: context.lastAssistantQuestionType,
+      lastAssistantQuestionText: context.lastAssistantQuestionText,
+      lastOfferedTopics: context.lastOfferedTopics,
+    },
+  });
+
+  assert.match(policy.text, /portaria 24 horas com controle de acesso/i);
+  assert.equal(/me confirma so qual ponto/i.test(policy.text), false);
+});
+
+test('"sim" com estado commitado de oferta multi-topico pede escolha', () => {
+  const context = resolveShortConfirmationContext({
+    userText: 'sim',
+    recentMessages: [{ role: 'user', content: 'sim' }],
+    flowState: {
+      dialoguePolicy: {
+        lastAssistantQuestionType: 'multi_topic_offer',
+        lastAssistantQuestionText: 'Quer que eu te fale sobre lazer ou localizacao?',
+        lastOfferedTopics: ['lazer', 'localizacao'],
+      },
+    },
+  });
+  assert.equal(context.kind, 'followup_topic_confirmation');
+  assert.equal(context.source, 'state');
+  assert.equal(context.lastOfferedTopics.length >= 2, true);
+
+  const policy = applyAnaConversationPolicy({
+    conversationId: 2043,
+    userMessage: 'sim',
+    replyText: 'Perfeito. Para qual dia voce prefere agendar a visita?',
+    isFirstAnaReply: false,
+    flowState: {
+      dialoguePolicy: {
+        lastAssistantQuestionType: 'multi_topic_offer',
+        lastAssistantQuestionText: 'Quer que eu te fale sobre lazer ou localizacao?',
+        lastOfferedTopics: ['lazer', 'localizacao'],
+      },
+    },
+    recentMessages: [{ role: 'user', content: 'sim' }],
+    disableFollowupQuestion: true,
+    shortConfirmationContext: {
+      kind: context.kind,
+      lastAssistantQuestionType: context.lastAssistantQuestionType,
+      lastAssistantQuestionText: context.lastAssistantQuestionText,
+      lastOfferedTopics: context.lastOfferedTopics,
+    },
+  });
+
+  assert.equal(/agendar|visita/i.test(policy.text), false);
+  assert.match(policy.text, /lazer|localiza|qual dos dois/i);
+});
+
 test('pedido de rota sem link autorizado nao repete promessa de referencia', () => {
   const guarded = applyAnaNoRepeatMessageGuard({
     conversationId: 902,
@@ -1735,6 +1919,11 @@ test('logs de orquestracao de turno estao presentes', () => {
   assert.match(source, /\[ANA_TURN_EXTRA_HANDLER_SUPPRESSED\]/);
   assert.match(source, /\[ANA_DUPLICATE_RESPONSE_PART_SUPPRESSED\]/);
   assert.match(source, /\[ANA_CONTEXT_STALE_TOPIC_IGNORED\]/);
+  assert.match(source, /\[ANA_COMMITTED_REPLY_STATE_EXTRACTED\]/);
+  assert.match(source, /\[ANA_COMMITTED_REPLY_STATE_SAVED\]/);
+  assert.match(source, /\[ANA_ACCEPTED_COMMITTED_TOPIC_OFFER\]/);
+  assert.match(source, /\[ANA_LOCATION_LINK_INTENT_REJECTED_DIRECT_LOCATION\]/);
+  assert.match(source, /\[ANA_FIRST_GREETING_FINAL_NORMALIZED\]/);
 });
 
 test('qwen e deterministico passam pelo mesmo commit final sem envio extra', () => {

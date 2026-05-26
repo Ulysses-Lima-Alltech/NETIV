@@ -11,6 +11,8 @@ export interface AnaDialoguePolicyState {
   lastAssistantQuestionType?:
     | 'visit_offer'
     | 'broker_handoff'
+    | 'single_topic_offer'
+    | 'multi_topic_offer'
     | 'followup_topics'
     | 'followup_topic'
     | 'media_offer'
@@ -18,6 +20,10 @@ export interface AnaDialoguePolicyState {
     | null;
   lastAssistantQuestionText?: string | null;
   lastOfferedTopics?: string[];
+  lastAnsweredTopic?: string | null;
+  topicsAlreadyAnswered?: string[];
+  lastCommittedHandler?: string | null;
+  lastCommittedAt?: string | null;
 }
 
 const MAX_RECENT = 6;
@@ -48,6 +54,8 @@ export function getAnaDialoguePolicyState(flowState: CommercialFlowState | null 
     lastAssistantQuestionType:
       raw.lastAssistantQuestionType === 'visit_offer' ||
       raw.lastAssistantQuestionType === 'broker_handoff' ||
+      raw.lastAssistantQuestionType === 'single_topic_offer' ||
+      raw.lastAssistantQuestionType === 'multi_topic_offer' ||
       raw.lastAssistantQuestionType === 'followup_topics' ||
       raw.lastAssistantQuestionType === 'followup_topic' ||
       raw.lastAssistantQuestionType === 'media_offer' ||
@@ -56,6 +64,10 @@ export function getAnaDialoguePolicyState(flowState: CommercialFlowState | null 
         : null,
     lastAssistantQuestionText: raw.lastAssistantQuestionText ?? null,
     lastOfferedTopics: compactTopicList(raw.lastOfferedTopics),
+    lastAnsweredTopic: raw.lastAnsweredTopic ?? null,
+    topicsAlreadyAnswered: compactTopicList(raw.topicsAlreadyAnswered),
+    lastCommittedHandler: raw.lastCommittedHandler ?? null,
+    lastCommittedAt: raw.lastCommittedAt ?? null,
   };
 }
 
@@ -71,6 +83,7 @@ export function mergeAnaDialoguePolicyState(
   merged.recentlyDiscussedTopics = compactTopicList(merged.recentlyDiscussedTopics);
   merged.recentlyAskedTopics = compactTopicList(merged.recentlyAskedTopics);
   merged.lastOfferedTopics = compactTopicList(merged.lastOfferedTopics);
+  merged.topicsAlreadyAnswered = compactTopicList(merged.topicsAlreadyAnswered);
   return {
     ...flowState,
     dialoguePolicy: merged,

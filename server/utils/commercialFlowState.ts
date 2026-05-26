@@ -99,6 +99,10 @@ export interface CommercialFlowState {
     lastAssistantQuestionType?: string | null;
     lastAssistantQuestionText?: string | null;
     lastOfferedTopics?: string[];
+    lastAnsweredTopic?: string | null;
+    topicsAlreadyAnswered?: string[];
+    lastCommittedHandler?: string | null;
+    lastCommittedAt?: string | null;
   };
 }
 

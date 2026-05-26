@@ -1,4 +1,4 @@
-import type { CommercialFlowState } from './commercialFlowState.js';
+﻿import type { CommercialFlowState } from './commercialFlowState.js';
 
 export type AnaShortConfirmationKind =
   | 'visit_confirmation'
@@ -11,6 +11,8 @@ export type AnaShortConfirmationKind =
 export type AnaShortConfirmationQuestionType =
   | 'visit_offer'
   | 'broker_handoff'
+  | 'single_topic_offer'
+  | 'multi_topic_offer'
   | 'followup_topic'
   | 'media_offer'
   | 'unknown';
@@ -69,70 +71,83 @@ function mapTopicLabelsFromText(text: string): string[] {
   return dedupeTopics(topics);
 }
 
+function extractLastQuestionSentence(text: string | null | undefined): string | null {
+  const raw = (text || '').trim();
+  if (!raw) return null;
+  const matches = raw.match(/[^?]*\?/g) ?? [];
+  const lastQuestion = matches[matches.length - 1]?.trim() ?? null;
+  if (lastQuestion && lastQuestion.length > 0) return lastQuestion;
+  return /\?/.test(raw) ? raw : null;
+}
+
 function classifyAssistantQuestion(text: string | null | undefined): {
   questionType: AnaShortConfirmationQuestionType;
   questionText: string | null;
   offeredTopics: string[];
 } {
-  const raw = (text || '').trim();
-  if (!raw) {
+  const questionText = extractLastQuestionSentence(text);
+  if (!questionText) {
     return {
       questionType: 'unknown',
       questionText: null,
       offeredTopics: [],
     };
   }
-  const n = norm(raw);
-  const hasQuestionMark = /\?/.test(raw);
-  if (!hasQuestionMark) {
-    return {
-      questionType: 'unknown',
-      questionText: raw,
-      offeredTopics: [],
-    };
-  }
-  if (/\b(agendar|agendamento|marcar visita|marcar uma visita|agendar uma visita|conhecer pessoalmente|reservar horario|reservar horário)\b/.test(n)) {
+
+  const n = norm(questionText);
+  if (/\b(agendar|agendamento|marcar visita|marcar uma visita|agendar uma visita|conhecer pessoalmente|reservar horario)\b/.test(n)) {
     return {
       questionType: 'visit_offer',
-      questionText: raw,
+      questionText,
       offeredTopics: [],
     };
   }
   if (/\b(encaminh|corretor|consultor)\b/.test(n)) {
     return {
       questionType: 'broker_handoff',
-      questionText: raw,
+      questionText,
       offeredTopics: [],
     };
   }
-  if (/\b(video|v[ií]deo|book|fotos?|imagens?|galeria)\b/.test(n)) {
+  if (/\b(video|book|fotos?|imagens?|galeria)\b/.test(n)) {
     return {
       questionType: 'media_offer',
-      questionText: raw,
+      questionText,
       offeredTopics: [],
     };
   }
-  const offeredTopics = mapTopicLabelsFromText(raw);
+
+  const offeredTopics = mapTopicLabelsFromText(questionText);
   if (offeredTopics.length > 0) {
     return {
-      questionType: 'followup_topic',
-      questionText: raw,
+      questionType: offeredTopics.length > 1 ? 'multi_topic_offer' : 'single_topic_offer',
+      questionText,
       offeredTopics,
     };
   }
+
   return {
     questionType: 'unknown',
-    questionText: raw,
+    questionText,
     offeredTopics: [],
   };
 }
 
 function normalizeStateQuestionType(
   value: unknown
-): 'visit_offer' | 'broker_handoff' | 'followup_topic' | 'media_offer' | 'unknown' {
+):
+  | 'visit_offer'
+  | 'broker_handoff'
+  | 'single_topic_offer'
+  | 'multi_topic_offer'
+  | 'followup_topic'
+  | 'media_offer'
+  | 'unknown' {
   const n = norm(String(value ?? ''));
   if (n === 'visit_offer') return 'visit_offer';
   if (n === 'broker_handoff') return 'broker_handoff';
+  if (n === 'single_topic_offer') return 'single_topic_offer';
+  if (n === 'multi_topic_offer') return 'multi_topic_offer';
   if (n === 'followup_topic' || n === 'followup_topics') return 'followup_topic';
   if (n === 'media_offer') return 'media_offer';
   return 'unknown';
@@ -217,7 +232,12 @@ export function resolveShortConfirmationContext(
       source,
     };
   }
-  if (selected.questionType === 'followup_topic' && selected.offeredTopics.length > 0) {
+  if (
+    (selected.questionType === 'followup_topic' ||
+      selected.questionType === 'single_topic_offer' ||
+      selected.questionType === 'multi_topic_offer') &&
+    selected.offeredTopics.length > 0
+  ) {
     return {
       kind: 'followup_topic_confirmation',
       isShortConfirmation: true,
@@ -236,4 +256,3 @@ export function resolveShortConfirmationContext(
     source,
   };
 }
-

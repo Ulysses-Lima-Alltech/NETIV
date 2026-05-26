@@ -83,6 +83,8 @@ function stripLeadingStaleTopicCta(text: string): { text: string; changed: boole
       /^(quer\s+(?:que eu te explique|saber tambem sobre)[^?]*\?\s*)+/i,
       ''
     )
+    .replace(/^\s*vou responder todas\.?\s*/i, '')
+    .replace(/\s*vou responder todas\.?\s*$/i, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
   if (!next) {
@@ -364,7 +366,14 @@ function isAssistantVisitOfferQuestion(text: string | null | undefined): boolean
 }
 
 type LastAssistantQuestionContext = {
-  questionType: 'visit_offer' | 'broker_handoff' | 'followup_topics' | 'followup_topic' | 'other';
+  questionType:
+    | 'visit_offer'
+    | 'broker_handoff'
+    | 'single_topic_offer'
+    | 'multi_topic_offer'
+    | 'followup_topics'
+    | 'followup_topic'
+    | 'other';
   offeredTopics: AnaDialogueTopic[];
   questionText: string | null;
   askedVisitOffer: boolean;
@@ -406,6 +415,8 @@ function resolveLastAssistantQuestionContext(
   else if (
     stateQuestionType === 'visit_offer' ||
     stateQuestionType === 'broker_handoff' ||
+    stateQuestionType === 'single_topic_offer' ||
+    stateQuestionType === 'multi_topic_offer' ||
     stateQuestionType === 'followup_topics' ||
     stateQuestionType === 'followup_topic'
   ) {

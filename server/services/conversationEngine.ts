@@ -362,7 +362,11 @@ function detectRequestedTopicForTurn(text: string): AnaTurnTopic | null {
   const n = normText(text || '');
   if (!n) return null;
   if (/\b(quantos?\s+lotes?|numero\s+de\s+lotes?|vai\s+ter\s+quantos?\s+lotes?)\b/.test(n)) return 'lotes';
-  if (/\b(link da localizacao|link de localizacao|google maps|rota|como chegar|manda localizacao|manda a localizacao)\b/.test(n)) {
+  if (
+    /\b(link|google maps|maps|mapa|rota|como chegar|manda localizacao|manda a localizacao|me envia a localizacao|me envia localizacao|me manda a localizacao|me manda localizacao)\b/.test(
+      n
+    )
+  ) {
     return 'rota';
   }
   if (/\b(onde fica|localizacao|endereco|regiao|bairro|pedreira|rio abaixo)\b/.test(n)) return 'localizacao';
@@ -384,6 +388,17 @@ function detectTopicFromAssistantAnswer(text: string): AnaTurnTopic | null {
   if (/\b(120x|48x|financiamento direto)\b/.test(n)) return 'pagamento';
   if (/\b(r\$\s*279|r\$\s*775|valor inicial)\b/.test(n)) return 'valores';
   if (/\b(quantos?\s+lotes?|informacao exata liberada)\b/.test(n)) return 'lotes';
+  return null;
+}
+
+function mapCommercialAxisToTurnTopic(axis: CommercialAxis | null): AnaTurnTopic | null {
+  if (!axis) return null;
+  if (axis === 'localizacao') return 'localizacao';
+  if (axis === 'lazer') return 'lazer';
+  if (axis === 'preco') return 'valores';
+  if (axis === 'financiamento') return 'pagamento';
+  if (axis === 'visita_agendamento') return 'visita';
+  if (axis === 'disponibilidade') return 'lotes';
   return null;
 }
 
@@ -483,6 +498,222 @@ function resolveAnaConversationTurn(input: {
     finalDecisionReason: null,
     decisionPath,
   };
+}
+
+type CommittedReplyQuestionType =
+  | 'visit_offer'
+  | 'broker_handoff'
+  | 'single_topic_offer'
+  | 'multi_topic_offer'
+  | 'media_offer'
+  | 'other'
+  | null;
+
+type CommittedReplyStateExtraction = {
+  lastAssistantQuestionText: string | null;
+  lastAssistantQuestionType: CommittedReplyQuestionType;
+  lastOfferedTopics: string[];
+  lastAnsweredTopic: string | null;
+  topicsAlreadyAnswered: string[];
+  lastCommittedHandler: string;
+  lastCommittedAt: string;
+};
+
+function extractLastQuestionSentenceFromCommittedReply(text: string): string | null {
+  const raw = (text || '').trim();
+  if (!raw) return null;
+  const matches = raw.match(/[^?]*\?/g) ?? [];
+  const last = matches[matches.length - 1]?.trim() ?? null;
+  return last && last.length > 0 ? last : null;
+}
+
+function extractOfferedTopicsFromQuestion(questionText: string | null): string[] {
+  const n = normText(questionText || '');
+  if (!n) return [];
+  const out: string[] = [];
+  if (/\b(lazer|areas? de lazer|piscina|academia|playground|quadra|coworking|fireplace)\b/.test(n)) {
+    out.push('lazer');
+  }
+  if (/\b(seguranca|portaria|monitoramento|controle de acesso)\b/.test(n)) {
+    out.push('seguranca');
+  }
+  if (/\b(localizacao|onde fica|bairro|regiao|acesso|endereco|rodovia|atibaia|pedreira|rio abaixo)\b/.test(n)) {
+    out.push('localizacao');
+  }
+  if (/\b(valor|valores|preco|quanto custa|r\$)\b/.test(n)) {
+    out.push('valores');
+  }
+  if (/\b(formas? de pagamento|pagamento|entrada|parcela|parcelamento|financiamento)\b/.test(n)) {
+    out.push('formas_pagamento');
+  }
+  return [...new Set(out)];
+}
+
+function classifyCommittedReplyQuestion(questionText: string | null): {
+  questionType: CommittedReplyQuestionType;
+  offeredTopics: string[];
+} {
+  const n = normText(questionText || '');
+  if (!n) return { questionType: null, offeredTopics: [] };
+  if (/\b(agendar|agendamento|marcar visita|conhecer pessoalmente|reservar horario)\b/.test(n)) {
+    return { questionType: 'visit_offer', offeredTopics: [] };
+  }
+  if (/\b(encaminh|corretor|consultor)\b/.test(n)) {
+    return { questionType: 'broker_handoff', offeredTopics: [] };
+  }
+  if (/\b(video|book|fotos?|imagens?|galeria)\b/.test(n)) {
+    return { questionType: 'media_offer', offeredTopics: [] };
+  }
+  const offeredTopics = extractOfferedTopicsFromQuestion(questionText);
+  if (offeredTopics.length > 1) return { questionType: 'multi_topic_offer', offeredTopics };
+  if (offeredTopics.length === 1) return { questionType: 'single_topic_offer', offeredTopics };
+  return { questionType: 'other', offeredTopics: [] };
+}
+
+function mergeAnsweredTopics(existing: string[], topic: string | null): string[] {
+  const out = [...existing];
+  const normalizedTopic = normText(topic || '');
+  if (!normalizedTopic) return out;
+  if (!out.includes(normalizedTopic)) out.push(normalizedTopic);
+  return out.slice(-8);
+}
+
+function normalizeFirstGreetingCommittedReply(params: {
+  conversationId: number;
+  isFirstAnaReply: boolean;
+  parts: string[];
+}): { changed: boolean; parts: string[]; text: string } {
+  const originalText = params.parts.map((part) => String(part || '').trim()).filter(Boolean).join('\n\n').trim();
+  if (!params.isFirstAnaReply || !originalText) {
+    return { changed: false, parts: params.parts, text: originalText };
+  }
+
+  let next = originalText;
+  let changed = false;
+  let staleSuppressed = false;
+  const stalePattern = /quer saber tamb[eé]m sobre localiza[cç][aã]o\?/i;
+  if (stalePattern.test(next)) {
+    next = next.replace(stalePattern, '').replace(/\s{2,}/g, ' ').trim();
+    changed = true;
+    staleSuppressed = true;
+  }
+  if (/\bvou responder todas\.?/i.test(next)) {
+    next = next.replace(/\bvou responder todas\.?/gi, '').replace(/\s{2,}/g, ' ').trim();
+    changed = true;
+  }
+  if (!/\?/.test(next)) {
+    if (next.length > 0 && !/[.!?]$/.test(next)) next = `${next}.`;
+    next = `${next} Me conta, qual ponto voce quer entender primeiro?`.replace(/\s{2,}/g, ' ').trim();
+    changed = true;
+  }
+  if (staleSuppressed) {
+    console.log('[ANA_FIRST_GREETING_STALE_CTA_SUPPRESSED]', {
+      conversationId: params.conversationId,
+      source: 'committed_reply',
+    });
+  }
+  if (changed) {
+    console.log('[ANA_FIRST_GREETING_FINAL_NORMALIZED]', {
+      conversationId: params.conversationId,
+      preview: next.slice(0, 220),
+    });
+  }
+  return {
+    changed,
+    parts: next ? [next] : [],
+    text: next,
+  };
+}
+
+function updateConversationStateFromCommittedReply(params: {
+  conversationId: number;
+  flowState: CommercialFlowState;
+  finalReplyParts: string[];
+  finalReplyText: string;
+  handler: string;
+  currentTopic: AnaTurnTopic | null;
+  requestedTopic: AnaTurnTopic | null;
+  commercialAxis: CommercialAxis | null;
+}): {
+  nextState: CommercialFlowState;
+  extracted: CommittedReplyStateExtraction;
+} {
+  const nowIso = new Date().toISOString();
+  const committedReplyText =
+    String(params.finalReplyText || '').trim() ||
+    params.finalReplyParts.map((part) => String(part || '').trim()).filter(Boolean).join('\n\n').trim();
+  const questionText = extractLastQuestionSentenceFromCommittedReply(committedReplyText);
+  const question = classifyCommittedReplyQuestion(questionText);
+  const questionType = question.questionType;
+
+  let answerBody = committedReplyText;
+  if (questionText) {
+    const idx = answerBody.lastIndexOf(questionText);
+    if (idx >= 0) {
+      answerBody = `${answerBody.slice(0, idx)} ${answerBody.slice(idx + questionText.length)}`
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+    }
+  }
+
+  let detectedAnsweredTopic = detectTopicFromAssistantAnswer(answerBody);
+  if (!detectedAnsweredTopic) {
+    detectedAnsweredTopic = detectTopicFromAssistantAnswer(committedReplyText);
+  }
+  if (!detectedAnsweredTopic) {
+    const requested = params.requestedTopic === 'rota' ? 'localizacao' : params.requestedTopic;
+    if (requested && requested !== 'geral') detectedAnsweredTopic = requested;
+  }
+  if (!detectedAnsweredTopic) {
+    const mappedAxisTopic = mapCommercialAxisToTurnTopic(params.commercialAxis);
+    if (mappedAxisTopic && mappedAxisTopic !== 'geral') detectedAnsweredTopic = mappedAxisTopic;
+  }
+  if (!detectedAnsweredTopic && params.currentTopic && params.currentTopic !== 'geral') {
+    detectedAnsweredTopic = params.currentTopic;
+  }
+
+  const dialoguePolicy = (params.flowState.dialoguePolicy ?? {}) as Record<string, unknown>;
+  const existingAnsweredTopics = Array.isArray(dialoguePolicy.topicsAlreadyAnswered)
+    ? (dialoguePolicy.topicsAlreadyAnswered as string[]).map((topic) => normText(topic || '')).filter(Boolean)
+    : [];
+  const mergedAnsweredTopics = mergeAnsweredTopics(existingAnsweredTopics, detectedAnsweredTopic);
+
+  const extracted: CommittedReplyStateExtraction = {
+    lastAssistantQuestionText: questionText,
+    lastAssistantQuestionType: questionType,
+    lastOfferedTopics: question.offeredTopics,
+    lastAnsweredTopic: detectedAnsweredTopic,
+    topicsAlreadyAnswered: mergedAnsweredTopics,
+    lastCommittedHandler: params.handler,
+    lastCommittedAt: nowIso,
+  };
+
+  console.log('[ANA_COMMITTED_REPLY_STATE_EXTRACTED]', {
+    conversationId: params.conversationId,
+    lastAssistantQuestionText: extracted.lastAssistantQuestionText,
+    lastAssistantQuestionType: extracted.lastAssistantQuestionType,
+    lastOfferedTopics: extracted.lastOfferedTopics,
+    lastAnsweredTopic: extracted.lastAnsweredTopic,
+    handler: params.handler,
+  });
+
+  const nextState: CommercialFlowState = {
+    ...params.flowState,
+    dialoguePolicy: {
+      ...(params.flowState.dialoguePolicy ?? {}),
+      lastFollowupQuestion: extracted.lastAssistantQuestionText,
+      lastAssistantQuestionText: extracted.lastAssistantQuestionText,
+      lastAssistantQuestionType: extracted.lastAssistantQuestionType,
+      lastOfferedTopics: extracted.lastOfferedTopics,
+      lastAnsweredTopic: extracted.lastAnsweredTopic,
+      topicsAlreadyAnswered: extracted.topicsAlreadyAnswered,
+      lastCommittedHandler: extracted.lastCommittedHandler,
+      lastCommittedAt: extracted.lastCommittedAt,
+    },
+    updatedAt: nowIso,
+  };
+
+  return { nextState, extracted };
 }
 
 function isProviderFailureClassifiedError(
@@ -783,7 +1014,7 @@ function buildOnlyNewLazerItemsReply(newItems: string[]): string {
 function isLocationLinkRequest(text: string): boolean {
   const n = normText(text || '');
   if (!n) return false;
-  return /\b(tem o link da localizacao|link da localizacao|manda localizacao|manda a localizacao|manda o endereco|me passa o endereco|mapa|google maps|rota|como chegar)\b/.test(n);
+  return /\b(tem o link da localizacao|tem link da localizacao|link da localizacao|link de localizacao|google maps|maps|mapa|rota|como chegar|manda localizacao|manda a localizacao|me envia a localizacao|me envia localizacao|me manda localizacao|me manda a localizacao)\b/.test(n);
 }
 
 function isImageMaterialRequest(text: string): boolean {
@@ -2305,6 +2536,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   let anaTurnContextResolved: AnaTurnContextResolved | null = null;
   let turnResponseCommitted = false;
   let turnCommittedHandler: string | null = null;
+  let isFirstAnaReplyForTurn = false;
   const selectTurnDecision = (params: {
     handler: string;
     reason: string;
@@ -2343,16 +2575,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       conversationId,
       stage: params.stage,
     });
-    if (dedupedParts.length === 0) {
+    const firstGreetingNormalized = normalizeFirstGreetingCommittedReply({
+      conversationId,
+      isFirstAnaReply: isFirstAnaReplyForTurn,
+      parts: dedupedParts,
+    });
+    const committedParts = firstGreetingNormalized.parts;
+    if (committedParts.length === 0) {
       return { committed: false, text: '', parts: [] };
     }
-    const text = dedupedParts.join('\n\n').trim();
+    const text = committedParts.join('\n\n').trim();
     turnResponseCommitted = true;
     turnCommittedHandler = params.handler;
     console.log('[ANA_TURN_RESPONSE_COMMITTED]', {
       conversationId,
       handler: params.handler,
-      partsCount: dedupedParts.length,
+      partsCount: committedParts.length,
       preview: text.slice(0, 260),
     });
     selectTurnDecision({
@@ -2362,7 +2600,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       commercialAxis: params.commercialAxis,
       shouldCallQwen: params.shouldCallQwen,
     });
-    return { committed: true, text, parts: dedupedParts };
+    return { committed: true, text, parts: committedParts };
   };
   try {
     console.log('[ANA_PIPELINE] engine_start', {
@@ -2533,6 +2771,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const rows = await getMessagesByConversationId(conversationId);
     anaEngineTrace('rows_loaded', { conversationId, rowCount: rows.length });
     const isFirstAnaReply = !rows.some((m) => m.role === 'assistant');
+    isFirstAnaReplyForTurn = isFirstAnaReply;
     const lastAssistantBeforeUser = [...rows].reverse().find((m) => m.role === 'assistant');
     const lastAssistantPlain = lastAssistantBeforeUser?.content?.trim() || null;
     let visitStateReconstructedThisTurn = false;
@@ -3599,6 +3838,27 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       lastOfferedTopics: shortConfirmationContext.lastOfferedTopics ?? [],
       requestedAxis: currentAxisForRepetition,
     });
+    if (
+      anaTurnContextResolved.acceptedOfferTopic &&
+      shortConfirmationContext.source === 'state' &&
+      shortConfirmationContext.kind === 'followup_topic_confirmation'
+    ) {
+      console.log('[ANA_ACCEPTED_COMMITTED_TOPIC_OFFER]', {
+        conversationId,
+        topic: anaTurnContextResolved.acceptedOfferTopic,
+        source: 'committed_reply_state',
+      });
+    }
+    if (
+      anaTurnContextResolved.requestedTopic === 'localizacao' &&
+      !isLocationLinkRequest(trimmed)
+    ) {
+      console.log('[ANA_LOCATION_LINK_INTENT_REJECTED_DIRECT_LOCATION]', {
+        conversationId,
+        userText: trimmed.slice(0, 160),
+        requestedTopic: anaTurnContextResolved.requestedTopic,
+      });
+    }
     const offeredTopicsFromHistory = (anaTurnContextResolved.lastOfferedTopics ?? [])
       .map((topic) => normalizeOfferedTopicForTurn(topic))
       .filter((topic): topic is AnaTurnTopic => topic != null);
@@ -4388,6 +4648,30 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         return;
       }
       await insertMessage(conversationId, 'assistant', deterministicVisitReply, sendVisitResult.metaMessageId);
+      const committedVisitState = updateConversationStateFromCommittedReply({
+        conversationId,
+        flowState: flowStateParsed,
+        finalReplyParts: committedVisitReply.parts,
+        finalReplyText: deterministicVisitReply,
+        handler: 'deterministic_visit_scheduling',
+        currentTopic: anaTurnContextResolved?.currentTopic ?? null,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+      });
+      flowStateParsed = committedVisitState.nextState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+      console.log('[ANA_COMMITTED_REPLY_STATE_SAVED]', {
+        conversationId,
+        savedFields: [
+          'lastAssistantQuestionText',
+          'lastAssistantQuestionType',
+          'lastOfferedTopics',
+          'lastAnsweredTopic',
+          'topicsAlreadyAnswered',
+          'lastCommittedHandler',
+          'lastCommittedAt',
+        ],
+      });
       console.log('[ANA_VISIT_FLOW_RESPONSE_SENT]', {
         conversationId,
         reason: directVisitSchedulingDecision.reason,
@@ -4490,6 +4774,30 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         return;
       }
       await insertMessage(conversationId, 'assistant', committedLocationLink.text, sendResult.metaMessageId);
+      const committedLocationState = updateConversationStateFromCommittedReply({
+        conversationId,
+        flowState: flowStateParsed,
+        finalReplyParts: committedLocationLink.parts,
+        finalReplyText: committedLocationLink.text,
+        handler: 'deterministic_location_link',
+        currentTopic: anaTurnContextResolved?.currentTopic ?? null,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+      });
+      flowStateParsed = committedLocationState.nextState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+      console.log('[ANA_COMMITTED_REPLY_STATE_SAVED]', {
+        conversationId,
+        savedFields: [
+          'lastAssistantQuestionText',
+          'lastAssistantQuestionType',
+          'lastOfferedTopics',
+          'lastAnsweredTopic',
+          'topicsAlreadyAnswered',
+          'lastCommittedHandler',
+          'lastCommittedAt',
+        ],
+      });
       anaTurnAuditOutcome = 'sent';
       anaTurnAuditBlockedReason = null;
       anaTurnAuditLlmStatus = 'skipped';
@@ -4928,6 +5236,30 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
       lastCommercialRuleMetaMessageId = sendResult.metaMessageId;
       await insertMessage(conversationId, 'assistant', committedCommercialRule.text, sendResult.metaMessageId);
+      const committedCommercialState = updateConversationStateFromCommittedReply({
+        conversationId,
+        flowState: flowStateParsed,
+        finalReplyParts: committedCommercialRule.parts,
+        finalReplyText: committedCommercialRule.text,
+        handler: 'deterministic_commercial_rule',
+        currentTopic: anaTurnContextResolved?.currentTopic ?? null,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+      });
+      flowStateParsed = committedCommercialState.nextState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+      console.log('[ANA_COMMITTED_REPLY_STATE_SAVED]', {
+        conversationId,
+        savedFields: [
+          'lastAssistantQuestionText',
+          'lastAssistantQuestionType',
+          'lastOfferedTopics',
+          'lastAnsweredTopic',
+          'topicsAlreadyAnswered',
+          'lastCommittedHandler',
+          'lastCommittedAt',
+        ],
+      });
 
       await applyAnaConversationUpdate(conversationId, {
         classification: 'Qualificado',
@@ -8222,6 +8554,30 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
     if (sendResult.success && sendResult.metaMessageId) {
       await insertMessage(conversationId, 'assistant', replyText, sendResult.metaMessageId);
+      const committedFinalState = updateConversationStateFromCommittedReply({
+        conversationId,
+        flowState: flowStateParsed,
+        finalReplyParts: committedFinalReply.parts,
+        finalReplyText: replyText,
+        handler: openAiCalled ? 'qwen_or_llm_final' : 'deterministic_final',
+        currentTopic: anaTurnContextResolved?.currentTopic ?? null,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+      });
+      flowStateParsed = committedFinalState.nextState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+      console.log('[ANA_COMMITTED_REPLY_STATE_SAVED]', {
+        conversationId,
+        savedFields: [
+          'lastAssistantQuestionText',
+          'lastAssistantQuestionType',
+          'lastOfferedTopics',
+          'lastAnsweredTopic',
+          'topicsAlreadyAnswered',
+          'lastCommittedHandler',
+          'lastCommittedAt',
+        ],
+      });
       anaEngineTrace('final_send_success', {
         conversationId,
         phase: 'ana_main_reply',
@@ -8429,7 +8785,7 @@ function buildFirstGreetingSafeFallback(text: string): string {
     opening,
     'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas.',
     'Fica em Atibaia, com fácil acesso pela Rodovia Dom Pedro I, perto da área da Pedreira, a aproximadamente 50 minutos de São Paulo.',
-    'Me conta, quais são suas dúvidas? Vou responder todas.',
+    'Me conta, qual ponto voce quer entender primeiro?',
   ].join('\n\n');
 }
 
