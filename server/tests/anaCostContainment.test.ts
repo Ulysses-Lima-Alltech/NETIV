@@ -1703,6 +1703,36 @@ test('pedido direto "localizacao" responde localizacao normal e nao fluxo de lin
   assert.equal(/nao tenho um link de localizacao liberado/i.test(policy.text), false);
 });
 
+test('pedido direto "onde fica?" responde localizacao normal e nao fluxo de link', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 9101,
+    userMessage: 'onde fica?',
+    replyText: 'Nao tenho um link de localizacao liberado para envio por aqui.',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'user', content: 'onde fica?' }],
+    disableFollowupQuestion: true,
+  });
+
+  assert.match(policy.text, /atibaia|pedreira|rodovia dom pedro i/i);
+  assert.equal(/nao tenho um link de localizacao liberado/i.test(policy.text), false);
+});
+
+test('pedido direto "endereco" responde localizacao normal e nao fluxo de link', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 9102,
+    userMessage: 'endereco',
+    replyText: 'Nao tenho um link de localizacao liberado para envio por aqui.',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'user', content: 'endereco' }],
+    disableFollowupQuestion: true,
+  });
+
+  assert.match(policy.text, /atibaia|pedreira|rodovia dom pedro i/i);
+  assert.equal(/nao tenho um link de localizacao liberado/i.test(policy.text), false);
+});
+
 test('onde fica esse loteamento responde localizacao normal, nao preco e nao link', () => {
   const policy = applyAnaConversationPolicy({
     conversationId: 911,
@@ -1906,9 +1936,24 @@ test('pedido de rota sem link autorizado nao repete promessa de referencia', () 
     semanticallySimilar: (a, b) => a.toLowerCase() === b.toLowerCase(),
   });
   assert.equal(guarded.changed, true);
-  assert.match(guarded.text, /n[aã]o tenho um link de localiza[cç][aã]o liberado/i);
+  assert.match(guarded.text, /n.{0,2}o tenho um link de localiza/i);
   assert.match(guarded.text, /atibaia/i);
   assert.equal(/referencia de acesso/i.test(guarded.text), false);
+});
+
+test('no-repeat guard de localizacao direta usa rewrite seguro sem fallback de link', () => {
+  const guarded = applyAnaNoRepeatMessageGuard({
+    conversationId: 903,
+    enterpriseId: 10,
+    enterpriseName: 'Evora',
+    userMessage: 'onde fica?',
+    answer: 'O Evora fica em Atibaia, na regiao da Pedreira, com acesso pela Rodovia Dom Pedro I.',
+    recentAssistantReplies: ['O Evora fica em Atibaia, na regiao da Pedreira, com acesso pela Rodovia Dom Pedro I.'],
+    semanticallySimilar: (a, b) => a.toLowerCase() === b.toLowerCase(),
+  });
+  assert.equal(guarded.changed, true);
+  assert.match(guarded.text, /atibaia|pedreira|rodovia dom pedro i/i);
+  assert.equal(/nao tenho um link de localizacao liberado/i.test(guarded.text), false);
 });
 
 test('logs de orquestracao de turno estao presentes', () => {
@@ -1924,6 +1969,10 @@ test('logs de orquestracao de turno estao presentes', () => {
   assert.match(source, /\[ANA_ACCEPTED_COMMITTED_TOPIC_OFFER\]/);
   assert.match(source, /\[ANA_LOCATION_LINK_INTENT_REJECTED_DIRECT_LOCATION\]/);
   assert.match(source, /\[ANA_FIRST_GREETING_FINAL_NORMALIZED\]/);
+  assert.match(source, /\[ANA_FIRST_GREETING_FORBIDDEN_PHRASE_REMOVED\]/);
+
+  const guardsSource = readFileSync(path.resolve(process.cwd(), 'utils/anaEvoraCommercialGuards.ts'), 'utf8');
+  assert.match(guardsSource, /\[ANA_LOCATION_DIRECT_NO_REPEAT_SAFE_REWRITE\]/);
 });
 
 test('qwen e deterministico passam pelo mesmo commit final sem envio extra', () => {

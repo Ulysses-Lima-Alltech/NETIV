@@ -528,7 +528,7 @@ function isOfferTopicAllowed(topic: AnaOfferTopic, availability: AnaOfferAvailab
 function buildQuestionForOfferTopic(topic: AnaOfferTopic): string {
   if (topic === 'lazer') return 'Quer que eu te explique as areas de lazer?';
   if (topic === 'seguranca') return 'Quer que eu te explique a seguranca do empreendimento?';
-  if (topic === 'localizacao') return 'Quer saber tambem sobre localizacao?';
+  if (topic === 'localizacao') return 'Quer que eu te fale sobre localizacao?';
   if (topic === 'valores') return 'Quer saber tambem sobre valores?';
   if (topic === 'pagamento') return 'Quer que eu te explique as formas de pagamento?';
   if (topic === 'fotos') return 'Quer que eu te envie algumas fotos?';
@@ -968,6 +968,10 @@ export function applyAnaConversationPolicy(
   }
 
   if (!visitFlowActive && input.isFirstAnaReply) {
+    const originalReplyNorm = norm(reply);
+    const forbiddenFirstGreetingPhrasesPresent =
+      /\bquer saber tambem sobre localizacao\?/.test(originalReplyNorm) ||
+      /\bvou responder todas\.?/.test(originalReplyNorm);
     const hadStaleQuestionContext =
       (state.lastAssistantQuestionType ?? null) != null ||
       (state.lastAssistantQuestionText ?? null) != null ||
@@ -988,6 +992,12 @@ export function applyAnaConversationPolicy(
         conversationId: input.conversationId,
         hadStaleQuestionContext,
         staleLeadingCtaRemoved: staleLeadingCta.changed,
+      });
+    }
+    if (forbiddenFirstGreetingPhrasesPresent) {
+      console.log('[ANA_FIRST_GREETING_FORBIDDEN_PHRASE_REMOVED]', {
+        conversationId: input.conversationId,
+        source: 'conversation_policy_first_reply',
       });
     }
   }

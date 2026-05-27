@@ -72,7 +72,7 @@ const CANDIDATE_ORDER_BY_CURRENT_TOPIC: Record<AnaDialogueTopic, AnaDialogueTopi
 const TOPIC_QUESTION_LABEL: Record<AnaDialogueTopic, string | null> = {
   lazer: 'Quer que eu te explique as areas de lazer?',
   seguranca: 'Quer que eu te explique a seguranca do empreendimento?',
-  localizacao: 'Quer saber tambem sobre localizacao?',
+  localizacao: 'Quer que eu te fale sobre localizacao?',
   valores: 'Quer saber tambem sobre valores?',
   pagamento: 'Quer que eu te explique as formas de pagamento?',
   visita: null,

@@ -153,7 +153,7 @@ function humanizeLazerReplyWhenNeeded(reply: string, userMessage?: string | null
   return HUMAN_LAZER_REPLY;
 }
 
-const GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION = 'Me conta, quais são suas dúvidas? Vou responder todas.';
+const GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION = 'Me conta, qual ponto você quer entender primeiro?';
 
 const INTERNAL_INSTRUCTION_FRAGMENT_PATTERNS: readonly RegExp[] = [
   /finalizar com pergunta aberta e natural,?\s*sem resposta fixa determin[ií]stica\.?/i,

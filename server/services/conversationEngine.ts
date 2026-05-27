@@ -591,15 +591,18 @@ function normalizeFirstGreetingCommittedReply(params: {
   let next = originalText;
   let changed = false;
   let staleSuppressed = false;
+  const forbiddenPhrasesRemoved: string[] = [];
   const stalePattern = /quer saber tamb[eé]m sobre localiza[cç][aã]o\?/i;
   if (stalePattern.test(next)) {
     next = next.replace(stalePattern, '').replace(/\s{2,}/g, ' ').trim();
     changed = true;
     staleSuppressed = true;
+    forbiddenPhrasesRemoved.push('quer_saber_tambem_sobre_localizacao');
   }
   if (/\bvou responder todas\.?/i.test(next)) {
     next = next.replace(/\bvou responder todas\.?/gi, '').replace(/\s{2,}/g, ' ').trim();
     changed = true;
+    forbiddenPhrasesRemoved.push('vou_responder_todas');
   }
   if (!/\?/.test(next)) {
     if (next.length > 0 && !/[.!?]$/.test(next)) next = `${next}.`;
@@ -610,6 +613,13 @@ function normalizeFirstGreetingCommittedReply(params: {
     console.log('[ANA_FIRST_GREETING_STALE_CTA_SUPPRESSED]', {
       conversationId: params.conversationId,
       source: 'committed_reply',
+    });
+  }
+  if (forbiddenPhrasesRemoved.length > 0) {
+    console.log('[ANA_FIRST_GREETING_FORBIDDEN_PHRASE_REMOVED]', {
+      conversationId: params.conversationId,
+      source: 'committed_reply',
+      removed: forbiddenPhrasesRemoved,
     });
   }
   if (changed) {

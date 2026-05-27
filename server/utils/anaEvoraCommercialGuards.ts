@@ -1,17 +1,10 @@
-Ôªøconst EVORA_REGION_BLOCK = `Atibaia faz parte de uma regi√£o valorizada e desenvolvida do estado. Fica a 50 minutos de S√£o Paulo, tornando o √âvora um condom√≠nio para casas de veraneio ou at√© mesmo moradia.
-
-A cidade de Atibaia √© rica em gastronomia, contendo os melhores restaurantes da regi√£o, sem contar com a avenida Lucas Nogueira Garces, que al√©m de ser um verdadeiro centro gastron√¥mico cont√©m tamb√©m as principais grifes, bares renomados se tornando um charmoso shopping a c√©u aberto.
-
-N√£o podemos deixar de destacar que Atibaia foi considerada a cidade com o segundo melhor clima do mundo pela ONU.`;
-
-const EVORA_ADDRESS_BLOCK =
-  'Fica na Regi√£o da Pedreira, no bairro do Rio Abaixo. Um bairro j√° conceituado com diversos condom√≠nios de m√©dio e alto padr√£o.';
-
-const EVORA_ACCESS_BLOCK =
-  'Fica perto da √°rea da Pedreira, com f√°cil acesso pela Rodovia Dom Pedro I.';
+const EVORA_CANONICAL_LOCATION_REPLY =
+  'O …vora fica em Atibaia, na regi„o da Pedreira, prÛximo ao bairro Rio Abaixo, com f·cil acesso pela Rodovia Dom Pedro I.';
+const EVORA_DIRECT_LOCATION_NO_REPEAT_REPLY =
+  'Ele fica em Atibaia, na regi„o da Pedreira, prÛximo ao bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.';
 
 export const EVORA_VISIT_OFFER_MESSAGES = [
-  'Se fizer sentido para voc√™, posso te ajudar a agendar uma visita.',
+  'Se fizer sentido para vocÍ, posso te ajudar a agendar uma visita.',
 ] as const;
 
 function normalizeText(value: string | null | undefined): string {
@@ -24,12 +17,12 @@ function normalizeText(value: string | null | undefined): string {
 }
 
 function normalizeCompare(value: string | null | undefined): string {
-  return normalizeText(value).replace(/[.!?,;:()"'`¬¥]/g, '').trim();
+  return normalizeText(value).replace(/[.!?,;:()"'`¥]/g, '').trim();
 }
 
 function isGratitudeOnlyMessage(text: string | null | undefined): boolean {
   const n = normalizeText(text);
-  return /^(obrigad[oa]|muito obrigad[oa]|ok obrigad[oa]|valeu|vlw|agradeco|agrade√ßo)[.! ]*$/.test(n);
+  return /^(obrigad[oa]|muito obrigad[oa]|ok obrigad[oa]|valeu|vlw|agradeco|agradeÁo)[.! ]*$/.test(n);
 }
 
 const EXPLICIT_VISIT_CTA_PATTERNS: RegExp[] = [
@@ -54,17 +47,31 @@ function isEvoraEnterprise(enterpriseName: string | null | undefined): boolean {
 
 function isAddressIntent(userMessage: string): boolean {
   const n = normalizeText(userMessage);
-  return /(onde fica|endereco|bairro|localizacao exata|ponto de referencia|como chegar|acesso|rota|caminho)/.test(n);
+  return /(localizacao|onde fica|endereco|bairro|regiao|localizacao exata|ponto de referencia)/.test(n);
 }
 
 function isAccessIntent(userMessage: string): boolean {
   const n = normalizeText(userMessage);
-  return /(como e o acesso|como eh o acesso|acesso|como chegar|rota|caminho)/.test(n);
+  return /(como e o acesso|como eh o acesso|acesso)/.test(n);
 }
 
 function isRegionIntent(userMessage: string): boolean {
   const n = normalizeText(userMessage);
   return /(regiao|atibaia|cidade|gastronomia|qualidade de vida|pontos positivos|clima)/.test(n);
+}
+
+function isExplicitLocationLinkIntent(userMessage: string | null | undefined): boolean {
+  const n = normalizeText(userMessage);
+  if (!n) return false;
+  return /(tem o link da localizacao|tem link da localizacao|link da localizacao|link de localizacao|google maps|maps|mapa|rota|como chegar|manda localizacao|manda a localizacao|me envia a localizacao|me envia localizacao|me manda localizacao|me manda a localizacao)/.test(
+    n
+  );
+}
+
+function isDirectLocationIntent(userMessage: string | null | undefined): boolean {
+  const n = normalizeText(userMessage);
+  if (!n) return false;
+  return /(localizacao|onde fica|endereco|regiao|bairro|pedreira|rio abaixo)/.test(n);
 }
 
 function hasLucasAsAccessLeak(answer: string): boolean {
@@ -113,20 +120,20 @@ export function blockLegacyAggressiveVisitCtaByIntent(params: {
   }
   if (nIntent === 'localizacao_endereco') {
     return {
-      text: 'Voc√™ vem de S√£o Paulo ou de Atibaia?',
+      text: 'VocÍ vem de S„o Paulo ou de Atibaia?',
       changed: true,
       reason: 'legacy_visit_cta_blocked_for_location',
     };
   }
   if (nIntent === 'entrega_empreendimento') {
     return {
-      text: 'Quer saber tamb√©m como est√° a infraestrutura prevista?',
+      text: 'Quer saber tambÈm como est· a infraestrutura prevista?',
       changed: true,
       reason: 'legacy_visit_cta_blocked_for_delivery',
     };
   }
   return {
-    text: 'Se voc√™ quiser, posso te explicar esse ponto com mais detalhe.',
+    text: 'Se vocÍ quiser, posso te explicar esse ponto com mais detalhe.',
     changed: true,
     reason: 'legacy_visit_cta_blocked',
   };
@@ -198,17 +205,17 @@ export function applyEvoraLocationGuard(params: {
   let reason: string | null = null;
 
   if (hasLucasAsAccessLeak(text)) {
-    text = EVORA_ADDRESS_BLOCK;
+    text = EVORA_CANONICAL_LOCATION_REPLY;
     reason = 'lucas_garces_used_as_access';
   } else if (isAccessIntent(params.userMessage)) {
-    text = EVORA_ACCESS_BLOCK;
-    reason = 'access_intent_forced_access_block';
+    text = EVORA_CANONICAL_LOCATION_REPLY;
+    reason = 'access_intent_forced_canonical_location';
   } else if (isAddressIntent(params.userMessage)) {
-    text = EVORA_ADDRESS_BLOCK;
-    reason = 'address_intent_forced_address_block';
+    text = EVORA_CANONICAL_LOCATION_REPLY;
+    reason = 'address_intent_forced_canonical_location';
   } else if (isRegionIntent(params.userMessage)) {
-    text = EVORA_REGION_BLOCK;
-    reason = 'region_intent_forced_region_block';
+    text = EVORA_CANONICAL_LOCATION_REPLY;
+    reason = 'region_intent_forced_canonical_location';
   }
 
   if (reason) {
@@ -339,38 +346,46 @@ export function applyAnaNoRepeatMessageGuard(params: {
 
   const nUser = normalizeText(params.userMessage ?? '');
   let text =
-    'Me confirma s√≥ qual ponto voc√™ quer que eu detalhe: lazer, seguran√ßa, localiza√ß√£o ou formas de pagamento?';
+    'Me confirma sÛ qual ponto vocÍ quer que eu detalhe: lazer, seguranÁa, localizaÁ„o ou formas de pagamento?';
   if (/(quantos?\s+lotes?|numero\s+de\s+lotes?|vai\s+ter\s+quantos?\s+lotes?)/.test(nUser)) {
     text =
-      'Ainda n√£o tenho essa informa√ß√£o exata liberada por aqui.\nQuer que eu encaminhe para um corretor te passar certinho?';
-  } else if (/(localizacao|endereco|onde fica|como chegar|regiao|bairro|pedreira|rio abaixo|rota|maps|link)/.test(nUser)) {
+      'Ainda n„o tenho essa informaÁ„o exata liberada por aqui.\nQuer que eu encaminhe para um corretor te passar certinho?';
+  } else if (isExplicitLocationLinkIntent(params.userMessage)) {
     text =
-      'N√£o tenho um link de localiza√ß√£o liberado para envio por aqui.\nO √âvora fica em Atibaia, na regi√£o da Pedreira, pr√≥ximo ao bairro Rio Abaixo, com f√°cil acesso pela Rodovia Dom Pedro I.';
+      'N„o tenho um link de localizaÁ„o liberado para envio por aqui.\nO …vora fica em Atibaia, na regi„o da Pedreira, prÛximo ao bairro Rio Abaixo, com f·cil acesso pela Rodovia Dom Pedro I.';
+  } else if (isDirectLocationIntent(params.userMessage)) {
+    text = EVORA_DIRECT_LOCATION_NO_REPEAT_REPLY;
+    console.log('[ANA_LOCATION_DIRECT_NO_REPEAT_SAFE_REWRITE]', {
+      conversationId: params.conversationId,
+      enterpriseId: params.enterpriseId,
+      originalAnswer: params.answer,
+      finalAnswer: text,
+    });
   } else if (/(seguranca|portaria|controle de acesso)/.test(nUser)) {
-    text = 'O √âvora conta com portaria 24 horas com controle de acesso.';
+    text = 'O …vora conta com portaria 24 horas com controle de acesso.';
   } else if (/(lazer|areas? de lazer|piscina|academia|playground|quadra|coworking)/.test(nUser)) {
     text = [
-      'As √°reas de lazer do √âvora incluem:',
+      'As ·reas de lazer do …vora incluem:',
       'Piscina adulto',
       'Academia',
-      'Sal√£o de festas',
+      'Sal„o de festas',
       'Playground',
       'Coworking',
-      'Espa√ßo zen',
+      'EspaÁo zen',
       'Fireplace',
       'Quadra de beach tennis',
       'Campo society',
       '',
-      'Tamb√©m conta com esta√ß√£o de carregamento para carros el√©tricos e portaria 24 horas com controle de acesso.',
+      'TambÈm conta com estaÁ„o de carregamento para carros elÈtricos e portaria 24 horas com controle de acesso.',
     ].join('\n');
   } else if (/(entrega|obra|prazo|construir|libera)/.test(nUser)) {
-    text = 'A previs√£o de entrega do √âvora √© dezembro de 2027, e as obras est√£o avan√ßadas com 55% executado.';
+    text = 'A previs„o de entrega do …vora È dezembro de 2027, e as obras est„o avanÁadas com 55% executado.';
   } else if (/(entrada)/.test(nUser)) {
-    text = 'Temos planos estendidos em at√© 120x, parcelamento sem juros em at√© 48x e financiamento direto com a construtora.';
+    text = 'Temos planos estendidos em atÈ 120x, parcelamento sem juros em atÈ 48x e financiamento direto com a construtora.';
   } else if (/(condominio|taxa condominial)/.test(nUser)) {
-    text = 'O condom√≠nio tem estimativa entre R$400 e R$700, conforme defini√ß√µes da associa√ß√£o.';
+    text = 'O condomÌnio tem estimativa entre R$400 e R$700, conforme definiÁıes da associaÁ„o.';
   } else if (/(preco|valor|quanto custa|\blote\b)/.test(nUser)) {
-    text = 'Esse √© o valor inicial mesmo. Se quiser, o corretor pode simular conforme o lote dispon√≠vel.';
+    text = 'Esse È o valor inicial mesmo. Se quiser, o corretor pode simular conforme o lote disponÌvel.';
   }
 
   const reason = alreadyExact ? 'exact_duplicate_blocked' : 'semantic_duplicate_blocked';
