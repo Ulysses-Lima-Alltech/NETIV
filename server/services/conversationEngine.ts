@@ -4419,6 +4419,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     console.log('[ANA_DIRECT_VISIT_SCHEDULING]', directVisitSchedulingAudit);
 
     if (directVisitSchedulingDecision?.handled && directVisitSchedulingDecision.reply) {
+      const visitCustomerNameBeforeDecision =
+        (flowStateParsed.pendingVisitCustomerName || '').trim() || null;
+      let scheduledVisitStateSnapshot: CommercialFlowState | null = null;
       let deterministicVisitReply = directVisitSchedulingDecision.reply;
       await mergeConversationCommercialFlowState(conversationId, directVisitSchedulingDecision.nextState);
       flowStateParsed = directVisitSchedulingDecision.nextState;
@@ -4517,7 +4520,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               error: e instanceof Error ? e.message : String(e),
             });
           }
-          const scheduledCustomerName = (trustedCustomerName || effectiveConv.customer_name || '').trim();
+          const scheduledCustomerName = (
+            trustedCustomerName ||
+            effectiveConv.customer_name ||
+            visitCustomerNameBeforeDecision ||
+            ''
+          ).trim();
           const scheduledHm = directVisitSchedulingDecision.appointmentTimeHm ?? null;
           const scheduledHh = scheduledHm ? Number.parseInt(scheduledHm.slice(0, 2), 10) : null;
           const scheduledMm = scheduledHm ? scheduledHm.slice(3, 5) : null;
@@ -4562,6 +4570,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             },
             updatedAt: new Date().toISOString(),
           };
+          scheduledVisitStateSnapshot = scheduledState;
           await mergeConversationCommercialFlowState(conversationId, scheduledState);
           flowStateParsed = scheduledState;
           console.log('[ANA_VISIT_STATE_SAVED]', {
@@ -4739,7 +4748,44 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
         commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
       });
-      flowStateParsed = committedVisitState.nextState;
+      if (directVisitSchedulingDecision.appointmentConfirmed && scheduledVisitStateSnapshot?.visitScheduling?.status === 'scheduled') {
+        const baseVisitScheduling =
+          scheduledVisitStateSnapshot.visitScheduling ??
+          committedVisitState.nextState.visitScheduling ?? {
+            active: false,
+            offered: true,
+            accepted: true,
+            requestedDateText: null,
+            requestedTimeText: null,
+            requestedPeriodText: null,
+            normalizedDate: null,
+            normalizedTime: null,
+            nameCollected: false,
+            customerName: null,
+            status: 'scheduled' as const,
+          };
+        flowStateParsed = {
+          ...committedVisitState.nextState,
+          pendingVisitScheduling: false,
+          pendingVisitDateLabel: null,
+          pendingVisitDay: null,
+          pendingVisitDate: null,
+          pendingVisitTime: null,
+          pendingVisitPeriod: null,
+          pendingVisitEnterpriseId: null,
+          pendingVisitInvalidTime: null,
+          pendingVisitMissingSlot: null,
+          pendingVisitCustomerName: null,
+          pendingVisitConfirmationAsked: false,
+          visitScheduling: {
+            ...baseVisitScheduling,
+            active: false,
+            status: 'scheduled' as const,
+          },
+        };
+      } else {
+        flowStateParsed = committedVisitState.nextState;
+      }
       await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
       console.log('[ANA_COMMITTED_REPLY_STATE_SAVED]', {
         conversationId,

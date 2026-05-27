@@ -214,6 +214,22 @@ export function isVisitSchedulingAckOnlyMessage(text: string): boolean {
   return /^(sim|ok|ta|tÃ¡|certo|beleza|perfeito|combinado|aguardo|fico no aguardo|ok aguardo|ok aguardo agendamento|aguardo agendamento|pode ser|pode sim)$/.test(n);
 }
 
+export function isVisitSchedulingConfirmationMessage(text: string): boolean {
+  const n = norm(text).replace(/[.,;:!?]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!n) return false;
+
+  return (
+    isVisitSchedulingAckOnlyMessage(text) ||
+    /^(sim\s+)?pode\s+confirmar$/.test(n) ||
+    /^(sim\s+)?confirma$/.test(n) ||
+    /^(sim\s+)?confirmar$/.test(n) ||
+    /^confirmo$/.test(n) ||
+    /^confirmado$/.test(n) ||
+    /^sim\s+confirmado$/.test(n) ||
+    /^sim\s+pode\s+confirmar\s+sim$/.test(n)
+  );
+}
+
 function hasVisitSchedulingWords(text: string): boolean {
   const n = norm(text);
   return /\b(agendar|agendamento|agenda|marcar|visita|visitar|conhecer pessoalmente)\b/.test(n);
@@ -268,6 +284,7 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
     .filter(Boolean);
   const axisRequestedVisit = axes.some((x) => x === 'visita_agendamento' || x === 'agendar');
   const ackOnlyMessage = isVisitSchedulingAckOnlyMessage(input.userMessage);
+  const visitConfirmationMessage = isVisitSchedulingConfirmationMessage(input.userMessage);
   const hasVisitOfferContext = isAssistantVisitOfferContextMessage(input.lastAssistantMessage);
   const confirmationContextKind = input.confirmationContextKind ?? null;
   const shortConfirmationSuppressesVisit =
@@ -282,6 +299,7 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
   });
   if (
     input.flowState.pendingVisitScheduling === true &&
+    !visitConfirmationMessage &&
     isVisitSchedulingTopicSwitchMessage(input.userMessage)
   ) {
     return false;
@@ -563,6 +581,7 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
   const effectivePeriod = period ?? pendingPeriod;
   const effectiveName = explicitNameFromMessage || pendingCustomerName || knownNameFromContext(input);
   const userAckOnly = isVisitSchedulingAckOnlyMessage(input.userMessage);
+  const userVisitConfirmation = isVisitSchedulingConfirmationMessage(input.userMessage);
   const userConfusion = isEmpatheticConfusionMessage(input.userMessage);
 
   const capturedSlots: VisitSlotKey[] = [];
@@ -798,7 +817,7 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
         'nome'
       );
     }
-    const shouldConfirmNow = userAckOnly && pendingConfirmationAsked;
+    const shouldConfirmNow = pendingConfirmationAsked && userVisitConfirmation;
     if (!shouldConfirmNow) {
       const nextState = buildPendingState(input.flowState, {
         pending: true,

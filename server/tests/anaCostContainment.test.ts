@@ -24,6 +24,7 @@ import {
 import { selectSingleSafeNextTopic } from '../utils/anaFollowupQuestionService.js';
 import {
   handleVisitSchedulingDeterministically,
+  isVisitSchedulingConfirmationMessage,
   isVisitSchedulingIntent,
   isVisitSchedulingTopicSwitchMessage,
   reconstructVisitStateFromRecentMessages,
@@ -1023,6 +1024,128 @@ test('todos os slots validos com "sim" confirmam agendamento', () => {
   assert.match(confirm.reply ?? '', /visita ficou agendada/i);
 });
 
+test('confirmacao curta no fluxo completo continua funcionando', () => {
+  const started = handleVisitSchedulingDeterministically({
+    userMessage: 'Quero marcar uma visita.',
+    flowState: {},
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T10:00:00.000Z'),
+  });
+  assert.equal(started.nextState.pendingVisitScheduling, true);
+
+  const withDateTime = handleVisitSchedulingDeterministically({
+    userMessage: 'Hoje às 15h.',
+    flowState: started.nextState,
+    lastAssistantMessage: started.reply,
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T10:01:00.000Z'),
+  });
+  assert.equal(withDateTime.missingSlot, 'nome');
+
+  const withName = handleVisitSchedulingDeterministically({
+    userMessage: 'Ulysses.',
+    flowState: withDateTime.nextState,
+    lastAssistantMessage: withDateTime.reply,
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T10:02:00.000Z'),
+  });
+  assert.equal(withName.missingSlot, null);
+  assert.match(withName.reply ?? '', /posso confirmar sua visita/i);
+
+  const confirmed = handleVisitSchedulingDeterministically({
+    userMessage: 'Sim.',
+    flowState: withName.nextState,
+    lastAssistantMessage: withName.reply,
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T10:03:00.000Z'),
+  });
+  assert.equal(confirmed.appointmentConfirmed, true);
+  assert.equal(confirmed.nextState.pendingVisitScheduling, false);
+  assert.equal(confirmed.nextState.pendingVisitConfirmationAsked, false);
+  assert.match(confirmed.reply ?? '', /visita ficou agendada/i);
+});
+
+test('confirmacao natural "Sim, pode confirmar." conclui agendamento', () => {
+  const withDateTime = handleVisitSchedulingDeterministically({
+    userMessage: 'Pode agendar para amanha as 10h?',
+    flowState: {
+      pendingVisitScheduling: true,
+    },
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T11:00:00.000Z'),
+  });
+  assert.equal(withDateTime.missingSlot, 'nome');
+
+  const withName = handleVisitSchedulingDeterministically({
+    userMessage: 'Meu nome e Ulysses Lima.',
+    flowState: withDateTime.nextState,
+    lastAssistantMessage: withDateTime.reply,
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T11:01:00.000Z'),
+  });
+  assert.equal(withName.missingSlot, null);
+  assert.match(withName.reply ?? '', /posso confirmar sua visita/i);
+
+  const confirmed = handleVisitSchedulingDeterministically({
+    userMessage: 'Sim, pode confirmar.',
+    flowState: withName.nextState,
+    lastAssistantMessage: withName.reply,
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T11:02:00.000Z'),
+  });
+  assert.equal(confirmed.appointmentConfirmed, true);
+  assert.equal(confirmed.nextState.pendingVisitScheduling, false);
+  assert.equal(confirmed.nextState.pendingVisitConfirmationAsked, false);
+  assert.equal(confirmed.capturedSlots.includes('nome'), true);
+  assert.equal(confirmed.reason, 'date_and_time_confirmed');
+  assert.match(confirmed.reply ?? '', /visita ficou agendada/i);
+  assert.equal(/posso confirmar sua visita/i.test(confirmed.reply ?? ''), false);
+});
+
+test('variacoes naturais de confirmacao concluem quando pendingConfirmationAsked=true', () => {
+  const flowState = {
+    pendingVisitScheduling: true,
+    pendingVisitDateLabel: 'amanha',
+    pendingVisitDate: '2026-05-26',
+    pendingVisitTime: '10:00',
+    pendingVisitPeriod: null,
+    pendingVisitInvalidTime: null,
+    pendingVisitMissingSlot: null,
+    pendingVisitCustomerName: 'Ulysses Lima',
+    pendingVisitConfirmationAsked: true,
+  };
+  const variants = ['Pode confirmar.', 'Confirmo.', 'Confirmado.'];
+  for (const message of variants) {
+    assert.equal(isVisitSchedulingConfirmationMessage(message), true);
+    const result = handleVisitSchedulingDeterministically({
+      userMessage: message,
+      flowState,
+      enterpriseId: 10,
+      customerName: null,
+      customerPhone: '11999990000',
+      referenceNow: new Date('2026-05-25T11:05:00.000Z'),
+    });
+    assert.equal(result.appointmentConfirmed, true);
+    assert.equal(result.nextState.pendingVisitScheduling, false);
+    assert.equal(result.nextState.pendingVisitConfirmationAsked, false);
+    assert.equal(result.reason, 'date_and_time_confirmed');
+  }
+});
+
 test('fluxo completo de visita confirma sem reabrir coleta de slots', () => {
   const afterDateTime = handleVisitSchedulingDeterministically({
     userMessage: 'Hoje às 15',
@@ -1065,6 +1188,37 @@ test('fluxo completo de visita confirma sem reabrir coleta de slots', () => {
   assert.match(confirmed.reply ?? '', /visita ficou agendada/i);
   assert.equal(/para qual dia/i.test(confirmed.reply ?? ''), false);
   assert.equal(/posso confirmar sua visita/i.test(confirmed.reply ?? ''), false);
+});
+
+test('apos scheduled, mensagem de pagamento nao ativa intencao de visita', () => {
+  const intent = isVisitSchedulingIntent({
+    userMessage: 'Agora me fala das condicoes de pagamento.',
+    flowState: {
+      pendingVisitScheduling: false,
+      visitScheduling: {
+        active: false,
+        offered: true,
+        accepted: true,
+        requestedDateText: 'amanha',
+        requestedTimeText: '10h',
+        requestedPeriodText: null,
+        normalizedDate: '2026-05-26',
+        normalizedTime: '10:00',
+        nameCollected: true,
+        customerName: 'Ulysses Lima',
+        status: 'scheduled',
+      },
+    },
+    confirmationContextKind: 'not_short_confirmation',
+    resolvedIntent: null,
+    primaryAxis: null,
+    currentAxis: null,
+    requestedAxis: null,
+    lastAssistantMessage: 'Perfeito, sua visita ficou agendada para amanha as 10h.',
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T11:10:00.000Z'),
+  });
+  assert.equal(intent, false);
 });
 
 test('quando visita ja esta scheduled, policy nao ancora novamente em coleta de visita', () => {
@@ -2106,6 +2260,15 @@ test('qwen e deterministico passam pelo mesmo commit final sem envio extra', () 
   assert.match(source, /commitTurnResponse\(/);
   assert.match(source, /evoraKnowledgeDrivenMode/);
   assert.equal(source.includes('ana_main_reply_visit_offer'), false);
+});
+
+test('engine preserva scheduled apos commit e reaproveita nome coletado no fluxo de visita', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  assert.match(source, /visitCustomerNameBeforeDecision/);
+  assert.match(source, /effectiveConv\.customer_name \|\|\s*visitCustomerNameBeforeDecision/);
+  assert.match(source, /appointmentConfirmed && scheduledVisitStateSnapshot\?\.visitScheduling\?\.status === 'scheduled'/);
+  assert.match(source, /pendingVisitScheduling: false/);
+  assert.match(source, /status: 'scheduled' as const/);
 });
 
 test('split de outbound da Ana envia cada linha como mensagem separada', () => {
