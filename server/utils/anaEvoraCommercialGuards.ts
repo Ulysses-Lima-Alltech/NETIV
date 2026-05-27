@@ -1,10 +1,5 @@
-const EVORA_CANONICAL_LOCATION_REPLY =
-  'O Évora fica em Atibaia, na região da Pedreira, próximo ao bairro Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I.';
-const EVORA_DIRECT_LOCATION_NO_REPEAT_REPLY =
-  'Ele fica em Atibaia, na região da Pedreira, próximo ao bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.';
-
-export const EVORA_VISIT_OFFER_MESSAGES = [
-  'Se fizer sentido para você, posso te ajudar a agendar uma visita.',
+ï»¿export const EVORA_VISIT_OFFER_MESSAGES = [
+  'Se fizer sentido para vocÃª, posso te ajudar a agendar uma visita.',
 ] as const;
 
 function normalizeText(value: string | null | undefined): string {
@@ -17,12 +12,12 @@ function normalizeText(value: string | null | undefined): string {
 }
 
 function normalizeCompare(value: string | null | undefined): string {
-  return normalizeText(value).replace(/[.!?,;:()"'`´]/g, '').trim();
+  return normalizeText(value).replace(/[.!?,;:()"'`Â´]/g, '').trim();
 }
 
 function isGratitudeOnlyMessage(text: string | null | undefined): boolean {
   const n = normalizeText(text);
-  return /^(obrigad[oa]|muito obrigad[oa]|ok obrigad[oa]|valeu|vlw|agradeco|agradeço)[.! ]*$/.test(n);
+  return /^(obrigad[oa]|muito obrigad[oa]|ok obrigad[oa]|valeu|vlw|agradeco|agradeÃ§o)[.! ]*$/.test(n);
 }
 
 const EXPLICIT_VISIT_CTA_PATTERNS: RegExp[] = [
@@ -43,35 +38,6 @@ export function hasRecentExplicitVisitCta(recentAssistantReplies: string[]): boo
 function isEvoraEnterprise(enterpriseName: string | null | undefined): boolean {
   const n = normalizeText(enterpriseName);
   return n === 'evora' || n.includes('evora');
-}
-
-function isAddressIntent(userMessage: string): boolean {
-  const n = normalizeText(userMessage);
-  return /(localizacao|onde fica|endereco|bairro|regiao|localizacao exata|ponto de referencia)/.test(n);
-}
-
-function isAccessIntent(userMessage: string): boolean {
-  const n = normalizeText(userMessage);
-  return /(como e o acesso|como eh o acesso|acesso)/.test(n);
-}
-
-function isRegionIntent(userMessage: string): boolean {
-  const n = normalizeText(userMessage);
-  return /(regiao|atibaia|cidade|gastronomia|qualidade de vida|pontos positivos|clima)/.test(n);
-}
-
-function isExplicitLocationLinkIntent(userMessage: string | null | undefined): boolean {
-  const n = normalizeText(userMessage);
-  if (!n) return false;
-  return /(tem o link da localizacao|tem link da localizacao|link da localizacao|link de localizacao|google maps|maps|mapa|rota|como chegar|manda localizacao|manda a localizacao|me envia a localizacao|me envia localizacao|me manda localizacao|me manda a localizacao)/.test(
-    n
-  );
-}
-
-function isDirectLocationIntent(userMessage: string | null | undefined): boolean {
-  const n = normalizeText(userMessage);
-  if (!n) return false;
-  return /(localizacao|onde fica|endereco|regiao|bairro|pedreira|rio abaixo)/.test(n);
 }
 
 function hasLucasAsAccessLeak(answer: string): boolean {
@@ -112,30 +78,31 @@ export function blockLegacyAggressiveVisitCtaByIntent(params: {
     nIntent === 'valor_condominio' ||
     nIntent === 'entrega_empreendimento' ||
     nIntent === 'esclarecimento';
+
   if (!containsLegacyAggressiveVisitCta(params.text)) {
     return { text: params.text, changed: false, reason: null };
   }
   if (!disallowByIntent && !params.hasRecentVisitCta) {
     return { text: params.text, changed: false, reason: null };
   }
-  if (nIntent === 'localizacao_endereco') {
-    return {
-      text: 'Você vem de São Paulo ou de Atibaia?',
-      changed: true,
-      reason: 'legacy_visit_cta_blocked_for_location',
-    };
+
+  const stripped = params.text
+    .replace(/que tal voce marcar uma visita\??/gi, '')
+    .replace(/aproveita pra conhecer nosso stand\??/gi, '')
+    .replace(/55%\s*de\s*obras executadas[.!?]?/gi, '')
+    .replace(/vale a pena a visita[.!?]?/gi, '')
+    .replace(/vamos marcar\??/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  if (!stripped || stripped === params.text) {
+    return { text: params.text, changed: false, reason: null };
   }
-  if (nIntent === 'entrega_empreendimento') {
-    return {
-      text: 'Quer saber também como está a infraestrutura prevista?',
-      changed: true,
-      reason: 'legacy_visit_cta_blocked_for_delivery',
-    };
-  }
+
   return {
-    text: 'Se você quiser, posso te explicar esse ponto com mais detalhe.',
+    text: stripped,
     changed: true,
-    reason: 'legacy_visit_cta_blocked',
+    reason: 'legacy_visit_cta_removed',
   };
 }
 
@@ -197,39 +164,39 @@ export function applyEvoraLocationGuard(params: {
   userMessage: string;
   answer: string;
 }): { text: string; changed: boolean; reason: string | null } {
+  void params.userMessage;
   if (!isEvoraEnterprise(params.enterpriseName)) {
     return { text: params.answer, changed: false, reason: null };
   }
 
-  let text = params.answer.trim();
-  let reason: string | null = null;
-
-  if (hasLucasAsAccessLeak(text)) {
-    text = EVORA_CANONICAL_LOCATION_REPLY;
-    reason = 'lucas_garces_used_as_access';
-  } else if (isAccessIntent(params.userMessage)) {
-    text = EVORA_CANONICAL_LOCATION_REPLY;
-    reason = 'access_intent_forced_canonical_location';
-  } else if (isAddressIntent(params.userMessage)) {
-    text = EVORA_CANONICAL_LOCATION_REPLY;
-    reason = 'address_intent_forced_canonical_location';
-  } else if (isRegionIntent(params.userMessage)) {
-    text = EVORA_CANONICAL_LOCATION_REPLY;
-    reason = 'region_intent_forced_canonical_location';
+  if (!hasLucasAsAccessLeak(params.answer)) {
+    return { text: params.answer, changed: false, reason: null };
   }
 
-  if (reason) {
+  const sanitized = params.answer
+    .replace(/[^.!?]*lucas nogueira garces[^.!?]*[.!?]?/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  if (!sanitized || sanitized === params.answer.trim()) {
     console.log('[ANA_EVORA_LOCATION_GUARD]', {
       conversationId: params.conversationId,
       enterpriseId: params.enterpriseId,
-      reason,
+      reason: 'lucas_garces_access_detected_no_rewrite',
       originalAnswer: params.answer,
-      finalAnswer: text,
+      finalAnswer: params.answer,
     });
-    return { text, changed: true, reason };
+    return { text: params.answer, changed: false, reason: null };
   }
 
-  return { text: params.answer, changed: false, reason: null };
+  console.log('[ANA_EVORA_LOCATION_GUARD]', {
+    conversationId: params.conversationId,
+    enterpriseId: params.enterpriseId,
+    reason: 'lucas_garces_access_sentence_removed',
+    originalAnswer: params.answer,
+    finalAnswer: sanitized,
+  });
+  return { text: sanitized, changed: true, reason: 'lucas_garces_access_sentence_removed' };
 }
 
 export function applyAnaVisitOfferGuard(params: {
@@ -344,59 +311,13 @@ export function applyAnaNoRepeatMessageGuard(params: {
     return { text: params.answer, changed: false, reason: null };
   }
 
-  const nUser = normalizeText(params.userMessage ?? '');
-  let text =
-    'Me confirma só qual ponto você quer que eu detalhe: lazer, segurança, localização ou formas de pagamento?';
-  if (/(quantos?\s+lotes?|numero\s+de\s+lotes?|vai\s+ter\s+quantos?\s+lotes?)/.test(nUser)) {
-    text =
-      'Ainda não tenho essa informação exata liberada por aqui.\nQuer que eu encaminhe para um corretor te passar certinho?';
-  } else if (isExplicitLocationLinkIntent(params.userMessage)) {
-    text =
-      'Não tenho um link de localização liberado para envio por aqui.\nO Évora fica em Atibaia, na região da Pedreira, próximo ao bairro Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I.';
-  } else if (isDirectLocationIntent(params.userMessage)) {
-    text = EVORA_DIRECT_LOCATION_NO_REPEAT_REPLY;
-    console.log('[ANA_LOCATION_DIRECT_NO_REPEAT_SAFE_REWRITE]', {
-      conversationId: params.conversationId,
-      enterpriseId: params.enterpriseId,
-      originalAnswer: params.answer,
-      finalAnswer: text,
-    });
-  } else if (/(seguranca|portaria|controle de acesso)/.test(nUser)) {
-    text = 'O Évora conta com portaria 24 horas com controle de acesso.';
-  } else if (/(lazer|areas? de lazer|piscina|academia|playground|quadra|coworking)/.test(nUser)) {
-    text = [
-      'As áreas de lazer do Évora incluem:',
-      'Piscina adulto',
-      'Academia',
-      'Salão de festas',
-      'Playground',
-      'Coworking',
-      'Espaço zen',
-      'Fireplace',
-      'Quadra de beach tennis',
-      'Campo society',
-      '',
-      'Também conta com estação de carregamento para carros elétricos e portaria 24 horas com controle de acesso.',
-    ].join('\n');
-  } else if (/(entrega|obra|prazo|construir|libera)/.test(nUser)) {
-    text = 'A previsão de entrega do Évora é dezembro de 2027, e as obras estão avançadas com 55% executado.';
-  } else if (/(entrada)/.test(nUser)) {
-    text = 'Temos planos estendidos em até 120x, parcelamento sem juros em até 48x e financiamento direto com a construtora.';
-  } else if (/(condominio|taxa condominial)/.test(nUser)) {
-    text = 'O condomínio tem estimativa entre R$400 e R$700, conforme definições da associação.';
-  } else if (/(preco|valor|quanto custa|\blote\b)/.test(nUser)) {
-    text = 'Esse é o valor inicial mesmo. Se quiser, o corretor pode simular conforme o lote disponível.';
-  }
-
-  const reason = alreadyExact ? 'exact_duplicate_blocked' : 'semantic_duplicate_blocked';
+  const reason = alreadyExact ? 'exact_duplicate_detected_no_rewrite' : 'semantic_duplicate_detected_no_rewrite';
   console.log('[ANA_NO_REPEAT_MESSAGE_GUARD]', {
     conversationId: params.conversationId,
     enterpriseId: params.enterpriseId,
     reason,
     originalAnswer: params.answer,
-    finalAnswer: text,
+    finalAnswer: params.answer,
   });
-  return { text, changed: true, reason };
+  return { text: params.answer, changed: false, reason };
 }
-
-

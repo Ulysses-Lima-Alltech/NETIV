@@ -27,7 +27,10 @@ import {
   isVisitSchedulingIntent,
   reconstructVisitStateFromRecentMessages,
 } from '../utils/anaDirectVisitScheduling.js';
-import { __testOnlyResolveMediaPostSendFollowup } from '../services/conversationEngine.js';
+import {
+  __testOnlyResolveMediaPostSendFollowup,
+  __testOnlySplitAnaOutboundMessages,
+} from '../services/conversationEngine.js';
 import {
   extractCustomerNameFromUserUtterance,
   isUncertainCustomerNameCue,
@@ -1935,13 +1938,12 @@ test('pedido de rota sem link autorizado nao repete promessa de referencia', () 
     recentAssistantReplies: ['O Evora fica em Atibaia, na regiao da Pedreira, com acesso pela Rodovia Dom Pedro I.'],
     semanticallySimilar: (a, b) => a.toLowerCase() === b.toLowerCase(),
   });
-  assert.equal(guarded.changed, true);
-  assert.match(guarded.text, /n.{0,2}o tenho um link de localiza/i);
-  assert.match(guarded.text, /atibaia/i);
+  assert.equal(guarded.changed, false);
+  assert.match(guarded.text, /atibaia|pedreira|rodovia dom pedro i/i);
   assert.equal(/referencia de acesso/i.test(guarded.text), false);
 });
 
-test('no-repeat guard de localizacao direta usa rewrite seguro sem fallback de link', () => {
+test('no-repeat guard nao troca resposta correta por fallback deterministico', () => {
   const guarded = applyAnaNoRepeatMessageGuard({
     conversationId: 903,
     enterpriseId: 10,
@@ -1951,7 +1953,7 @@ test('no-repeat guard de localizacao direta usa rewrite seguro sem fallback de l
     recentAssistantReplies: ['O Evora fica em Atibaia, na regiao da Pedreira, com acesso pela Rodovia Dom Pedro I.'],
     semanticallySimilar: (a, b) => a.toLowerCase() === b.toLowerCase(),
   });
-  assert.equal(guarded.changed, true);
+  assert.equal(guarded.changed, false);
   assert.match(guarded.text, /atibaia|pedreira|rodovia dom pedro i/i);
   assert.equal(/nao tenho um link de localizacao liberado/i.test(guarded.text), false);
 });
@@ -1970,16 +1972,45 @@ test('logs de orquestracao de turno estao presentes', () => {
   assert.match(source, /\[ANA_LOCATION_LINK_INTENT_REJECTED_DIRECT_LOCATION\]/);
   assert.match(source, /\[ANA_FIRST_GREETING_FINAL_NORMALIZED\]/);
   assert.match(source, /\[ANA_FIRST_GREETING_FORBIDDEN_PHRASE_REMOVED\]/);
+  assert.match(source, /\[ANA_COMMERCIAL_RULES_BYPASSED_CANONICAL_BASE\]/);
 
   const guardsSource = readFileSync(path.resolve(process.cwd(), 'utils/anaEvoraCommercialGuards.ts'), 'utf8');
-  assert.match(guardsSource, /\[ANA_LOCATION_DIRECT_NO_REPEAT_SAFE_REWRITE\]/);
+  assert.match(guardsSource, /\[ANA_NO_REPEAT_MESSAGE_GUARD\]/);
 });
 
 test('qwen e deterministico passam pelo mesmo commit final sem envio extra', () => {
   const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
   assert.match(source, /commitTurnResponse\(/);
-  assert.match(source, /\[ANA_QWEN_SKIPPED_BY_DETERMINISTIC\]/);
+  assert.match(source, /evoraKnowledgeDrivenMode/);
   assert.equal(source.includes('ana_main_reply_visit_offer'), false);
+});
+
+test('split de outbound da Ana envia cada linha como mensagem separada', () => {
+  const parts = __testOnlySplitAnaOutboundMessages('linha 1\n\nlinha 2\nlinha 3\n');
+  assert.deepEqual(parts, ['linha 1', 'linha 2', 'linha 3']);
+});
+
+test('policy em modo knowledge-driven nao injeta pergunta artificial de topico', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 4100,
+    userMessage: 'endereco',
+    replyText: 'Fica na Estrada dos Pires, s/n, na regiao da Pedreira, bairro Rio Abaixo, em Atibaia.',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'user', content: 'endereco' }],
+    disableFollowupQuestion: false,
+    knowledgeDrivenMode: true,
+  });
+  assert.equal(/quer que eu te explique|quer saber tambem sobre|qual ponto voce quer/i.test(policy.text), false);
+  assert.match(policy.text, /estrada dos pires|atibaia|rio abaixo/i);
+});
+
+test('engine do evora nao força resposta deterministica de localizacao nem triplet fixo', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  assert.equal(source.includes('ANA_EVORA_LOCATION_TRIPLET_SELECTED'), false);
+  assert.equal(source.includes('EVORA_LOCATION_REPLY_CHUNKS'), false);
+  assert.match(source, /evoraKnowledgeDrivenMode/);
+  assert.match(source, /ANA_COMMERCIAL_RULES_BYPASSED_CANONICAL_BASE/);
 });
 
 

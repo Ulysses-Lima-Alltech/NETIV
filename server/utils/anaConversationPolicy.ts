@@ -890,6 +890,7 @@ export interface ApplyAnaConversationPolicyInput {
     lastOfferedTopics?: string[] | null;
   };
   safeTopicAvailability?: AnaOfferAvailability | null;
+  knowledgeDrivenMode?: boolean;
 }
 
 export interface ApplyAnaConversationPolicyResult {
@@ -958,6 +959,7 @@ export function applyAnaConversationPolicy(
   const overrideQuestionText = shortConfirmationContext?.lastAssistantQuestionText ?? null;
   const overrideOfferedTopics = shortConfirmationContext?.lastOfferedTopics ?? null;
   const safeTopicAvailability = input.safeTopicAvailability ?? null;
+  const knowledgeDrivenMode = input.knowledgeDrivenMode === true;
 
   if (visitFlowActive) {
     console.log('[ANA_VISIT_FLOW_ACTIVE]', {
@@ -1061,6 +1063,7 @@ export function applyAnaConversationPolicy(
   }
 
   if (
+    !knowledgeDrivenMode &&
     !visitFlowActive &&
     (requestedTopicAction.type === 'direct_topic_request' || requestedTopicAction.type === 'accepted_topic_offer') &&
     requestedTopicAction.topic
@@ -1127,7 +1130,7 @@ export function applyAnaConversationPolicy(
 
   if (norm(reply).includes(norm(BANNED_GENERIC_FALLBACK))) {
     const replacementTopic = resolvedTopicAction ?? detectDirectDeterministicTopicRequest(input.userMessage);
-    if (replacementTopic) {
+    if (!knowledgeDrivenMode && replacementTopic) {
       reply = buildDeterministicTopicReply({
         topic: replacementTopic,
         recentlyDiscussedTopics: state.recentlyDiscussedTopics ?? [],
@@ -1139,7 +1142,8 @@ export function applyAnaConversationPolicy(
         });
       }
     } else {
-      reply = TOPIC_CLARIFICATION_FALLBACK;
+      const cleaned = (reply || '').replace(new RegExp(BANNED_GENERIC_FALLBACK, 'ig'), '').replace(/\s{2,}/g, ' ').trim();
+      reply = cleaned || SPECIFIC_DETAIL_FALLBACK_QUESTION;
     }
     appliedRules.push('bad_generic_fallback_blocked');
     console.log('[ANA_BAD_GENERIC_FALLBACK_BLOCKED]', {
@@ -1148,7 +1152,7 @@ export function applyAnaConversationPolicy(
     });
   }
 
-  if (!visitFlowActive && (userAffirmative || userContinuationDemand)) {
+  if (!knowledgeDrivenMode && !visitFlowActive && (userAffirmative || userContinuationDemand)) {
     const replyLooksVisitScheduling = containsVisitOffer(reply) || looksLikeVisitFlowReply(reply);
     if (userAffirmative && replyLooksVisitScheduling && !lastAssistantQuestionContext.askedVisitOffer) {
       console.log('[ANA_VISIT_CONFIRMATION_REJECTED_NO_VISIT_CONTEXT]', {
@@ -1320,6 +1324,7 @@ export function applyAnaConversationPolicy(
   }
 
   const shouldSelectNextQuestion =
+    !knowledgeDrivenMode &&
     !input.disableFollowupQuestion &&
     !visitFlowActive &&
     reply.length > 0 &&
@@ -1393,6 +1398,7 @@ export function applyAnaConversationPolicy(
   }
 
   const shouldEnforceSingleQuestion =
+    !knowledgeDrivenMode &&
     !input.isFirstAnaReply &&
     !visitFlowActive &&
     !brokerAskAlreadyPresent(reply) &&

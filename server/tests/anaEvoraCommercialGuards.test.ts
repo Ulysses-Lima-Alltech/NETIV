@@ -3,13 +3,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-test('evora location guard define blocos e bloqueia lucas como acesso', () => {
+test('evora location guard remove apenas leak especifico sem forcar resposta fixa', () => {
   const source = readFileSync(path.resolve(process.cwd(), 'utils/anaEvoraCommercialGuards.ts'), 'utf8');
-  assert.match(source, /Atibaia faz parte da região bragantina/);
-  assert.match(source, /Fica na Região da Pedreira, no bairro do Rio Abaixo/);
-  assert.match(source, /fácil acesso pela Rodovia Dom Pedro I/);
   assert.match(source, /hasLucasAsAccessLeak/);
   assert.match(source, /\[ANA_EVORA_LOCATION_GUARD\]/);
+  assert.match(source, /lucas_garces_access_sentence_removed/);
+  assert.equal(source.includes('access_intent_forced_canonical_location'), false);
 });
 
 test('visit offer guard adiciona visita e evita repeticao', () => {
@@ -34,7 +33,7 @@ test('bloqueio de CTA agressivo legado existe', () => {
 test('no repeat guard existe e registra log', () => {
   const source = readFileSync(path.resolve(process.cwd(), 'utils/anaEvoraCommercialGuards.ts'), 'utf8');
   assert.match(source, /applyAnaNoRepeatMessageGuard/);
-  assert.match(source, /exact_duplicate_blocked|semantic_duplicate_blocked/);
+  assert.match(source, /exact_duplicate_detected_no_rewrite|semantic_duplicate_detected_no_rewrite/);
   assert.match(source, /\[ANA_NO_REPEAT_MESSAGE_GUARD\]/);
 });
 

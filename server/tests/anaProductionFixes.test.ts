@@ -8,7 +8,7 @@ import { applyAnaNoRepeatMessageGuard, blockLegacyAggressiveVisitCtaByIntent } f
 test('Teste 1: entrega com base resolvida nunca envia label vazio', () => {
   const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
   assert.match(source, /isWeakEntregaAnswer/);
-  assert.match(source, /Ainda não tenho a previsão exata liberada por aqui\. O corretor confirma certinho pra você\./);
+  assert.match(source, /Ainda não tenho essa previsão exata liberada por aqui\./);
 });
 
 test('Teste 2: "quando sera entregue" sem acento cai em entrega_empreendimento', () => {
@@ -33,12 +33,13 @@ test('Teste 3: "perguntei quando sera entregue" cai em entrega_empreendimento', 
 
 test('Teste 4: localização não deve carregar CTA agressivo legado', () => {
   const guarded = blockLegacyAggressiveVisitCtaByIntent({
-    text: 'Que tal você marcar uma visita?',
+    text: 'Que tal voce marcar uma visita? O Evora fica em Atibaia.',
     intent: 'localizacao_endereco',
     hasRecentVisitCta: false,
   });
   assert.equal(guarded.changed, true);
-  assert.equal(guarded.text, 'Você vem de São Paulo ou de Atibaia?');
+  assert.equal(/que tal|vamos marcar|visita\\?/i.test(guarded.text), false);
+  assert.match(guarded.text, /evora|atibaia/i);
 });
 
 test('Teste 5: fallback repetido não repete texto genérico antigo', () => {
@@ -51,8 +52,8 @@ test('Teste 5: fallback repetido não repete texto genérico antigo', () => {
     recentAssistantReplies: ['Isso mesmo. Se quiser, eu detalho esse ponto de forma objetiva.'],
     semanticallySimilar: (a, b) => a === b,
   });
-  assert.equal(out.changed, true);
-  assert.notEqual(out.text, 'Isso mesmo. Se quiser, eu detalho esse ponto de forma objetiva.');
+  assert.equal(out.changed, false);
+  assert.equal(out.text, 'Isso mesmo. Se quiser, eu detalho esse ponto de forma objetiva.');
 });
 
 test('Teste 6: envios finais passam por guard de não repetição no engine', () => {
