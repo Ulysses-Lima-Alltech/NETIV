@@ -380,6 +380,52 @@ function applyShortMaterialReplyPolicy(
 const BROKER_DETAIL_ROUTING_TEXT =
   'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?';
 
+const EVORA_LOT_COUNT_ROUTING_REPLY =
+  'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².';
+
+function isUserAskingEvoraLotCountOrCondoSize(userMessage?: string | null): boolean {
+  const n = normClosure(userMessage || '');
+  if (!n) return false;
+  return (
+    /\b(quantos?\s+lotes?|numero\s+de\s+lotes?|número\s+de\s+lotes?|total\s+de\s+lotes?|quantas?\s+unidades?)\b/.test(n) ||
+    /\b(condominio|condomínio|loteamento)\b.*\b(grande|pequeno|muito grande|tamanho|porte)\b/.test(n) ||
+    /\bnao quero\b.*\b(condominio|condomínio|loteamento)\b.*\b(grande|muito grande)\b/.test(n)
+  );
+}
+
+function sanitizeEvoraLotCountRestrictedReply(text: string, userMessage?: string | null): string {
+  const clean = String(text || '').trim();
+  const n = normClosure(clean);
+  const askedLotCount = isUserAskingEvoraLotCountOrCondoSize(userMessage);
+
+  const hasForbiddenLotCount =
+    /\b145\s+lotes\b/i.test(clean) ||
+    /\[\s*n[uú]mero\s+de\s+lotes\s*\]/i.test(clean) ||
+    /\bpossui\s+um\s+total\s+de\s+\[.*?\]\s+lotes\b/i.test(clean);
+
+  const hasBadNoInfoForKnownRestrictedTopic =
+    askedLotCount &&
+    (
+      /\bnao temos esse detalhe\b/.test(n) ||
+      /\bnao ha uma informacao especifica\b/.test(n) ||
+      /\bnumero exato nao foi mencionado\b/.test(n) ||
+      /\bnao tenho essa informacao\b/.test(n) ||
+      /\bnao consta\b/.test(n)
+    );
+
+  const leaksInternalTemplate =
+    /\bINTENCAO\b/i.test(clean) ||
+    /\bINTENÇÃO\b/i.test(clean) ||
+    /\bRESPOSTA\b/i.test(clean) ||
+    /\[.*?\]/.test(clean);
+
+  if (askedLotCount || hasForbiddenLotCount || hasBadNoInfoForKnownRestrictedTopic || leaksInternalTemplate) {
+    return EVORA_LOT_COUNT_ROUTING_REPLY;
+  }
+
+  return clean;
+}
+
 function removeInternalLimitationSentences(text: string): { text: string; changed: boolean } {
   const lines = (text || '')
     .split(/\r?\n/)
@@ -465,7 +511,8 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
     (acc, re) => acc.replace(re, ' ').replace(/\s{2,}/g, ' ').trim(),
     dedupGreeting,
   );
-  return noInternalFragments.slice(0, 4000);
+  const lotCountSafe = sanitizeEvoraLotCountRestrictedReply(noInternalFragments, opts?.userMessage ?? null);
+  return lotCountSafe.slice(0, 4000);
 }
 
 function truncateAtWordBoundary(text: string, maxLen: number): string {

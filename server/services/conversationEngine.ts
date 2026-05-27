@@ -1065,6 +1065,14 @@ function pickLocationLinkFromKnowledge(knowledgeText: string): string | null {
   return match?.[0]?.trim() || null;
 }
 
+function sanitizeEvoraRestrictedKnowledgeForAna(text: string): string {
+  return String(text || '')
+    .replace(/^Quantidade total de lotes:\s*\d+\s*$/gim, 'Quantidade total de lotes: informação tratada pelo corretor')
+    .replace(/\b145\s+lotes\b/gi, 'quantidade de lotes tratada pelo corretor');
+}
+
+export const __testOnlySanitizeEvoraRestrictedKnowledgeForAna = sanitizeEvoraRestrictedKnowledgeForAna;
+
 function hasConversationalUnsupportedPromise(text: string): boolean {
   const n = normText(text || '');
   if (!n) return false;
@@ -3702,12 +3710,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         : chunkMeta.selectedChunkCount;
       for (const chunkId of chunkMeta.selectedChunkIds) ragChunkIds.add(chunkId);
       for (const fileName of chunkMeta.sourceFiles) ragSourceFiles.add(fileName);
-      const kb = evoraKnowledgePriority
+      const rawKb = evoraKnowledgePriority
         ? await loadAgentKnowledgeText(eid)
         : likelyLocalRuntimeForRag
           ? ''
           : await loadAgentKnowledgeText(eid);
-      const merged = [chunk, kb].filter(Boolean).join('\n\n');
+      const kb = evoraKnowledgePriority ? sanitizeEvoraRestrictedKnowledgeForAna(rawKb) : rawKb;
+      const safeChunk = evoraKnowledgePriority ? sanitizeEvoraRestrictedKnowledgeForAna(chunk || '') : chunk;
+      const merged = evoraKnowledgePriority
+        ? [kb, safeChunk].filter(Boolean).join('\n\n')
+        : [chunk, kb].filter(Boolean).join('\n\n');
       if (merged.trim()) knowledgeParts.push(`--- ${row.name} ---\n${merged}`);
     }
     const knowledgeText = knowledgeParts.join('\n\n').slice(0, likelyLocalRuntimeForRag ? localQwenMaxContextChars : 52_000);

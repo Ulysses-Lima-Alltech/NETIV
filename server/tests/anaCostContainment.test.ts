@@ -13,6 +13,7 @@ import {
   applyFirstUsefulGreetingStyle,
   evaluateAnaEmptyFallbackGuard,
   evaluateAnaOutboundText,
+  finalizeAnaReplyText,
   sanitizeTooManyQuestionsReply,
 } from '../utils/anaReplyFinalize.js';
 import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
@@ -31,6 +32,7 @@ import {
 } from '../utils/anaDirectVisitScheduling.js';
 import {
   __testOnlyResolveMediaPostSendFollowup,
+  __testOnlySanitizeEvoraRestrictedKnowledgeForAna,
   __testOnlySplitAnaOutboundMessages,
 } from '../services/conversationEngine.js';
 import {
@@ -412,6 +414,70 @@ test('sanitiza resposta valida com perguntas finais em excesso sem esvaziar cont
     output.includes('Quer que eu te fale mais sobre a localizacao?') ||
     output.includes('Quer saber mais sobre a localizacao ou prefere falar com um corretor?');
   assert.equal(hasSafeQuestion, true);
+});
+
+test('finalizeAnaReplyText bloqueia placeholder de lotes e roteia para resposta segura', () => {
+  const output = finalizeAnaReplyText(
+    'O Residencial Évora possui um total de [número de lotes] lotes.',
+    { userMessage: 'Lá são quantos lotes?' }
+  );
+  assert.equal(
+    output,
+    'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².'
+  );
+});
+
+test('finalizeAnaReplyText bloqueia numero exato de lotes e roteia para resposta segura', () => {
+  const output = finalizeAnaReplyText('O Évora tem 145 lotes.', {
+    userMessage: 'Lá são quantos lotes?',
+  });
+  assert.equal(
+    output,
+    'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².'
+  );
+});
+
+test('finalizeAnaReplyText bloqueia resposta generica de falta de informacao para porte/quantidade', () => {
+  const output = finalizeAnaReplyText('Não temos informações específicas sobre o número total de lotes.', {
+    userMessage: 'É um condomínio grande?',
+  });
+  assert.equal(
+    output,
+    'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².'
+  );
+});
+
+test('finalizeAnaReplyText nao aplica fallback de lotes para pergunta de localizacao', () => {
+  const output = finalizeAnaReplyText('O Évora fica em Atibaia, com acesso pela Rodovia Dom Pedro I.', {
+    userMessage: 'Onde fica?',
+  });
+  assert.equal(
+    output ===
+      'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².',
+    false
+  );
+  assert.match(output, /atibaia|rodovia dom pedro/i);
+});
+
+test('finalizeAnaReplyText nao aplica fallback de lotes para pergunta de valor', () => {
+  const output = finalizeAnaReplyText('O valor inicial parte de R$ 279.000,00.', {
+    userMessage: 'Quanto está o lote?',
+  });
+  assert.equal(
+    output ===
+      'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².',
+    false
+  );
+  assert.match(output, /r\$\s*279\.000,00|valor inicial/i);
+});
+
+test('sanitizacao de knowledge do evora mascara quantidade total de lotes', () => {
+  const output = __testOnlySanitizeEvoraRestrictedKnowledgeForAna(
+    'Quantidade total de lotes: 145\nÁrea total: 128.027,28 m²\nLotes de 360 m² até 725 m²'
+  );
+  assert.match(output, /Quantidade total de lotes: informação tratada pelo corretor/i);
+  assert.equal(/\b145\b/.test(output), false);
+  assert.match(output, /128\.027,28 m²|360 m²|725 m²/i);
 });
 
 test('reengagement bloqueia inbound e outbound recentes', () => {
