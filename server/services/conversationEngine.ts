@@ -164,6 +164,7 @@ import {
   isVisitSchedulingIntent,
   isVisitSchedulingLoopFallbackReply,
   isVisitSchedulingRefusalMessage,
+  isVisitSchedulingTopicSwitchMessage,
   reconstructVisitStateFromRecentMessages,
 } from '../utils/anaDirectVisitScheduling.js';
 import {
@@ -4327,7 +4328,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         });
       }
     }
+    const visitTopicSwitchRequested =
+      flowStateParsed.pendingVisitScheduling === true &&
+      isVisitSchedulingTopicSwitchMessage(trimmed);
     const visitSchedulingFlowActiveForTurn =
+      !visitTopicSwitchRequested &&
       !visitFlowSuppressedByConfirmationContext &&
       (directVisitSchedulingIntent ||
         flowStateParsed.pendingVisitScheduling === true ||
@@ -4633,6 +4638,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         }
       }
 
+      const visitStillActiveForPolicy =
+        directVisitSchedulingDecision.appointmentConfirmed !== true &&
+        (
+          flowStateParsed.pendingVisitScheduling === true ||
+          flowStateParsed.visitScheduling?.active === true
+        );
       const visitPolicyResult = applyAnaConversationPolicy({
         conversationId,
         userMessage: trimmed,
@@ -4650,7 +4661,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             : null,
         now: lastUserMessageAt,
         disableFollowupQuestion: true,
-        visitFlowActive: true,
+        visitFlowActive: visitStillActiveForPolicy,
         shortConfirmationContext: shortConfirmationContext.isShortConfirmation
           ? {
               kind: shortConfirmationContext.kind,

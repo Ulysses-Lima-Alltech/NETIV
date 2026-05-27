@@ -219,6 +219,21 @@ function hasVisitSchedulingWords(text: string): boolean {
   return /\b(agendar|agendamento|agenda|marcar|visita|visitar|conhecer pessoalmente)\b/.test(n);
 }
 
+export function isVisitSchedulingTopicSwitchMessage(text: string): boolean {
+  const n = norm(text);
+  if (!n) return false;
+
+  if (isVisitSchedulingAckOnlyMessage(text)) return false;
+  if (hasVisitSchedulingWords(text)) return false;
+  if (parseDateMention(text, new Date())) return false;
+  if (parseTimeHmFromText(text, { allowStandaloneHour: true })) return false;
+  if (parsePeriodFromText(text)) return false;
+
+  return /\b(valor|preco|preço|parcela|parcelamento|pagamento|entrada|financiamento|lazer|seguranca|segurança|localizacao|localização|endereco|endereço|maps|book|foto|fotos|video|vídeo)\b/.test(
+    n
+  );
+}
+
 export function isVisitSchedulingRefusalMessage(text: string): boolean {
   const n = norm(text);
   return /\b(nao quero agendar|nao quero visita|nao quero marcar|nao quero horario|nao quero isso|so quero detalhes|quero detalhes|me passa os detalhes|quero saber dos lotes|quero lote plano|lotes planos|ja falei)\b/.test(n);
@@ -265,6 +280,12 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
     lastAssistantMessage: input.lastAssistantMessage,
     referenceNow: input.referenceNow,
   });
+  if (
+    input.flowState.pendingVisitScheduling === true &&
+    isVisitSchedulingTopicSwitchMessage(input.userMessage)
+  ) {
+    return false;
+  }
   if (input.flowState.pendingVisitScheduling === true) {
     return true;
   }

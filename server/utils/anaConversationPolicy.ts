@@ -952,6 +952,9 @@ export function applyAnaConversationPolicy(
     input.visitFlowActive === true ||
     input.flowState.pendingVisitScheduling === true ||
     input.flowState.visitScheduling?.active === true;
+  const visitAlreadyScheduled =
+    input.flowState.pendingVisitScheduling !== true &&
+    input.flowState.visitScheduling?.status === 'scheduled';
   const lastAssistantQuestionFromHistory = recentAssistantReplies[recentAssistantReplies.length - 1] ?? null;
   const shortConfirmationContext = input.shortConfirmationContext ?? null;
   const shortConfirmationKind = shortConfirmationContext?.kind ?? null;
@@ -961,7 +964,7 @@ export function applyAnaConversationPolicy(
   const safeTopicAvailability = input.safeTopicAvailability ?? null;
   const knowledgeDrivenMode = input.knowledgeDrivenMode === true;
 
-  if (visitFlowActive) {
+  if (visitFlowActive && !visitAlreadyScheduled) {
     console.log('[ANA_VISIT_FLOW_ACTIVE]', {
       conversationId: input.conversationId,
       pendingVisitScheduling: input.flowState.pendingVisitScheduling === true,
@@ -1262,7 +1265,7 @@ export function applyAnaConversationPolicy(
     });
   }
 
-  if (visitFlowActive) {
+  if (visitFlowActive && !visitAlreadyScheduled) {
     const hasTopicSwitchIntent =
       containsMediaOffer(reply) ||
       /\b(lazer|localizacao|localização|infraestrutura|pagamento|valor|seguranca|segurança|book|vídeo|video|foto|fotos)\b/.test(norm(reply));

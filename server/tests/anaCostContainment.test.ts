@@ -25,6 +25,7 @@ import { selectSingleSafeNextTopic } from '../utils/anaFollowupQuestionService.j
 import {
   handleVisitSchedulingDeterministically,
   isVisitSchedulingIntent,
+  isVisitSchedulingTopicSwitchMessage,
   reconstructVisitStateFromRecentMessages,
 } from '../utils/anaDirectVisitScheduling.js';
 import {
@@ -1022,9 +1023,131 @@ test('todos os slots validos com "sim" confirmam agendamento', () => {
   assert.match(confirm.reply ?? '', /visita ficou agendada/i);
 });
 
-test('quando pendingVisitScheduling esta ativo, intencao de visita permanece ligada ao fluxo transacional', () => {
+test('fluxo completo de visita confirma sem reabrir coleta de slots', () => {
+  const afterDateTime = handleVisitSchedulingDeterministically({
+    userMessage: 'Hoje às 15',
+    flowState: {
+      pendingVisitScheduling: true,
+    },
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:10:00.000Z'),
+  });
+  assert.equal(afterDateTime.appointmentConfirmed, false);
+  assert.equal(afterDateTime.missingSlot, 'nome');
+  assert.match(afterDateTime.reply ?? '', /como posso te chamar|me passa seu nome/i);
+
+  const afterName = handleVisitSchedulingDeterministically({
+    userMessage: 'Ulysses',
+    flowState: afterDateTime.nextState,
+    lastAssistantMessage: afterDateTime.reply,
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:11:00.000Z'),
+  });
+  assert.equal(afterName.appointmentConfirmed, false);
+  assert.equal(afterName.missingSlot, null);
+  assert.match(afterName.reply ?? '', /posso confirmar sua visita/i);
+
+  const confirmed = handleVisitSchedulingDeterministically({
+    userMessage: 'Sim',
+    flowState: afterName.nextState,
+    lastAssistantMessage: afterName.reply,
+    enterpriseId: 10,
+    customerName: null,
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-05-25T12:12:00.000Z'),
+  });
+  assert.equal(confirmed.appointmentConfirmed, true);
+  assert.equal(confirmed.nextState.pendingVisitScheduling, false);
+  assert.match(confirmed.reply ?? '', /visita ficou agendada/i);
+  assert.equal(/para qual dia/i.test(confirmed.reply ?? ''), false);
+  assert.equal(/posso confirmar sua visita/i.test(confirmed.reply ?? ''), false);
+});
+
+test('quando visita ja esta scheduled, policy nao ancora novamente em coleta de visita', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 601,
+    userMessage: 'o valor parcela?',
+    replyText: 'Perfeito. Visita agendada. Se quiser, tambem posso te ajudar com valores e pagamento.',
+    isFirstAnaReply: false,
+    flowState: {
+      pendingVisitScheduling: false,
+      visitScheduling: {
+        active: false,
+        offered: true,
+        accepted: true,
+        requestedDateText: 'hoje',
+        requestedTimeText: '15h',
+        requestedPeriodText: null,
+        normalizedDate: '2026-05-25',
+        normalizedTime: '15:00',
+        nameCollected: true,
+        customerName: 'Ulysses',
+        status: 'scheduled',
+      },
+    },
+    recentMessages: [
+      { role: 'assistant', content: 'Perfeito. Sua visita ficou agendada para hoje às 15h.' },
+      { role: 'user', content: 'o valor parcela?' },
+    ],
+    disableFollowupQuestion: true,
+    visitFlowActive: true,
+  });
+  assert.equal(/para qual dia|qual hor[aá]rio|posso confirmar sua visita/i.test(policy.text), false);
+  assert.match(policy.text, /visita agendada|valores|pagamento/i);
+});
+
+test('quando pendingVisitScheduling esta ativo e usuario muda para valor/parcela, fluxo de visita nao deve ligar', () => {
+  assert.equal(isVisitSchedulingTopicSwitchMessage('o valor parcela?'), true);
+  assert.equal(isVisitSchedulingTopicSwitchMessage('tem lazer?'), true);
   const intent = isVisitSchedulingIntent({
-    userMessage: 'qual o valor?',
+    userMessage: 'o valor parcela?',
+    flowState: {
+      pendingVisitScheduling: true,
+      pendingVisitDateLabel: 'amanha',
+      pendingVisitDate: '2026-05-26',
+      pendingVisitTime: null,
+      pendingVisitInvalidTime: '20h',
+      pendingVisitMissingSlot: 'valid_time',
+    },
+    confirmationContextKind: 'not_short_confirmation',
+    resolvedIntent: null,
+    primaryAxis: null,
+    currentAxis: null,
+    requestedAxis: null,
+    lastAssistantMessage: '20h fica fora do horario de visitas. Posso seguir com um horario entre 09h e 18h. Qual prefere?',
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T12:11:00.000Z'),
+  });
+  assert.equal(intent, false);
+  const lazerIntent = isVisitSchedulingIntent({
+    userMessage: 'tem lazer?',
+    flowState: {
+      pendingVisitScheduling: true,
+      pendingVisitDateLabel: 'amanha',
+      pendingVisitDate: '2026-05-26',
+      pendingVisitTime: null,
+      pendingVisitInvalidTime: '20h',
+      pendingVisitMissingSlot: 'valid_time',
+    },
+    confirmationContextKind: 'not_short_confirmation',
+    resolvedIntent: null,
+    primaryAxis: null,
+    currentAxis: null,
+    requestedAxis: null,
+    lastAssistantMessage: '20h fica fora do horario de visitas. Posso seguir com um horario entre 09h e 18h. Qual prefere?',
+    enterpriseId: 10,
+    referenceNow: new Date('2026-05-25T12:11:00.000Z'),
+  });
+  assert.equal(lazerIntent, false);
+});
+
+test('quando pendingVisitScheduling esta ativo e usuario informa slot, fluxo de visita segue normal', () => {
+  const intent = isVisitSchedulingIntent({
+    userMessage: 'amanha as 10',
     flowState: {
       pendingVisitScheduling: true,
       pendingVisitDateLabel: 'amanha',
