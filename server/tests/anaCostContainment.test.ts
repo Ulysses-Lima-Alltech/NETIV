@@ -45,6 +45,7 @@ import {
 } from '../utils/anaShortConfirmationContext.js';
 import { resolveAnaCommercialRule } from '../services/anaCommercialRulesService.js';
 import { applyAnaNoRepeatMessageGuard } from '../utils/anaEvoraCommercialGuards.js';
+import { buildAnaEnterpriseEvidence } from '../utils/anaEnterpriseEvidence.js';
 import type { CommercialFlowState } from '../utils/commercialFlowState.js';
 
 test('resolve modelo da Ana por DB com gpt-4.1', () => {
@@ -478,6 +479,107 @@ test('sanitizacao de knowledge do evora mascara quantidade total de lotes', () =
   assert.match(output, /Quantidade total de lotes: informação tratada pelo corretor/i);
   assert.equal(/\b145\b/.test(output), false);
   assert.match(output, /128\.027,28 m²|360 m²|725 m²/i);
+});
+
+test('anaEnterpriseEvidence marca preco quando existe apenas no knowledgeText', () => {
+  const evidence = buildAnaEnterpriseEvidence({
+    enterprise: { city: 'Atibaia' } as any,
+    files: [],
+    variablesMap: {},
+    knowledgeText: 'Valor inicial: A partir de R$279.000,00.',
+  });
+
+  assert.equal(evidence.hasPricingInfo, true);
+});
+
+test('anaEnterpriseEvidence marca financiamento quando existe apenas no knowledgeText', () => {
+  const evidence = buildAnaEnterpriseEvidence({
+    enterprise: { city: 'Atibaia' } as any,
+    files: [],
+    variablesMap: {},
+    knowledgeText: 'Entrada/sinal: 20%. Sem juros em até 48x + IGPM. Em até 120x com juros + IGPM.',
+  });
+
+  assert.equal(evidence.hasFinancingInfo, true);
+});
+
+test('finalizeAnaReplyText força endereço canônico do Évora em resposta genérica', () => {
+  const output = finalizeAnaReplyText('Tem algum ponto específico que você quer que eu detalhe melhor?', {
+    enterpriseName: 'Residencial Évora',
+    userMessage: 'Qual é o endereço completo?',
+  });
+
+  assert.equal(output, 'Fica na Estrada dos Pires, s/n, na região da Pedreira, bairro Rio Abaixo, em Atibaia.');
+});
+
+test('finalizeAnaReplyText força Google Maps canônico do Évora', () => {
+  const output = finalizeAnaReplyText('Posso te ajudar com mais detalhes do empreendimento.', {
+    enterpriseName: 'Residencial Évora',
+    userMessage: 'Me manda o Google Maps.',
+  });
+
+  assert.equal(
+    output,
+    'Posso te enviar sim. O link do Évora no Google Maps é: https://maps.app.goo.gl/jBoxPM6XRut2iXHSA?g_st=ic'
+  );
+});
+
+test('finalizeAnaReplyText força lazer canônico do Évora em fallback genérico', () => {
+  const output = finalizeAnaReplyText('Tem algum ponto específico que você quer que eu detalhe melhor?', {
+    enterpriseName: 'Residencial Évora',
+    userMessage: 'Quais são as áreas de lazer?',
+  });
+
+  assert.equal(
+    output,
+    'O Évora conta com lazer completo: piscina adulto, piscina infantil, academia, salão de festas, playground, coworking, espaço zen, fireplace, quadra de beach tennis, campo society, praça interna e área verde.'
+  );
+});
+
+test('finalizeAnaReplyText corrige preço do Évora quando modelo diz não divulgado', () => {
+  const output = finalizeAnaReplyText('O preço dos lotes no Évora ainda não foi divulgado oficialmente.', {
+    enterpriseName: 'Residencial Évora',
+    userMessage: 'Quanto está o lote?',
+  });
+
+  assert.equal(output, 'O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.');
+});
+
+test('finalizeAnaReplyText aplica resposta canônica de formas de pagamento do Évora', () => {
+  const output = finalizeAnaReplyText('Tem algum ponto específico que você quer que eu detalhe melhor?', {
+    enterpriseName: 'Residencial Évora',
+    userMessage: 'Como funcionam as formas de pagamento?',
+  });
+
+  assert.equal(
+    output,
+    'A entrada padrão é de 20%. Para parcelas mais baixas, temos planos estendidos em até 120x; para parcelamento sem juros, temos planos em até 48x + IGPM. O financiamento é direto com a construtora, com menos burocracia.'
+  );
+});
+
+test('finalizeAnaReplyText aplica redirect de parcela do Évora', () => {
+  const output = finalizeAnaReplyText('Hoje trabalhamos com condições variadas.', {
+    enterpriseName: 'Residencial Évora',
+    userMessage: 'Esse valor parcela?',
+  });
+
+  assert.equal(
+    output,
+    'A simulação certinha depende do lote e do plano escolhido. O corretor te passa tudo direitinho no atendimento. Que tal marcarmos uma visita?'
+  );
+});
+
+test('finalizeAnaReplyText mantém bloqueio de quantidade total de lotes após rescues canônicos', () => {
+  const output = finalizeAnaReplyText('O Évora tem 145 lotes.', {
+    enterpriseName: 'Residencial Évora',
+    userMessage: 'Lá são quantos lotes?',
+  });
+
+  assert.equal(
+    output,
+    'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².'
+  );
+  assert.equal(/\b145\b/.test(output), false);
 });
 
 test('finalizeAnaReplyText corrige eixo de desconto quando resposta mistura condominio/taxa', () => {

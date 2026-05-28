@@ -7352,6 +7352,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               userMessage: trimmed,
               conversationMode: mode,
               isFirstAnaReply,
+              enterpriseName: ent?.name ?? null,
           }).slice(0, 4000);
     }
 
@@ -7420,6 +7421,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             userMessage: trimmed,
             conversationMode: mode,
             isFirstAnaReply,
+            enterpriseName: ent?.name ?? null,
           });
     if (
       currentAxisForRepetition != null &&
@@ -7450,6 +7452,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         userMessage: trimmed,
         conversationMode: mode,
         isFirstAnaReply,
+        enterpriseName: ent?.name ?? null,
       });
     }
     const preserveListFormatting =
@@ -7761,6 +7764,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             userMessage: trimmed,
             conversationMode: mode,
             isFirstAnaReply,
+            enterpriseName: ent?.name ?? null,
           }),
           enterpriseName: ent?.name ?? null,
           maxChars: ANA_OUTBOUND_MAX_CHARS,

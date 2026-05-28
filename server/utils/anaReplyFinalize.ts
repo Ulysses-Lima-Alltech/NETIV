@@ -74,8 +74,14 @@ export function repliesSemanticallySimilar(a: string, b: string): boolean {
   return j >= 0.88;
 }
 
-const HUMAN_EVORA_LOCATION_REPLY =
-  'O Évora fica em Atibaia, em uma das melhores localizações da cidade, com fácil acesso pela Rodovia Dom Pedro I, perto da região da Pedreira. É uma região que combina tranquilidade, natureza e acesso rápido aos principais pontos da cidade. Me conta, você quer entender melhor o entorno, os acessos ou a estrutura do empreendimento?';
+const EVORA_LOCATION_REPLY =
+  'O Évora fica em Atibaia, perto da região da Pedreira, no bairro Rio Abaixo. Tem fácil acesso pela Rodovia Dom Pedro I e fica a aproximadamente 50 minutos de São Paulo.';
+
+const EVORA_ADDRESS_REPLY =
+  'Fica na Estrada dos Pires, s/n, na região da Pedreira, bairro Rio Abaixo, em Atibaia.';
+
+const EVORA_MAPS_REPLY =
+  'Posso te enviar sim. O link do Évora no Google Maps é: https://maps.app.goo.gl/jBoxPM6XRut2iXHSA?g_st=ic';
 
 function isUserAskingAboutLocation(text: string | null | undefined): boolean {
   const n = normClosure(text || '');
@@ -83,19 +89,37 @@ function isUserAskingAboutLocation(text: string | null | undefined): boolean {
   return /\b(localizacao|localização|onde fica|endereco|endereço|fica onde|qual a regiao|qual a região|como chegar|mapa|google maps|acesso|bairro)\b/.test(n);
 }
 
+function isUserAskingEvoraMaps(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return /\b(google maps|maps|mapa|link)\b/.test(n);
+}
+
+function isUserAskingEvoraAddress(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return /\b(endereco|endereço|endereco completo|endereço completo)\b/.test(n);
+}
+
 function isEvoraContext(reply: string, userMessage?: string | null): boolean {
   const combined = normClosure(`${reply || ''} ${userMessage || ''}`);
   return /\b(evora|évora)\b/.test(combined);
 }
 
-function forceEvoraLocationReplyWhenNeeded(reply: string, userMessage?: string | null): string {
+function isEvoraScopedContext(opts?: FinalizeAnaReplyOptions): boolean {
+  return /\bevora\b/.test(normClosure(opts?.enterpriseName || ''));
+}
+
+function forceEvoraLocationReplyWhenNeeded(reply: string, opts?: FinalizeAnaReplyOptions): string {
   const clean = (reply || '').trim();
-  if (!clean) return clean;
+  const userMessage = opts?.userMessage ?? null;
 
   if (!isUserAskingAboutLocation(userMessage)) return clean;
-  if (!isEvoraContext(clean, userMessage)) return clean;
+  if (!isEvoraScopedContext(opts) && !isEvoraContext(clean, userMessage)) return clean;
 
-  return HUMAN_EVORA_LOCATION_REPLY;
+  if (isUserAskingEvoraMaps(userMessage)) return EVORA_MAPS_REPLY;
+  if (isUserAskingEvoraAddress(userMessage)) return EVORA_ADDRESS_REPLY;
+  return EVORA_LOCATION_REPLY;
 }
 
 const HUMAN_LAZER_REPLY =
@@ -105,6 +129,43 @@ function isUserAskingAboutLazer(text: string | null | undefined): boolean {
   const n = normClosure(text || '');
   if (!n) return false;
   return /\b(lazer|area de lazer|área de lazer|piscina|piscinas|academia|salao de festas|salão de festas|playground|quadra|quadras|beach tennis|campo society|coworking|espaco zen|espaço zen|fireplace|praca interna|praça interna|area verde|área verde)\b/.test(n);
+}
+
+const EVORA_LAZER_REPLY =
+  'O Évora conta com lazer completo: piscina adulto, piscina infantil, academia, salão de festas, playground, coworking, espaço zen, fireplace, quadra de beach tennis, campo society, praça interna e área verde.';
+
+function replyHasEvoraLazerItems(text: string): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return /\b(piscina|academia|salao de festas|salão de festas|playground|coworking|espaco zen|espaço zen|fireplace|beach tennis|campo society|praca interna|praça interna|area verde|área verde|quadra|quadras)\b/.test(
+    n
+  );
+}
+
+function looksGenericEvoraFallback(text: string): boolean {
+  const n = normClosure(text || '');
+  if (!n) return true;
+  return (
+    /\btem algum ponto especifico\b/.test(n) ||
+    /\bquer que eu detalhe melhor\b/.test(n) ||
+    /\bqual ponto voce quer\b/.test(n) ||
+    /\bse quiser eu te explico\b/.test(n) ||
+    /\bme conta o que voce quer\b/.test(n) ||
+    /\bquer que eu te explique\b/.test(n)
+  );
+}
+
+function forceEvoraLazerReplyWhenNeeded(reply: string, opts?: FinalizeAnaReplyOptions): string {
+  const clean = (reply || '').trim();
+  if (!isEvoraScopedContext(opts)) return clean;
+  if (!isUserAskingAboutLazer(opts?.userMessage ?? null)) return clean;
+  if (!clean) return EVORA_LAZER_REPLY;
+
+  if (looksGenericEvoraFallback(clean) || !replyHasEvoraLazerItems(clean)) {
+    return EVORA_LAZER_REPLY;
+  }
+
+  return clean;
 }
 
 function looksLikeDryLazerList(reply: string): boolean {
@@ -283,6 +344,8 @@ export interface FinalizeAnaReplyOptions {
   conversationMode?: 'triage' | 'scoped' | 'inactive_linked';
   /** true somente na primeira resposta da Ana na conversa. */
   isFirstAnaReply?: boolean;
+  /** Empreendimento ativo no turno (usado para regras canônicas do Évora). */
+  enterpriseName?: string | null;
 }
 
 /**
@@ -468,6 +531,50 @@ function sanitizeDiscountRestrictedReply(text: string, userMessage?: string | nu
   return clean;
 }
 
+const EVORA_PRICE_REPLY =
+  'O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.';
+
+const EVORA_PAYMENT_REPLY =
+  'A entrada padrão é de 20%. Para parcelas mais baixas, temos planos estendidos em até 120x; para parcelamento sem juros, temos planos em até 48x + IGPM. O financiamento é direto com a construtora, com menos burocracia.';
+
+const EVORA_INSTALLMENT_REDIRECT_REPLY =
+  'A simulação certinha depende do lote e do plano escolhido. O corretor te passa tudo direitinho no atendimento. Que tal marcarmos uma visita?';
+
+function isUserAskingEvoraInstallment(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return /\b(esse valor parcela|parcela|parcelamento|quanto fica por mes|quanto fica por mês|simulacao|simulação)\b/.test(n);
+}
+
+function isUserAskingEvoraPayment(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return /\b(formas? de pagamento|entrada|financiamento direto|financiamento)\b/.test(n);
+}
+
+function isUserAskingEvoraPrice(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return /\b(quanto esta o lote|quanto está o lote|qual valor|preco|preço|valor do lote|quanto custa)\b/.test(n);
+}
+
+function sanitizeEvoraPriceAndPaymentReply(text: string, opts?: FinalizeAnaReplyOptions): string {
+  const clean = String(text || '').trim();
+  if (!clean) return clean;
+  if (!isEvoraScopedContext(opts)) return clean;
+
+  const userMessage = opts?.userMessage ?? null;
+  if (isUserAskingEvoraInstallment(userMessage)) return EVORA_INSTALLMENT_REDIRECT_REPLY;
+  if (isUserAskingEvoraPayment(userMessage)) return EVORA_PAYMENT_REPLY;
+  if (isUserAskingEvoraPrice(userMessage)) return EVORA_PRICE_REPLY;
+
+  if (/\bpreco\b.*\bnao foi divulgado\b/i.test(normClosure(clean))) {
+    return EVORA_PRICE_REPLY;
+  }
+
+  return clean;
+}
+
 function removeInternalLimitationSentences(text: string): { text: string; changed: boolean } {
   const lines = (text || '')
     .split(/\r?\n/)
@@ -543,10 +650,11 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   const noReintro = stripMidConversationReintroduction(base, isFirstAnaReply);
   const materialShort = applyShortMaterialReplyPolicy(noReintro, opts?.userMessage ?? null);
   const compact = keepTwoShortSentencesMax(materialShort);
-  const evoraLocation = forceEvoraLocationReplyWhenNeeded(compact, opts?.userMessage ?? null);
+  const evoraLocation = forceEvoraLocationReplyWhenNeeded(compact, opts);
   const humanLazer = humanizeLazerReplyWhenNeeded(evoraLocation, opts?.userMessage ?? null);
   const withOpenQuestion = appendOpenQuestionForGeneralEnterpriseIntro(humanLazer, opts?.userMessage ?? null);
-  const sanitized = removeInternalLimitationSentences(withOpenQuestion);
+  const evoraLazer = forceEvoraLazerReplyWhenNeeded(withOpenQuestion, opts);
+  const sanitized = removeInternalLimitationSentences(evoraLazer);
   const safeOffers = sanitizeUnsupportedSpecificOffers(sanitized.text);
   const dedupGreeting = sanitizeDuplicatedGreetingPrefix(safeOffers.text);
   const noInternalFragments = INTERNAL_INSTRUCTION_FRAGMENT_PATTERNS.reduce(
@@ -555,7 +663,8 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   );
   const lotCountSafe = sanitizeEvoraLotCountRestrictedReply(noInternalFragments, opts?.userMessage ?? null);
   const discountSafe = sanitizeDiscountRestrictedReply(lotCountSafe, opts?.userMessage ?? null);
-  return discountSafe.slice(0, 4000);
+  const evoraPricingSafe = sanitizeEvoraPriceAndPaymentReply(discountSafe, opts);
+  return evoraPricingSafe.slice(0, 4000);
 }
 
 function truncateAtWordBoundary(text: string, maxLen: number): string {

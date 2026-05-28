@@ -95,8 +95,14 @@ export function buildAnaEnterpriseEvidence(params: {
   const hasSendableFloorplan = sendable.some((f) => norm(f.category) === 'unidades');
   const hasAnySendableMaterial = sendable.length > 0;
   const hasExactLocation = Boolean(city) && (hasAddressLikeSignal(joinedVars) || hasAddressLikeSignal(knowledgeText));
-  const hasPricingInfo = hasStrongFinancialSignal(variablesMap.preco || '') || hasStrongFinancialSignal(joinedVars);
-  const hasFinancingInfo = hasFinancingSignal(variablesMap.condicoes || '') || hasFinancingSignal(joinedVars);
+  const hasPricingInfo =
+    hasStrongFinancialSignal(variablesMap.preco || '') ||
+    hasStrongFinancialSignal(joinedVars) ||
+    hasStrongFinancialSignal(knowledgeText);
+  const hasFinancingInfo =
+    hasFinancingSignal(variablesMap.condicoes || '') ||
+    hasFinancingSignal(joinedVars) ||
+    hasFinancingSignal(knowledgeText);
   const hasUsableKnowledgeChunks = usableKnowledgeFiles.length > 0 || norm(knowledgeText).length > 80;
 
   return {
