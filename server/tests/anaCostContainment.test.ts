@@ -480,6 +480,56 @@ test('sanitizacao de knowledge do evora mascara quantidade total de lotes', () =
   assert.match(output, /128\.027,28 m²|360 m²|725 m²/i);
 });
 
+test('finalizeAnaReplyText corrige eixo de desconto quando resposta mistura condominio/taxa', () => {
+  const output = finalizeAnaReplyText(
+    'Desconto ainda não está definido com precisão, pois depende das decisões dos moradores e da associação do condomínio. Hoje trabalhamos com uma estimativa entre R$400,00 e R$700,00 para a taxa de condomínio.',
+    { userMessage: 'Tem desconto?' }
+  );
+  const normalized = output.normalize('NFD').replace(/\p{M}/gu, '');
+  assert.equal(
+    normalized,
+    'Desconto ou condicao especial depende de analise. O corretor consegue te passar isso certinho no atendimento. Que tal marcarmos uma visita?'
+  );
+});
+
+test('finalizeAnaReplyText corrige eixo para negociacao com resposta misturada de taxa/condominio', () => {
+  const output = finalizeAnaReplyText(
+    'Dá pra negociar, mas a taxa de condomínio varia e fica entre R$400 e R$700.',
+    { userMessage: 'Dá pra negociar?' }
+  );
+  const normalized = output.normalize('NFD').replace(/\p{M}/gu, '');
+  assert.equal(
+    normalized,
+    'Desconto ou condicao especial depende de analise. O corretor consegue te passar isso certinho no atendimento. Que tal marcarmos uma visita?'
+  );
+});
+
+test('finalizeAnaReplyText mantem resposta de condominio quando pergunta e sobre condominio', () => {
+  const output = finalizeAnaReplyText('Hoje trabalhamos com uma estimativa entre R$400,00 e R$700,00.', {
+    userMessage: 'Tem condomínio?',
+  });
+  const normalized = output.normalize('NFD').replace(/\p{M}/gu, '');
+  assert.equal(
+    normalized ===
+      'Desconto ou condicao especial depende de analise. O corretor consegue te passar isso certinho no atendimento. Que tal marcarmos uma visita?',
+    false
+  );
+  assert.match(normalized, /r\$400,00|r\$700,00|estimativa/i);
+});
+
+test('finalizeAnaReplyText nao aplica sanitizer de desconto para pergunta de valor do lote', () => {
+  const output = finalizeAnaReplyText('O valor inicial parte de R$ 279.000,00.', {
+    userMessage: 'Quanto estÃ¡ o lote?',
+  });
+  const normalized = output.normalize('NFD').replace(/\p{M}/gu, '');
+  assert.equal(
+    normalized ===
+      'Desconto ou condicao especial depende de analise. O corretor consegue te passar isso certinho no atendimento. Que tal marcarmos uma visita?',
+    false
+  );
+  assert.match(normalized, /r\$\s*279\.000,00|valor inicial/i);
+});
+
 test('reengagement bloqueia inbound e outbound recentes', () => {
   const now = new Date('2026-05-25T15:00:00.000Z');
   const inboundRecent = evaluateAnaReengagementPolicy({

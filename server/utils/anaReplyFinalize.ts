@@ -383,6 +383,9 @@ const BROKER_DETAIL_ROUTING_TEXT =
 const EVORA_LOT_COUNT_ROUTING_REPLY =
   'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².';
 
+const DISCOUNT_ROUTING_REPLY =
+  'Desconto ou condição especial depende de análise. O corretor consegue te passar isso certinho no atendimento. Que tal marcarmos uma visita?';
+
 function isUserAskingEvoraLotCountOrCondoSize(userMessage?: string | null): boolean {
   const n = normClosure(userMessage || '');
   if (!n) return false;
@@ -421,6 +424,45 @@ function sanitizeEvoraLotCountRestrictedReply(text: string, userMessage?: string
 
   if (askedLotCount || hasForbiddenLotCount || hasBadNoInfoForKnownRestrictedTopic || leaksInternalTemplate) {
     return EVORA_LOT_COUNT_ROUTING_REPLY;
+  }
+
+  return clean;
+}
+
+function isUserAskingDiscountOrNegotiation(userMessage?: string | null): boolean {
+  const n = normClosure(userMessage || '');
+  if (!n) return false;
+  return /\b(desconto|condicao especial|condição especial|negociar|negociacao|negociação|melhor valor|melhor preco|melhor preço|proposta|oferta)\b/.test(n);
+}
+
+function sanitizeDiscountRestrictedReply(text: string, userMessage?: string | null): string {
+  const clean = String(text || '').trim();
+  if (!clean) return clean;
+
+  if (!isUserAskingDiscountOrNegotiation(userMessage)) return clean;
+
+  const n = normClosure(clean);
+
+  const mentionsCondoFee =
+    /\bcondominio\b/.test(n) ||
+    /\btaxa de condominio\b/.test(n) ||
+    /\bassociacao do condominio\b/.test(n) ||
+    /\br\$ ?400\b/i.test(clean) ||
+    /\br\$ ?700\b/i.test(clean);
+
+  const claimsDiscountAsUndefined =
+    /\bdesconto\b.*\bnao esta definido\b/.test(n) ||
+    /\bdesconto\b.*\bdepende\b/.test(n) ||
+    /\bcondicao especial\b.*\bdepende\b/.test(n);
+
+  const becameGenericOfferAfterSanitization =
+    /se quiser.*(localizacao|estrutura|lazer|seguranca).*marcar visita/.test(n);
+
+  const tooLongOrMixedAxis =
+    clean.length > 280 || mentionsCondoFee;
+
+  if (mentionsCondoFee || tooLongOrMixedAxis || claimsDiscountAsUndefined || becameGenericOfferAfterSanitization) {
+    return DISCOUNT_ROUTING_REPLY;
   }
 
   return clean;
@@ -512,7 +554,8 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
     dedupGreeting,
   );
   const lotCountSafe = sanitizeEvoraLotCountRestrictedReply(noInternalFragments, opts?.userMessage ?? null);
-  return lotCountSafe.slice(0, 4000);
+  const discountSafe = sanitizeDiscountRestrictedReply(lotCountSafe, opts?.userMessage ?? null);
+  return discountSafe.slice(0, 4000);
 }
 
 function truncateAtWordBoundary(text: string, maxLen: number): string {
