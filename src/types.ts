@@ -23,6 +23,8 @@ export interface Conversation {
   classificationStatus?: string;
   /** true = atendimento humano (ANA não responde), false = ANA responde. */
   handoff?: boolean;
+  /** Fonte derivada do backend para o modo de atendimento da conversa. */
+  attendanceMode?: 'ana' | 'handoff';
   /** Empreendimento da origem/campanha (imutável); pode diferir do ativo. */
   enterpriseOriginId?: number | null;
   enterpriseOriginName?: string | null;

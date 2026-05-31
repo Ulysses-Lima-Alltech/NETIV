@@ -22,6 +22,7 @@ export function ConversationListItem({
   const isUnread = conversation.unreadCount > 0;
   const isHandoff =
     conversation.handoff === true ||
+    conversation.attendanceMode === 'handoff' ||
     conversation.status === 'Handoff' ||
     conversation.classificationStatus === 'Handoff';
   const isCarteira =

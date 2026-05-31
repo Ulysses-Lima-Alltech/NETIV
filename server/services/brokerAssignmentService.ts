@@ -58,6 +58,36 @@ function resolveCustomerNameOrPhone(row: AssignmentConversationRow): string {
   return fallbackPhone || 'Cliente';
 }
 
+async function logEnforcedHandoffState(args: {
+  conversationId: number;
+  expectedBrokerId: number | null;
+  client: PgClient;
+}): Promise<void> {
+  const verification = await args.client.query<{
+    id: number;
+    assigned_broker_id: number | null;
+    handoff: boolean | null;
+    classification: string | null;
+  }>(
+    `SELECT id, assigned_broker_id, handoff, classification
+     FROM conversations
+     WHERE id = $1
+     LIMIT 1`,
+    [args.conversationId]
+  );
+  const row = verification.rows[0] ?? null;
+  if (!row) return;
+  const attendanceMode = row.handoff === true || row.classification === 'Handoff' ? 'handoff' : 'ana';
+  console.log('[ANA_HANDOFF_MODE_ENFORCED]', {
+    conversationId: row.id,
+    expectedBrokerId: args.expectedBrokerId,
+    assignedBrokerId: row.assigned_broker_id ?? null,
+    handoff: row.handoff === true,
+    classification: row.classification ?? null,
+    attendanceMode,
+  });
+}
+
 export async function getActiveBrokersForEnterprise(args: {
   enterpriseId: number;
   client: PgClient;
@@ -160,11 +190,15 @@ export async function markConversationAsHandoffAssigned(args: {
   await args.client.query(
     `UPDATE conversations
      SET assigned_broker_id = $2,
-         assigned_broker_at = COALESCE(assigned_broker_at, NOW()),
+         assigned_broker_at = NOW(),
          handoff = true,
          classification = 'Handoff',
+         classification_before_handoff = CASE
+           WHEN classification = 'Handoff' THEN classification_before_handoff
+           ELSE COALESCE(classification_before_handoff, classification)
+         END,
          handoff_reason = $3,
-         handoff_requested_at = COALESCE(handoff_requested_at, NOW()),
+         handoff_requested_at = NOW(),
          pending_resolution_choice = false,
          pending_resolution_reason = NULL,
          pending_resolution_intent = NULL,
@@ -181,6 +215,11 @@ export async function markConversationAsHandoffAssigned(args: {
      WHERE id = $1`,
     [args.conversationId, args.brokerId, args.reason]
   );
+  await logEnforcedHandoffState({
+    conversationId: args.conversationId,
+    expectedBrokerId: args.brokerId,
+    client: args.client,
+  });
 }
 
 export async function markConversationAsHandoffUnassigned(args: {
@@ -194,8 +233,12 @@ export async function markConversationAsHandoffUnassigned(args: {
          assigned_broker_at = NULL,
          handoff = true,
          classification = 'Handoff',
+         classification_before_handoff = CASE
+           WHEN classification = 'Handoff' THEN classification_before_handoff
+           ELSE COALESCE(classification_before_handoff, classification)
+         END,
          handoff_reason = $2,
-         handoff_requested_at = COALESCE(handoff_requested_at, NOW()),
+         handoff_requested_at = NOW(),
          pending_resolution_choice = false,
          pending_resolution_reason = NULL,
          pending_resolution_intent = NULL,
@@ -212,6 +255,11 @@ export async function markConversationAsHandoffUnassigned(args: {
      WHERE id = $1`,
     [args.conversationId, args.reason]
   );
+  await logEnforcedHandoffState({
+    conversationId: args.conversationId,
+    expectedBrokerId: null,
+    client: args.client,
+  });
 }
 
 export async function assignConversationToNextBroker(args: {

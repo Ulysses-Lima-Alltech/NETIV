@@ -18,6 +18,7 @@ export interface RealtimeConversationPayload {
   enterpriseName: string | null;
   classificationStatus: string;
   handoff: boolean;
+  attendanceMode: 'ana' | 'handoff';
   leadStage: 'HOT' | 'WARM' | 'COLD' | null;
   createdAt: string;
   updatedAt: string;
@@ -171,6 +172,7 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
     enterpriseName: row.enterprise_name,
     classificationStatus: row.classification ?? 'Novo',
     handoff: row.handoff === true,
+    attendanceMode: row.handoff === true || row.classification === 'Handoff' ? 'handoff' : 'ana',
     leadStage: toLeadStage(row.lead_temperature),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),

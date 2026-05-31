@@ -102,11 +102,17 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
   const empreendimento = projectName;
   const raw = c.classificationStatus || 'Novo';
   const normalized = raw === 'Reserva' ? 'Carteira' : raw;
-  const status = (normalized === 'Interessado' || normalized === 'Qualificando'
+  const statusBase = (normalized === 'Interessado' || normalized === 'Qualificando'
     ? 'Qualificado'
     : ['Handoff', 'Qualificado', 'Carteira', 'Novo'].includes(normalized)
       ? normalized
       : 'Novo') as Conversation['status'];
+  const isHandoffMode =
+    c.handoff === true ||
+    c.attendanceMode === 'handoff' ||
+    statusBase === 'Handoff' ||
+    normalized === 'Handoff';
+  const status = (isHandoffMode ? 'Handoff' : statusBase) as Conversation['status'];
   return {
     id: c.id,
     leadName,
@@ -121,7 +127,8 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     projectId: c.projectId ?? null,
     projectName: projectName ?? null,
     classificationStatus: status,
-    handoff: c.handoff ?? (status === 'Handoff'),
+    handoff: isHandoffMode,
+    attendanceMode: isHandoffMode ? 'handoff' : 'ana',
     enterpriseOriginId: c.enterpriseOriginId ?? null,
     enterpriseOriginName: undefined,
     assignedBrokerName: c.assignedBrokerName ?? null,
@@ -813,6 +820,7 @@ export function InboxPage() {
                   status: 'Novo',
                   classificationStatus: 'Novo',
                   handoff: false,
+                  attendanceMode: 'ana',
                   temperatura: 'frio',
                   projectId: null,
                   projectName: null,
@@ -921,20 +929,26 @@ export function InboxPage() {
               const ls = data.leadStage.toUpperCase();
               nextTemp = ls === 'HOT' ? 'quente' : ls === 'WARM' ? 'morno' : 'frio';
             }
+            const nextClassification = data.classificationStatus ?? c.classificationStatus ?? c.status;
+            const nextHandoff =
+              data.handoff === true ||
+              data.attendanceMode === 'handoff' ||
+              nextClassification === 'Handoff';
             return c.id === selectedId
               ? {
                   ...c,
                   projectId: data.projectId ?? c.projectId,
                   projectName: data.projectName ?? c.projectName,
-                  classificationStatus: data.classificationStatus ?? c.classificationStatus,
-                  status: (data.classificationStatus ?? c.status) as Conversation['status'],
+                  classificationStatus: nextHandoff ? 'Handoff' : nextClassification,
+                  status: (nextHandoff ? 'Handoff' : nextClassification) as Conversation['status'],
                   empreendimento: data.projectName ?? c.empreendimento,
                   temperatura: nextTemp,
                   enterpriseOriginId:
                     data.enterpriseOriginId !== undefined ? data.enterpriseOriginId : c.enterpriseOriginId,
                   enterpriseOriginName:
                     data.enterpriseOriginName !== undefined ? data.enterpriseOriginName : c.enterpriseOriginName,
-                  handoff: data.handoff ?? c.handoff,
+                  handoff: nextHandoff,
+                  attendanceMode: nextHandoff ? 'handoff' : 'ana',
                   assignedBrokerName:
                     data.assignedBrokerName !== undefined ? data.assignedBrokerName : c.assignedBrokerName,
                   assignedBrokerId:

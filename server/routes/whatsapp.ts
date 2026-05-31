@@ -125,6 +125,7 @@ function tempToStage(t: string | null | undefined): string | null {
 }
 
 function mapConversationWithPreviewRow(r: ConversationWithPreview) {
+  const isHandoff = r.handoff === true || (r.classification ?? '') === 'Handoff';
   return {
     id: String(r.id),
     channel: r.channel,
@@ -144,7 +145,8 @@ function mapConversationWithPreviewRow(r: ConversationWithPreview) {
     enterpriseId: r.enterprise_id ?? null,
     enterpriseName: r.enterprise_name ?? null,
     classificationStatus: r.classification ?? 'Novo',
-    handoff: r.handoff ?? false,
+    handoff: isHandoff,
+    attendanceMode: isHandoff ? 'handoff' : 'ana',
     leadStage: tempToStage(r.lead_temperature),
     enterpriseOriginId: r.enterprise_origin_id ?? null,
     leadSourceRaw: r.lead_source_raw ?? null,
@@ -645,6 +647,7 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       conv.enterprise_origin_id != null ? (await getEnterpriseById(conv.enterprise_origin_id))?.name ?? null : null;
     const bid = conv.assigned_broker_id;
     const brokerRow = bid != null ? await getCorretorById(bid) : null;
+    const isHandoff = conv.handoff === true || conv.classification === 'Handoff';
     res.json({
       id: conv.id,
       projectId: conv.enterprise_id ?? null,
@@ -656,7 +659,8 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       leadSourceRaw: conv.lead_source_raw ?? null,
       classificationStatus: conv.classification ?? 'Novo',
       leadStage: tempToStage(conv.lead_temperature),
-      handoff: conv.handoff ?? false,
+      handoff: isHandoff,
+      attendanceMode: isHandoff ? 'handoff' : 'ana',
       assignedBrokerId: conv.assigned_broker_id ?? null,
       assignedBrokerName: brokerRow?.full_name ?? null,
       brokerNotificationStatus: conv.broker_notification_status ?? null,

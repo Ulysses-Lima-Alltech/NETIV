@@ -192,6 +192,7 @@ export interface ConversationListItem {
   classificationStatus: string;
   leadStage: string | null;
   handoff?: boolean;
+  attendanceMode?: 'ana' | 'handoff';
   /** Empreendimento da campanha/origem (histórico). */
   enterpriseOriginId?: number | null;
   /** Snapshot bruto (ex.: referral Meta) quando existir. */
@@ -553,6 +554,7 @@ export const whatsappApi = {
       classificationStatus: string;
       leadStage?: string | null;
       handoff?: boolean;
+      attendanceMode?: 'ana' | 'handoff';
       assignedBrokerId?: number | null;
       assignedBrokerName?: string | null;
       brokerNotificationStatus?: string | null;

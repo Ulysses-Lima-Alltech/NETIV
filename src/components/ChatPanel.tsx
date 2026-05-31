@@ -251,8 +251,10 @@ export function ChatPanel({
   };
 
   const cls = conversation.classificationStatus ?? conversation.status ?? 'Novo';
+  const isHandoffMode =
+    conversation.handoff === true || conversation.attendanceMode === 'handoff' || cls === 'Handoff';
   const statusLabel = (conversation.classificationStatus ?? '').trim() || formatStatus(conversation.status);
-  const showCarteiraBlock = cls === 'Carteira' && !conversation.handoff;
+  const showCarteiraBlock = cls === 'Carteira' && !isHandoffMode;
   const d = reserveDraft;
 
   const hasReserveData =
@@ -484,7 +486,7 @@ export function ChatPanel({
                 <dl className="mt-2 grid gap-2 text-[12px] text-[#334155]">
                   <div className="flex items-start justify-between gap-2">
                     <dt className="text-[#94a3b8]">Modo</dt>
-                    <dd className="font-medium">{conversation.handoff ? 'Handoff' : 'ANA'}</dd>
+                    <dd className="font-medium">{isHandoffMode ? 'Handoff' : 'ANA'}</dd>
                   </div>
                   <div className="flex items-start justify-between gap-2">
                     <dt className="text-[#94a3b8]">Empreendimento</dt>
@@ -517,7 +519,7 @@ export function ChatPanel({
                         onClick={() => onClassificationChange({ handoff: false })}
                         title="ANA: resposta automatica da ANA"
                         className={`px-3 py-1.5 rounded-[8px] text-[12px] font-medium transition-all ${
-                          !conversation.handoff
+                          !isHandoffMode
                             ? 'bg-[#F97316] text-white shadow-sm'
                             : 'text-[#6B7280] hover:text-[#111827] hover:bg-[#E5E7EB]/60'
                         }`}
@@ -529,7 +531,7 @@ export function ChatPanel({
                         onClick={() => onClassificationChange({ handoff: true })}
                         title="Handoff: apenas atendimento humano"
                         className={`px-3 py-1.5 rounded-[8px] text-[12px] font-medium transition-all ${
-                          conversation.handoff
+                          isHandoffMode
                             ? 'bg-[#F97316] text-white shadow-sm'
                             : 'text-[#6B7280] hover:text-[#111827] hover:bg-[#E5E7EB]/60'
                         }`}

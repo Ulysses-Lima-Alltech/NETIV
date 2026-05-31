@@ -594,10 +594,34 @@ function mergeAnsweredTopics(existing: string[], topic: string | null): string[]
 function normalizeFirstGreetingCommittedReply(params: {
   conversationId: number;
   isFirstAnaReply: boolean;
+  userMessage: string;
   parts: string[];
 }): { changed: boolean; parts: string[]; text: string } {
+  const userText = String(params.userMessage || '').trim();
+  const firstContactEnterpriseInterest =
+    params.isFirstAnaReply && isFirstContactGeneralInterestMessage(userText);
+  if (firstContactEnterpriseInterest) {
+    console.log('[ANA_FIRST_CONTACT_ENTERPRISE_INTEREST_DETECTED]', {
+      conversationId: params.conversationId,
+      source: 'committed_reply',
+      userPreview: userText.slice(0, 220),
+    });
+  }
   const originalText = params.parts.map((part) => String(part || '').trim()).filter(Boolean).join('\n\n').trim();
-  if (!params.isFirstAnaReply || !originalText) {
+  if (!params.isFirstAnaReply) {
+    return { changed: false, parts: params.parts, text: originalText };
+  }
+  if (!originalText) {
+    if (firstContactEnterpriseInterest) {
+      const fallback = buildFirstGreetingSafeFallback(userText);
+      console.log('[ANA_FIRST_CONTACT_EMPTY_GREETING_BLOCKED]', {
+        conversationId: params.conversationId,
+        source: 'committed_reply',
+        reason: 'empty_reply',
+        replacementPreview: fallback.slice(0, 220),
+      });
+      return { changed: true, parts: [fallback], text: fallback };
+    }
     return { changed: false, parts: params.parts, text: originalText };
   }
 
@@ -621,6 +645,20 @@ function normalizeFirstGreetingCommittedReply(params: {
     if (next.length > 0 && !/[.!?]$/.test(next)) next = `${next}.`;
     next = `${next} Me conta, qual ponto voce quer entender primeiro?`.replace(/\s{2,}/g, ' ').trim();
     changed = true;
+  }
+  const firstReplyGreetingOnly = isFirstReplyGreetingOnlyMessage(next);
+  if (firstContactEnterpriseInterest && (firstReplyGreetingOnly || !hasEnterprisePresentationContent(next))) {
+    const reason = firstReplyGreetingOnly ? 'greeting_only' : 'missing_enterprise_intro';
+    const blockedPreview = next.slice(0, 220);
+    next = buildFirstGreetingSafeFallback(userText);
+    changed = true;
+    console.log('[ANA_FIRST_CONTACT_EMPTY_GREETING_BLOCKED]', {
+      conversationId: params.conversationId,
+      source: 'committed_reply',
+      reason,
+      originalPreview: blockedPreview,
+      replacementPreview: next.slice(0, 220),
+    });
   }
   if (staleSuppressed) {
     console.log('[ANA_FIRST_GREETING_STALE_CTA_SUPPRESSED]', {
@@ -2666,6 +2704,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const firstGreetingNormalized = normalizeFirstGreetingCommittedReply({
       conversationId,
       isFirstAnaReply: isFirstAnaReplyForTurn,
+      userMessage: trimmed,
       parts: dedupedParts,
     });
     const committedParts = firstGreetingNormalized.parts;
@@ -6739,7 +6778,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           } else if (isGratitudeOnlyMessage(trimmed)) {
             deterministicRetryReply =
               'De nada! Se precisar de mais alguma informação sobre o Évora, estou por aqui.';
-          } else if (isFirstAnaReply && (isGenericFirstGreetingMessage(trimmed) || isFirstContactGeneralInterestMessage(trimmed))) {
+          } else if (
+            isFirstAnaReply &&
+            (isGenericFirstGreetingMessage(trimmed) || isFirstContactGeneralInterestMessage(trimmed))
+          ) {
             deterministicRetryReply = buildFirstGreetingSafeFallback(trimmed);
           } else if (isGenericInterestFollowup(trimmed)) {
             deterministicRetryReply =
@@ -9311,11 +9353,64 @@ function isGenericFirstGreetingMessage(text: string): boolean {
 }
 
 function isFirstContactGeneralInterestMessage(text: string): boolean {
+  return isFirstContactEnterpriseInterestMessage(text);
+}
+
+function isFirstContactEnterpriseInterestMessage(text: string): boolean {
   const n = normalizeAnaLocalTextForRules(text);
-  return (
-    /\b(tenho interesse|gostaria de saber mais|quero saber mais|vi o anuncio|vi o anúncio|me passa mais detalhes|me manda mais informacoes|me manda mais informações|gostaria de informacoes|gostaria de informações)\b/.test(n) &&
-    /\b(evora|empreendimento|lote|lotes|atibaia)?\b/.test(n)
+  const asksCommercialInfo =
+    /\b(tenho interesse|gostaria de saber mais|quero saber mais|queria saber mais|me fala mais|me fale mais|quero entender melhor|vi o anuncio|vi o anúncio|me passa mais detalhes|me manda mais informacoes|me manda mais informações|gostaria de informacoes|gostaria de informações|quero informacoes|quero informações|queria informacoes|queria informações|informacoes sobre|informações sobre)\b/.test(
+      n
+    );
+  const mentionsEnterprise = /\b(evora|empreendimento|projeto|loteamento|lote|lotes|atibaia)\b/.test(n);
+  return asksCommercialInfo && mentionsEnterprise;
+}
+
+function hasEnterprisePresentationContent(text: string): boolean {
+  const n = normalizeAnaLocalTextForRules(text);
+  if (!n) return false;
+  return /\b(evora|empreendimento|projeto|loteamento|lote|lotes|atibaia|pedreira|rodovia dom pedro|dom pedro|seguranca|portaria|lazer|infraestrutura|obras|financiamento|pagamento)\b/.test(
+    n
   );
+}
+
+function isFirstReplyGreetingOnlyMessage(text: string): boolean {
+  const n = normalizeAnaLocalTextForRules(text)
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!n) return true;
+  const words = n.split(' ').filter(Boolean);
+  if (words.length === 0) return true;
+  if (words.length > 16) return false;
+  const allowed = new Set([
+    'oi',
+    'ola',
+    'bom',
+    'boa',
+    'dia',
+    'tarde',
+    'noite',
+    'tudo',
+    'bem',
+    'td',
+    'como',
+    'vai',
+    'voce',
+    'esta',
+    'claro',
+    'sim',
+    'ok',
+    'opa',
+    'e',
+    'ai',
+    'te',
+    'ajudo',
+    'ajudar',
+    'posso',
+  ]);
+  if (words.every((word) => allowed.has(word))) return true;
+  return /^(oi|ola|bom dia|boa tarde|boa noite)(\s+(tudo bem|como vai|claro|sim|ok))*$/.test(n);
 }
 
 function buildFirstGreetingSafeFallback(text: string): string {

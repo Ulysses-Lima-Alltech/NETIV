@@ -1233,8 +1233,9 @@ export async function applyAnaConversationUpdate(
   const conv = await getConversationById(conversationId);
   if (!conv) return;
   let classification = toValidClassification(meta.classification?.trim() || conv.classification);
+  const handoffAlreadyActive = conv.handoff === true || toValidClassification(conv.classification) === 'Handoff';
   const requestedAutoHandoff = !!meta.handoff || classification === 'Handoff';
-  if (requestedAutoHandoff) {
+  if (requestedAutoHandoff && !handoffAlreadyActive) {
     logAutoHandoffBlocked({
       origin: 'applyAnaConversationUpdate',
       conversationId,
@@ -1244,8 +1245,11 @@ export async function applyAnaConversationUpdate(
     });
   }
   // Regra definitiva: updates automáticos da Ana nunca podem ativar handoff.
-  const handoff = false;
-  if (classification === 'Handoff') {
+  // Se a conversa já estiver em handoff, preserva o estado humano.
+  const handoff = handoffAlreadyActive;
+  if (handoff) {
+    classification = 'Handoff';
+  } else if (classification === 'Handoff') {
     const restored = toValidClassification(conv.classification);
     classification = restored === 'Handoff' ? 'Novo' : restored;
   }
