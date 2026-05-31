@@ -2620,6 +2620,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   let isFirstAnaReplyForTurn = false;
   let pendingResolutionNeedsDisambiguation = false;
   let pendingResolutionDeclinedLike = false;
+  let pendingResolutionChoiceIntent: 'broker' | 'visit' | 'ambiguous' | 'decline_or_ambiguous' | null = null;
   const selectTurnDecision = (params: {
     handler: string;
     reason: string;
@@ -2805,12 +2806,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     if (effectiveConv.pending_resolution_choice === true) {
       const pendingChoice = classifyPendingResolutionChoice(trimmed);
-      if (pendingChoice === 'broker') {
-        await updateClassification(conversationId, { handoff: true, classification: 'Handoff' });
-        await clearConversationPendingResolutionState(conversationId);
-        console.log('[ANA_HANDOFF_ACCEPTED_BY_CUSTOMER]', { conversationId });
-        return;
-      }
+      pendingResolutionChoiceIntent = pendingChoice;
       if (pendingChoice === 'visit') {
         await clearConversationPendingResolutionState(conversationId);
         console.log('[ANA_VISIT_SELECTED_FROM_RESOLUTION_OFFER]', { conversationId });
@@ -4227,6 +4223,122 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    if (
+      effectiveConv.pending_resolution_choice === true &&
+      (pendingResolutionChoiceIntent === 'ambiguous' ||
+        pendingResolutionChoiceIntent === 'decline_or_ambiguous' ||
+        pendingResolutionChoiceIntent === 'broker')
+    ) {
+      const pendingResolutionModelResolution = resolveAnaOpenAIModel({
+        configuredModelFromDb: (aiSettings?.modelHotLead || '').trim() || null,
+        slot: 'hot_lead',
+        provider: anaTurnDiagnostics.provider,
+        baseUrl: aiSettings?.openaiBaseUrl ?? null,
+      });
+      if (pendingResolutionModelResolution.blocked) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = pendingResolutionModelResolution.reason;
+        anaTurnAuditLlmStatus = 'blocked';
+        anaTurnAuditErrorCode = pendingResolutionModelResolution.reason;
+        anaTurnAuditErrorMessage = 'Modelo operacional da Ana nao esta configurado corretamente.';
+        return;
+      }
+      const pendingResolutionModel = pendingResolutionModelResolution.finalModel;
+      const pendingResolutionContext =
+        pendingResolutionChoiceIntent === 'broker'
+          ? [
+              '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
+              'O cliente escolheu falar com o corretor responsavel.',
+              'Responda de forma curta e natural confirmando que o atendimento sera encaminhado.',
+              'Nao invente dados comerciais.',
+              'Nao ofereca visita neste momento.',
+              '[/CONTEXTO OPERACIONAL]',
+            ].join('\n')
+          : pendingResolutionChoiceIntent === 'decline_or_ambiguous'
+            ? [
+                '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
+                'O cliente recusou no momento ou respondeu de forma negativa/ambigua.',
+                'Responda de forma natural, curta e sem insistir.',
+                'Mantenha disponiveis as opcoes de corretor ou visita caso ele queira seguir.',
+                'Nao invente dados comerciais.',
+                '[/CONTEXTO OPERACIONAL]',
+              ].join('\n')
+          : [
+              '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
+              'O cliente respondeu de forma ambigua a uma pergunta com duas opcoes.',
+              'Ele precisa escolher entre:',
+              '1. encaminhamento para o corretor responsavel;',
+              '2. agendamento de visita.',
+              'Responda de forma natural e curta pedindo que ele escolha uma das duas opcoes.',
+              'Nao invente dados comerciais.',
+              '[/CONTEXTO OPERACIONAL]',
+            ].join('\n');
+      if (pendingResolutionChoiceIntent === 'broker') {
+        console.log('[ANA_HANDOFF_CONFIRMATION_CONTEXT_INJECTED]', { conversationId });
+      } else {
+        console.log('[ANA_PENDING_RESOLUTION_AMBIGUOUS_CHOICE]', {
+          conversationId,
+          choice: pendingResolutionChoiceIntent,
+        });
+      }
+      const pendingResolutionMessages: ChatMessage[] = [
+        { role: 'system', content: pendingResolutionContext },
+        { role: 'user', content: trimmed },
+      ];
+      const pendingResolutionResult = await generateChatCompletion({
+        apiKey: aiApiKey,
+        baseUrl: aiSettings.openaiBaseUrl,
+        model: pendingResolutionModel,
+        messages: pendingResolutionMessages,
+        temperature: Math.min(aiSettings.temperature, 0.65),
+        maxTokens: Math.max(aiSettings.maxTokens, 450),
+        responseFormatJson: false,
+      });
+      captureLlmAudit(
+        pendingResolutionResult,
+        pendingResolutionChoiceIntent === 'broker'
+          ? 'pending_resolution_broker_confirmation'
+          : 'pending_resolution_ambiguous_disambiguation'
+      );
+      const pendingResolutionReplyRaw = (pendingResolutionResult.content || '').trim();
+      if (pendingResolutionResult.success && pendingResolutionReplyRaw) {
+        const pendingResolutionReply = finalizeAnaReplyText(pendingResolutionReplyRaw, {
+          userMessage: trimmed,
+          conversationMode: mode,
+          isFirstAnaReply,
+          enterpriseName: ent?.name ?? null,
+          isKnowledgeGapTurn: true,
+        }).slice(0, 4000);
+        if (pendingResolutionReply.trim()) {
+          if (isPipelineStale(conversationId, replyPipelineToken)) {
+            anaTurnAuditOutcome = 'silent';
+            anaTurnAuditBlockedReason = 'pipeline_stale_before_pending_resolution_send';
+            return;
+          }
+          const pendingResolutionSend = await sendAnaOutboundMessages({
+            conversationId,
+            toPhoneNumber,
+            text: pendingResolutionReply,
+            phase: 'ana_pending_resolution_choice',
+            replyPipelineToken,
+          });
+          if (!pendingResolutionSend.success || pendingResolutionSend.metaMessageIds.length === 0) {
+            anaTurnAuditOutcome = 'send_failed';
+            anaTurnAuditBlockedReason = 'pending_resolution_send_failed';
+            return;
+          }
+          if (pendingResolutionChoiceIntent === 'broker') {
+            await updateClassification(conversationId, { handoff: true, classification: 'Handoff' });
+            await clearConversationPendingResolutionState(conversationId);
+            console.log('[ANA_HANDOFF_ACCEPTED_BY_CUSTOMER]', { conversationId });
+          }
+          anaTurnAuditOutcome = 'sent';
+          anaTurnAuditBlockedReason = null;
+          return;
+        }
+      }
+    }
+
     const userRefusedScheduling =
       isVisitSchedulingRefusal(trimmed) || isVisitSchedulingRefusalMessage(trimmed);
     const userIrritatedNow = isUserIrritated(trimmed);
@@ -4290,6 +4402,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       !visitStateReconstructedThisTurn;
     const directVisitSchedulingIntent = visitFlowSuppressedByConfirmationContext
       ? false
+      : (effectiveConv.pending_resolution_choice === true &&
+        pendingResolutionChoiceIntent !== null &&
+        pendingResolutionChoiceIntent !== 'visit')
+        ? false
       : rawDirectVisitSchedulingIntent;
     const hadVisitFlowSignalsBeforeSuppression =
       rawDirectVisitSchedulingIntent ||

@@ -103,6 +103,18 @@ export function classifyPendingResolutionChoice(
   const text = n(userMessage);
   if (!text) return 'ambiguous';
 
+  const brokerExplicit =
+    /\b(corretor|consultor|especialista|atendimento humano|responsavel|responsável|falar com alguem|falar com alguém|me encaminha|pode encaminhar|melhor o corretor|prefiro o corretor)\b/.test(
+      text
+    );
+  if (brokerExplicit) return 'broker';
+
+  const visitExplicit =
+    /\b(visita|agendar visita|marcar visita|quero visitar|conhecer o empreendimento|conhecer o stand|ir ate o local|ir até o local|presencial)\b/.test(
+      text
+    );
+  if (visitExplicit) return 'visit';
+
   if (
     /\b(nao quero|não quero|nao|não|agora nao|agora não|nao quero visita|não quero visita|nao quero agendar|não quero agendar)\b/.test(
       text
@@ -110,7 +122,11 @@ export function classifyPendingResolutionChoice(
   ) {
     return 'decline_or_ambiguous';
   }
-  if (/\b(corretor|consultor|encaminha|encaminhar|atendente|humano)\b/.test(text)) return 'broker';
-  if (/\b(visita|agendar|agendamento|marcar visita|agenda)\b/.test(text)) return 'visit';
+
+  if (
+    /^(sim|ok|pode|pode ser|pode sim|tanto faz|beleza|claro|acho que sim|vamos)$/.test(text)
+  ) {
+    return 'ambiguous';
+  }
   return 'ambiguous';
 }
