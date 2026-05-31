@@ -8,6 +8,13 @@ export interface AnaKnowledgeGapResult {
   instructionForModel: string;
 }
 
+export interface KnowledgeGapResolutionOfferValidation {
+  ok: boolean;
+  hasBrokerOption: boolean;
+  hasVisitOption: boolean;
+  missing: Array<'broker' | 'visit'>;
+}
+
 const DEFAULT_MODEL_INSTRUCTION =
   'A informação solicitada pelo cliente não está disponível com segurança na base autorizada ou depende de validação humana. Não invente dados. Responda de forma natural, curta e consultiva. Conduza oferecendo duas possibilidades: encaminhar para o corretor responsável ou agendar uma visita.';
 
@@ -68,10 +75,41 @@ export function detectAnaKnowledgeGap(args: {
   };
 }
 
-export function classifyPendingResolutionChoice(userMessage: string): 'broker' | 'visit' | 'ambiguous' {
+export function validateKnowledgeGapResolutionOffer(replyText: string): KnowledgeGapResolutionOfferValidation {
+  const text = n(replyText);
+  const hasBrokerOption =
+    /\b(corretor|consultor responsavel|consultor responsável|responsavel pelo atendimento|responsável pelo atendimento|especialista|atendimento humano)\b/.test(
+      text
+    );
+  const hasVisitOption =
+    /\b(visita|agendar visita|agendamento de visita|marcar visita|conhecer o empreendimento|conhecer o stand)\b/.test(
+      text
+    );
+  const missing: Array<'broker' | 'visit'> = [];
+  if (!hasBrokerOption) missing.push('broker');
+  if (!hasVisitOption) missing.push('visit');
+
+  return {
+    ok: hasBrokerOption && hasVisitOption,
+    hasBrokerOption,
+    hasVisitOption,
+    missing,
+  };
+}
+
+export function classifyPendingResolutionChoice(
+  userMessage: string
+): 'broker' | 'visit' | 'ambiguous' | 'decline_or_ambiguous' {
   const text = n(userMessage);
   if (!text) return 'ambiguous';
 
+  if (
+    /\b(nao quero|não quero|nao|não|agora nao|agora não|nao quero visita|não quero visita|nao quero agendar|não quero agendar)\b/.test(
+      text
+    )
+  ) {
+    return 'decline_or_ambiguous';
+  }
   if (/\b(corretor|consultor|encaminha|encaminhar|atendente|humano)\b/.test(text)) return 'broker';
   if (/\b(visita|agendar|agendamento|marcar visita|agenda)\b/.test(text)) return 'visit';
   return 'ambiguous';

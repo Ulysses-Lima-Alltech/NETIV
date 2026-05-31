@@ -228,7 +228,11 @@ import {
   splitCommercialRuleMessages,
 } from './anaCommercialRulesService.js';
 import { ANA_COMMERCIAL_RULES } from '../config/anaCommercialRules.js';
-import { classifyPendingResolutionChoice, detectAnaKnowledgeGap } from '../utils/anaKnowledgeGapGuard.js';
+import {
+  classifyPendingResolutionChoice,
+  detectAnaKnowledgeGap,
+  validateKnowledgeGapResolutionOffer,
+} from '../utils/anaKnowledgeGapGuard.js';
 
 /** Desligado para rastrear o fluxo real com [ANA_ENGINE_TRACE]. */
 const ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY = false;
@@ -2615,6 +2619,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   let turnCommittedHandler: string | null = null;
   let isFirstAnaReplyForTurn = false;
   let pendingResolutionNeedsDisambiguation = false;
+  let pendingResolutionDeclinedLike = false;
   const selectTurnDecision = (params: {
     handler: string;
     reason: string;
@@ -2809,6 +2814,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (pendingChoice === 'visit') {
         await clearConversationPendingResolutionState(conversationId);
         console.log('[ANA_VISIT_SELECTED_FROM_RESOLUTION_OFFER]', { conversationId });
+      } else if (pendingChoice === 'decline_or_ambiguous') {
+        pendingResolutionNeedsDisambiguation = true;
+        pendingResolutionDeclinedLike = true;
       } else if (pendingChoice === 'ambiguous') {
         pendingResolutionNeedsDisambiguation = true;
       }
@@ -5815,14 +5823,24 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           ].join('\n')
         : null;
     const pendingResolutionDisambiguationContext = pendingResolutionNeedsDisambiguation
-      ? [
-          '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
-          'A conversa esta aguardando escolha do cliente entre duas opcoes: corretor responsavel ou agendamento de visita.',
-          'A resposta do cliente foi ambigua.',
-          'Responda de forma natural e curta pedindo que ele escolha explicitamente entre corretor ou visita.',
-          'Nao invente dados comerciais.',
-          '[/CONTEXTO OPERACIONAL]',
-        ].join('\n')
+      ? pendingResolutionDeclinedLike
+        ? [
+            '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
+            'A conversa esta aguardando escolha entre corretor responsavel ou agendamento de visita.',
+            'O cliente recusou no momento ou respondeu de forma negativa/ambigua.',
+            'Responda de forma natural, curta e sem insistir.',
+            'Mantenha disponiveis as opcoes de corretor ou visita caso ele queira seguir.',
+            'Nao invente dados comerciais.',
+            '[/CONTEXTO OPERACIONAL]',
+          ].join('\n')
+        : [
+            '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
+            'A conversa esta aguardando escolha do cliente entre duas opcoes: corretor responsavel ou agendamento de visita.',
+            'A resposta do cliente foi ambigua.',
+            'Responda de forma natural e curta pedindo que ele escolha explicitamente entre corretor ou visita.',
+            'Nao invente dados comerciais.',
+            '[/CONTEXTO OPERACIONAL]',
+          ].join('\n')
       : null;
     if (conversationalQwenMode) {
       const conversationalPrompt = [
@@ -8782,6 +8800,98 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     if (finalPolicyResult.changed) {
       flowStateParsed = finalPolicyResult.flowState;
       await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+    }
+
+    if (isKnowledgeGapTurn) {
+      const knowledgeGapOfferValidation = validateKnowledgeGapResolutionOffer(replyText);
+      if (!knowledgeGapOfferValidation.ok) {
+        console.log('[ANA_KNOWLEDGE_GAP_RESPONSE_MISSING_REQUIRED_OPTIONS]', {
+          conversationId,
+          hasBrokerOption: knowledgeGapOfferValidation.hasBrokerOption,
+          hasVisitOption: knowledgeGapOfferValidation.hasVisitOption,
+          missing: knowledgeGapOfferValidation.missing,
+        });
+        console.log('[ANA_KNOWLEDGE_GAP_RETRY_GENERATION]', {
+          conversationId,
+          missing: knowledgeGapOfferValidation.missing,
+        });
+        const knowledgeGapRetryInstruction = [
+          '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
+          'A resposta anterior nao cumpriu a regra obrigatoria.',
+          'Ela precisa oferecer explicitamente as DUAS opcoes ao cliente:',
+          '1. encaminhar para o corretor responsavel;',
+          '2. agendar uma visita.',
+          'Nao escolha apenas uma.',
+          'Nao invente dados.',
+          'Nao diga valores, quantidades, disponibilidade, tabela, simulacao ou condicoes especificas.',
+          'Reescreva a resposta de forma natural, curta e consultiva como Ana.',
+          '[/CONTEXTO OPERACIONAL]',
+        ].join('\n');
+        const knowledgeGapRetryMessages: ChatMessage[] = [
+          { role: 'system', content: knowledgeGapRetryInstruction },
+          { role: 'user', content: `Mensagem original do cliente: "${trimmed}"` },
+          { role: 'assistant', content: replyText },
+          {
+            role: 'user',
+            content:
+              'Reescreva a resposta mantendo tom humano e consultivo, cumprindo exatamente a regra de oferecer as duas opcoes.',
+          },
+        ];
+        const knowledgeGapRetryResult = await generateChatCompletion({
+          apiKey: aiApiKey,
+          baseUrl: aiSettings.openaiBaseUrl,
+          model,
+          messages: knowledgeGapRetryMessages,
+          temperature: Math.min(aiSettings.temperature, 0.65),
+          maxTokens: Math.max(aiSettings.maxTokens, 700),
+          responseFormatJson: false,
+          costTracking: aiSettings.costTrackingEnabled
+            ? {
+                ...baseAnaCostTracking,
+                purpose: 'ana_knowledge_gap_options_retry',
+                requestType: 'ana_knowledge_gap_options_retry',
+                metadata: {
+                  responseFormatJson: false,
+                  strategy: 'knowledge_gap_required_options_retry',
+                },
+              }
+            : undefined,
+        });
+        captureLlmAudit(knowledgeGapRetryResult, 'ana_knowledge_gap_options_retry');
+        const knowledgeGapRetryRaw = (knowledgeGapRetryResult.content || '').trim();
+        if (knowledgeGapRetryResult.success && knowledgeGapRetryRaw) {
+          replyText = finalizeAnaReplyText(knowledgeGapRetryRaw, {
+            userMessage: trimmed,
+            conversationMode: mode,
+            isFirstAnaReply,
+            enterpriseName: ent?.name ?? null,
+            isKnowledgeGapTurn: true,
+          }).slice(0, 4000);
+          const retryValidation = validateKnowledgeGapResolutionOffer(replyText);
+          if (retryValidation.ok) {
+            console.log('[ANA_KNOWLEDGE_GAP_RETRY_ACCEPTED]', {
+              conversationId,
+              hasBrokerOption: retryValidation.hasBrokerOption,
+              hasVisitOption: retryValidation.hasVisitOption,
+            });
+          } else {
+            console.log('[ANA_KNOWLEDGE_GAP_RETRY_STILL_INVALID]', {
+              conversationId,
+              hasBrokerOption: retryValidation.hasBrokerOption,
+              hasVisitOption: retryValidation.hasVisitOption,
+              missing: retryValidation.missing,
+            });
+          }
+        } else {
+          console.log('[ANA_KNOWLEDGE_GAP_RETRY_STILL_INVALID]', {
+            conversationId,
+            reason: 'retry_generation_failed_or_empty',
+            hasBrokerOption: knowledgeGapOfferValidation.hasBrokerOption,
+            hasVisitOption: knowledgeGapOfferValidation.hasVisitOption,
+            missing: knowledgeGapOfferValidation.missing,
+          });
+        }
+      }
     }
 
     const finalReplyParts = [replyText];
