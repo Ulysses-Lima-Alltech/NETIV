@@ -71,6 +71,11 @@ export interface ConversationRow {
   reengagement_sent_at?: Date | null;
   reengagement_for_user_message_id?: number | null;
   reengagement_count?: number;
+  pending_resolution_choice?: boolean;
+  pending_resolution_reason?: string | null;
+  pending_resolution_intent?: string | null;
+  pending_resolution_created_at?: Date | null;
+  pending_resolution_payload?: unknown;
 }
 
 export interface ReserveSegmentationPatch {
@@ -1309,6 +1314,41 @@ export async function applyInboundUserMessageResets(conversationId: number): Pro
        reengagement_for_user_message_id = NULL,
        updated_at = NOW()
      WHERE id = $1`,
+    [conversationId]
+  );
+}
+
+export async function setConversationPendingResolutionState(
+  conversationId: number,
+  input: {
+    reason: string;
+    intent?: string | null;
+    payload?: Record<string, unknown> | null;
+  }
+): Promise<void> {
+  await query(
+    `UPDATE conversations
+        SET pending_resolution_choice = true,
+            pending_resolution_reason = $1,
+            pending_resolution_intent = $2,
+            pending_resolution_created_at = NOW(),
+            pending_resolution_payload = $3::jsonb,
+            updated_at = NOW()
+      WHERE id = $4`,
+    [input.reason, input.intent ?? null, JSON.stringify(input.payload ?? {}), conversationId]
+  );
+}
+
+export async function clearConversationPendingResolutionState(conversationId: number): Promise<void> {
+  await query(
+    `UPDATE conversations
+        SET pending_resolution_choice = false,
+            pending_resolution_reason = NULL,
+            pending_resolution_intent = NULL,
+            pending_resolution_created_at = NULL,
+            pending_resolution_payload = NULL,
+            updated_at = NOW()
+      WHERE id = $1`,
     [conversationId]
   );
 }

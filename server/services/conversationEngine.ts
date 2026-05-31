@@ -14,6 +14,9 @@ import {
   mergeConversationCommercialFlowState,
   mergeConfirmedCustomerNameIfEmpty,
   markAnaAskedForCustomerName,
+  setConversationPendingResolutionState,
+  clearConversationPendingResolutionState,
+  updateClassification,
 } from '../repositories/conversationRepository.js';
 import {
   sendAnaLocalMediaToWhatsAppWithQuota as sendLocalMediaToWhatsApp,
@@ -225,6 +228,7 @@ import {
   splitCommercialRuleMessages,
 } from './anaCommercialRulesService.js';
 import { ANA_COMMERCIAL_RULES } from '../config/anaCommercialRules.js';
+import { classifyPendingResolutionChoice, detectAnaKnowledgeGap } from '../utils/anaKnowledgeGapGuard.js';
 
 /** Desligado para rastrear o fluxo real com [ANA_ENGINE_TRACE]. */
 const ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY = false;
@@ -2610,6 +2614,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   let turnResponseCommitted = false;
   let turnCommittedHandler: string | null = null;
   let isFirstAnaReplyForTurn = false;
+  let pendingResolutionNeedsDisambiguation = false;
   const selectTurnDecision = (params: {
     handler: string;
     reason: string;
@@ -2765,6 +2770,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     // Decisao final SEMPRE com base no estado mais recente. Modo handoff: NAO responder. Modo ANA: SEMPRE responder via IA.
     if (effectiveConv.handoff === true || effectiveConv.classification === 'Handoff') {
+      console.log('[ANA_SKIPPED_HANDOFF_ACTIVE]', {
+        conversationId,
+        handoff: effectiveConv.handoff,
+        classification: effectiveConv.classification,
+      });
       if (ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY) {
         console.log('[ANA_ENGINE_DIAGNOSTIC] skip_handoff', {
           conversationId,
@@ -2787,6 +2797,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
     console.log('[ANA DEBUG] handoff check passed');
+
+    if (effectiveConv.pending_resolution_choice === true) {
+      const pendingChoice = classifyPendingResolutionChoice(trimmed);
+      if (pendingChoice === 'broker') {
+        await updateClassification(conversationId, { handoff: true, classification: 'Handoff' });
+        await clearConversationPendingResolutionState(conversationId);
+        console.log('[ANA_HANDOFF_ACCEPTED_BY_CUSTOMER]', { conversationId });
+        return;
+      }
+      if (pendingChoice === 'visit') {
+        await clearConversationPendingResolutionState(conversationId);
+        console.log('[ANA_VISIT_SELECTED_FROM_RESOLUTION_OFFER]', { conversationId });
+      } else if (pendingChoice === 'ambiguous') {
+        pendingResolutionNeedsDisambiguation = true;
+      }
+    }
 
     if (hasExplicitHandoffIntent(trimmed)) {
       console.warn('explicit_handoff_intent_detected_no_auto_handoff', {
@@ -4961,6 +4987,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    const knowledgeGapMeta = detectAnaKnowledgeGap({
+      userMessage: trimmed,
+      requestedAxis: requestedAxisForPolicy,
+    });
+    if (knowledgeGapMeta.hasKnowledgeGap) {
+      console.log('[ANA_KNOWLEDGE_GAP_DETECTED]', {
+        conversationId,
+        reason: knowledgeGapMeta.reason,
+        matchedIntent: knowledgeGapMeta.matchedIntent ?? null,
+      });
+      await setConversationPendingResolutionState(conversationId, {
+        reason: knowledgeGapMeta.reason,
+        intent: knowledgeGapMeta.matchedIntent ?? null,
+        payload: {
+          allowedNextActions: knowledgeGapMeta.allowedNextActions,
+        },
+      });
+    }
+
     if (!evoraKnowledgeDrivenMode) {
     const commercialRule = resolveAnaCommercialRule({
       enterpriseName: ent?.name ?? null,
@@ -5032,7 +5077,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           }
         : null;
     const effectiveCommercialRule = forcedCommercialRule ?? commercialRule ?? canonicalLocationFallbackRule;
-    if (effectiveCommercialRule && anaDecision.canRespond && anaDecision.outboundAllowed) {
+    if (
+      effectiveCommercialRule &&
+      anaDecision.canRespond &&
+      anaDecision.outboundAllowed &&
+      !knowledgeGapMeta.hasKnowledgeGap
+    ) {
       console.log('[ANA_LLM_DECISION]', {
         conversationId,
         willCallQwen: false,
@@ -5742,6 +5792,32 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       systemPromptLen: systemPrompt.length,
     });
     const messages: ChatMessage[] = [];
+    const knowledgeGapOperationalContext =
+      knowledgeGapMeta.hasKnowledgeGap
+        ? [
+            '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
+            'A pergunta do cliente exige uma informacao que nao esta disponivel com seguranca na base autorizada ou depende de validacao humana.',
+            'Nao invente resposta.',
+            'Nao diga valores, quantidades, disponibilidade, tabela, simulacao ou condicoes especificas.',
+            'Responda naturalmente como Ana.',
+            'Ofereca duas saidas possiveis:',
+            '- encaminhar para o corretor responsavel;',
+            '- agendar uma visita.',
+            'A resposta deve soar humana, curta e consultiva.',
+            `Instrucao adicional: ${knowledgeGapMeta.instructionForModel}`,
+            '[/CONTEXTO OPERACIONAL]',
+          ].join('\n')
+        : null;
+    const pendingResolutionDisambiguationContext = pendingResolutionNeedsDisambiguation
+      ? [
+          '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
+          'A conversa esta aguardando escolha do cliente entre duas opcoes: corretor responsavel ou agendamento de visita.',
+          'A resposta do cliente foi ambigua.',
+          'Responda de forma natural e curta pedindo que ele escolha explicitamente entre corretor ou visita.',
+          'Nao invente dados comerciais.',
+          '[/CONTEXTO OPERACIONAL]',
+        ].join('\n')
+      : null;
     if (conversationalQwenMode) {
       const conversationalPrompt = [
         'MODO CONVERSACIONAL DA ANA',
@@ -5750,6 +5826,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         'Evite ofertas de visita automáticas. Só fale de visita se o cliente pedir.',
       ].join('\n\n');
       messages.push({ role: 'system', content: conversationalPrompt });
+      if (knowledgeGapOperationalContext) {
+        messages.push({ role: 'system', content: knowledgeGapOperationalContext });
+        console.log('[ANA_RESOLUTION_OPTIONS_INJECTED]', { conversationId, mode: 'conversational' });
+      }
+      if (pendingResolutionDisambiguationContext) {
+        messages.push({ role: 'system', content: pendingResolutionDisambiguationContext });
+      }
       for (const h of history.slice(-6)) messages.push({ role: h.role, content: h.content });
       messages.push({ role: 'user', content: userMessageForReasoning });
       console.log('[ANA_CONVERSATIONAL_QWEN_ATTEMPT]', {
@@ -5761,6 +5844,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       messages.push({ role: 'system', content: systemPrompt });
       if (policyRuntimeDirectives) {
         messages.push({ role: 'system', content: policyRuntimeDirectives });
+      }
+      if (knowledgeGapOperationalContext) {
+        messages.push({ role: 'system', content: knowledgeGapOperationalContext });
+        console.log('[ANA_RESOLUTION_OPTIONS_INJECTED]', { conversationId, mode: 'structured' });
+      }
+      if (pendingResolutionDisambiguationContext) {
+        messages.push({ role: 'system', content: pendingResolutionDisambiguationContext });
       }
       for (const h of history) {
         messages.push({ role: h.role, content: h.content });
