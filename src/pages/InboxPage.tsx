@@ -110,6 +110,7 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
   const isHandoffMode =
     c.handoff === true ||
     c.attendanceMode === 'handoff' ||
+    c.status === 'Handoff' ||
     statusBase === 'Handoff' ||
     normalized === 'Handoff';
   const status = (isHandoffMode ? 'Handoff' : statusBase) as Conversation['status'];
@@ -933,6 +934,7 @@ export function InboxPage() {
             const nextHandoff =
               data.handoff === true ||
               data.attendanceMode === 'handoff' ||
+              c.status === 'Handoff' ||
               nextClassification === 'Handoff';
             return c.id === selectedId
               ? {

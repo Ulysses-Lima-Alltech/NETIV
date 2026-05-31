@@ -151,6 +151,7 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
   );
   const row = rows[0];
   if (!row) return null;
+  const isHandoff = row.handoff === true || row.classification === 'Handoff';
   return {
     id: String(row.id),
     channel: row.channel,
@@ -170,9 +171,9 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
     projectName: row.enterprise_name,
     enterpriseId: row.enterprise_id,
     enterpriseName: row.enterprise_name,
-    classificationStatus: row.classification ?? 'Novo',
-    handoff: row.handoff === true,
-    attendanceMode: row.handoff === true || row.classification === 'Handoff' ? 'handoff' : 'ana',
+    classificationStatus: isHandoff ? 'Handoff' : (row.classification ?? 'Novo'),
+    handoff: isHandoff,
+    attendanceMode: isHandoff ? 'handoff' : 'ana',
     leadStage: toLeadStage(row.lead_temperature),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),

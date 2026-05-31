@@ -1,4 +1,5 @@
 import { statSync } from 'fs';
+import { query } from '../db/pg.js';
 import {
   getMessagesByConversationId,
   getLastUserMessageNeedingReply,
@@ -2729,6 +2730,81 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
     return { committed: true, text, parts: committedParts };
   };
+  const verifyAndRepairHandoffAfterBrokerAssignment = async (
+    assignment: Awaited<ReturnType<typeof assignConversationToNextBroker>>
+  ): Promise<void> => {
+    if (!assignment) return;
+    let convAfterAssignment = await getConversationById(conversationId);
+    if (!convAfterAssignment) {
+      console.error('[ANA_HANDOFF_MODE_VERIFY_FAILED]', {
+        conversationId,
+        reason: 'conversation_not_found_after_assignment',
+      });
+      return;
+    }
+    const initialAttendanceMode =
+      convAfterAssignment.handoff === true || convAfterAssignment.classification === 'Handoff'
+        ? 'handoff'
+        : 'ana';
+    console.log('[ANA_HANDOFF_MODE_VERIFY_AFTER_ASSIGNMENT]', {
+      conversationId,
+      assignedBrokerId: convAfterAssignment.assigned_broker_id ?? null,
+      handoff: convAfterAssignment.handoff === true,
+      classification: convAfterAssignment.classification ?? null,
+      pendingResolutionChoice: convAfterAssignment.pending_resolution_choice === true,
+      attendanceMode: initialAttendanceMode,
+    });
+    const shouldRepairHandoffMode =
+      convAfterAssignment.assigned_broker_id != null &&
+      (convAfterAssignment.handoff !== true || convAfterAssignment.classification !== 'Handoff');
+    if (shouldRepairHandoffMode) {
+      await query(
+        `UPDATE conversations
+         SET handoff = true,
+             classification = 'Handoff',
+             handoff_reason = COALESCE(handoff_reason, 'customer_requested_broker'),
+             handoff_requested_at = COALESCE(handoff_requested_at, NOW()),
+             updated_at = NOW()
+         WHERE id = $1`,
+        [conversationId]
+      );
+      convAfterAssignment = await getConversationById(conversationId);
+      const repairedAttendanceMode =
+        convAfterAssignment?.handoff === true || convAfterAssignment?.classification === 'Handoff'
+          ? 'handoff'
+          : 'ana';
+      console.log('[ANA_HANDOFF_MODE_REPAIRED_AFTER_ASSIGNMENT]', {
+        conversationId,
+        assignedBrokerId: convAfterAssignment?.assigned_broker_id ?? null,
+        handoff: convAfterAssignment?.handoff === true,
+        classification: convAfterAssignment?.classification ?? null,
+        pendingResolutionChoice: convAfterAssignment?.pending_resolution_choice === true,
+        attendanceMode: repairedAttendanceMode,
+      });
+    }
+    const finalAttendanceMode =
+      convAfterAssignment?.handoff === true || convAfterAssignment?.classification === 'Handoff'
+        ? 'handoff'
+        : 'ana';
+    const verificationFailed =
+      !convAfterAssignment ||
+      (assignment.assignedBrokerId != null && convAfterAssignment.assigned_broker_id == null) ||
+      convAfterAssignment.handoff !== true ||
+      convAfterAssignment.classification !== 'Handoff' ||
+      convAfterAssignment.pending_resolution_choice === true;
+    if (verificationFailed) {
+      console.error('[ANA_HANDOFF_MODE_VERIFY_FAILED]', {
+        conversationId,
+        assignedBrokerId: convAfterAssignment?.assigned_broker_id ?? null,
+        expectedAssignedBrokerId: assignment.assignedBrokerId ?? null,
+        handoff: convAfterAssignment?.handoff === true,
+        classification: convAfterAssignment?.classification ?? null,
+        pendingResolutionChoice: convAfterAssignment?.pending_resolution_choice === true,
+        attendanceMode: finalAttendanceMode,
+      });
+    }
+    await publishConversationUpdated(conversationId);
+  };
   try {
     console.log('[ANA_PIPELINE] engine_start', {
       conversationId,
@@ -4390,7 +4466,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
                 reason: 'conversation_not_found_after_customer_confirmation',
               });
             } else {
-              await publishConversationUpdated(conversationId);
+              await verifyAndRepairHandoffAfterBrokerAssignment(assignment);
 
               if (assignment.assignedBrokerId != null) {
                 const enterpriseNameForNotification =
@@ -5206,18 +5282,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       requestedAxis: requestedAxisForPolicy,
     });
     const isKnowledgeGapTurn = knowledgeGapMeta.hasKnowledgeGap === true;
+    let knowledgeGapOfferValidationResult: ReturnType<typeof validateKnowledgeGapResolutionOffer> | null = null;
     if (isKnowledgeGapTurn) {
       console.log('[ANA_KNOWLEDGE_GAP_DETECTED]', {
         conversationId,
         reason: knowledgeGapMeta.reason,
         matchedIntent: knowledgeGapMeta.matchedIntent ?? null,
-      });
-      await setConversationPendingResolutionState(conversationId, {
-        reason: knowledgeGapMeta.reason,
-        intent: knowledgeGapMeta.matchedIntent ?? null,
-        payload: {
-          allowedNextActions: knowledgeGapMeta.allowedNextActions,
-        },
       });
     }
 
@@ -5747,9 +5817,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       flowState: flowStateParsed,
     };
 
-    const shouldBlockFreeformWithoutRag =
+    const ragMissingAndKnowledgeDependent =
       ragChunksFound === 0 &&
       isKnowledgeDependentRequest(userMessageForReasoning, currentAxisForRepetition);
+    if (isKnowledgeGapTurn && ragMissingAndKnowledgeDependent) {
+      console.log('[ANA_RAG_MISSING_BYPASSED_FOR_KNOWLEDGE_GAP]', {
+        conversationId,
+        reason: knowledgeGapMeta.reason,
+        matchedIntent: knowledgeGapMeta.matchedIntent ?? null,
+      });
+    }
+    const shouldBlockFreeformWithoutRag =
+      !isKnowledgeGapTurn &&
+      ragMissingAndKnowledgeDependent;
     if (shouldBlockFreeformWithoutRag) {
       const canonicalReply = buildCanonicalSafeReplyForMissingRag({
         axis: currentAxisForRepetition,
@@ -9013,6 +9093,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     if (isKnowledgeGapTurn) {
       const knowledgeGapOfferValidation = validateKnowledgeGapResolutionOffer(replyText);
+      knowledgeGapOfferValidationResult = knowledgeGapOfferValidation;
       if (!knowledgeGapOfferValidation.ok) {
         console.log('[ANA_KNOWLEDGE_GAP_RESPONSE_MISSING_REQUIRED_OPTIONS]', {
           conversationId,
@@ -9077,6 +9158,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             isKnowledgeGapTurn: true,
           }).slice(0, 4000);
           const retryValidation = validateKnowledgeGapResolutionOffer(replyText);
+          knowledgeGapOfferValidationResult = retryValidation;
           if (retryValidation.ok) {
             console.log('[ANA_KNOWLEDGE_GAP_RETRY_ACCEPTED]', {
               conversationId,
@@ -9090,11 +9172,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               hasVisitOption: retryValidation.hasVisitOption,
               missing: retryValidation.missing,
             });
+            console.error('[ANA_PENDING_RESOLUTION_STATE_NOT_SET_INVALID_OFFER]', {
+              conversationId,
+              reason: 'knowledge_gap_retry_still_invalid',
+              hasBrokerOption: retryValidation.hasBrokerOption,
+              hasVisitOption: retryValidation.hasVisitOption,
+              missing: retryValidation.missing,
+            });
           }
         } else {
           console.log('[ANA_KNOWLEDGE_GAP_RETRY_STILL_INVALID]', {
             conversationId,
             reason: 'retry_generation_failed_or_empty',
+            hasBrokerOption: knowledgeGapOfferValidation.hasBrokerOption,
+            hasVisitOption: knowledgeGapOfferValidation.hasVisitOption,
+            missing: knowledgeGapOfferValidation.missing,
+          });
+          console.error('[ANA_PENDING_RESOLUTION_STATE_NOT_SET_INVALID_OFFER]', {
+            conversationId,
+            reason: 'knowledge_gap_retry_generation_failed_or_empty',
             hasBrokerOption: knowledgeGapOfferValidation.hasBrokerOption,
             hasVisitOption: knowledgeGapOfferValidation.hasVisitOption,
             missing: knowledgeGapOfferValidation.missing,
@@ -9159,6 +9255,33 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           'lastCommittedAt',
         ],
       });
+      if (isKnowledgeGapTurn) {
+        if (knowledgeGapOfferValidationResult?.ok === true) {
+          await setConversationPendingResolutionState(conversationId, {
+            reason: knowledgeGapMeta.reason,
+            intent: knowledgeGapMeta.matchedIntent ?? null,
+            payload: {
+              allowedNextActions: knowledgeGapMeta.allowedNextActions,
+            },
+          });
+          console.log('[ANA_PENDING_RESOLUTION_STATE_SET_AFTER_VALID_OFFER]', {
+            conversationId,
+            reason: knowledgeGapMeta.reason,
+            matchedIntent: knowledgeGapMeta.matchedIntent ?? null,
+            hasBrokerOption: knowledgeGapOfferValidationResult.hasBrokerOption,
+            hasVisitOption: knowledgeGapOfferValidationResult.hasVisitOption,
+          });
+        } else {
+          console.error('[ANA_PENDING_RESOLUTION_STATE_NOT_SET_INVALID_OFFER]', {
+            conversationId,
+            reason: knowledgeGapMeta.reason,
+            matchedIntent: knowledgeGapMeta.matchedIntent ?? null,
+            hasBrokerOption: knowledgeGapOfferValidationResult?.hasBrokerOption ?? null,
+            hasVisitOption: knowledgeGapOfferValidationResult?.hasVisitOption ?? null,
+            missing: knowledgeGapOfferValidationResult?.missing ?? ['broker', 'visit'],
+          });
+        }
+      }
       anaEngineTrace('final_send_success', {
         conversationId,
         phase: 'ana_main_reply',
