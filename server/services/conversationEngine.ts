@@ -6059,13 +6059,23 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       .filter((line): line is string => Boolean(line))
       .join('\n');
     const conversationalQwenMode =
-      isLocalQwenRuntime &&
+      isKnowledgeGapTurn === true ||
       (
-        isConversationalGenericFollowup(trimmed) ||
-        anaDecision.isGenericOpenQuestion === true ||
-        (requestedAxisForPolicy == null && !anaDecision.shouldAnswerDirectly)
+        isLocalQwenRuntime &&
+        (
+          isConversationalGenericFollowup(trimmed) ||
+          anaDecision.isGenericOpenQuestion === true ||
+          (requestedAxisForPolicy == null && !anaDecision.shouldAnswerDirectly)
+        )
       );
-    const responseFormatJsonForTurn = !conversationalQwenMode;
+    const responseFormatJsonForTurn = isKnowledgeGapTurn === true ? false : !conversationalQwenMode;
+    if (isKnowledgeGapTurn) {
+      console.log('[ANA_KNOWLEDGE_GAP_TEXT_MODE_FORCED]', {
+        conversationId,
+        reason: knowledgeGapMeta.reason,
+        matchedIntent: knowledgeGapMeta.matchedIntent ?? null,
+      });
+    }
     const knownTopics = Array.from(
       new Set([
         ...detectCommercialAxes(userMessageForReasoning),
@@ -6737,7 +6747,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         );
       }
     }
-    if (!structured && isLocalQwenRuntime && !conversationalQwenMode) {
+    if (!structured && isLocalQwenRuntime && !conversationalQwenMode && !isKnowledgeGapTurn) {
       const canonicalSafeReply = buildCanonicalSafeReplyForMissingRag({
         axis: currentAxisForRepetition,
         isEvora: isEvoraEnterpriseName(ent?.name ?? null),
@@ -6754,7 +6764,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         reason: 'local_qwen_json_repair_failed',
       });
     }
-    if (!structured && conversationalQwenMode) {
+    if (!structured && conversationalQwenMode && !isKnowledgeGapTurn) {
       const conversationalFallback = buildConversationalCanonicalFallback(currentAxisForRepetition);
       console.log('[ANA_QWEN_RESPONSE_REPLACED]', {
         conversationId,
@@ -6768,6 +6778,24 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationId,
         lastAxis: currentAxisForRepetition,
         fallbackLen: conversationalFallback.length,
+      });
+    }
+    if (!structured && isKnowledgeGapTurn) {
+      console.error('[ANA_KNOWLEDGE_GAP_TEXT_MODE_EMPTY_OR_FAILED]', {
+        conversationId,
+        reason: knowledgeGapMeta.reason,
+        matchedIntent: knowledgeGapMeta.matchedIntent ?? null,
+        llmSuccess: result.success,
+        rawLen: rawTrimmed.length,
+      });
+      const safeKnowledgeGapFallback =
+        'Essa informacao precisa ser confirmada com seguranca. Posso te encaminhar para o corretor responsavel ou, se preferir, te ajudar a agendar uma visita?';
+      structured = buildRecoveredReplyStructured(safeKnowledgeGapFallback, effectiveConv.classification);
+      recoveredTextUsed = true;
+      console.log('[ANA_KNOWLEDGE_GAP_SAFE_OFFER_FALLBACK_USED]', {
+        conversationId,
+        reason: 'structured_missing_or_llm_failure',
+        replyLen: safeKnowledgeGapFallback.length,
       });
     }
     console.log('[ANA_QWEN_PARSE_RESULT]', {
@@ -9197,6 +9225,35 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           });
         }
       }
+      if (!knowledgeGapOfferValidationResult?.ok) {
+        console.error('[ANA_KNOWLEDGE_GAP_TEXT_MODE_EMPTY_OR_FAILED]', {
+          conversationId,
+          reason: 'knowledge_gap_offer_invalid_after_retry',
+          hasBrokerOption: knowledgeGapOfferValidationResult?.hasBrokerOption ?? false,
+          hasVisitOption: knowledgeGapOfferValidationResult?.hasVisitOption ?? false,
+          missing: knowledgeGapOfferValidationResult?.missing ?? ['broker', 'visit'],
+        });
+        const safeKnowledgeGapFallback =
+          'Essa informacao precisa ser confirmada com seguranca. Posso te encaminhar para o corretor responsavel ou, se preferir, te ajudar a agendar uma visita?';
+        const safeFallbackValidation = validateKnowledgeGapResolutionOffer(safeKnowledgeGapFallback);
+        if (safeFallbackValidation.ok) {
+          replyText = safeKnowledgeGapFallback;
+          knowledgeGapOfferValidationResult = safeFallbackValidation;
+          console.log('[ANA_KNOWLEDGE_GAP_SAFE_OFFER_FALLBACK_USED]', {
+            conversationId,
+            reason: 'knowledge_gap_offer_invalid_after_retry',
+            replyLen: safeKnowledgeGapFallback.length,
+          });
+        }
+      }
+      if (knowledgeGapOfferValidationResult) {
+        console.log('[ANA_KNOWLEDGE_GAP_FINAL_OFFER_READY]', {
+          conversationId,
+          hasBrokerOption: knowledgeGapOfferValidationResult.hasBrokerOption,
+          hasVisitOption: knowledgeGapOfferValidationResult.hasVisitOption,
+          replyLen: replyText.trim().length,
+        });
+      }
     }
 
     const finalReplyParts = [replyText];
@@ -9223,6 +9280,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       phase: 'ana_main_reply',
       replyLen: replyText.length,
     });
+    if (isKnowledgeGapTurn) {
+      console.log('[ANA_KNOWLEDGE_GAP_SEND_STARTED]', {
+        conversationId,
+        replyLen: replyText.length,
+      });
+    }
     const sendResult = await sendAnaOutboundMessages({
       conversationId,
       toPhoneNumber,
@@ -9231,6 +9294,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       replyPipelineToken,
     });
     if (sendResult.success && sendResult.metaMessageIds.length > 0) {
+      if (isKnowledgeGapTurn) {
+        console.log('[ANA_KNOWLEDGE_GAP_SEND_SUCCESS]', {
+          conversationId,
+          outboundMetaMessageId: sendResult.metaMessageIds[sendResult.metaMessageIds.length - 1] ?? null,
+        });
+      }
       const committedFinalState = updateConversationStateFromCommittedReply({
         conversationId,
         flowState: flowStateParsed,
@@ -9373,6 +9442,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         fallbackUsed: anaTurnDiagnostics.fallbackUsed,
       });
     } else {
+      if (isKnowledgeGapTurn) {
+        console.error('[ANA_KNOWLEDGE_GAP_SEND_FAILED]', {
+          conversationId,
+          error: sendResult.error ?? null,
+          code: sendResult.code ?? null,
+        });
+      }
       anaEngineTrace('final_send_error', {
         conversationId,
         phase: 'ana_main_reply',
