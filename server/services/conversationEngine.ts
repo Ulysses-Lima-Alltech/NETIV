@@ -4991,7 +4991,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       userMessage: trimmed,
       requestedAxis: requestedAxisForPolicy,
     });
-    if (knowledgeGapMeta.hasKnowledgeGap) {
+    const isKnowledgeGapTurn = knowledgeGapMeta.hasKnowledgeGap === true;
+    if (isKnowledgeGapTurn) {
       console.log('[ANA_KNOWLEDGE_GAP_DETECTED]', {
         conversationId,
         reason: knowledgeGapMeta.reason,
@@ -5081,7 +5082,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       effectiveCommercialRule &&
       anaDecision.canRespond &&
       anaDecision.outboundAllowed &&
-      !knowledgeGapMeta.hasKnowledgeGap
+      !isKnowledgeGapTurn
     ) {
       console.log('[ANA_LLM_DECISION]', {
         conversationId,
@@ -5367,6 +5368,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               }
             : undefined,
           safeTopicAvailability: safeTopicAvailabilityForPolicy,
+          isKnowledgeGapTurn,
         });
         commercialRuleMessage = commercialPolicyResult.text;
         if (commercialPolicyResult.changed) {
@@ -5793,16 +5795,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
     const messages: ChatMessage[] = [];
     const knowledgeGapOperationalContext =
-      knowledgeGapMeta.hasKnowledgeGap
+      isKnowledgeGapTurn
         ? [
             '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
             'A pergunta do cliente exige uma informacao que nao esta disponivel com seguranca na base autorizada ou depende de validacao humana.',
             'Nao invente resposta.',
+            'Nao tente compensar com informacoes genericas.',
+            'Nao diga "o que posso te adiantar".',
+            'Nao diga "esse detalhe o corretor consegue te passar certinho" como frase padrao.',
+            'Nao pergunte "qual ponto voce quer entender primeiro".',
             'Nao diga valores, quantidades, disponibilidade, tabela, simulacao ou condicoes especificas.',
             'Responda naturalmente como Ana.',
-            'Ofereca duas saidas possiveis:',
-            '- encaminhar para o corretor responsavel;',
-            '- agendar uma visita.',
+            'Ofereca explicitamente duas opcoes para o cliente escolher:',
+            '1. encaminhar para o corretor responsavel;',
+            '2. agendar uma visita.',
             'A resposta deve soar humana, curta e consultiva.',
             `Instrucao adicional: ${knowledgeGapMeta.instructionForModel}`,
             '[/CONTEXTO OPERACIONAL]',
@@ -7443,6 +7449,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               conversationMode: mode,
               isFirstAnaReply,
               enterpriseName: ent?.name ?? null,
+              isKnowledgeGapTurn,
           }).slice(0, 4000);
     }
 
@@ -7512,7 +7519,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             conversationMode: mode,
             isFirstAnaReply,
             enterpriseName: ent?.name ?? null,
+            isKnowledgeGapTurn,
           });
+    if (isKnowledgeGapTurn) {
+      console.log('[ANA_KNOWLEDGE_GAP_SKIPPED_LEGACY_CTA]', {
+        conversationId,
+        skipOpenQuestion: true,
+        skipLegacyBrokerText: true,
+      });
+    }
     if (
       currentAxisForRepetition != null &&
       anaDecision.shouldAvoidGenericFallback &&
@@ -7543,6 +7558,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationMode: mode,
         isFirstAnaReply,
         enterpriseName: ent?.name ?? null,
+        isKnowledgeGapTurn,
       });
     }
     const preserveListFormatting =
@@ -7855,6 +7871,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             conversationMode: mode,
             isFirstAnaReply,
             enterpriseName: ent?.name ?? null,
+            isKnowledgeGapTurn,
           }),
           enterpriseName: ent?.name ?? null,
           maxChars: ANA_OUTBOUND_MAX_CHARS,
@@ -8759,6 +8776,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         : undefined,
       safeTopicAvailability: safeTopicAvailabilityForPolicy,
       knowledgeDrivenMode: evoraKnowledgeDrivenMode,
+      isKnowledgeGapTurn,
     });
     replyText = finalPolicyResult.text;
     if (finalPolicyResult.changed) {

@@ -346,6 +346,8 @@ export interface FinalizeAnaReplyOptions {
   isFirstAnaReply?: boolean;
   /** Empreendimento ativo no turno (usado para regras canônicas do Évora). */
   enterpriseName?: string | null;
+  /** Turno de knowledge gap: preservar texto do LLM e pular CTAs legadas. */
+  isKnowledgeGapTurn?: boolean;
 }
 
 /**
@@ -646,24 +648,31 @@ export function containsInternalLimitationLanguage(text: string): boolean {
 
 export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOptions): string {
   const isFirstAnaReply = opts?.isFirstAnaReply === true;
+  const isKnowledgeGapTurn = opts?.isKnowledgeGapTurn === true;
   const base = normalizeWhitespacePreservingLines(stripMarkdownArtifactsForWhatsApp((text || '').trim()));
   const noReintro = stripMidConversationReintroduction(base, isFirstAnaReply);
   const materialShort = applyShortMaterialReplyPolicy(noReintro, opts?.userMessage ?? null);
   const compact = keepTwoShortSentencesMax(materialShort);
   const evoraLocation = forceEvoraLocationReplyWhenNeeded(compact, opts);
   const humanLazer = humanizeLazerReplyWhenNeeded(evoraLocation, opts?.userMessage ?? null);
-  const withOpenQuestion = appendOpenQuestionForGeneralEnterpriseIntro(humanLazer, opts?.userMessage ?? null);
+  const withOpenQuestion = isKnowledgeGapTurn
+    ? humanLazer
+    : appendOpenQuestionForGeneralEnterpriseIntro(humanLazer, opts?.userMessage ?? null);
   const evoraLazer = forceEvoraLazerReplyWhenNeeded(withOpenQuestion, opts);
-  const sanitized = removeInternalLimitationSentences(evoraLazer);
-  const safeOffers = sanitizeUnsupportedSpecificOffers(sanitized.text);
+  const sanitized = isKnowledgeGapTurn ? { text: evoraLazer, changed: false } : removeInternalLimitationSentences(evoraLazer);
+  const safeOffers = isKnowledgeGapTurn ? { text: sanitized.text, changed: false } : sanitizeUnsupportedSpecificOffers(sanitized.text);
   const dedupGreeting = sanitizeDuplicatedGreetingPrefix(safeOffers.text);
   const noInternalFragments = INTERNAL_INSTRUCTION_FRAGMENT_PATTERNS.reduce(
     (acc, re) => acc.replace(re, ' ').replace(/\s{2,}/g, ' ').trim(),
     dedupGreeting,
   );
-  const lotCountSafe = sanitizeEvoraLotCountRestrictedReply(noInternalFragments, opts?.userMessage ?? null);
-  const discountSafe = sanitizeDiscountRestrictedReply(lotCountSafe, opts?.userMessage ?? null);
-  const evoraPricingSafe = sanitizeEvoraPriceAndPaymentReply(discountSafe, opts);
+  const lotCountSafe = isKnowledgeGapTurn
+    ? noInternalFragments
+    : sanitizeEvoraLotCountRestrictedReply(noInternalFragments, opts?.userMessage ?? null);
+  const discountSafe = isKnowledgeGapTurn
+    ? lotCountSafe
+    : sanitizeDiscountRestrictedReply(lotCountSafe, opts?.userMessage ?? null);
+  const evoraPricingSafe = isKnowledgeGapTurn ? discountSafe : sanitizeEvoraPriceAndPaymentReply(discountSafe, opts);
   return evoraPricingSafe.slice(0, 4000);
 }
 

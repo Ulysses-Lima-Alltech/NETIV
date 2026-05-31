@@ -891,6 +891,7 @@ export interface ApplyAnaConversationPolicyInput {
   };
   safeTopicAvailability?: AnaOfferAvailability | null;
   knowledgeDrivenMode?: boolean;
+  isKnowledgeGapTurn?: boolean;
 }
 
 export interface ApplyAnaConversationPolicyResult {
@@ -963,6 +964,7 @@ export function applyAnaConversationPolicy(
   const overrideOfferedTopics = shortConfirmationContext?.lastOfferedTopics ?? null;
   const safeTopicAvailability = input.safeTopicAvailability ?? null;
   const knowledgeDrivenMode = input.knowledgeDrivenMode === true;
+  const isKnowledgeGapTurn = input.isKnowledgeGapTurn === true;
 
   if (visitFlowActive && !visitAlreadyScheduled) {
     console.log('[ANA_VISIT_FLOW_ACTIVE]', {
@@ -1217,46 +1219,53 @@ export function applyAnaConversationPolicy(
   }
 
   const infoGapReply = replyLooksInfoGap(reply);
-  const needsBrokerAsk =
-    userAskedDetailedCommercialTopic(input.userMessage) || userAskedForHuman(input.userMessage) || infoGapReply;
-  const recentBrokerAsk =
-    recentAssistantReplies.length > 0 &&
-    recentAssistantReplies.slice(-2).some((msg) => containsBrokerAsk(msg));
-  const infoGapBrokerAskAlreadyPresent = infoGapReply && brokerAskAlreadyPresent(reply);
-  if (needsBrokerAsk && recentBrokerAsk) {
-    const stripped = stripBrokerAsk(reply);
-    if (stripped && stripped !== reply) {
-      reply = stripped;
-      appliedRules.push('broker_handoff_duplicate_suppressed');
-    }
-    console.log('[ANA_BROKER_HANDOFF_SUPPRESSED_DUPLICATE]', {
+  if (isKnowledgeGapTurn) {
+    console.log('[ANA_KNOWLEDGE_GAP_SKIPPED_LEGACY_BROKER_POLICY]', {
       conversationId: input.conversationId,
+      reason: 'is_knowledge_gap_turn',
     });
-  } else if (needsBrokerAsk && !visitFlowActive && !brokerAskAlreadyPresent(reply)) {
-    const withBrokerAsk = rewriteToBrokerAsk(reply);
-    if (withBrokerAsk !== reply) {
-      reply = withBrokerAsk;
-      appliedRules.push('broker_handoff_question_asked');
-      nextState = mergeAnaDialoguePolicyState(nextState, { lastBrokerHandoffAskedAt: new Date().toISOString() });
-      console.log('[ANA_BROKER_HANDOFF_ASKED]', {
+  } else {
+    const needsBrokerAsk =
+      userAskedDetailedCommercialTopic(input.userMessage) || userAskedForHuman(input.userMessage) || infoGapReply;
+    const recentBrokerAsk =
+      recentAssistantReplies.length > 0 &&
+      recentAssistantReplies.slice(-2).some((msg) => containsBrokerAsk(msg));
+    const infoGapBrokerAskAlreadyPresent = infoGapReply && brokerAskAlreadyPresent(reply);
+    if (needsBrokerAsk && recentBrokerAsk) {
+      const stripped = stripBrokerAsk(reply);
+      if (stripped && stripped !== reply) {
+        reply = stripped;
+        appliedRules.push('broker_handoff_duplicate_suppressed');
+      }
+      console.log('[ANA_BROKER_HANDOFF_SUPPRESSED_DUPLICATE]', {
         conversationId: input.conversationId,
       });
-      if (infoGapReply) {
-        console.log('[ANA_INFO_GAP_BROKER_HANDOFF_ASKED]', {
+    } else if (needsBrokerAsk && !visitFlowActive && !brokerAskAlreadyPresent(reply)) {
+      const withBrokerAsk = rewriteToBrokerAsk(reply);
+      if (withBrokerAsk !== reply) {
+        reply = withBrokerAsk;
+        appliedRules.push('broker_handoff_question_asked');
+        nextState = mergeAnaDialoguePolicyState(nextState, { lastBrokerHandoffAskedAt: new Date().toISOString() });
+        console.log('[ANA_BROKER_HANDOFF_ASKED]', {
           conversationId: input.conversationId,
-          source: 'conversation_policy_rewrite',
         });
+        if (infoGapReply) {
+          console.log('[ANA_INFO_GAP_BROKER_HANDOFF_ASKED]', {
+            conversationId: input.conversationId,
+            source: 'conversation_policy_rewrite',
+          });
+        }
       }
+    } else if (infoGapBrokerAskAlreadyPresent) {
+      console.log('[ANA_INFO_GAP_BROKER_HANDOFF_ASKED]', {
+        conversationId: input.conversationId,
+        source: 'conversation_policy_already_present',
+      });
     }
-  } else if (infoGapBrokerAskAlreadyPresent) {
-    console.log('[ANA_INFO_GAP_BROKER_HANDOFF_ASKED]', {
-      conversationId: input.conversationId,
-      source: 'conversation_policy_already_present',
-    });
   }
 
   const lastAssistantAskedBroker = lastAssistantQuestionContext.askedBrokerHandoff;
-  if (lastAssistantAskedBroker && userAffirmative) {
+  if (!isKnowledgeGapTurn && lastAssistantAskedBroker && userAffirmative) {
     reply = 'Perfeito, vou encaminhar para um corretor te passar certinho.';
     nextState = mergeAnaDialoguePolicyState(nextState, { brokerHandoffAcceptedAt: new Date().toISOString() });
     appliedRules.push('broker_handoff_confirmed');
