@@ -6,6 +6,7 @@ import mobileConversationsRouter from './mobileConversations.js';
 import mobileVisitsRouter from './mobileVisits.js';
 import mobileTeamRouter from './mobileTeam.js';
 import mobileEnterprisesRouter from './mobileEnterprises.js';
+import mobilePushTokenRouter from './mobilePushToken.js';
 import ssoRouter from './sso.js';
 import usersRouter from './users.js';
 import settingsRouter from './settings.js';
@@ -38,6 +39,7 @@ router.use('/mobile/conversations', mobileConversationsRouter);
 router.use('/mobile/visits', mobileVisitsRouter);
 router.use('/mobile/team', mobileTeamRouter);
 router.use('/mobile/enterprises', mobileEnterprisesRouter);
+router.use('/mobile/push-token', mobilePushTokenRouter);
 // SSO: chamado pelo Django, protegido pelo JWT assinado (não precisa de auth)
 router.use('/auth/sso', ssoRouter);
 

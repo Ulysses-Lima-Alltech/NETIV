@@ -1,7 +1,7 @@
 ﻿import { getPool, query } from '../db/pg.js';
 import { getActiveEnterpriseById } from './enterpriseRepository.js';
 import { getCorretorById } from './corretorRepository.js';
-import { assignBrokerForHandoffConversation } from '../services/handoffQueueService.js';
+import { assignConversationToNextBroker } from '../services/brokerAssignmentService.js';
 import { notifyDjango, buildLeadPayload } from '../services/djangoWebhook.js';
 import { logAutoHandoffBlocked } from '../utils/autoHandoffPolicy.js';
 import type { LeadOriginInput } from '../services/leadOriginResolver.js';
@@ -57,6 +57,16 @@ export interface ConversationRow {
   reserve_follow_up_moment?: string | null;
   reserve_commercial_notes?: string | null;
   assigned_broker_id?: number | null;
+  assigned_broker_at?: Date | null;
+  handoff_reason?: string | null;
+  handoff_requested_at?: Date | null;
+  broker_notified_at?: Date | null;
+  broker_notification_status?: string | null;
+  broker_notification_error?: string | null;
+  broker_notification_template?: string | null;
+  broker_push_notified_at?: Date | null;
+  broker_push_notification_status?: string | null;
+  broker_push_notification_error?: string | null;
   /** Quantidade aproximada de menções ao nome do cliente nas respostas da Ana (incremento por mensagem). */
   ana_customer_name_mentions?: number;
   /** Quando preenchido, handoff será aplicado após esse instante (pós-agendamento). */
@@ -346,6 +356,16 @@ async function resetConversationCommercialStateForDelete(
        reserve_follow_up_moment = NULL,
        reserve_commercial_notes = NULL,
        assigned_broker_id = NULL,
+       assigned_broker_at = NULL,
+       handoff_reason = NULL,
+       handoff_requested_at = NULL,
+       broker_notified_at = NULL,
+       broker_notification_status = NULL,
+       broker_notification_error = NULL,
+       broker_notification_template = NULL,
+       broker_push_notified_at = NULL,
+       broker_push_notification_status = NULL,
+       broker_push_notification_error = NULL,
        ana_customer_name_mentions = 0,
        handoff_deferred_until = NULL,
        handoff_deferred_broker_id = NULL,
@@ -520,6 +540,16 @@ export async function resetConversationState(id: number): Promise<boolean> {
        reserve_follow_up_moment = NULL,
        reserve_commercial_notes = NULL,
        assigned_broker_id = NULL,
+       assigned_broker_at = NULL,
+       handoff_reason = NULL,
+       handoff_requested_at = NULL,
+       broker_notified_at = NULL,
+       broker_notification_status = NULL,
+       broker_notification_error = NULL,
+       broker_notification_template = NULL,
+       broker_push_notified_at = NULL,
+       broker_push_notification_status = NULL,
+       broker_push_notification_error = NULL,
        ana_customer_name_mentions = 0,
        handoff_deferred_until = NULL,
        handoff_deferred_broker_id = NULL,
@@ -688,6 +718,8 @@ export interface ConversationWithPreview extends ConversationRow {
   last_message_preview: string | null;
   enterprise_name: string | null;
   assigned_broker_name?: string | null;
+  broker_notification_status?: string | null;
+  broker_push_notification_status?: string | null;
   conversation_type?: 'CLIENT' | 'CORRETOR' | 'ADMIN' | string | null;
 }
 
@@ -868,6 +900,20 @@ export async function updateClassification(
   const manualClosedAtFinal = shouldClearHandoffState ? null : cur.manual_closed_at ?? null;
   const manualClosedByUserIdFinal = shouldClearHandoffState ? null : cur.manual_closed_by_user_id ?? null;
   const manualClosedReasonFinal = shouldClearHandoffState ? null : cur.manual_closed_reason ?? null;
+  const assignedBrokerAtFinal = shouldClearHandoffState ? null : cur.assigned_broker_at ?? null;
+  const handoffReasonFinal = shouldClearHandoffState ? null : cur.handoff_reason ?? null;
+  const handoffRequestedAtFinal = shouldClearHandoffState ? null : cur.handoff_requested_at ?? null;
+  const brokerNotifiedAtFinal = shouldClearHandoffState ? null : cur.broker_notified_at ?? null;
+  const brokerNotificationStatusFinal = shouldClearHandoffState ? null : cur.broker_notification_status ?? null;
+  const brokerNotificationErrorFinal = shouldClearHandoffState ? null : cur.broker_notification_error ?? null;
+  const brokerNotificationTemplateFinal = shouldClearHandoffState ? null : cur.broker_notification_template ?? null;
+  const brokerPushNotifiedAtFinal = shouldClearHandoffState ? null : cur.broker_push_notified_at ?? null;
+  const brokerPushNotificationStatusFinal = shouldClearHandoffState
+    ? null
+    : cur.broker_push_notification_status ?? null;
+  const brokerPushNotificationErrorFinal = shouldClearHandoffState
+    ? null
+    : cur.broker_push_notification_error ?? null;
   const handoffDeferredUntilFinal = shouldClearHandoffState ? null : cur.handoff_deferred_until ?? null;
   const handoffDeferredBrokerIdFinal = shouldClearHandoffState ? null : cur.handoff_deferred_broker_id ?? null;
 
@@ -877,11 +923,21 @@ export async function updateClassification(
        lead_temperature = $6,
        classification_before_handoff = CASE WHEN $3 = false THEN NULL ELSE COALESCE($5::text, classification_before_handoff) END,
        assigned_broker_id = $7,
-       handoff_deferred_until = $8,
-       handoff_deferred_broker_id = $9,
-       manual_closed_at = $10,
-       manual_closed_by_user_id = $11,
-       manual_closed_reason = $12,
+       assigned_broker_at = $8,
+       handoff_reason = $9,
+       handoff_requested_at = $10,
+       broker_notified_at = $11,
+       broker_notification_status = $12,
+       broker_notification_error = $13,
+       broker_notification_template = $14,
+       broker_push_notified_at = $15,
+       broker_push_notification_status = $16,
+       broker_push_notification_error = $17,
+       handoff_deferred_until = $18,
+       handoff_deferred_broker_id = $19,
+       manual_closed_at = $20,
+       manual_closed_by_user_id = $21,
+       manual_closed_reason = $22,
        updated_at = NOW() WHERE id = $4 RETURNING *`,
       [
         enterprise_id,
@@ -891,6 +947,16 @@ export async function updateClassification(
         savedForHandoff,
         lead_temperature,
         assignedBrokerFinal,
+        assignedBrokerAtFinal,
+        handoffReasonFinal,
+        handoffRequestedAtFinal,
+        brokerNotifiedAtFinal,
+        brokerNotificationStatusFinal,
+        brokerNotificationErrorFinal,
+        brokerNotificationTemplateFinal,
+        brokerPushNotifiedAtFinal,
+        brokerPushNotificationStatusFinal,
+        brokerPushNotificationErrorFinal,
         handoffDeferredUntilFinal,
         handoffDeferredBrokerIdFinal,
         manualClosedAtFinal,
@@ -911,7 +977,10 @@ export async function updateClassification(
           contactFullName: contact?.full_name ?? null,
           contactFirstName: contact?.first_name ?? null,
         }));
-        await assignBrokerForHandoffConversation(conversationId);
+        await assignConversationToNextBroker({
+          conversationId,
+          reason: 'manual_classification_handoff',
+        });
       }
       if (row.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(row.contact_id);
     }
@@ -934,11 +1003,21 @@ export async function updateClassification(
      reserve_follow_up_moment = $13,
      reserve_commercial_notes = $14,
      assigned_broker_id = $16,
-     handoff_deferred_until = $17,
-     handoff_deferred_broker_id = $18,
-     manual_closed_at = $19,
-     manual_closed_by_user_id = $20,
-     manual_closed_reason = $21,
+     assigned_broker_at = $17,
+     handoff_reason = $18,
+     handoff_requested_at = $19,
+     broker_notified_at = $20,
+     broker_notification_status = $21,
+     broker_notification_error = $22,
+     broker_notification_template = $23,
+     broker_push_notified_at = $24,
+     broker_push_notification_status = $25,
+     broker_push_notification_error = $26,
+     handoff_deferred_until = $27,
+     handoff_deferred_broker_id = $28,
+     manual_closed_at = $29,
+     manual_closed_by_user_id = $30,
+     manual_closed_reason = $31,
      updated_at = NOW() WHERE id = $4 RETURNING *`,
     [
       enterprise_id,
@@ -957,6 +1036,16 @@ export async function updateClassification(
       mergedReserve.commercialNotes,
       lead_temperature,
       assignedBrokerFinal,
+      assignedBrokerAtFinal,
+      handoffReasonFinal,
+      handoffRequestedAtFinal,
+      brokerNotifiedAtFinal,
+      brokerNotificationStatusFinal,
+      brokerNotificationErrorFinal,
+      brokerNotificationTemplateFinal,
+      brokerPushNotifiedAtFinal,
+      brokerPushNotificationStatusFinal,
+      brokerPushNotificationErrorFinal,
       handoffDeferredUntilFinal,
       handoffDeferredBrokerIdFinal,
       manualClosedAtFinal,
@@ -977,7 +1066,10 @@ export async function updateClassification(
         contactFullName: contact?.full_name ?? null,
         contactFirstName: contact?.first_name ?? null,
       }));
-      await assignBrokerForHandoffConversation(conversationId);
+      await assignConversationToNextBroker({
+        conversationId,
+        reason: 'manual_classification_handoff',
+      });
     }
     if (row.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(row.contact_id);
   }

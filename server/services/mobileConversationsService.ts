@@ -102,6 +102,28 @@ function normalizeDigits(value: string | null | undefined): string {
 }
 
 async function resolveCorretorIdFromMobileUser(user: MobileAuthUser): Promise<number | null> {
+  const mappedResult = await query<{ corretor_id: number | null }>(
+    `SELECT corretor_id
+     FROM mobile_users
+     WHERE id = $1
+     LIMIT 1`,
+    [user.id]
+  );
+  const mappedCorretorId = mappedResult.rows[0]?.corretor_id ?? null;
+  if (mappedCorretorId != null) {
+    const activeResult = await query<{ id: number }>(
+      `SELECT id
+       FROM corretores
+       WHERE id = $1
+         AND active = true
+       LIMIT 1`,
+      [mappedCorretorId]
+    );
+    if (activeResult.rows[0]?.id != null) {
+      return activeResult.rows[0].id;
+    }
+  }
+
   const phoneDigits = normalizeDigits(user.phone);
   if (!phoneDigits) return null;
 

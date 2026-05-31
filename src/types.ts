@@ -40,6 +40,8 @@ export interface Conversation {
   assignedBrokerName?: string | null;
   /** ID do corretor fixo da conversa (prioridade sobre distribuição automática). */
   assignedBrokerId?: number | null;
+  brokerNotificationStatus?: string | null;
+  brokerPushNotificationStatus?: string | null;
   whatsappWindow?: {
     isOpen: boolean;
     lastInboundAt: string | null;

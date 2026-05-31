@@ -18,6 +18,10 @@ import {
   clearConversationPendingResolutionState,
   updateClassification,
 } from '../repositories/conversationRepository.js';
+import { publishConversationUpdated } from '../realtime/realtimePublisher.js';
+import { assignConversationToNextBroker } from './brokerAssignmentService.js';
+import { sendBrokerPendingAttendanceTemplate } from './brokerWhatsappNotificationService.js';
+import { sendBrokerPendingAttendancePush } from './brokerPushNotificationService.js';
 import {
   sendAnaLocalMediaToWhatsAppWithQuota as sendLocalMediaToWhatsApp,
   sendAnaTextMessageWithQuota as sendTextMessage,
@@ -4328,9 +4332,56 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             return;
           }
           if (pendingResolutionChoiceIntent === 'broker') {
-            await updateClassification(conversationId, { handoff: true, classification: 'Handoff' });
-            await clearConversationPendingResolutionState(conversationId);
-            console.log('[ANA_HANDOFF_ACCEPTED_BY_CUSTOMER]', { conversationId });
+            let assignment: Awaited<ReturnType<typeof assignConversationToNextBroker>> = null;
+            try {
+              assignment = await assignConversationToNextBroker({
+                conversationId,
+                reason: 'customer_requested_broker',
+              });
+            } catch (error) {
+              console.error('[ANA_BROKER_ASSIGNMENT_FAILED]', {
+                conversationId,
+                reason: 'customer_requested_broker',
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+            if (!assignment) {
+              console.warn('[ANA_BROKER_ASSIGNMENT_FAILED]', {
+                conversationId,
+                reason: 'conversation_not_found_after_customer_confirmation',
+              });
+            } else {
+              await publishConversationUpdated(conversationId);
+
+              if (assignment.assignedBrokerId != null) {
+                const enterpriseNameForNotification =
+                  assignment.enterpriseName ?? ent?.name ?? 'empreendimento';
+
+                await sendBrokerPendingAttendanceTemplate({
+                  brokerPhone: assignment.assignedBrokerPhone,
+                  brokerName: assignment.assignedBrokerName,
+                  customerNameOrPhone: assignment.customerNameOrPhone,
+                  enterpriseName: enterpriseNameForNotification,
+                  conversationId,
+                });
+
+                await sendBrokerPendingAttendancePush({
+                  brokerId: assignment.assignedBrokerId,
+                  conversationId,
+                  enterpriseId: assignment.enterpriseId,
+                  customerNameOrPhone: assignment.customerNameOrPhone,
+                  enterpriseName: enterpriseNameForNotification,
+                });
+
+                await publishConversationUpdated(conversationId);
+              }
+
+              console.log('[ANA_HANDOFF_ACCEPTED_BY_CUSTOMER]', {
+                conversationId,
+                assignedBrokerId: assignment.assignedBrokerId,
+                handoffReason: assignment.handoffReason,
+              });
+            }
           }
           anaTurnAuditOutcome = 'sent';
           anaTurnAuditBlockedReason = null;

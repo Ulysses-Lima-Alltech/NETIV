@@ -32,6 +32,8 @@ export interface RealtimeConversationPayload {
   reserveCommercialNotes: string | null;
   assignedBrokerId: number | null;
   assignedBrokerName: string | null;
+  brokerNotificationStatus: string | null;
+  brokerPushNotificationStatus: string | null;
   conversationType: string;
   manualClosedAt: string | null;
   manualClosedByUserId: number | null;
@@ -79,6 +81,8 @@ interface ConversationRealtimeRow {
   reserve_commercial_notes: string | null;
   assigned_broker_id: number | null;
   assigned_broker_name: string | null;
+  broker_notification_status: string | null;
+  broker_push_notification_status: string | null;
   conversation_type: string | null;
   manual_closed_at: Date | null;
   manual_closed_by_user_id: number | null;
@@ -129,6 +133,8 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
        c.reserve_commercial_notes,
        c.assigned_broker_id,
        b.full_name AS assigned_broker_name,
+       c.broker_notification_status,
+       c.broker_push_notification_status,
        COALESCE(c.conversation_type, 'CLIENT') AS conversation_type,
        c.manual_closed_at,
        c.manual_closed_by_user_id,
@@ -179,6 +185,8 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
     reserveCommercialNotes: row.reserve_commercial_notes ?? null,
     assignedBrokerId: row.assigned_broker_id ?? null,
     assignedBrokerName: row.assigned_broker_name ?? null,
+    brokerNotificationStatus: row.broker_notification_status ?? null,
+    brokerPushNotificationStatus: row.broker_push_notification_status ?? null,
     conversationType: row.conversation_type ?? 'CLIENT',
     manualClosedAt: row.manual_closed_at?.toISOString() ?? null,
     manualClosedByUserId: row.manual_closed_by_user_id ?? null,

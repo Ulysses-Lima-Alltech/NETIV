@@ -126,6 +126,8 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     enterpriseOriginName: undefined,
     assignedBrokerName: c.assignedBrokerName ?? null,
     assignedBrokerId: c.assignedBrokerId ?? null,
+    brokerNotificationStatus: c.brokerNotificationStatus ?? null,
+    brokerPushNotificationStatus: c.brokerPushNotificationStatus ?? null,
     reserveReason: c.reserveReason ?? null,
     reserveDesiredCity: c.reserveDesiredCity ?? null,
     reservePriceMin: c.reservePriceMin ?? null,
@@ -937,6 +939,14 @@ export function InboxPage() {
                     data.assignedBrokerName !== undefined ? data.assignedBrokerName : c.assignedBrokerName,
                   assignedBrokerId:
                     data.assignedBrokerId !== undefined ? data.assignedBrokerId : c.assignedBrokerId,
+                  brokerNotificationStatus:
+                    data.brokerNotificationStatus !== undefined
+                      ? data.brokerNotificationStatus
+                      : c.brokerNotificationStatus,
+                  brokerPushNotificationStatus:
+                    data.brokerPushNotificationStatus !== undefined
+                      ? data.brokerPushNotificationStatus
+                      : c.brokerPushNotificationStatus,
                   reserveReason: data.reserveReason ?? c.reserveReason,
                   reserveDesiredCity: data.reserveDesiredCity ?? c.reserveDesiredCity,
                   reservePriceMin: data.reservePriceMin ?? c.reservePriceMin,

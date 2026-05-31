@@ -209,6 +209,8 @@ export interface ConversationListItem {
   reserveCommercialNotes?: string | null;
   assignedBrokerName?: string | null;
   assignedBrokerId?: number | null;
+  brokerNotificationStatus?: string | null;
+  brokerPushNotificationStatus?: string | null;
   manualClosedAt?: string | null;
   manualClosedByUserId?: number | null;
   manualClosedReason?: string | null;
@@ -553,6 +555,8 @@ export const whatsappApi = {
       handoff?: boolean;
       assignedBrokerId?: number | null;
       assignedBrokerName?: string | null;
+      brokerNotificationStatus?: string | null;
+      brokerPushNotificationStatus?: string | null;
       reserveReason?: string | null;
       reserveDesiredCity?: string | null;
       reservePriceMin?: number | null;

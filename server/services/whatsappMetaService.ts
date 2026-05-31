@@ -394,6 +394,87 @@ export async function sendTemplateMessage(
   }
 }
 
+export async function sendTemplateMessageByName(
+  to: string,
+  templateName: string,
+  languageCode: string,
+  parameters: string[] = []
+): Promise<SendTextResult> {
+  const config = await getCfg();
+  if (!config) return { success: false, error: 'Integração WhatsApp não configurada no banco.' };
+
+  const normalizedTo = to.replace(/\D/g, '');
+  if (!normalizedTo) return { success: false, error: 'Número inválido.' };
+
+  const safeTemplateName = String(templateName ?? '').trim();
+  if (!safeTemplateName) return { success: false, error: 'Template inválido.' };
+
+  const safeLanguageCode = String(languageCode ?? '').trim() || 'pt_BR';
+  if (parameters.some((param) => shouldBlockEmergencyOutboundText(param))) {
+    return buildEmergencyBlockedResponse();
+  }
+
+  const bodyParams = parameters.map((value) => ({ type: 'text' as const, text: String(value ?? '') }));
+  const components =
+    bodyParams.length > 0
+      ? [
+          {
+            type: 'body',
+            parameters: bodyParams,
+          },
+        ]
+      : [];
+
+  const requestBody = {
+    messaging_product: 'whatsapp',
+    to: normalizedTo,
+    type: 'template',
+    template: {
+      name: safeTemplateName,
+      language: { code: safeLanguageCode },
+      ...(components.length > 0 ? { components } : {}),
+    },
+  };
+
+  const url = `${META_GRAPH_BASE}/${config.apiVersion}/${config.whatsappPhoneNumberId}/messages`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.metaAccessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    const data = (await res.json()) as MetaSendMessageResponse | MetaErrorResponse;
+    if (!res.ok) {
+      const err = (data as MetaErrorResponse).error;
+      return {
+        success: false,
+        error: err?.message ?? `HTTP ${res.status}`,
+        code: err?.code,
+        httpStatus: res.status,
+        metaErrorCode: err?.code,
+        metaErrorType: err?.type,
+        metaErrorSubcode: err?.error_subcode,
+        metaFbTraceId: err?.fbtrace_id,
+      };
+    }
+
+    const mid = (data as MetaSendMessageResponse).messages?.[0]?.id;
+    if (!mid || typeof mid !== 'string') return { success: false, error: 'Meta não retornou o ID da mensagem.' };
+    return { success: true, metaMessageId: mid };
+  } catch (e) {
+    clearTimeout(timeout);
+    return { success: false, error: e instanceof Error ? e.message : 'Erro ao enviar template' };
+  }
+}
+
 /** Contexto opcional para logs de diagnÃ³stico (envio book/material). */
 export interface DocumentSendLogContext {
   enterpriseId: number;
