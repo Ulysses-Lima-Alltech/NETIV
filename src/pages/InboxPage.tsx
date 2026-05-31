@@ -22,6 +22,7 @@ import {
 } from '../components/inboxFilters';
 import { useRealtimeInbox } from '../hooks/useRealtimeInbox';
 import { useAuth } from '../contexts/AuthContext';
+import { isRealtimeClientEnabled } from '../realtime/socketClient';
 
 const INBOX_READ_STATE_KEY = 'inbox_read_state_v1';
 const INBOX_CONVERSATION_PANEL_COLLAPSED_KEY = 'inbox_conversation_panel_collapsed_v1';
@@ -242,6 +243,8 @@ export function InboxPage() {
   const isConversationListNearTopRef = useRef(true);
   const pendingRealtimeConversationsRef = useRef<Map<string, Conversation>>(new Map());
   const [hasPendingRealtimeUpdates, setHasPendingRealtimeUpdates] = useState(false);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
+  const realtimeFetchDebounceTimersRef = useRef<Map<string, number>>(new Map());
 
   const rawConversationParam = searchParams.get('conversationId')?.trim() ?? '';
   const parsedConversationId = useMemo(() => {
@@ -338,6 +341,18 @@ export function InboxPage() {
         inflightRealtimeConversationFetchRef.current.delete(conversationId);
       });
   }, []);
+
+  const scheduleFetchAndMergeConversationById = useCallback((conversationId: string, delayMs = 250) => {
+    const existingTimer = realtimeFetchDebounceTimersRef.current.get(conversationId);
+    if (existingTimer != null) {
+      window.clearTimeout(existingTimer);
+    }
+    const timerId = window.setTimeout(() => {
+      realtimeFetchDebounceTimersRef.current.delete(conversationId);
+      fetchAndMergeConversationById(conversationId);
+    }, delayMs);
+    realtimeFetchDebounceTimersRef.current.set(conversationId, timerId);
+  }, [fetchAndMergeConversationById]);
 
   const selectedConversation = selectedId
     ? conversations.find((c) => c.id === selectedId) ?? null
@@ -504,7 +519,15 @@ export function InboxPage() {
     },
     onConversationUpdated: (payload) => {
       if (!payload || typeof payload !== 'object') return;
-      mergeConversation(mapApiConversationToConversation(payload as ApiConversation));
+      const mapped = mapApiConversationToConversation(payload as ApiConversation);
+      mergeConversation(mapped);
+      console.info('[RealtimeInbox] conversation.updated merged', {
+        conversationId: mapped.id,
+        handoff: mapped.handoff,
+        attendanceMode: mapped.attendanceMode,
+        assignedBrokerName: mapped.assignedBrokerName,
+      });
+      scheduleFetchAndMergeConversationById(mapped.id, 250);
     },
     onMessageCreated: (payload) => {
       if (!payload || typeof payload !== 'object') return;
@@ -603,6 +626,8 @@ export function InboxPage() {
       });
       if (!conversationKnown) {
         fetchAndMergeConversationById(convId);
+      } else {
+        scheduleFetchAndMergeConversationById(convId, 250);
       }
     },
     onMessageUpdated: (payload) => {
@@ -618,7 +643,26 @@ export function InboxPage() {
         )
       );
     },
+    onConnectionChange: (connected) => {
+      setIsRealtimeConnected(connected);
+    },
   });
+
+  useEffect(() => {
+    return () => {
+      realtimeFetchDebounceTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      realtimeFetchDebounceTimersRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const enabled = isRealtimeClientEnabled();
+    const intervalMs = !enabled || !isRealtimeConnected ? 15000 : 30000;
+    const timerId = window.setInterval(() => {
+      void loadConversations(true);
+    }, intervalMs);
+    return () => window.clearInterval(timerId);
+  }, [isRealtimeConnected, loadConversations]);
 
   const handleTabChange = useCallback((tab: 'CLIENT' | 'INTERNO') => {
     if (tab === activeTab) return;

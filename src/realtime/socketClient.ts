@@ -28,15 +28,19 @@ function buildSocketAuthOptions(): {
 export function getInboxSocket(): Socket | null {
   if (!realtimeEnabled) {
     if (!realtimeLogged) {
-      console.info('[Realtime] disabled');
+      console.info('[RealtimeInbox] socket disabled by env', {
+        VITE_REALTIME_ENABLED: String(import.meta.env.VITE_REALTIME_ENABLED ?? ''),
+      });
       realtimeLogged = true;
     }
     return null;
   }
   if (socket) return socket;
-  console.info('[Realtime] enabled');
+  console.info('[RealtimeInbox] enabled flag', {
+    VITE_REALTIME_ENABLED: String(import.meta.env.VITE_REALTIME_ENABLED ?? ''),
+  });
   const authOptions = buildSocketAuthOptions();
-  console.info('[realtime] socket init', {
+  console.info('[RealtimeInbox] socket init', {
     apiUrl: API_URL,
     authMode: authOptions.authMode,
   });
@@ -53,13 +57,13 @@ export function getInboxSocket(): Socket | null {
     withCredentials: true,
   });
   socket.on('connect', () => {
-    console.info('[realtime] socket connected', { socketId: socket?.id ?? null });
+    console.info('[RealtimeInbox] socket connected', { socketId: socket?.id ?? null });
   });
   socket.on('connect_error', (error) => {
-    console.warn('[realtime] socket connect_error', { message: error.message });
+    console.warn('[RealtimeInbox] socket connect_error', { message: error.message });
   });
   socket.on('disconnect', (reason) => {
-    console.info('[realtime] socket disconnected', { reason });
+    console.info('[RealtimeInbox] socket disconnected', { reason });
   });
   return socket;
 }

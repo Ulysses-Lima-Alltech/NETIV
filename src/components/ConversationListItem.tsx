@@ -123,12 +123,12 @@ export function ConversationListItem({
           </span>
         )}
 
-        {isHandoff && conversation.assignedBrokerName?.trim() && (
+        {conversation.assignedBrokerName?.trim() && (
           <span
             className="inline-flex max-w-[140px] items-center truncate rounded-full border border-[#a7f3d0] bg-[#ecfdf5] px-2 py-[3px] text-[10px] font-medium text-[#047857]"
             title={conversation.assignedBrokerName}
           >
-            {conversation.assignedBrokerName}
+            {`Corretor: ${conversation.assignedBrokerName}`}
           </span>
         )}
 
