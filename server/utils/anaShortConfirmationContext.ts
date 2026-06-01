@@ -145,9 +145,12 @@ function normalizeStateQuestionType(
   | 'unknown' {
   const n = norm(String(value ?? ''));
   if (n === 'visit_offer') return 'visit_offer';
-  if (n === 'broker_handoff') return 'broker_handoff';
+  if (n === 'broker_handoff' || n === 'broker_offer') return 'broker_handoff';
   if (n === 'single_topic_offer') return 'single_topic_offer';
   if (n === 'multi_topic_offer') return 'multi_topic_offer';
+  if (n === 'contextual_followup') return 'followup_topic';
+  if (n === 'broker_or_visit_offer') return 'unknown';
+  if (n === 'clarification') return 'unknown';
   if (n === 'followup_topic' || n === 'followup_topics') return 'followup_topic';
   if (n === 'media_offer') return 'media_offer';
   return 'unknown';

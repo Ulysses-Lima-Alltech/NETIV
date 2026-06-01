@@ -488,12 +488,25 @@ function resolveLastAssistantQuestionContext(
   else if (
     stateQuestionType === 'visit_offer' ||
     stateQuestionType === 'broker_handoff' ||
+    stateQuestionType === 'broker_offer' ||
+    stateQuestionType === 'broker_or_visit_offer' ||
     stateQuestionType === 'single_topic_offer' ||
     stateQuestionType === 'multi_topic_offer' ||
+    stateQuestionType === 'contextual_followup' ||
+    stateQuestionType === 'clarification' ||
     stateQuestionType === 'followup_topics' ||
     stateQuestionType === 'followup_topic'
   ) {
-    questionType = stateQuestionType;
+    questionType =
+      stateQuestionType === 'broker_offer'
+        ? 'broker_handoff'
+        : stateQuestionType === 'contextual_followup'
+          ? 'followup_topic'
+          : stateQuestionType === 'broker_or_visit_offer'
+            ? 'followup_topics'
+            : stateQuestionType === 'clarification'
+              ? 'other'
+              : stateQuestionType;
   }
   return {
     questionType,

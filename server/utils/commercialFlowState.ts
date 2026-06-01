@@ -98,6 +98,7 @@ export interface CommercialFlowState {
     nameUncertainAt?: string | null;
     lastAssistantQuestionType?: string | null;
     lastAssistantQuestionText?: string | null;
+    recentQuestions?: string[];
     lastOfferedTopics?: string[];
     lastAnsweredTopic?: string | null;
     topicsAlreadyAnswered?: string[];

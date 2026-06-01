@@ -240,8 +240,17 @@ import {
   buildLeadQualificationBridgeReply,
   classifyPendingResolutionChoice,
   detectAnaKnowledgeGap,
+  isExplicitResolutionChoice,
+  isSubstantiveQuestionThatBypassesResolutionChoice,
   validateKnowledgeGapResolutionOffer,
 } from '../utils/anaKnowledgeGapGuard.js';
+import {
+  evaluateFinalQuestionCheck,
+  extractLastQuestionSentenceFromReply,
+  inferCommittedQuestionType,
+  mergeRecentQuestions,
+  type AnaCommittedQuestionType,
+} from '../utils/anaFinalQuestionPolicy.js';
 
 /** Desligado para rastrear o fluxo real com [ANA_ENGINE_TRACE]. */
 const ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY = false;
@@ -518,18 +527,12 @@ function resolveAnaConversationTurn(input: {
   };
 }
 
-type CommittedReplyQuestionType =
-  | 'visit_offer'
-  | 'broker_handoff'
-  | 'single_topic_offer'
-  | 'multi_topic_offer'
-  | 'media_offer'
-  | 'other'
-  | null;
+type CommittedReplyQuestionType = AnaCommittedQuestionType;
 
 type CommittedReplyStateExtraction = {
   lastAssistantQuestionText: string | null;
   lastAssistantQuestionType: CommittedReplyQuestionType;
+  recentQuestions: string[];
   lastOfferedTopics: string[];
   lastAnsweredTopic: string | null;
   topicsAlreadyAnswered: string[];
@@ -538,11 +541,7 @@ type CommittedReplyStateExtraction = {
 };
 
 function extractLastQuestionSentenceFromCommittedReply(text: string): string | null {
-  const raw = (text || '').trim();
-  if (!raw) return null;
-  const matches = raw.match(/[^?]*\?/g) ?? [];
-  const last = matches[matches.length - 1]?.trim() ?? null;
-  return last && last.length > 0 ? last : null;
+  return extractLastQuestionSentenceFromReply(text);
 }
 
 function extractOfferedTopicsFromQuestion(questionText: string | null): string[] {
@@ -573,19 +572,8 @@ function classifyCommittedReplyQuestion(questionText: string | null): {
 } {
   const n = normText(questionText || '');
   if (!n) return { questionType: null, offeredTopics: [] };
-  if (/\b(agendar|agendamento|marcar visita|conhecer pessoalmente|reservar horario)\b/.test(n)) {
-    return { questionType: 'visit_offer', offeredTopics: [] };
-  }
-  if (/\b(encaminh|corretor|consultor)\b/.test(n)) {
-    return { questionType: 'broker_handoff', offeredTopics: [] };
-  }
-  if (/\b(video|book|fotos?|imagens?|galeria)\b/.test(n)) {
-    return { questionType: 'media_offer', offeredTopics: [] };
-  }
   const offeredTopics = extractOfferedTopicsFromQuestion(questionText);
-  if (offeredTopics.length > 1) return { questionType: 'multi_topic_offer', offeredTopics };
-  if (offeredTopics.length === 1) return { questionType: 'single_topic_offer', offeredTopics };
-  return { questionType: 'other', offeredTopics: [] };
+  return { questionType: inferCommittedQuestionType(questionText), offeredTopics };
 }
 
 function mergeAnsweredTopics(existing: string[], topic: string | null): string[] {
@@ -594,6 +582,39 @@ function mergeAnsweredTopics(existing: string[], topic: string | null): string[]
   if (!normalizedTopic) return out;
   if (!out.includes(normalizedTopic)) out.push(normalizedTopic);
   return out.slice(-8);
+}
+
+function collectRecentAssistantQuestionsForFinalCheck(args: {
+  flowState: CommercialFlowState;
+  recentMessages: Array<{ role: string; content?: string | null }>;
+}): string[] {
+  const out: string[] = [];
+  const pushUnique = (question: string | null | undefined): void => {
+    const text = String(question ?? '').trim();
+    if (!text) return;
+    const key = normText(text);
+    if (!key) return;
+    if (out.some((existing) => normText(existing) === key)) return;
+    out.push(text);
+  };
+
+  const statePolicy = (args.flowState.dialoguePolicy ?? {}) as Record<string, unknown>;
+  const stateRecentQuestions = Array.isArray(statePolicy.recentQuestions)
+    ? (statePolicy.recentQuestions as string[]).map((question) => String(question || '').trim()).filter(Boolean)
+    : [];
+  for (const question of stateRecentQuestions) pushUnique(question);
+  pushUnique(String(statePolicy.lastAssistantQuestionText ?? '').trim() || null);
+
+  const historyAssistantMessages = args.recentMessages
+    .filter((msg) => msg.role === 'assistant')
+    .map((msg) => String(msg.content ?? '').trim())
+    .filter((text) => text.length > 0)
+    .slice(-10);
+  for (const assistantText of historyAssistantMessages) {
+    pushUnique(extractLastQuestionSentenceFromReply(assistantText));
+  }
+
+  return out.slice(-10);
 }
 
 function normalizeFirstGreetingCommittedReply(params: {
@@ -743,11 +764,16 @@ function updateConversationStateFromCommittedReply(params: {
   const existingAnsweredTopics = Array.isArray(dialoguePolicy.topicsAlreadyAnswered)
     ? (dialoguePolicy.topicsAlreadyAnswered as string[]).map((topic) => normText(topic || '')).filter(Boolean)
     : [];
+  const existingRecentQuestions = Array.isArray(dialoguePolicy.recentQuestions)
+    ? (dialoguePolicy.recentQuestions as string[]).map((question) => String(question || '').trim()).filter(Boolean)
+    : [];
   const mergedAnsweredTopics = mergeAnsweredTopics(existingAnsweredTopics, detectedAnsweredTopic);
+  const mergedRecentQuestions = mergeRecentQuestions(existingRecentQuestions, questionText, 8);
 
   const extracted: CommittedReplyStateExtraction = {
     lastAssistantQuestionText: questionText,
     lastAssistantQuestionType: questionType,
+    recentQuestions: mergedRecentQuestions,
     lastOfferedTopics: question.offeredTopics,
     lastAnsweredTopic: detectedAnsweredTopic,
     topicsAlreadyAnswered: mergedAnsweredTopics,
@@ -759,6 +785,7 @@ function updateConversationStateFromCommittedReply(params: {
     conversationId: params.conversationId,
     lastAssistantQuestionText: extracted.lastAssistantQuestionText,
     lastAssistantQuestionType: extracted.lastAssistantQuestionType,
+    recentQuestions: extracted.recentQuestions,
     lastOfferedTopics: extracted.lastOfferedTopics,
     lastAnsweredTopic: extracted.lastAnsweredTopic,
     handler: params.handler,
@@ -771,6 +798,7 @@ function updateConversationStateFromCommittedReply(params: {
       lastFollowupQuestion: extracted.lastAssistantQuestionText,
       lastAssistantQuestionText: extracted.lastAssistantQuestionText,
       lastAssistantQuestionType: extracted.lastAssistantQuestionType,
+      recentQuestions: extracted.recentQuestions,
       lastOfferedTopics: extracted.lastOfferedTopics,
       lastAnsweredTopic: extracted.lastAnsweredTopic,
       topicsAlreadyAnswered: extracted.topicsAlreadyAnswered,
@@ -1450,6 +1478,8 @@ function containsProhibitedTechnicalFallbackText(text: string): boolean {
     'posso te ajudar com informacoes comerciais',
     'tem algum ponto especifico que voce gostaria de saber primeiro',
     'voce quer saber valor localizacao ou planta',
+    'desculpe parece que sua resposta nao esta clara',
+    'voce poderia escolher entre encaminhamento para o corretor responsavel ou agendamento de visita',
     'sobre esse ponto eu te passo apenas o que esta validado',
     'sobre metragem eu te passo apenas o que esta validado',
     'sobre formas de pagamento eu te passo apenas o que esta validado',
@@ -2741,8 +2771,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   let turnCommittedHandler: string | null = null;
   let isFirstAnaReplyForTurn = false;
   let pendingResolutionNeedsDisambiguation = false;
-  let pendingResolutionDeclinedLike = false;
-  let pendingResolutionChoiceIntent: 'broker' | 'visit' | 'ambiguous' | 'decline_or_ambiguous' | null = null;
+  let pendingResolutionChoiceIntent: 'broker' | 'visit' | 'ambiguous' | null = null;
   const selectTurnDecision = (params: {
     handler: string;
     reason: string;
@@ -3003,16 +3032,31 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     console.log('[ANA DEBUG] handoff check passed');
 
     if (effectiveConv.pending_resolution_choice === true) {
-      const pendingChoice = classifyPendingResolutionChoice(trimmed);
-      pendingResolutionChoiceIntent = pendingChoice;
-      if (pendingChoice === 'visit') {
+      const substantiveBypass = isSubstantiveQuestionThatBypassesResolutionChoice(trimmed);
+      if (substantiveBypass) {
         await clearConversationPendingResolutionState(conversationId);
-        console.log('[ANA_VISIT_SELECTED_FROM_RESOLUTION_OFFER]', { conversationId });
-      } else if (pendingChoice === 'decline_or_ambiguous') {
-        pendingResolutionNeedsDisambiguation = true;
-        pendingResolutionDeclinedLike = true;
-      } else if (pendingChoice === 'ambiguous') {
-        pendingResolutionNeedsDisambiguation = true;
+        effectiveConv = { ...effectiveConv, pending_resolution_choice: false };
+        pendingResolutionChoiceIntent = null;
+        pendingResolutionNeedsDisambiguation = false;
+        console.log('[ANA_PENDING_RESOLUTION_BYPASSED_BY_SUBSTANTIVE_QUESTION]', {
+          conversationId,
+          userMessage: trimmed.slice(0, 220),
+        });
+      } else {
+        const pendingChoice = isExplicitResolutionChoice(trimmed) ?? classifyPendingResolutionChoice(trimmed);
+        pendingResolutionChoiceIntent = pendingChoice;
+        if (pendingChoice === 'visit') {
+          await clearConversationPendingResolutionState(conversationId);
+          effectiveConv = { ...effectiveConv, pending_resolution_choice: false };
+          console.log('[ANA_VISIT_SELECTED_FROM_RESOLUTION_OFFER]', { conversationId });
+        } else if (pendingChoice === 'ambiguous') {
+          pendingResolutionNeedsDisambiguation = true;
+        }
+        console.log('[ANA_PENDING_RESOLUTION_CHOICE_CLASSIFIED]', {
+          conversationId,
+          choice: pendingChoice,
+          pendingResolutionChoice: effectiveConv.pending_resolution_choice === true,
+        });
       }
     }
 
@@ -4497,10 +4541,37 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     if (
       effectiveConv.pending_resolution_choice === true &&
-      (pendingResolutionChoiceIntent === 'ambiguous' ||
-        pendingResolutionChoiceIntent === 'decline_or_ambiguous' ||
-        pendingResolutionChoiceIntent === 'broker')
+      (pendingResolutionChoiceIntent === 'ambiguous' || pendingResolutionChoiceIntent === 'broker')
     ) {
+      if (pendingResolutionChoiceIntent === 'ambiguous') {
+        const clarificationReply =
+          'Voce prefere que eu te encaminhe ao corretor ou que eu te ajude a agendar uma visita?';
+        if (isPipelineStale(conversationId, replyPipelineToken)) {
+          anaTurnAuditOutcome = 'silent';
+          anaTurnAuditBlockedReason = 'pipeline_stale_before_pending_resolution_send';
+          return;
+        }
+        const clarificationSend = await sendAnaOutboundMessages({
+          conversationId,
+          toPhoneNumber,
+          text: clarificationReply,
+          phase: 'ana_pending_resolution_choice',
+          replyPipelineToken,
+        });
+        if (!clarificationSend.success || clarificationSend.metaMessageIds.length === 0) {
+          anaTurnAuditOutcome = 'send_failed';
+          anaTurnAuditBlockedReason = 'pending_resolution_send_failed';
+          return;
+        }
+        anaTurnAuditOutcome = 'sent';
+        anaTurnAuditBlockedReason = null;
+        console.log('[ANA_PENDING_RESOLUTION_AMBIGUOUS_CHOICE]', {
+          conversationId,
+          choice: pendingResolutionChoiceIntent,
+        });
+        return;
+      }
+
       const pendingResolutionModelResolution = resolveAnaOpenAIModel({
         configuredModelFromDb: (aiSettings?.modelHotLead || '').trim() || null,
         slot: 'hot_lead',
@@ -4526,15 +4597,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               'Nao ofereca visita neste momento.',
               '[/CONTEXTO OPERACIONAL]',
             ].join('\n')
-          : pendingResolutionChoiceIntent === 'decline_or_ambiguous'
-            ? [
-                '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
-                'O cliente recusou no momento ou respondeu de forma negativa/ambigua.',
-                'Responda de forma natural, curta e sem insistir.',
-                'Mantenha disponiveis as opcoes de corretor ou visita caso ele queira seguir.',
-                'Nao invente dados comerciais.',
-                '[/CONTEXTO OPERACIONAL]',
-              ].join('\n')
           : [
               '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
               'O cliente respondeu de forma ambigua a uma pergunta com duas opcoes.',
@@ -5347,6 +5409,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         savedFields: [
           'lastAssistantQuestionText',
           'lastAssistantQuestionType',
+          'recentQuestions',
           'lastOfferedTopics',
           'lastAnsweredTopic',
           'topicsAlreadyAnswered',
@@ -5491,6 +5554,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         savedFields: [
           'lastAssistantQuestionText',
           'lastAssistantQuestionType',
+          'recentQuestions',
           'lastOfferedTopics',
           'lastAnsweredTopic',
           'topicsAlreadyAnswered',
@@ -5986,6 +6050,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         savedFields: [
           'lastAssistantQuestionText',
           'lastAssistantQuestionType',
+          'recentQuestions',
           'lastOfferedTopics',
           'lastAnsweredTopic',
           'topicsAlreadyAnswered',
@@ -6361,24 +6426,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           ].join('\n')
         : null;
     const pendingResolutionDisambiguationContext = pendingResolutionNeedsDisambiguation
-      ? pendingResolutionDeclinedLike
-        ? [
-            '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
-            'A conversa esta aguardando escolha entre corretor responsavel ou agendamento de visita.',
-            'O cliente recusou no momento ou respondeu de forma negativa/ambigua.',
-            'Responda de forma natural, curta e sem insistir.',
-            'Mantenha disponiveis as opcoes de corretor ou visita caso ele queira seguir.',
-            'Nao invente dados comerciais.',
-            '[/CONTEXTO OPERACIONAL]',
-          ].join('\n')
-        : [
-            '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
-            'A conversa esta aguardando escolha do cliente entre duas opcoes: corretor responsavel ou agendamento de visita.',
-            'A resposta do cliente foi ambigua.',
-            'Responda de forma natural e curta pedindo que ele escolha explicitamente entre corretor ou visita.',
-            'Nao invente dados comerciais.',
-            '[/CONTEXTO OPERACIONAL]',
-          ].join('\n')
+      ? [
+          '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
+          'A conversa esta aguardando escolha do cliente entre duas opcoes: corretor responsavel ou agendamento de visita.',
+          'A resposta do cliente foi ambigua.',
+          'Responda de forma natural e curta pedindo que ele escolha explicitamente entre corretor ou visita.',
+          'Nao invente dados comerciais.',
+          '[/CONTEXTO OPERACIONAL]',
+        ].join('\n')
       : null;
     if (conversationalQwenMode) {
       const conversationalPrompt = [
@@ -9548,6 +9603,127 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
+    const finalQuestionHistory = collectRecentAssistantQuestionsForFinalCheck({
+      flowState: flowStateParsed,
+      recentMessages: rowsBeforeSend.map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+    });
+    const originalReplyBeforeFinalQuestionRetry = replyText;
+    let finalQuestionCheck = evaluateFinalQuestionCheck({
+      replyText,
+      recentQuestions: finalQuestionHistory,
+    });
+    console.log('[ANA_FINAL_QUESTION_CHECK]', {
+      conversationId,
+      hasFinalQuestion: finalQuestionCheck.hasFinalQuestion,
+      repeatedQuestion: finalQuestionCheck.repeatedQuestion,
+      forbiddenQuestion: finalQuestionCheck.forbiddenQuestion,
+      lastAssistantQuestionText: finalQuestionCheck.lastAssistantQuestionText,
+    });
+    if (
+      !finalQuestionCheck.hasFinalQuestion ||
+      finalQuestionCheck.repeatedQuestion ||
+      finalQuestionCheck.forbiddenQuestion
+    ) {
+      const retryReason =
+        finalQuestionCheck.reasons.length > 0 ? finalQuestionCheck.reasons.join(',') : 'invalid_final_question';
+      console.log('[ANA_FINAL_QUESTION_RETRY_GENERATION]', {
+        conversationId,
+        reason: retryReason,
+      });
+
+      const finalQuestionRetryInstruction = [
+        '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
+        'Mantenha o conteudo principal da resposta anterior, sem inventar dados novos.',
+        'Ajuste apenas o fechamento final para terminar com UMA pergunta curta e contextual ao ultimo assunto do cliente.',
+        'A pergunta final nao pode repetir perguntas recentes da conversa.',
+        'Nao use frases proibidas como:',
+        '- "morar, investir ou construir";',
+        '- "Tem algum ponto especifico que voce quer que eu detalhe melhor?";',
+        '- "Me conta, qual ponto voce quer entender primeiro?";',
+        '- "Desculpe, parece que sua resposta nao esta clara...";',
+        'Nao use menu fixo generico.',
+        'A resposta final precisa terminar com uma pergunta real.',
+        '[/CONTEXTO OPERACIONAL]',
+      ].join('\n');
+      const finalQuestionRetryMessages: ChatMessage[] = [
+        { role: 'system', content: finalQuestionRetryInstruction },
+        { role: 'user', content: `Mensagem do cliente: "${trimmed}"` },
+        {
+          role: 'assistant',
+          content: `Resposta atual: "${originalReplyBeforeFinalQuestionRetry}"`,
+        },
+        {
+          role: 'user',
+          content: `Perguntas recentes da Ana (evitar repeticao): ${finalQuestionHistory.join(' | ') || 'nenhuma'}`,
+        },
+        {
+          role: 'user',
+          content: 'Reescreva a resposta final preservando o conteudo e ajustando apenas o fechamento final.',
+        },
+      ];
+
+      const finalQuestionRetryResult = await generateChatCompletion({
+        apiKey: aiApiKey,
+        baseUrl: aiSettings.openaiBaseUrl,
+        model,
+        messages: finalQuestionRetryMessages,
+        temperature: Math.min(aiSettings.temperature, 0.65),
+        maxTokens: Math.max(aiSettings.maxTokens, 700),
+        responseFormatJson: false,
+      });
+      captureLlmAudit(finalQuestionRetryResult, 'ana_final_question_retry');
+      const finalQuestionRetryRaw = (finalQuestionRetryResult.content || '').trim();
+      if (finalQuestionRetryResult.success && finalQuestionRetryRaw) {
+        const retryCandidate = finalizeAnaReplyText(finalQuestionRetryRaw, {
+          userMessage: trimmed,
+          conversationMode: mode,
+          isFirstAnaReply,
+          enterpriseName: ent?.name ?? null,
+          isKnowledgeGapTurn,
+        }).slice(0, 4000);
+        const retryCheck = evaluateFinalQuestionCheck({
+          replyText: retryCandidate,
+          recentQuestions: finalQuestionHistory,
+        });
+        const retryKnowledgeGapValidation = isKnowledgeGapTurn
+          ? validateKnowledgeGapResolutionOffer(retryCandidate)
+          : null;
+        const retryHasValidKnowledgeGapOffer = retryKnowledgeGapValidation?.ok ?? true;
+        if (
+          retryCheck.hasFinalQuestion &&
+          !retryCheck.repeatedQuestion &&
+          !retryCheck.forbiddenQuestion &&
+          retryHasValidKnowledgeGapOffer
+        ) {
+          replyText = retryCandidate;
+          finalQuestionCheck = retryCheck;
+          if (retryKnowledgeGapValidation) {
+            knowledgeGapOfferValidationResult = retryKnowledgeGapValidation;
+          }
+          console.log('[ANA_FINAL_QUESTION_RETRY_ACCEPTED]', {
+            conversationId,
+            finalQuestion: retryCheck.lastAssistantQuestionText,
+          });
+        } else {
+          console.error('[ANA_FINAL_QUESTION_RETRY_FAILED]', {
+            conversationId,
+            reason:
+              !retryHasValidKnowledgeGapOffer
+                ? 'knowledge_gap_offer_invalid_after_final_question_retry'
+                : (retryCheck.reasons.join(',') || 'retry_generated_invalid_question'),
+          });
+        }
+      } else {
+        console.error('[ANA_FINAL_QUESTION_RETRY_FAILED]', {
+          conversationId,
+          reason: finalQuestionRetryResult.error || 'retry_generation_failed_or_empty',
+        });
+      }
+    }
+
     const finalReplyParts = [replyText];
     const committedFinalReply = commitTurnResponse({
       handler: openAiCalled ? 'qwen_or_llm_final' : 'deterministic_final',
@@ -9609,6 +9785,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         savedFields: [
           'lastAssistantQuestionText',
           'lastAssistantQuestionType',
+          'recentQuestions',
           'lastOfferedTopics',
           'lastAnsweredTopic',
           'topicsAlreadyAnswered',

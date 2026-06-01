@@ -203,35 +203,40 @@ export function validateKnowledgeGapResolutionOffer(replyText: string): Knowledg
   };
 }
 
-export function classifyPendingResolutionChoice(
-  userMessage: string
-): 'broker' | 'visit' | 'ambiguous' | 'decline_or_ambiguous' {
+const SUBSTANTIVE_RESOLUTION_BYPASS_PATTERNS: RegExp[] = [
+  /\?/,
+  /\b(tem|qual|quais|quantos?|onde|como|manda|me fala|seguranca|segurança|lazer|valor|preco|preço|metragem|lote|condominio|condomínio|camera|câmera|portaria|obra|entrega|localizacao|localização|endereco|endereço)\b/,
+];
+
+const EXPLICIT_BROKER_CHOICE_PATTERN =
+  /\b(corretor|consultor|humano|pessoa|alguem|alguém|atendimento|me encaminha|me encaminhe|falar com alguem|falar com alguém)\b/;
+const EXPLICIT_VISIT_CHOICE_PATTERN =
+  /\b(visita|agendar|marcar|conhecer o stand|ir ate o local|ir até o local)\b/;
+const AMBIGUOUS_RESOLUTION_CHOICE_PATTERN =
+  /^(sim|pode|ok|pode ser|tanto faz|claro|beleza|fechado|perfeito|isso)$/;
+
+export function isSubstantiveQuestionThatBypassesResolutionChoice(userMessage: string): boolean {
   const text = n(userMessage);
-  if (!text) return 'ambiguous';
-
-  const brokerExplicit =
-    /\b(corretor|consultor|especialista|atendimento humano|responsavel|falar com alguem|me encaminha|pode encaminhar|melhor o corretor|prefiro o corretor)\b/.test(
-      text
-    );
-  if (brokerExplicit) return 'broker';
-
-  const visitExplicit =
-    /\b(visita|agendar visita|marcar visita|quero visitar|conhecer o empreendimento|conhecer o stand|ir ate o local|presencial)\b/.test(
-      text
-    );
-  if (visitExplicit) return 'visit';
-
-  if (
-    /\b(nao quero|nao|agora nao|nao quero visita|nao quero agendar)\b/.test(
-      text
-    )
-  ) {
-    return 'decline_or_ambiguous';
-  }
-
-  if (/^(sim|ok|pode|pode ser|pode sim|tanto faz|beleza|claro|acho que sim|vamos)$/.test(text)) {
-    return 'ambiguous';
-  }
-  return 'ambiguous';
+  if (!text) return false;
+  return SUBSTANTIVE_RESOLUTION_BYPASS_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+export function isExplicitResolutionChoice(userMessage: string): 'broker' | 'visit' | 'ambiguous' | null {
+  const text = n(userMessage);
+  if (!text) return null;
+
+  if (EXPLICIT_BROKER_CHOICE_PATTERN.test(text)) return 'broker';
+  if (EXPLICIT_VISIT_CHOICE_PATTERN.test(text)) return 'visit';
+  if (isSubstantiveQuestionThatBypassesResolutionChoice(text)) return null;
+  if (AMBIGUOUS_RESOLUTION_CHOICE_PATTERN.test(text)) return 'ambiguous';
+
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length <= 3) return 'ambiguous';
+  return null;
+}
+
+export function classifyPendingResolutionChoice(
+  userMessage: string
+): 'broker' | 'visit' | 'ambiguous' | null {
+  return isExplicitResolutionChoice(userMessage);
+}
