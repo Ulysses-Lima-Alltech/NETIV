@@ -22,7 +22,7 @@ import {
   evaluateAnaReengagementPolicy,
   resolveRequestedTopicAction,
 } from '../utils/anaConversationPolicy.js';
-import { selectSingleSafeNextTopic } from '../utils/anaFollowupQuestionService.js';
+import { selectAnaNextFollowupQuestion, selectSingleSafeNextTopic } from '../utils/anaFollowupQuestionService.js';
 import {
   handleVisitSchedulingDeterministically,
   isVisitSchedulingConfirmationMessage,
@@ -1798,7 +1798,8 @@ test('nao oferece topico sem base autorizada', () => {
   });
 
   assert.equal(/valores/i.test(policy.text), false);
-  assert.match(policy.text, /ponto especifico/i);
+  assert.equal(/tem algum ponto especifico|me conta,\s*qual ponto/i.test(policy.text), false);
+  assert.match(policy.text, /visita|corretor|morar|investir|construir/i);
 });
 
 test('selectSingleSafeNextTopic escolhe apenas um topico seguro', () => {
@@ -1819,6 +1820,66 @@ test('selectSingleSafeNextTopic escolhe apenas um topico seguro', () => {
   assert.equal(selected.topic, 'pagamento');
   assert.match(selected.question ?? '', /formas de pagamento/i);
   assert.equal(/\bou\b/i.test(selected.question ?? ''), false);
+});
+
+test('selectAnaNextFollowupQuestion sem proximo topico seguro retorna null sem fallback generico', () => {
+  const selected = selectAnaNextFollowupQuestion({
+    currentTopic: 'localizacao',
+    recentlyDiscussedTopics: ['valores', 'pagamento', 'lazer', 'seguranca'],
+    recentlyAskedTopics: ['valores', 'pagamento', 'lazer', 'seguranca'],
+    recentAssistantReplies: [
+      'Quer saber tambem sobre valores?',
+      'Quer que eu te explique as formas de pagamento?',
+      'Quer que eu te explique as areas de lazer?',
+      'Quer que eu te explique a seguranca do empreendimento?',
+    ],
+    allowedTopics: {
+      valores: true,
+      pagamento: true,
+      localizacao: true,
+      lazer: true,
+      seguranca: true,
+    },
+  });
+
+  assert.equal(selected.question, null);
+  assert.equal(selected.usedFallbackQuestion, false);
+  assert.equal(selected.suppressedByRepeat, true);
+});
+
+test('guard final remove frase generica e responde localizacao de forma objetiva', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 12351,
+    userMessage: 'manda a localizacao pfv',
+    replyText: 'Tem algum ponto específico que você quer que eu detalhe melhor?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [{ role: 'user', content: 'manda a localizacao pfv' }],
+    disableFollowupQuestion: true,
+  });
+
+  const normalized = policy.text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+  assert.equal(/tem algum ponto especifico|detalhe melhor/.test(normalized), false);
+  assert.match(normalized, /atibaia|pedreira|rodovia dom pedro i/);
+});
+
+test('guard final remove "me conta, qual ponto..." quando a frase ja foi usada', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 12352,
+    userMessage: 'nao entendi onde fica',
+    replyText: 'Me conta, qual ponto você quer entender primeiro?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [
+      { role: 'assistant', content: 'Me conta, qual ponto você quer entender primeiro?' },
+      { role: 'user', content: 'nao entendi onde fica' },
+    ],
+    disableFollowupQuestion: true,
+  });
+
+  const normalized = policy.text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+  assert.equal(/me conta,?\s*qual ponto voce quer entender primeiro/.test(normalized), false);
+  assert.match(normalized, /atibaia|pedreira|rodovia dom pedro i/);
 });
 
 test('apos envio de fotos, prepara follow-up com "o que achou"', () => {
@@ -2252,6 +2313,23 @@ test('pedido explicito de link de localizacao permanece no fluxo de link/rota', 
   assert.match(source, /tem link da localizacao/);
   assert.match(source, /google maps/);
   assert.match(source, /me envia a localizacao/);
+  assert.match(source, /manda a localizacao pfv/);
+  assert.match(source, /nao entendi onde fica/);
+  assert.match(source, /if \(isLocationLinkRequest\(trimmed\) && isEvoraEnterpriseName/);
+});
+
+test('engine prioriza aliases de link de localizacao em variablesMap', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  assert.match(source, /google_maps_url/);
+  assert.match(source, /maps_url/);
+  assert.match(source, /location_url/);
+  assert.match(source, /localizacao_url/);
+  assert.match(source, /link_localizacao/);
+  assert.match(source, /link_google_maps/);
+  assert.match(source, /endereco_google_maps/);
+  assert.match(source, /exact_location_url/);
+  assert.match(source, /exactlocation/);
+  assert.match(source, /localizacao_exata/);
 });
 
 test('depois de pergunta de valor, onde fica continua localizacao', () => {

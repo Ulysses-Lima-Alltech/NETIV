@@ -1077,7 +1077,9 @@ function buildOnlyNewLazerItemsReply(newItems: string[]): string {
 function isLocationLinkRequest(text: string): boolean {
   const n = normText(text || '');
   if (!n) return false;
-  return /\b(tem o link da localizacao|tem link da localizacao|link da localizacao|link de localizacao|link com a localizacao|google maps|maps|mapa|rota|como chegar|manda localizacao|manda a localizacao|me envia a localizacao|me envia localizacao|me manda localizacao|me manda a localizacao|localizacao exata|endereco com numero|tem numero|numero do endereco)\b/.test(n);
+  return /\b(tem o link da localizacao|tem link da localizacao|link da localizacao|link de localizacao|link com a localizacao|google maps|maps|mapa|rota|como chegar|manda localizacao|manda a localizacao|manda a localizacao pfv|me envia a localizacao|me envia localizacao|me manda localizacao|me manda a localizacao|localizacao exata|endereco com numero|tem numero|numero do endereco|onde fica|nao entendi onde fica|endereco|localizacao)\b/.test(
+    n
+  );
 }
 
 function isImageMaterialRequest(text: string): boolean {
@@ -1100,15 +1102,27 @@ function isProactiveVideoOfferIntent(text: string): boolean {
 
 function pickAuthorizedLocationLink(vars: Record<string, unknown>): string | null {
   const entries = Object.entries(vars || {});
+  const normalizedKey = (key: string): string =>
+    normText(key)
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
   const exactPriorityKeys = new Set([
     'google_maps_url',
     'location_url',
     'maps_url',
     'localizacao_link',
+    'localizacao_url',
+    'link_localizacao',
+    'link_google_maps',
+    'endereco_google_maps',
+    'exact_location_url',
+    'exact_location',
+    'exactlocation',
+    'localizacao_exata',
     'mapa_url',
   ]);
   const exactPriorityCandidates = entries.filter(([k, v]) => {
-    const key = normText(k);
+    const key = normalizedKey(k);
     const val = String(v ?? '').trim();
     if (!val || !/^https?:\/\//i.test(val)) return false;
     return exactPriorityKeys.has(key);
@@ -1116,11 +1130,11 @@ function pickAuthorizedLocationLink(vars: Record<string, unknown>): string | nul
   if (exactPriorityCandidates[0]?.[1]) return String(exactPriorityCandidates[0][1]).trim();
 
   const candidates = entries.filter(([k, v]) => {
-    const key = normText(k);
+    const key = normalizedKey(k);
     const val = String(v ?? '').trim();
     if (!val) return false;
     if (!/^https?:\/\//i.test(val)) return false;
-    return /(mapa|maps|localizacao|localizacao_link|google|endereco|rota)/.test(key);
+    return /(mapa|maps|localizacao|google|endereco|rota|exact_location|exactlocation)/.test(key);
   });
   return candidates[0]?.[1] ? String(candidates[0][1]).trim() : null;
 }
@@ -5253,7 +5267,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
     }
 
-    if (!evoraKnowledgeDrivenMode && isLocationLinkRequest(trimmed) && isEvoraEnterpriseName(ent?.name ?? null)) {
+    if (isLocationLinkRequest(trimmed) && isEvoraEnterpriseName(ent?.name ?? null)) {
       const resolvedLocationLink = authorizedLocationLink ?? knowledgeLocationLink;
       const locationLinkMessages = [
         buildLeadQualificationBridgeReply({

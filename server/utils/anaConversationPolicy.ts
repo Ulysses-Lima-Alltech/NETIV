@@ -21,13 +21,14 @@ const GENERIC_SINGLE_QUESTION_FALLBACK =
   'Voce pretende conhecer o empreendimento presencialmente ou prefere falar primeiro com o corretor?';
 const BANNED_GENERIC_FALLBACK = 'Posso te responder de forma mais objetiva nesse ponto.';
 const GENERIC_LOOP_PATTERNS: RegExp[] = [
-  /\btem algum ponto especifico que voce quer que eu detalhe melhor\??\b/,
-  /\btem algum ponto especifico que voce quer saber\??\b/,
-  /\bme conta,\s*qual ponto voce quer entender primeiro\??\b/,
-  /\bme conta,\s*qual ponto voce quer entender\??\b/,
-  /\bposso te contar sobre os valores,\s*a localizacao,\s*o lazer ou as formas de pagamento(?: do evora)?\.?\s*qual desses pontos voce quer ver primeiro\??\b/,
-  /\bclaro\.\s*voce quer saber mais sobre valores,\s*lazer,\s*localizacao,\s*seguranca ou formas de pagamento\??\b/,
+  /tem algum ponto espec[ií]fico que voc[eê] quer que eu detalhe melhor\??/i,
+  /tem algum ponto espec[ií]fico que voc[eê] quer saber\??/i,
+  /me conta,?\s*qual ponto voc[eê] quer entender primeiro\??/i,
+  /me conta,?\s*qual ponto voc[eê] quer entender\??/i,
+  /posso te contar sobre os valores,\s*a localizacao,\s*o lazer ou as formas de pagamento(?: do evora)?\.?\s*qual desses pontos voc[eê] quer ver primeiro\??/i,
+  /claro\.\s*voce quer saber mais sobre valores,\s*lazer,\s*localizacao,\s*seguranca ou formas de pagamento\??/i,
 ];
+const ME_CONTA_GENERIC_LOOP_PATTERN = /me conta,?\s*qual ponto voc[eê] quer entender primeiro\??/i;
 
 type RequestedTopicActionType =
   | 'direct_topic_request'
@@ -63,9 +64,28 @@ function stripGenericLoopQuestion(text: string | null | undefined): string {
   if (!raw) return raw;
   let next = raw;
   for (const pattern of GENERIC_LOOP_PATTERNS) {
-    next = next.replace(pattern, '').trim();
+    next = next.replace(new RegExp(pattern.source, 'gi'), '').trim();
   }
-  return next.replace(/\s{2,}/g, ' ').trim();
+  return next
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[,.;:!?-]+\s*/g, '')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .trim();
+}
+
+function isLocationRequestUserMessage(userMessage: string): boolean {
+  const n = norm(userMessage);
+  if (!n) return false;
+  return /\b(manda a localizacao|manda localizacao|link da localizacao|link de localizacao|me envia a localizacao|me envia localizacao|como chegar|onde fica|nao entendi onde fica|endereco|localizacao|rota)\b/.test(
+    n
+  );
+}
+
+function buildLocationProgressBridgeReply(): string {
+  return [
+    'O Evora fica em Atibaia, na regiao da Pedreira, proximo ao bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.',
+    'Quer que eu te ajude a agendar uma visita?',
+  ].join(' ');
 }
 
 function startsWithGreeting(text: string): boolean {
@@ -302,6 +322,25 @@ function userAskedDetailedCommercialTopic(userMessage: string): boolean {
 function userAskedForHuman(userMessage: string): boolean {
   const n = norm(userMessage);
   return /\b(corretor|consultor|atendente|humano|pessoa)\b/.test(n);
+}
+
+function buildContextAwareSanitizedFallback(args: {
+  userMessage: string;
+  isKnowledgeGapTurn: boolean;
+  replyBeforeSanitize: string;
+}): string {
+  if (isLocationRequestUserMessage(args.userMessage)) {
+    return buildLocationProgressBridgeReply();
+  }
+  if (
+    args.isKnowledgeGapTurn ||
+    userAskedDetailedCommercialTopic(args.userMessage) ||
+    userAskedForHuman(args.userMessage) ||
+    replyLooksInfoGap(args.replyBeforeSanitize)
+  ) {
+    return 'Nao tenho esse detalhe validado por aqui. Posso te encaminhar para o corretor responsavel ou te ajudar a agendar uma visita. Qual prefere?';
+  }
+  return SPECIFIC_DETAIL_FALLBACK_QUESTION;
 }
 
 function replyLooksInfoGap(text: string): boolean {
@@ -1214,7 +1253,13 @@ export function applyAnaConversationPolicy(
       }
     } else {
       const cleaned = (reply || '').replace(new RegExp(BANNED_GENERIC_FALLBACK, 'ig'), '').replace(/\s{2,}/g, ' ').trim();
-      reply = cleaned || SPECIFIC_DETAIL_FALLBACK_QUESTION;
+      reply =
+        cleaned ||
+        buildContextAwareSanitizedFallback({
+          userMessage: input.userMessage,
+          isKnowledgeGapTurn,
+          replyBeforeSanitize: reply,
+        });
     }
     appliedRules.push('bad_generic_fallback_blocked');
     console.log('[ANA_BAD_GENERIC_FALLBACK_BLOCKED]', {
@@ -1528,6 +1573,31 @@ export function applyAnaConversationPolicy(
         conversationId: input.conversationId,
       });
     }
+  }
+
+  const meContaAlreadyUsedInConversation = recentAssistantReplies.some((msg) => ME_CONTA_GENERIC_LOOP_PATTERN.test(msg));
+  const shouldStripMeContaForRepeat = meContaAlreadyUsedInConversation && ME_CONTA_GENERIC_LOOP_PATTERN.test(reply);
+  let finalLoopGuardCandidate = stripGenericLoopQuestion(reply);
+  if (!shouldStripMeContaForRepeat && ME_CONTA_GENERIC_LOOP_PATTERN.test(reply)) {
+    finalLoopGuardCandidate = finalLoopGuardCandidate || reply;
+  }
+  finalLoopGuardCandidate = finalLoopGuardCandidate
+    .replace(new RegExp(BANNED_GENERIC_FALLBACK, 'ig'), '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  if (finalLoopGuardCandidate !== reply) {
+    const fallbackWhenEmpty = buildContextAwareSanitizedFallback({
+      userMessage: input.userMessage,
+      isKnowledgeGapTurn,
+      replyBeforeSanitize: reply,
+    });
+    reply = finalLoopGuardCandidate || fallbackWhenEmpty;
+    appliedRules.push('final_generic_loop_guard');
+    console.log('[ANA_FINAL_GENERIC_LOOP_GUARD_APPLIED]', {
+      conversationId: input.conversationId,
+      emptiedAfterStrip: finalLoopGuardCandidate.length === 0,
+      meContaRepeated: shouldStripMeContaForRepeat,
+    });
   }
 
   const finalQuestionContext = resolveLastAssistantQuestionContext(reply, null, null, []);

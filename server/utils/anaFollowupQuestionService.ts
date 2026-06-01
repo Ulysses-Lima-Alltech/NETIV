@@ -80,8 +80,6 @@ const TOPIC_QUESTION_LABEL: Record<AnaDialogueTopic, string | null> = {
   outro: null,
 };
 
-const FALLBACK_SPECIFIC_DETAIL_QUESTION = 'Voce esta buscando o lote para morar, investir ou construir?';
-
 function norm(value: string): string {
   return String(value ?? '')
     .toLowerCase()
@@ -194,25 +192,12 @@ export function selectAnaNextFollowupQuestion(input: {
       suppressedUnsupported: selected.suppressedUnsupported,
     };
   }
-
-  const fallbackNorm = norm(FALLBACK_SPECIFIC_DETAIL_QUESTION);
-  const recentRepliesNorm = (input.recentAssistantReplies ?? []).map((x) => norm(x));
-  if (recentRepliesNorm.some((reply) => reply.includes(fallbackNorm))) {
-    return {
-      question: null,
-      selectedTopic: null,
-      suppressedByRepeat: true,
-      topicRepeatAvoided: false,
-      usedFallbackQuestion: false,
-      suppressedUnsupported: selected.suppressedUnsupported,
-    };
-  }
   return {
-    question: FALLBACK_SPECIFIC_DETAIL_QUESTION,
+    question: null,
     selectedTopic: null,
     suppressedByRepeat: selected.suppressedByRepeat,
     topicRepeatAvoided: false,
-    usedFallbackQuestion: true,
+    usedFallbackQuestion: false,
     suppressedUnsupported: selected.suppressedUnsupported,
   };
 }
