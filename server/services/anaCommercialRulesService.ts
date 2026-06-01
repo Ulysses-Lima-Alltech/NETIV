@@ -82,6 +82,15 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
   if (hasAny(n, [/\b(quantos lotes|numero de lotes|vai ter quantos lotes)\b/])) {
     return 'quantidade_lotes_info_gap';
   }
+  if (
+    hasAny(n, [
+      /\b(quais?\s+os?\s+tamanhos?|qual\s+o\s+tamanho|metragem|metragens|tamanho\s+dos\s+lotes?)\b/,
+      /\b(lote|terreno)\s*(de|com)?\s*\d{2,4}\s*m(?:2|²)?\b/,
+      /\b\d{2,4}\s*m(?:2|²)\b/,
+    ])
+  ) {
+    return 'metragem_faixa';
+  }
   if (isEntregaEmpreendimentoIntent(n)) return 'entrega_empreendimento';
   if (isValorCondominioIntent(n)) return 'valor_condominio';
   if (hasAny(n, installmentTerms)) return 'parcela_simulacao';
@@ -142,6 +151,7 @@ export type ResolvedAnaCommercialRule = {
 
 function axisFromIntent(intent: AnaCommercialIntent): AnaCommercialAxis {
   if (intent === 'preco_valor_lote') return 'price';
+  if (intent === 'metragem_faixa') return 'availability';
   if (intent === 'parcela_simulacao') return 'installment';
   if (intent === 'formas_pagamento' || intent === 'financiamento') return 'payment_terms';
   if (intent === 'entrada') return 'entry';

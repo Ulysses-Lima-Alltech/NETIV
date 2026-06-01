@@ -617,6 +617,56 @@ function collectRecentAssistantQuestionsForFinalCheck(args: {
   return out.slice(-10);
 }
 
+function pickContextualCommercialFollowupQuestion(args: {
+  userMessage: string;
+  recentQuestions: string[];
+  topicHint?: 'first_contact' | 'location' | 'price' | 'leisure' | 'size' | null;
+}): string | null {
+  const userNorm = normText(args.userMessage || '');
+  const byHint: string[] = [];
+  if (args.topicHint === 'location') {
+    byHint.push('Quer que eu te passe também um ponto de referência no trajeto pela Dom Pedro I?');
+  } else if (args.topicHint === 'price') {
+    byHint.push('Quer que eu te explique também as formas de pagamento?');
+  } else if (args.topicHint === 'leisure') {
+    byHint.push('Quer que eu detalhe primeiro segurança ou localização?');
+  } else if (args.topicHint === 'size') {
+    byHint.push('Quer que eu te explique como funciona a confirmação de metragem disponível?');
+  } else if (args.topicHint === 'first_contact') {
+    byHint.push('Quer que eu te detalhe primeiro localização ou valores?');
+  }
+
+  const contextualByUser: string[] = [];
+  if (/\b(localizacao|onde fica|regiao|bairro|pedreira|rio abaixo|dom pedro)\b/.test(userNorm)) {
+    contextualByUser.push('Quer que eu te passe também um ponto de referência no trajeto pela Dom Pedro I?');
+  }
+  if (/\b(valor|preco|investimento|quanto custa|m2|metro quadrado)\b/.test(userNorm)) {
+    contextualByUser.push('Quer que eu te explique também as formas de pagamento?');
+  }
+  if (/\b(lazer|piscina|academia|playground|beach tennis|society)\b/.test(userNorm)) {
+    contextualByUser.push('Quer que eu detalhe melhor a parte de segurança ou localização?');
+  }
+  if (/\b(metragem|tamanho|lote de \d+|m2|m²)\b/.test(userNorm)) {
+    contextualByUser.push('Quer que eu te explique como funciona a confirmação de metragem disponível?');
+  }
+
+  const genericCandidates = [
+    'Quer que eu te detalhe primeiro localização ou valores?',
+    'Quer que eu te mostre agora localização ou lazer?',
+  ];
+  const candidates = [...new Set([...byHint, ...contextualByUser, ...genericCandidates])];
+  for (const candidate of candidates) {
+    const check = evaluateFinalQuestionCheck({
+      replyText: candidate,
+      recentQuestions: args.recentQuestions,
+    });
+    if (check.hasFinalQuestion && !check.repeatedQuestion && !check.forbiddenQuestion) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 function normalizeFirstGreetingCommittedReply(params: {
   conversationId: number;
   isFirstAnaReply: boolean;
@@ -1194,15 +1244,18 @@ function buildEvoraLocationOverview(args: {
   addressComplete?: string | null;
   addressNumber?: string | null;
 }): string {
+  const canonicalBase =
+    'O Evora fica em Atibaia, na regiao da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de Sao Paulo, em uma regiao com qualidade de vida e contato com a natureza.';
   const addressComplete = String(args.addressComplete ?? '').trim();
   const addressNumber = String(args.addressNumber ?? '').trim();
   if (addressComplete) {
-    if (addressNumber && !addressComplete.includes(addressNumber)) {
-      return `${addressComplete}, numero ${addressNumber}.`;
-    }
-    return addressComplete.endsWith('.') ? addressComplete : `${addressComplete}.`;
+    const addressLabel =
+      addressNumber && !addressComplete.includes(addressNumber)
+        ? `${addressComplete}, numero ${addressNumber}`
+        : addressComplete;
+    return `${canonicalBase} Endereco de referencia: ${addressLabel}.`;
   }
-  return 'O Evora fica em Atibaia, na regiao da Pedreira, proximo ao bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.';
+  return canonicalBase;
 }
 
 function pickLocationLinkFromKnowledge(knowledgeText: string): string | null {
@@ -1833,8 +1886,8 @@ function buildCanonicalLazerFullReply(): string {
     'Fireplace',
     'Quadra de beach tennis',
     'Campo society',
-    '',
-    'Também conta com estação de carregamento para carros elétricos e portaria 24 horas com controle de acesso.',
+    'Estação para carros elétricos',
+    'Portaria 24h com controle de acesso.',
   ].join('\n');
 }
 
@@ -5499,18 +5552,42 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     if (isLocationLinkRequest(trimmed) && isEvoraEnterpriseName(ent?.name ?? null)) {
       const resolvedLocationLink = authorizedLocationLink ?? knowledgeLocationLink;
-      const locationLinkMessages = [
-        buildLeadQualificationBridgeReply({
-          matchedIntent: 'exact_location_link',
-          locationOverview: buildEvoraLocationOverview({
-            addressComplete: authorizedLocationAddress.addressComplete,
-            addressNumber: authorizedLocationAddress.addressNumber,
-          }),
-          locationLink: resolvedLocationLink,
-          addressComplete: authorizedLocationAddress.addressComplete,
-          addressNumber: authorizedLocationAddress.addressNumber,
-        }),
-      ];
+      const locationOverview = buildEvoraLocationOverview({
+        addressComplete: authorizedLocationAddress.addressComplete,
+        addressNumber: authorizedLocationAddress.addressNumber,
+      });
+      const finalQuestionHistory = collectRecentAssistantQuestionsForFinalCheck({
+        flowState: flowStateParsed,
+        recentMessages: rows.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+      });
+      const contextualLocationQuestion = pickContextualCommercialFollowupQuestion({
+        userMessage: trimmed,
+        recentQuestions: finalQuestionHistory,
+        topicHint: 'location',
+      });
+      const locationLinkMessages: string[] = [locationOverview];
+      if (resolvedLocationLink) {
+        locationLinkMessages.push(resolvedLocationLink);
+        console.log('[ANA_LOCATION_LINK_SENT]', {
+          conversationId,
+          linkPreview: resolvedLocationLink.slice(0, 120),
+        });
+      } else {
+        locationLinkMessages.push('No momento, eu nao tenho um link de mapa autorizado por aqui.');
+        console.log('[ANA_LOCATION_LINK_UNAVAILABLE]', {
+          conversationId,
+        });
+      }
+      if (contextualLocationQuestion) {
+        locationLinkMessages.push(contextualLocationQuestion);
+      }
+      console.log('[ANA_LOCATION_RESPONSE_SPLIT]', {
+        conversationId,
+        partsCount: locationLinkMessages.length,
+      });
       const committedLocationLink = commitTurnResponse({
         handler: 'deterministic_location_link',
         reason: 'location_link_request',
@@ -5613,7 +5690,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (!isEvoraEnterpriseName(ent?.name ?? null)) return null;
       const topic = anaTurnContextResolved?.requestedTopic ?? null;
       if (topic === 'localizacao' || topic === 'rota') return 'localizacao_endereco' as const;
-      if (topic === 'lotes') return 'quantidade_lotes_info_gap' as const;
+      if (topic === 'lotes') return 'metragem_faixa' as const;
       if (topic === 'lazer') return 'areas_lazer' as const;
       if (topic === 'seguranca') return 'seguranca_portaria' as const;
       if (topic === 'pagamento') return 'formas_pagamento' as const;
@@ -5627,8 +5704,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             commercialAxis:
               forcedIntentFromTurnContext === 'localizacao_endereco'
                 ? ('location' as const)
-                : forcedIntentFromTurnContext === 'quantidade_lotes_info_gap'
-                  ? ('availability' as const)
+                : forcedIntentFromTurnContext === 'metragem_faixa'
+                    ? ('availability' as const)
                   : forcedIntentFromTurnContext === 'areas_lazer'
                     ? ('leisure' as const)
                     : forcedIntentFromTurnContext === 'seguranca_portaria'
@@ -5759,6 +5836,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           axis: effectiveCommercialRule.commercialAxis,
         });
       }
+      if (effectiveCommercialRule.ruleId === 'metragem_faixa') {
+        console.log('[ANA_LOT_SIZE_RANGE_REQUEST_HANDLED]', {
+          conversationId,
+          axis: effectiveCommercialRule.commercialAxis,
+        });
+      }
       if (effectiveCommercialRule.inheritedIntent === 'payment_terms') {
         console.log('[ANA_PAYMENT_INTENT_CONTEXT_GUARD]', {
           conversationId,
@@ -5777,6 +5860,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         effectiveCommercialRule.ruleId === 'areas_lazer' ||
         effectiveCommercialRule.ruleId === 'seguranca_portaria' ||
         effectiveCommercialRule.ruleId === 'quantidade_lotes_info_gap' ||
+        effectiveCommercialRule.ruleId === 'metragem_faixa' ||
         effectiveCommercialRule.ruleId === 'preco_valor_lote' ||
         effectiveCommercialRule.ruleId === 'parcela_simulacao' ||
         effectiveCommercialRule.ruleId === 'formas_pagamento' ||
@@ -5848,10 +5932,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         stage: 'commercial_rule_messages_initial',
       });
       if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessagesToSend.length === 0) {
-        commercialMessagesToSend.push(
-          'Atibaia faz parte da região bragantina e fica a cerca de 50 minutos de São Paulo.',
-          'O Évora fica na região da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.'
-        );
+        commercialMessagesToSend.push(buildEvoraLocationOverview({
+          addressComplete: authorizedLocationAddress.addressComplete,
+          addressNumber: authorizedLocationAddress.addressNumber,
+        }));
       }
       if (effectiveCommercialRule.ruleId === 'entrega_empreendimento') {
         const operational = resolveOperationalFactAnswer(trimmed, knowledgeText, vars, {
@@ -5881,6 +5965,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         !hasKnownCustomerName &&
         effectiveCommercialRule.ruleId !== 'visita_agendamento' &&
         effectiveCommercialRule.ruleId !== 'quantidade_lotes_info_gap' &&
+        effectiveCommercialRule.ruleId !== 'metragem_faixa' &&
         effectiveCommercialRule.ruleId !== 'preco_valor_lote' &&
         effectiveCommercialRule.ruleId !== 'parcela_simulacao' &&
         effectiveCommercialRule.ruleId !== 'entrada' &&
@@ -5995,6 +6080,45 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         if (commercialRuleMessage.trim()) {
           processedCommercialRuleMessages.push(commercialRuleMessage.trim());
           recentAssistantForNoRepeat.push(commercialRuleMessage.trim());
+        }
+      }
+      if (effectiveCommercialRule.ruleId === 'first_contact' && isFirstAnaReply) {
+        const finalQuestionHistoryForCommercialRule = collectRecentAssistantQuestionsForFinalCheck({
+          flowState: flowStateParsed,
+          recentMessages: rows.map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
+        });
+        const lastCommercialMessage = processedCommercialRuleMessages[processedCommercialRuleMessages.length - 1] ?? '';
+        const finalQuestionCheck = evaluateFinalQuestionCheck({
+          replyText: lastCommercialMessage,
+          recentQuestions: finalQuestionHistoryForCommercialRule,
+        });
+        console.log('[ANA_FINAL_QUESTION_REQUIRED]', {
+          conversationId,
+          handler: 'deterministic_commercial_rule_first_contact',
+          hasFinalQuestion: finalQuestionCheck.hasFinalQuestion,
+          repeatedQuestion: finalQuestionCheck.repeatedQuestion,
+          forbiddenQuestion: finalQuestionCheck.forbiddenQuestion,
+        });
+        if (
+          !finalQuestionCheck.hasFinalQuestion ||
+          finalQuestionCheck.repeatedQuestion ||
+          finalQuestionCheck.forbiddenQuestion
+        ) {
+          console.log('[ANA_FINAL_QUESTION_MISSING]', {
+            conversationId,
+            reasons: finalQuestionCheck.reasons,
+          });
+          const contextualQuestion = pickContextualCommercialFollowupQuestion({
+            userMessage: trimmed,
+            recentQuestions: finalQuestionHistoryForCommercialRule,
+            topicHint: 'first_contact',
+          });
+          if (contextualQuestion) {
+            processedCommercialRuleMessages.push(contextualQuestion);
+          }
         }
       }
       const committedCommercialRule = commitTurnResponse({
@@ -10121,13 +10245,13 @@ function buildConversationalCanonicalContext(lastAxis: string | null): string {
   return [
     'CONTEXTO CANÔNICO AUTORIZADO',
     '- Évora é loteamento fechado em Atibaia.',
-    '- Lotes a partir de 360 m².',
+    '- Lotes na faixa de 360 m² a 775 m².',
     '- Valor inicial a partir de R$279.000,00.',
     '- Metro quadrado a partir de R$775,00.',
     '- Região da Pedreira / bairro Rio Abaixo.',
-    '- Acesso pela Rodovia Dom Pedro I.',
-    '- Lazer: Piscina adulto, Academia, Salão de festas, Playground, Coworking, Espaço zen, Fireplace, Quadra de beach tennis, Campo society.',
-    '- Portaria 24 horas com controle de acesso.',
+    '- Acesso pela Rodovia Dom Pedro I, cerca de 50 minutos de São Paulo, com qualidade de vida e contato com a natureza.',
+    '- Lazer: Piscina adulto, Academia, Salão de festas, Playground, Coworking, Espaço zen, Fireplace, Quadra de beach tennis, Campo society, Estação para carros elétricos.',
+    '- Portaria 24h com controle de acesso.',
     '- Formas de pagamento: planos estendidos em até 120x, parcelamento sem juros em até 48x, financiamento direto com a construtora, menos burocracia e mais facilidade.',
     `- Último eixo da conversa: ${lastAxis ?? 'indefinido'}.`,
     'Responda com tom natural e útil, sem inventar fatos fora desse contexto.',
@@ -10146,7 +10270,7 @@ function hasUnauthorizedPriceClaimInConversationalReply(text: string): boolean {
 function buildConversationalCanonicalFallback(lastAxis: string | null): string {
   if (lastAxis === 'lazer' || lastAxis === 'areas_lazer') return buildCanonicalLazerFullReply();
   if (lastAxis === 'localizacao' || lastAxis === 'localizacao_endereco') {
-    return 'Atibaia faz parte da região bragantina, uma das regiões mais valorizadas e desenvolvidas do estado. Fica a cerca de 50 minutos de São Paulo.\n\nO Évora fica na região da Pedreira, no bairro Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I.\n\nAtibaia também se destaca pela gastronomia e pela Avenida Lucas Nogueira Garcez, com restaurantes, bares e comércio em uma região bem valorizada.';
+    return 'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, em uma região com qualidade de vida e contato com a natureza.';
   }
   if (lastAxis === 'preco' || lastAxis === 'preco_valor_lote') {
     return 'O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.';

@@ -78,7 +78,7 @@ export function detectAnaKnowledgeGap(args: {
     }
   }
 
-  if (axis === 'disponibilidade' || axis === 'preco' || axis === 'financiamento') {
+  if (axis === 'disponibilidade' || axis === 'financiamento') {
     return {
       hasKnowledgeGap: true,
       reason: `axis_${axis}_requires_authorized_or_human_validation`,
@@ -129,10 +129,9 @@ export function buildLeadQualificationBridgeReply(args: BuildLeadQualificationBr
 
   if (intent === 'lot_size_options') {
     return [
-      'No Evora, os lotes sao a partir de 360 m2.',
-      'Eu nao tenho todas as opcoes de metragem liberadas por aqui.',
-      'O corretor consegue te passar as opcoes disponiveis certinho.',
-      'Voce prefere que eu encaminhe seu atendimento ou quer agendar uma visita?',
+      'No Evora, os lotes ficam na faixa de 360 m2 a 775 m2.',
+      'Para confirmar metragem especifica e unidade disponivel, o corretor responsavel valida em tempo real.',
+      'Se preferir, posso te conectar com o corretor.',
     ].join(' ');
   }
 

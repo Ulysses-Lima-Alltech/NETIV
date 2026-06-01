@@ -75,10 +75,10 @@ export function repliesSemanticallySimilar(a: string, b: string): boolean {
 }
 
 const EVORA_LOCATION_REPLY =
-  'O Évora fica em Atibaia, perto da região da Pedreira, no bairro Rio Abaixo. Tem fácil acesso pela Rodovia Dom Pedro I e fica a aproximadamente 50 minutos de São Paulo.';
+  'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, em uma região com qualidade de vida e contato com a natureza.';
 
 const EVORA_ADDRESS_REPLY =
-  'O Évora fica em Atibaia, na região da Pedreira, próximo ao bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.';
+  'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, em uma região com qualidade de vida e contato com a natureza.';
 
 const EVORA_MAPS_REPLY =
   'Eu não tenho um link de localização exata liberado por aqui. Posso te encaminhar para o corretor responsável ou, se preferir, te ajudar a agendar uma visita.';
@@ -132,7 +132,7 @@ function isUserAskingAboutLazer(text: string | null | undefined): boolean {
 }
 
 const EVORA_LAZER_REPLY =
-  'O Évora conta com lazer completo: piscina adulto, piscina infantil, academia, salão de festas, playground, coworking, espaço zen, fireplace, quadra de beach tennis, campo society, praça interna e área verde.';
+  'As áreas de lazer do Évora incluem:\nPiscina adulto\nAcademia\nSalão de festas\nPlayground\nCoworking\nEspaço zen\nFireplace\nQuadra de beach tennis\nCampo society\nEstação para carros elétricos\nPortaria 24h com controle de acesso.';
 
 function replyHasEvoraLazerItems(text: string): boolean {
   const n = normClosure(text || '');
@@ -160,12 +160,58 @@ function forceEvoraLazerReplyWhenNeeded(reply: string, opts?: FinalizeAnaReplyOp
   const clean = (reply || '').trim();
   if (!isEvoraScopedContext(opts)) return clean;
   if (!isUserAskingAboutLazer(opts?.userMessage ?? null)) return clean;
-  if (!clean) return EVORA_LAZER_REPLY;
-
-  if (looksGenericEvoraFallback(clean) || !replyHasEvoraLazerItems(clean)) {
+  if (!clean) {
+    console.log('[ANA_LEISURE_CANONICAL_RESPONSE_USED]', { reason: 'empty_lazer_reply' });
     return EVORA_LAZER_REPLY;
   }
 
+  if (looksGenericEvoraFallback(clean) || !replyHasEvoraLazerItems(clean)) {
+    console.log('[ANA_LEISURE_CANONICAL_RESPONSE_USED]', { reason: 'generic_or_missing_lazer_items' });
+    return EVORA_LAZER_REPLY;
+  }
+
+  return clean;
+}
+
+const EVORA_LAZER_CONTINUATION_SAFE_REPLY =
+  'Posso te detalhar agora a parte de segurança ou de localização. Se preferir, também te conecto ao corretor para confirmar pontos específicos.';
+
+function userAskedToContinueDetails(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return /\b(me conta mais|conta mais|fala mais|detalha mais|quero mais detalhes)\b/.test(n);
+}
+
+function hasBrokenListShape(text: string): boolean {
+  const raw = String(text || '').trim();
+  if (!raw) return false;
+  if (/(^|\n)\s*\d+\s*$/m.test(raw)) return true;
+  if (/:\s*\d+\s*$/m.test(raw)) return true;
+  if (/(^|\n)\s*\d+\s*[:.-]\s*$/m.test(raw)) return true;
+  return false;
+}
+
+function sanitizeBrokenListOrLazerContinuation(reply: string, opts?: FinalizeAnaReplyOptions): string {
+  const clean = String(reply || '').trim();
+  if (!clean) return clean;
+
+  const brokenList = hasBrokenListShape(clean);
+  if (brokenList) {
+    console.log('[ANA_BROKEN_LIST_OUTPUT_BLOCKED]', { reason: 'broken_numeric_list' });
+  }
+
+  if (!isEvoraScopedContext(opts)) {
+    return brokenList ? clean.replace(/(^|\n)\s*\d+\s*$/gm, '').replace(/\s{2,}/g, ' ').trim() : clean;
+  }
+
+  const askedLazer = isUserAskingAboutLazer(opts?.userMessage ?? null);
+  const askedMore = userAskedToContinueDetails(opts?.userMessage ?? null);
+  if ((askedLazer || askedMore) && brokenList) {
+    return EVORA_LAZER_CONTINUATION_SAFE_REPLY;
+  }
+  if (askedMore && !replyHasEvoraLazerItems(clean)) {
+    return EVORA_LAZER_CONTINUATION_SAFE_REPLY;
+  }
   return clean;
 }
 
@@ -446,7 +492,7 @@ const BROKER_DETAIL_ROUTING_TEXT =
   'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?';
 
 const EVORA_LOT_COUNT_ROUTING_REPLY =
-  'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².';
+  'No Évora, os lotes ficam na faixa de 360 m² a 775 m². Para confirmar metragem específica e unidade disponível, o corretor responsável valida em tempo real.';
 
 const DISCOUNT_ROUTING_REPLY =
   'Desconto ou condição especial depende de análise. O corretor consegue te passar isso certinho no atendimento. Que tal marcarmos uma visita?';
@@ -541,6 +587,8 @@ const EVORA_PAYMENT_REPLY =
 
 const EVORA_INSTALLMENT_REDIRECT_REPLY =
   'A simulação certinha depende do lote e do plano escolhido. O corretor te passa tudo direitinho no atendimento. Que tal marcarmos uma visita?';
+const EVORA_LOT_SIZE_RANGE_REPLY =
+  'No Évora, os lotes ficam na faixa de 360 m² a 775 m². Para confirmar metragem específica e unidade disponível, o corretor responsável valida em tempo real.';
 
 function isUserAskingEvoraInstallment(text: string | null | undefined): boolean {
   const n = normClosure(text || '');
@@ -557,7 +605,27 @@ function isUserAskingEvoraPayment(text: string | null | undefined): boolean {
 function isUserAskingEvoraPrice(text: string | null | undefined): boolean {
   const n = normClosure(text || '');
   if (!n) return false;
-  return /\b(quanto esta o lote|quanto está o lote|qual valor|preco|preço|valor do lote|quanto custa)\b/.test(n);
+  return /\b(quanto esta o lote|quanto está o lote|qual valor|preco|preço|valor do lote|quanto custa|investimento|a partir de quanto|valor inicial|metro quadrado|m2)\b/.test(
+    n
+  );
+}
+
+function isUserAskingSpecificLotSize(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  if (!/\b(lote|terreno)\b/.test(n)) return false;
+  if (!/\b\d{2,4}\s*m(?:2|²)?\b/.test(n)) return false;
+  if (/\b(valor|preco|preço|investimento|r\$|metro quadrado)\b/.test(n)) return false;
+  return true;
+}
+
+function isUserAskingLotSizeRange(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  if (isUserAskingSpecificLotSize(text)) return true;
+  return /\b(quais?\s+os?\s+tamanhos?|qual\s+o\s+tamanho|tamanho\s+dos\s+lotes?|metragem|metragens|faixa\s+de\s+metragem)\b/.test(
+    n
+  );
 }
 
 function sanitizeEvoraPriceAndPaymentReply(text: string, opts?: FinalizeAnaReplyOptions): string {
@@ -566,6 +634,16 @@ function sanitizeEvoraPriceAndPaymentReply(text: string, opts?: FinalizeAnaReply
   if (!isEvoraScopedContext(opts)) return clean;
 
   const userMessage = opts?.userMessage ?? null;
+  if (isUserAskingSpecificLotSize(userMessage)) {
+    console.log('[ANA_SPECIFIC_LOT_SIZE_REQUEST_DETECTED]', {
+      userPreview: String(userMessage || '').slice(0, 180),
+    });
+    console.log('[ANA_SPECIFIC_LOT_AVAILABILITY_BLOCKED]', {
+      reason: 'specific_lot_size_needs_broker_confirmation',
+    });
+    return EVORA_LOT_SIZE_RANGE_REPLY;
+  }
+  if (isUserAskingLotSizeRange(userMessage)) return EVORA_LOT_SIZE_RANGE_REPLY;
   if (isUserAskingEvoraInstallment(userMessage)) return EVORA_INSTALLMENT_REDIRECT_REPLY;
   if (isUserAskingEvoraPayment(userMessage)) return EVORA_PAYMENT_REPLY;
   if (isUserAskingEvoraPrice(userMessage)) return EVORA_PRICE_REPLY;
@@ -659,7 +737,8 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
     ? humanLazer
     : appendOpenQuestionForGeneralEnterpriseIntro(humanLazer, opts?.userMessage ?? null);
   const evoraLazer = forceEvoraLazerReplyWhenNeeded(withOpenQuestion, opts);
-  const sanitized = isKnowledgeGapTurn ? { text: evoraLazer, changed: false } : removeInternalLimitationSentences(evoraLazer);
+  const noBrokenList = sanitizeBrokenListOrLazerContinuation(evoraLazer, opts);
+  const sanitized = isKnowledgeGapTurn ? { text: noBrokenList, changed: false } : removeInternalLimitationSentences(noBrokenList);
   const safeOffers = isKnowledgeGapTurn ? { text: sanitized.text, changed: false } : sanitizeUnsupportedSpecificOffers(sanitized.text);
   const dedupGreeting = sanitizeDuplicatedGreetingPrefix(safeOffers.text);
   const noInternalFragments = INTERNAL_INSTRUCTION_FRAGMENT_PATTERNS.reduce(
@@ -674,8 +753,25 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
     : sanitizeDiscountRestrictedReply(lotCountSafe, opts?.userMessage ?? null);
   const evoraPricingSafe = isKnowledgeGapTurn ? discountSafe : sanitizeEvoraPriceAndPaymentReply(discountSafe, opts);
   const forbiddenQuestionStrip = stripForbiddenFixedQualificationQuestion(evoraPricingSafe);
-  const finalText = forbiddenQuestionStrip.text || evoraPricingSafe;
+  const feminineGuard = enforceFeminineSelfReference(forbiddenQuestionStrip.text || evoraPricingSafe);
+  const finalText = feminineGuard.text || forbiddenQuestionStrip.text || evoraPricingSafe;
   return finalText.slice(0, 4000);
+}
+
+function enforceFeminineSelfReference(text: string): { text: string; changed: boolean } {
+  const raw = String(text || '').trim();
+  if (!raw) return { text: raw, changed: false };
+  let next = raw;
+  next = next.replace(/\bmuito obrigado\b/gi, 'Muito obrigada');
+  next = next.replace(/\bobrigado\b/gi, 'Obrigada');
+  const changed = next !== raw;
+  if (changed) {
+    console.log('[ANA_FEMININE_SELF_REFERENCE_FIXED]', {
+      originalPreview: raw.slice(0, 120),
+      finalPreview: next.slice(0, 120),
+    });
+  }
+  return { text: next, changed };
 }
 
 function truncateAtWordBoundary(text: string, maxLen: number): string {

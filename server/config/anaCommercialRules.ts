@@ -1,6 +1,7 @@
 ﻿export type AnaCommercialIntent =
   | 'first_contact'
   | 'preco_valor_lote'
+  | 'metragem_faixa'
   | 'parcela_simulacao'
   | 'entrada'
   | 'formas_pagamento'
@@ -21,11 +22,14 @@ export const ANA_COMMERCIAL_RULES = {
   askNameMessage: 'Ah, e qual é o seu nome? Assim já te atendo melhor por aqui.',
   firstContactMessages: [
     'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas.',
-    'Fica com fácil acesso pela Rodovia Dom Pedro I, perto da região da Pedreira, a aproximadamente 50 minutos de São Paulo.',
+    'Fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, em uma região com qualidade de vida e contato com a natureza.',
   ],
   byIntent: {
     preco_valor_lote: [
-      'O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.\n\nQuer que eu te explique também as formas de pagamento?',
+      'O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.',
+    ],
+    metragem_faixa: [
+      'No Évora, os lotes ficam na faixa de 360 m² a 775 m². Para confirmar metragem específica e unidade disponível, o corretor responsável valida em tempo real.',
     ],
     parcela_simulacao: [
       'A parcela depende da forma de pagamento e da opção escolhida.\n\nTemos planos estendidos em até 120x para parcelas mais baixas, parcelamento sem juros em até 48x e financiamento direto com a construtora.\n\nQuer que eu encaminhe para um corretor fazer uma simulação certinha pra você?',
@@ -40,10 +44,10 @@ export const ANA_COMMERCIAL_RULES = {
       'O financiamento é facilitado por ser direto com a construtora, com menos burocracia e mais facilidade para você.',
     ],
     localizacao_endereco: [
-      'O Évora fica em Atibaia, na região da Pedreira, próximo ao bairro Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I.',
+      'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, em uma região com qualidade de vida e contato com a natureza.',
     ],
     endereco: [
-      'O Évora fica em Atibaia, na região da Pedreira, próximo ao bairro Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I.',
+      'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, em uma região com qualidade de vida e contato com a natureza.',
     ],
     visita_agendamento: [
       'Perfeito! Pra agendarmos sua visita, só preciso saber seu nome, dia e horário que prefere.',
@@ -56,7 +60,7 @@ export const ANA_COMMERCIAL_RULES = {
       'O valor de condomínio vai depender das definições feitas pelos próprios moradores e associação do condomínio, mas temos uma estimativa entre R$400,00 e R$700,00.',
     ],
     areas_lazer: [
-      'As áreas de lazer do Évora incluem:\nPiscina adulto\nAcademia\nSalão de festas\nPlayground\nCoworking\nEspaço zen\nFireplace\nQuadra de beach tennis\nCampo society\n\nTambém conta com estação de carregamento para carros elétricos e portaria 24 horas com controle de acesso.',
+      'As áreas de lazer do Évora incluem:\nPiscina adulto\nAcademia\nSalão de festas\nPlayground\nCoworking\nEspaço zen\nFireplace\nQuadra de beach tennis\nCampo society\nEstação para carros elétricos\nPortaria 24h com controle de acesso.',
     ],
     seguranca_portaria: [
       'O Évora conta com portaria 24 horas com controle de acesso.',

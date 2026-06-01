@@ -83,8 +83,8 @@ function isLocationRequestUserMessage(userMessage: string): boolean {
 
 function buildLocationProgressBridgeReply(): string {
   return [
-    'O Evora fica em Atibaia, na regiao da Pedreira, proximo ao bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.',
-    'Quer que eu te ajude a agendar uma visita?',
+    'O Evora fica em Atibaia, na regiao da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de Sao Paulo, em uma regiao com qualidade de vida e contato com a natureza.',
+    'Quer que eu te mande tambem o link do mapa?',
   ].join(' ');
 }
 
@@ -721,8 +721,8 @@ function buildCanonicalLazerReply(): string {
     'Fireplace',
     'Quadra de beach tennis',
     'Campo society',
-    '',
-    'Tambem conta com estacao de carregamento para carros eletricos e portaria 24 horas com controle de acesso.',
+    'Estacao para carros eletricos',
+    'Portaria 24h com controle de acesso.',
   ].join('\n');
 }
 
@@ -745,7 +745,7 @@ function buildCanonicalSegurancaReply(opts: { shouldOfferLazer: boolean }): stri
 }
 
 function buildCanonicalLocalizacaoReply(): string {
-  return 'O Evora fica em Atibaia, na regiao da Pedreira, proximo ao bairro Rio Abaixo, com facil acesso pela Rodovia Dom Pedro I.';
+  return 'O Evora fica em Atibaia, na regiao da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de Sao Paulo, em uma regiao com qualidade de vida e contato com a natureza.';
 }
 
 function buildCanonicalValoresReply(): string {
@@ -753,10 +753,7 @@ function buildCanonicalValoresReply(): string {
 }
 
 function buildLotCountInfoGapReply(): string {
-  return [
-    'Ainda nao tenho essa informacao exata liberada por aqui.',
-    'Quer que eu encaminhe para um corretor te passar certinho?',
-  ].join('\n');
+  return 'No Evora, os lotes ficam na faixa de 360 m2 a 775 m2. Para confirmar metragem especifica e unidade disponivel, o corretor responsavel valida em tempo real.';
 }
 
 function buildDeterministicTopicReply(params: {
