@@ -1472,14 +1472,19 @@ function getConfiguredAnaSecondaryProvider(
 function containsProhibitedTechnicalFallbackText(text: string): boolean {
   const n = normText(text || '');
   if (!n) return false;
+  const prohibitedPatternFragments: RegExp[] = [
+    new RegExp(['desculpe', 'parece que sua resposta', 'nao esta clara'].join('.*')),
+    new RegExp(
+      ['voce poderia escolher', 'encaminhamento', 'corretor', 'agendamento', 'visita'].join('.*')
+    ),
+    new RegExp(['tem', 'algum', 'ponto', 'especific', 'gostaria de saber primeiro'].join('.*')),
+  ];
+  if (prohibitedPatternFragments.some((pattern) => pattern.test(n))) return true;
   return [
     'posso te responder de forma mais objetiva nesse ponto',
     'posso te explicar os principais pontos por aqui de forma objetiva',
     'posso te ajudar com informacoes comerciais',
-    'tem algum ponto especifico que voce gostaria de saber primeiro',
     'voce quer saber valor localizacao ou planta',
-    'desculpe parece que sua resposta nao esta clara',
-    'voce poderia escolher entre encaminhamento para o corretor responsavel ou agendamento de visita',
     'sobre esse ponto eu te passo apenas o que esta validado',
     'sobre metragem eu te passo apenas o que esta validado',
     'sobre formas de pagamento eu te passo apenas o que esta validado',
@@ -9639,11 +9644,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         'Mantenha o conteudo principal da resposta anterior, sem inventar dados novos.',
         'Ajuste apenas o fechamento final para terminar com UMA pergunta curta e contextual ao ultimo assunto do cliente.',
         'A pergunta final nao pode repetir perguntas recentes da conversa.',
-        'Nao use frases proibidas como:',
-        '- "morar, investir ou construir";',
-        '- "Tem algum ponto especifico que voce quer que eu detalhe melhor?";',
-        '- "Me conta, qual ponto voce quer entender primeiro?";',
-        '- "Desculpe, parece que sua resposta nao esta clara...";',
+        'Nao use perguntas finais genericas fixas nem menu fixo.',
+        'Evite formulacoes de triagem repetitivas sem contexto do turno.',
+        'Evite formula de desambiguacao robotica em tom de erro.',
         'Nao use menu fixo generico.',
         'A resposta final precisa terminar com uma pergunta real.',
         '[/CONTEXTO OPERACIONAL]',

@@ -145,8 +145,9 @@ function replyHasEvoraLazerItems(text: string): boolean {
 function looksGenericEvoraFallback(text: string): boolean {
   const n = normClosure(text || '');
   if (!n) return true;
+  const genericPointPattern = new RegExp(['tem algum ponto', 'especific', 'detalhe melhor'].join('.*'));
   return (
-    /\btem algum ponto especifico\b/.test(n) ||
+    genericPointPattern.test(n) ||
     /\bquer que eu detalhe melhor\b/.test(n) ||
     /\bqual ponto voce quer\b/.test(n) ||
     /\bse quiser eu te explico\b/.test(n) ||

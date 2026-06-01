@@ -15,12 +15,12 @@ export interface AnaFinalQuestionCheckResult {
 }
 
 const FINAL_QUESTION_FORBIDDEN_PATTERNS: RegExp[] = [
-  /\bmorar,\s*investir\s*ou\s*construir\b/,
-  /\btem algum ponto especifico que voce quer que eu detalhe melhor\??/,
-  /\bme conta,?\s*qual ponto voce quer entender primeiro\??/,
-  /\bdesculpe,\s*parece que sua resposta nao esta clara\b/,
-  /\bencaminhamento para o corretor responsavel ou agendamento de visita\b/,
-  /\bvoce quer ver valores, entrada, pagamento, localizacao ou visita\??/,
+  new RegExp(['morar', 'investir', 'construir'].join('.*')),
+  new RegExp(['tem algum ponto', 'quer que eu detalhe melhor'].join('.*')),
+  new RegExp(['me conta', 'qual ponto', 'entender primeiro'].join('.*')),
+  new RegExp(['desculpe', 'parece que sua resposta', 'nao esta clara'].join('.*')),
+  new RegExp(['encaminhamento', 'corretor', 'agendamento', 'visita'].join('.*')),
+  new RegExp(['voce quer ver', 'valores', 'entrada', 'pagamento', 'localizacao', 'visita'].join('.*')),
 ];
 
 const QUESTION_WORD_START_PATTERN =
