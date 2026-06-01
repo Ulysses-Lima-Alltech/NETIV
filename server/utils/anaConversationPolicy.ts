@@ -15,10 +15,10 @@ const BROKER_HANDOFF_ASK =
   'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?';
 const VISIT_SLOT_WINDOW = 'Temos disponibilidade de segunda a sabado, das 09h as 18h.';
 
-const SPECIFIC_DETAIL_FALLBACK_QUESTION = 'Voce esta buscando o lote para morar, investir ou construir?';
+const SPECIFIC_DETAIL_FALLBACK_STATEMENT = 'Posso te ajudar com mais detalhes do empreendimento.';
 
-const GENERIC_SINGLE_QUESTION_FALLBACK =
-  'Voce pretende conhecer o empreendimento presencialmente ou prefere falar primeiro com o corretor?';
+const GENERIC_SINGLE_FOLLOWUP_FALLBACK =
+  'Posso seguir com o ponto que fizer mais sentido para voce.';
 const BANNED_GENERIC_FALLBACK = 'Posso te responder de forma mais objetiva nesse ponto.';
 const GENERIC_LOOP_PATTERNS: RegExp[] = [
   /tem algum ponto espec[ií]fico que voc[eê] quer que eu detalhe melhor\??/i,
@@ -340,7 +340,7 @@ function buildContextAwareSanitizedFallback(args: {
   ) {
     return 'Nao tenho esse detalhe validado por aqui. Posso te encaminhar para o corretor responsavel ou te ajudar a agendar uma visita. Qual prefere?';
   }
-  return SPECIFIC_DETAIL_FALLBACK_QUESTION;
+  return SPECIFIC_DETAIL_FALLBACK_STATEMENT;
 }
 
 function replyLooksInfoGap(text: string): boolean {
@@ -417,7 +417,7 @@ function topicLabel(topic: AnaDialogueTopic): string {
 function buildFollowupTopicChoiceQuestion(topics: AnaDialogueTopic[], includeReminder: boolean): string {
   const unique = dedupeTopics(topics).slice(0, 2);
   if (unique.length === 0) {
-    return GENERIC_SINGLE_QUESTION_FALLBACK;
+    return GENERIC_SINGLE_FOLLOWUP_FALLBACK;
   }
   if (unique.length === 1) {
     return `Claro. Quer que eu te explique mais sobre ${topicLabel(unique[0] ?? 'outro')}?`;
@@ -863,7 +863,7 @@ function ensureSingleFinalQuestion(params: {
 
   let normalizedQuestions = extractQuestionSentences(next);
   if (normalizedQuestions.length === 0) {
-    const fallback = GENERIC_SINGLE_QUESTION_FALLBACK;
+    const fallback = GENERIC_SINGLE_FOLLOWUP_FALLBACK;
     if (next.length > 0 && !/[.!?]$/.test(next)) next = `${next}.`;
     next = `${next} ${fallback}`.replace(/\s{2,}/g, ' ').trim();
     return { text: next, changed: true, unsupportedTopics: removedUnsupportedTopics };
@@ -881,7 +881,7 @@ function ensureSingleFinalQuestion(params: {
   }
 
   if (normalizedQuestions.length === 0) {
-    const fallback = GENERIC_SINGLE_QUESTION_FALLBACK;
+    const fallback = GENERIC_SINGLE_FOLLOWUP_FALLBACK;
     if (next.length > 0 && !/[.!?]$/.test(next)) next = `${next}.`;
     next = `${next} ${fallback}`.replace(/\s{2,}/g, ' ').trim();
     return { text: next, changed: true, unsupportedTopics: removedUnsupportedTopics };
@@ -928,7 +928,7 @@ function ensureSingleFinalQuestion(params: {
     const chosen = extractQuestionSentences(next).slice(-1)[0] ?? null;
     if (!chosen) {
       if (next.length > 0 && !/[.!?]$/.test(next)) next = `${next}.`;
-      next = `${next} ${GENERIC_SINGLE_QUESTION_FALLBACK}`.replace(/\s{2,}/g, ' ').trim();
+      next = `${next} ${GENERIC_SINGLE_FOLLOWUP_FALLBACK}`.replace(/\s{2,}/g, ' ').trim();
       changed = true;
     }
   }
@@ -1106,7 +1106,9 @@ export function applyAnaConversationPolicy(
 
   if (!isKnowledgeGapTurn && containsGenericLoopQuestion(reply)) {
     const stripped = stripGenericLoopQuestion(reply);
-    reply = stripped ? `${stripped} ${GENERIC_SINGLE_QUESTION_FALLBACK}`.replace(/\s{2,}/g, ' ').trim() : GENERIC_SINGLE_QUESTION_FALLBACK;
+    reply = stripped
+      ? `${stripped} ${GENERIC_SINGLE_FOLLOWUP_FALLBACK}`.replace(/\s{2,}/g, ' ').trim()
+      : GENERIC_SINGLE_FOLLOWUP_FALLBACK;
     appliedRules.push('generic_loop_question_replaced');
     console.log('[ANA_GENERIC_LOOP_QUESTION_REPLACED]', {
       conversationId: input.conversationId,
@@ -1121,7 +1123,7 @@ export function applyAnaConversationPolicy(
     !brokerAskAlreadyPresent(reply) &&
     !containsVisitOffer(reply)
   ) {
-    reply = GENERIC_SINGLE_QUESTION_FALLBACK;
+    reply = GENERIC_SINGLE_FOLLOWUP_FALLBACK;
     appliedRules.push('insistence_forced_progress_question');
     console.log('[ANA_INSISTENCE_FORCED_PROGRESS_QUESTION]', {
       conversationId: input.conversationId,
@@ -1319,7 +1321,7 @@ export function applyAnaConversationPolicy(
         !lastAssistantQuestionContext.askedBrokerHandoff &&
         !lastAssistantQuestionContext.askedFollowupTopics
       ) {
-        reply = GENERIC_SINGLE_QUESTION_FALLBACK;
+        reply = GENERIC_SINGLE_FOLLOWUP_FALLBACK;
         appliedRules.push('pending_followup_ambiguous');
       }
       console.log('[ANA_PENDING_FOLLOWUP_AMBIGUOUS]', {
@@ -1564,7 +1566,7 @@ export function applyAnaConversationPolicy(
   if (!visitFlowActive && rawInputReply && norm(rawInputReply) === norm(reply)) {
     const repeatedOutput = recentAssistantReplies.slice(-2).some((prev) => norm(prev) === norm(reply));
     if (repeatedOutput) {
-      const fallback = SPECIFIC_DETAIL_FALLBACK_QUESTION;
+      const fallback = SPECIFIC_DETAIL_FALLBACK_STATEMENT;
       if (norm(reply) !== norm(fallback)) {
         reply = fallback;
         appliedRules.push('repeat_suppressed');

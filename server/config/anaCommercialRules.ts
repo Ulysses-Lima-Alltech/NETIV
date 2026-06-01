@@ -22,7 +22,6 @@ export const ANA_COMMERCIAL_RULES = {
   firstContactMessages: [
     'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas.',
     'Fica com fácil acesso pela Rodovia Dom Pedro I, perto da região da Pedreira, a aproximadamente 50 minutos de São Paulo.',
-    'Você está buscando o lote para morar, investir ou construir?',
   ],
   byIntent: {
     preco_valor_lote: [

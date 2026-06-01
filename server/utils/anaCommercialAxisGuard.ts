@@ -430,7 +430,7 @@ function buildRewrittenReply(
       );
       break;
     case 'disponibilidade':
-      rewritten = enforceShortShape(`Sobre disponibilidade no ${name}, eu te passo o que consigo confirmar agora. Você está buscando algo para agora?`);
+      rewritten = enforceShortShape(`Sobre disponibilidade no ${name}, eu te passo o que consigo confirmar agora. Você busca algo para agora?`);
       break;
     case 'visita_agendamento':
       rewritten = enforceShortShape(`Vamos organizar sua visita ao ${name}. Qual dia costuma funcionar melhor pra sua rotina?`);

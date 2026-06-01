@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import {
@@ -633,6 +633,72 @@ test('finalizeAnaReplyText nao aplica sanitizer de desconto para pergunta de val
     false
   );
   assert.match(normalized, /r\$\s*279\.000,00|valor inicial/i);
+});
+
+test('regra first_contact do Evora nao inclui pergunta fixa de qualificacao', () => {
+  const rule = resolveAnaCommercialRule({
+    enterpriseName: 'Evora',
+    userMessage: 'Oi, tenho interesse no Evora',
+    isFirstAnaReply: true,
+  });
+
+  assert.equal(rule != null, true);
+  const combined = (rule?.messages ?? []).join(' ');
+  assert.equal(/morar,\s*investir\s+ou\s+construir/i.test(combined), false);
+});
+
+test('finalizeAnaReplyText remove pergunta fixa proibida e preserva parte informativa', () => {
+  const output = finalizeAnaReplyText(
+    'Olá! O Évora é um loteamento fechado em Atibaia, na região da Pedreira, com lotes a partir de 360 m², lazer completo e segurança 24 horas. Você está buscando o lote para morar, investir ou construir?',
+    {
+      enterpriseName: 'Residencial Évora',
+      userMessage: 'Oi, queria saber mais sobre o Évora',
+      isFirstAnaReply: true,
+    }
+  );
+
+  assert.equal(/morar,\s*investir\s+ou\s+construir/i.test(output), false);
+  assert.match(output, /Évora|Atibaia|Pedreira/i);
+});
+
+test('fallback seguro de primeira resposta no engine nao contem pergunta fixa', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  const safeFallbackLine = source.match(/function buildEvoraFirstReplySafeFallback\(\): string \{\s*return '([^']+)'/);
+
+  assert.equal(safeFallbackLine != null, true);
+  assert.equal(/morar,\s*investir\s+ou\s+construir/i.test(safeFallbackLine?.[1] ?? ''), false);
+});
+
+test('codigo produtivo nao contem frase fixa de qualificacao', () => {
+  const serverRoot = path.resolve(process.cwd());
+  const deny = /(morar,\s*investir\s+ou\s+construir|morar investir construir|Você está buscando|voce esta buscando)/i;
+  const allowTestFile = /server[\\\/]tests[\\\/]anaCostContainment\.test\.ts$/i;
+
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (/([\\\/]|^)dist$/i.test(abs)) continue;
+        walk(abs);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!abs.endsWith('.ts')) continue;
+      files.push(abs);
+    }
+  };
+  walk(serverRoot);
+
+  const offenders: string[] = [];
+  for (const abs of files) {
+    const rel = path.relative(serverRoot, abs).replace(/\\/g, '/');
+    const content = readFileSync(abs, 'utf8');
+    if (allowTestFile.test(abs)) continue;
+    if (deny.test(content)) offenders.push(rel);
+  }
+
+  assert.deepEqual(offenders, []);
 });
 
 test('reengagement bloqueia inbound e outbound recentes', () => {

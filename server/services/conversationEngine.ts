@@ -647,9 +647,10 @@ function normalizeFirstGreetingCommittedReply(params: {
     forbiddenPhrasesRemoved.push('vou_responder_todas');
   }
   if (!/\?/.test(next)) {
-    if (next.length > 0 && !/[.!?]$/.test(next)) next = `${next}.`;
-    next = `${next} Voce esta buscando o lote para morar, investir ou construir?`.replace(/\s{2,}/g, ' ').trim();
-    changed = true;
+    if (next.length > 0 && !/[.!?]$/.test(next)) {
+      next = `${next}.`;
+      changed = true;
+    }
   }
   const firstReplyGreetingOnly = isFirstReplyGreetingOnlyMessage(next);
   if (firstContactEnterpriseInterest && (firstReplyGreetingOnly || !hasEnterprisePresentationContent(next))) {
@@ -1813,7 +1814,7 @@ function hasExplicitHandoffIntent(message: string): boolean {
 }
 
 function buildEvoraFirstReplySafeFallback(): string {
-  return 'Olá! O Évora é um loteamento fechado em Atibaia, na região da Pedreira, com lotes a partir de 360 m², lazer completo e segurança 24 horas. Você está buscando o lote para morar, investir ou construir?';
+  return 'Olá! O Évora é um loteamento fechado em Atibaia, na região da Pedreira, com lotes a partir de 360 m², lazer completo e segurança 24 horas.';
 }
 
 function userExplicitlyAskedPriceInCurrentTurn(message: string): boolean {
@@ -9912,7 +9913,6 @@ function buildFirstGreetingSafeFallback(text: string): string {
     opening,
     'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas.',
     'Fica em Atibaia, com fácil acesso pela Rodovia Dom Pedro I, perto da área da Pedreira, a aproximadamente 50 minutos de São Paulo.',
-    'Voce esta buscando o lote para morar, investir ou construir?',
   ].join('\n\n');
 }
 
@@ -9974,7 +9974,7 @@ function buildConversationalCanonicalFallback(lastAxis: string | null): string {
   if (lastAxis === 'financiamento' || lastAxis === 'formas_pagamento') {
     return 'Temos planos estendidos em até 120x, parcelamento sem juros em até 48x e financiamento direto com a construtora.';
   }
-  return 'Posso te ajudar de forma objetiva. Voce esta buscando o lote para morar, investir ou construir?';
+  return 'Posso te ajudar de forma objetiva com as informações do empreendimento.';
 }
 
 

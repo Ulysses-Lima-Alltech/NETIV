@@ -214,8 +214,6 @@ function humanizeLazerReplyWhenNeeded(reply: string, userMessage?: string | null
   return HUMAN_LAZER_REPLY;
 }
 
-const GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION = 'Você está buscando o lote para morar, investir ou construir?';
-
 const INTERNAL_INSTRUCTION_FRAGMENT_PATTERNS: readonly RegExp[] = [
   /finalizar com pergunta aberta e natural,?\s*sem resposta fixa determin[ií]stica\.?/i,
   /finalizar com pergunta aberta e natural/i,
@@ -281,7 +279,8 @@ function appendOpenQuestionForGeneralEnterpriseIntro(
 
   if (isSpecificCommercialOrOperationalTopic(userMessage)) return clean;
 
-  return `${clean} ${GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION}`;
+  // A pergunta final é opcional e deve ser contextual ao turno; nunca anexar pergunta fixa global.
+  return clean;
 }
 
 function normClosure(s: string): string {
@@ -673,7 +672,9 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
     ? lotCountSafe
     : sanitizeDiscountRestrictedReply(lotCountSafe, opts?.userMessage ?? null);
   const evoraPricingSafe = isKnowledgeGapTurn ? discountSafe : sanitizeEvoraPriceAndPaymentReply(discountSafe, opts);
-  return evoraPricingSafe.slice(0, 4000);
+  const forbiddenQuestionStrip = stripForbiddenFixedQualificationQuestion(evoraPricingSafe);
+  const finalText = forbiddenQuestionStrip.text || evoraPricingSafe;
+  return finalText.slice(0, 4000);
 }
 
 function truncateAtWordBoundary(text: string, maxLen: number): string {
@@ -813,7 +814,62 @@ export function applyAnaHardLengthGuard(params: {
   }
 
   const sanitized = sanitizeLeadingLabelPrefix(out.slice(0, maxChars).trim(), enterpriseName);
-  return appendOpenQuestionForGeneralEnterpriseIntro(sanitized, null);
+  return stripForbiddenFixedQualificationQuestion(sanitized).text;
+}
+
+function normalizeQualificationFragment(s: string): string {
+  return (s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function containsForbiddenQualificationFragment(s: string): boolean {
+  const n = normalizeQualificationFragment(s);
+  if (!n) return false;
+  const hasTriad = /\bmorar\s+investir\s+ou\s+construir\b/.test(n);
+  const hasFirstFixedQuestion = /\bvoce\s+esta\s+buscando\s+o\s+lote\s+para\b/.test(n) && hasTriad;
+  const hasSecondFixedQuestion = /\bvoce\s+busca\s+para\b/.test(n) && /\bfuturamente\b/.test(n) && hasTriad;
+  return (
+    hasFirstFixedQuestion ||
+    hasSecondFixedQuestion ||
+    hasTriad
+  );
+}
+
+function stripForbiddenFixedQualificationQuestion(text: string): { text: string; changed: boolean } {
+  const raw = (text || '').trim();
+  if (!raw) return { text: raw, changed: false };
+  if (!containsForbiddenQualificationFragment(raw)) return { text: raw, changed: false };
+
+  const parts = raw
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const kept = parts.filter((part) => !containsForbiddenQualificationFragment(part));
+  let next = kept.join(' ').replace(/\s{2,}/g, ' ').trim();
+
+  if (!next) {
+    next = raw
+      .replace(
+        /v(?:o|ó)ce\s+est[aá]\s+buscando\s+o\s+lote\s+para\s+morar,\s*investir\s+ou\s+c(?:o|ô)nstruir\??/gi,
+        ''
+      )
+      .replace(
+        /v(?:o|ó)ce\s+busca\s+para\s+morar,\s*investir\s+ou\s+c(?:o|ô)nstruir\s+futuramente\??/gi,
+        ''
+      )
+      .replace(/\bmorar,\s*investir\s+ou\s+c(?:o|ô)nstruir\b/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .replace(/\s+([,.;:!?])/g, '$1')
+      .replace(/^[,.;:!?-]+\s*/g, '')
+      .trim();
+  }
+
+  return { text: next, changed: next !== raw };
 }
 
 function normalizeForSemanticCheck(text: string): string {
