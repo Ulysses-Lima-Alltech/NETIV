@@ -1,13 +1,23 @@
-﻿import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
+import { useMobilePushNotifications } from "../src/hooks/useMobilePushNotifications";
+import { useAuthStore } from "../src/stores/auth.store";
+
+function MobilePushNotificationsBootstrap() {
+  const token = useAuthStore((state) => state.token);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  useMobilePushNotifications({ token, isAuthenticated });
+  return null;
+}
 
 export default function RootLayout() {
   const [queryClient] = useState(() => new QueryClient());
 
   return (
     <QueryClientProvider client={queryClient}>
+      <MobilePushNotificationsBootstrap />
       <StatusBar style="dark" />
       <Stack screenOptions={{ headerShown: false, animation: "fade" }}>
         <Stack.Screen name="index" />
@@ -28,3 +38,4 @@ export default function RootLayout() {
     </QueryClientProvider>
   );
 }
+

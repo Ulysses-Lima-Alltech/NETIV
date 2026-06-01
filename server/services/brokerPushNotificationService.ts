@@ -1,5 +1,8 @@
 import { query } from '../db/pg.js';
-import { listActiveMobileDeviceTokensByBrokerId } from '../repositories/mobileDeviceTokenRepository.js';
+import {
+  deactivateMobileUserDeviceToken,
+  listActiveMobileDeviceTokensByBrokerId,
+} from '../repositories/mobileDeviceTokenRepository.js';
 
 const EXPO_PUSH_ENDPOINT = 'https://exp.host/--/api/v2/push/send';
 
@@ -19,6 +22,20 @@ function buildPushBody(customerNameOrPhone: string, enterpriseName: string): str
   const customer = String(customerNameOrPhone ?? '').trim() || 'cliente';
   const enterprise = String(enterpriseName ?? '').trim() || 'empreendimento';
   return `Cliente ${customer} aguarda atendimento sobre ${enterprise}.`;
+}
+
+function shouldDeactivateTokenFromExpoError(args: {
+  detailsError: string | null;
+  message: string | null;
+}): boolean {
+  const detailsError = String(args.detailsError ?? '').trim();
+  if (detailsError === 'DeviceNotRegistered') return true;
+
+  const message = String(args.message ?? '').toLowerCase();
+  return (
+    message.includes('not a valid expo push token') ||
+    message.includes('not a registered push notification recipient')
+  );
 }
 
 async function persistBrokerPushNotificationStatus(args: {
@@ -124,6 +141,24 @@ export async function sendBrokerPendingAttendancePush(args: {
     }
 
     const responseItems = Array.isArray(raw?.data) ? raw?.data : [];
+    for (let index = 0; index < responseItems.length; index += 1) {
+      const item = responseItems[index];
+      const token = tokens[index];
+      if (!item || !token || item.status === 'ok') continue;
+
+      const detailsError = item.details?.error ?? null;
+      const message = item.message ?? null;
+      if (!shouldDeactivateTokenFromExpoError({ detailsError, message })) continue;
+
+      await deactivateMobileUserDeviceToken(token);
+      console.warn('[BROKER_PUSH_TOKEN_DEACTIVATED]', {
+        conversationId: args.conversationId,
+        brokerId: args.brokerId,
+        tokenSuffix: token.slice(-10),
+        reason: detailsError || message || 'unknown',
+      });
+    }
+
     const sentCount = responseItems.filter((item) => item?.status === 'ok').length;
     const errors = responseItems
       .filter((item) => item?.status !== 'ok')
@@ -173,4 +208,3 @@ export async function sendBrokerPendingAttendancePush(args: {
     return { success: false, status: 'failed', error: err, sentCount: 0 };
   }
 }
-

@@ -25,7 +25,8 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-font"
+      "expo-font",
+      "expo-notifications"
     ],
     "scheme": "netiv",
     "extra": {

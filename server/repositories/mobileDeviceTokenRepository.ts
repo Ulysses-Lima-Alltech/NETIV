@@ -65,3 +65,15 @@ export async function listActiveMobileDeviceTokensByBrokerId(
   return rows.map((row) => row.token).filter((token) => token.trim().length > 0);
 }
 
+export async function deactivateMobileUserDeviceToken(token: string): Promise<void> {
+  const normalizedToken = normalizeToken(token);
+  if (!normalizedToken) return;
+
+  await query(
+    `UPDATE mobile_user_device_tokens
+     SET active = false,
+         updated_at = NOW()
+     WHERE token = $1`,
+    [normalizedToken]
+  );
+}
