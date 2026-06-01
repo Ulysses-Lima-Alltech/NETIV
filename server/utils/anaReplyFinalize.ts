@@ -78,10 +78,10 @@ const EVORA_LOCATION_REPLY =
   'O Évora fica em Atibaia, perto da região da Pedreira, no bairro Rio Abaixo. Tem fácil acesso pela Rodovia Dom Pedro I e fica a aproximadamente 50 minutos de São Paulo.';
 
 const EVORA_ADDRESS_REPLY =
-  'Fica na Estrada dos Pires, s/n, na região da Pedreira, bairro Rio Abaixo, em Atibaia.';
+  'O Évora fica em Atibaia, na região da Pedreira, próximo ao bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.';
 
 const EVORA_MAPS_REPLY =
-  'Posso te enviar sim. O link do Évora no Google Maps é: https://maps.app.goo.gl/jBoxPM6XRut2iXHSA?g_st=ic';
+  'Eu não tenho um link de localização exata liberado por aqui. Posso te encaminhar para o corretor responsável ou, se preferir, te ajudar a agendar uma visita.';
 
 function isUserAskingAboutLocation(text: string | null | undefined): boolean {
   const n = normClosure(text || '');
@@ -214,7 +214,7 @@ function humanizeLazerReplyWhenNeeded(reply: string, userMessage?: string | null
   return HUMAN_LAZER_REPLY;
 }
 
-const GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION = 'Me conta, qual ponto você quer entender primeiro?';
+const GENERAL_ENTERPRISE_INTRO_OPEN_QUESTION = 'Você está buscando o lote para morar, investir ou construir?';
 
 const INTERNAL_INSTRUCTION_FRAGMENT_PATTERNS: readonly RegExp[] = [
   /finalizar com pergunta aberta e natural,?\s*sem resposta fixa determin[ií]stica\.?/i,

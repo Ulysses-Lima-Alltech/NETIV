@@ -80,7 +80,7 @@ const TOPIC_QUESTION_LABEL: Record<AnaDialogueTopic, string | null> = {
   outro: null,
 };
 
-const FALLBACK_SPECIFIC_DETAIL_QUESTION = 'Tem algum ponto especifico que voce quer que eu detalhe melhor?';
+const FALLBACK_SPECIFIC_DETAIL_QUESTION = 'Voce esta buscando o lote para morar, investir ou construir?';
 
 function norm(value: string): string {
   return String(value ?? '')

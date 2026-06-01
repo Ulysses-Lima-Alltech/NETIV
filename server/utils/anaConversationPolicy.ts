@@ -15,12 +15,19 @@ const BROKER_HANDOFF_ASK =
   'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?';
 const VISIT_SLOT_WINDOW = 'Temos disponibilidade de segunda a sabado, das 09h as 18h.';
 
-const SPECIFIC_DETAIL_FALLBACK_QUESTION = 'Tem algum ponto especifico que voce quer que eu detalhe melhor?';
+const SPECIFIC_DETAIL_FALLBACK_QUESTION = 'Voce esta buscando o lote para morar, investir ou construir?';
 
-const GENERIC_SINGLE_QUESTION_FALLBACK = 'Tem algum ponto especifico que voce quer saber?';
-const TOPIC_CLARIFICATION_FALLBACK =
-  'Me confirma so qual ponto voce quer que eu detalhe: lazer, seguranca, localizacao ou formas de pagamento?';
+const GENERIC_SINGLE_QUESTION_FALLBACK =
+  'Voce pretende conhecer o empreendimento presencialmente ou prefere falar primeiro com o corretor?';
 const BANNED_GENERIC_FALLBACK = 'Posso te responder de forma mais objetiva nesse ponto.';
+const GENERIC_LOOP_PATTERNS: RegExp[] = [
+  /\btem algum ponto especifico que voce quer que eu detalhe melhor\??\b/,
+  /\btem algum ponto especifico que voce quer saber\??\b/,
+  /\bme conta,\s*qual ponto voce quer entender primeiro\??\b/,
+  /\bme conta,\s*qual ponto voce quer entender\??\b/,
+  /\bposso te contar sobre os valores,\s*a localizacao,\s*o lazer ou as formas de pagamento(?: do evora)?\.?\s*qual desses pontos voce quer ver primeiro\??\b/,
+  /\bclaro\.\s*voce quer saber mais sobre valores,\s*lazer,\s*localizacao,\s*seguranca ou formas de pagamento\??\b/,
+];
 
 type RequestedTopicActionType =
   | 'direct_topic_request'
@@ -43,6 +50,22 @@ function norm(value: string): string {
     .replace(/\p{M}/gu, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function containsGenericLoopQuestion(text: string | null | undefined): boolean {
+  const normalized = norm(text || '');
+  if (!normalized) return false;
+  return GENERIC_LOOP_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function stripGenericLoopQuestion(text: string | null | undefined): string {
+  const raw = String(text || '').trim();
+  if (!raw) return raw;
+  let next = raw;
+  for (const pattern of GENERIC_LOOP_PATTERNS) {
+    next = next.replace(pattern, '').trim();
+  }
+  return next.replace(/\s{2,}/g, ' ').trim();
 }
 
 function startsWithGreeting(text: string): boolean {
@@ -304,6 +327,17 @@ function isContinuationDemandUserReply(userMessage: string): boolean {
     /\b(fala mais|me explica melhor|voce falou que ia explicar|você falou que ia explicar|quero saber mais)\b/.test(n)
   );
 }
+function isInsistenceOrClarificationUserReply(userMessage: string): boolean {
+  const n = norm(userMessage);
+  if (!n) return false;
+  if (isContinuationDemandUserReply(userMessage)) return true;
+  return (
+    /\b(nao entendi|nao ficou claro|nao ajudou|explica de novo|explica melhor|me manda certinho|onde exatamente|onde fica exatamente)\b/.test(
+      n
+    ) ||
+    /\b(n[ãa]o entendi|n[ãa]o ficou claro|n[ãa]o ajudou)\b/.test(n)
+  );
+}
 
 function isGenericDetailPromiseReply(replyText: string): boolean {
   const n = norm(replyText);
@@ -344,7 +378,7 @@ function topicLabel(topic: AnaDialogueTopic): string {
 function buildFollowupTopicChoiceQuestion(topics: AnaDialogueTopic[], includeReminder: boolean): string {
   const unique = dedupeTopics(topics).slice(0, 2);
   if (unique.length === 0) {
-    return 'Claro. Voce quer saber mais sobre valores, lazer, localizacao, seguranca ou formas de pagamento?';
+    return GENERIC_SINGLE_QUESTION_FALLBACK;
   }
   if (unique.length === 1) {
     return `Claro. Quer que eu te explique mais sobre ${topicLabel(unique[0] ?? 'outro')}?`;
@@ -506,10 +540,11 @@ function detectOfferedTopicsInSentence(text: string): AnaOfferTopic[] {
 }
 
 function isGenericQuestionSentence(sentence: string): boolean {
-  const n = norm(sentence);
+  const normalized = norm(sentence);
   return (
-    /\b(me conta|quais sao suas duvidas|quais sao as suas duvidas|vou responder todas|qualquer duvida)\b/.test(n) ||
-    /\b(quer saber mais|o que mais)\b/.test(n)
+    /\b(me conta|quais sao suas duvidas|quais sao as suas duvidas|vou responder todas|qualquer duvida)\b/.test(normalized) ||
+    /\b(quer saber mais|o que mais)\b/.test(normalized) ||
+    containsGenericLoopQuestion(sentence)
   );
 }
 
@@ -753,11 +788,13 @@ function ensureSingleFinalQuestion(params: {
   let next = raw;
   let changed = false;
   const removedUnsupportedTopics: AnaOfferTopic[] = [];
-  const genericLeadRemoved = next
-    .replace(/\bme conta,\s*quais sao suas duvidas\?\s*vou responder todas\.?/i, '')
-    .replace(/\bme conta,\s*quais s[a�]o suas d[u�]vidas\?\s*vou responder todas\.?/i, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+  const genericLeadRemoved = stripGenericLoopQuestion(
+    next
+      .replace(/\bme conta,\s*quais sao suas duvidas\?\s*vou responder todas\.?/i, '')
+      .replace(/\bme conta,\s*quais s[a�]o suas d[u�]vidas\?\s*vou responder todas\.?/i, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+  );
   if (genericLeadRemoved !== next) {
     next = genericLeadRemoved;
     changed = true;
@@ -1023,6 +1060,35 @@ export function applyAnaConversationPolicy(
     lastAssistantQuestionContext,
   });
   let resolvedTopicAction: DeterministicTopic | null = null;
+  const userInsistingForProgress = isInsistenceOrClarificationUserReply(input.userMessage);
+  const recentGenericLoopCount = recentAssistantReplies
+    .slice(-3)
+    .filter((msg) => containsGenericLoopQuestion(msg)).length;
+
+  if (!isKnowledgeGapTurn && containsGenericLoopQuestion(reply)) {
+    const stripped = stripGenericLoopQuestion(reply);
+    reply = stripped ? `${stripped} ${GENERIC_SINGLE_QUESTION_FALLBACK}`.replace(/\s{2,}/g, ' ').trim() : GENERIC_SINGLE_QUESTION_FALLBACK;
+    appliedRules.push('generic_loop_question_replaced');
+    console.log('[ANA_GENERIC_LOOP_QUESTION_REPLACED]', {
+      conversationId: input.conversationId,
+    });
+  }
+
+  if (
+    !isKnowledgeGapTurn &&
+    !visitFlowActive &&
+    userInsistingForProgress &&
+    recentGenericLoopCount > 0 &&
+    !brokerAskAlreadyPresent(reply) &&
+    !containsVisitOffer(reply)
+  ) {
+    reply = GENERIC_SINGLE_QUESTION_FALLBACK;
+    appliedRules.push('insistence_forced_progress_question');
+    console.log('[ANA_INSISTENCE_FORCED_PROGRESS_QUESTION]', {
+      conversationId: input.conversationId,
+      recentGenericLoopCount,
+    });
+  }
 
   if (!visitFlowActive && input.isFirstAnaReply) {
     const greeted = ensureFirstReplyGreeting(reply, input.now);
@@ -1208,7 +1274,7 @@ export function applyAnaConversationPolicy(
         !lastAssistantQuestionContext.askedBrokerHandoff &&
         !lastAssistantQuestionContext.askedFollowupTopics
       ) {
-        reply = 'Claro. Voce quer saber mais sobre valores, lazer, localizacao, seguranca ou formas de pagamento?';
+        reply = GENERIC_SINGLE_QUESTION_FALLBACK;
         appliedRules.push('pending_followup_ambiguous');
       }
       console.log('[ANA_PENDING_FOLLOWUP_AMBIGUOUS]', {
@@ -1492,6 +1558,8 @@ export function applyAnaConversationPolicy(
     changed: reply !== (input.replyText || '').trim() || appliedRules.length > 0 || shouldPersistQuestionContext,
   };
 }
+
+
 
 
 

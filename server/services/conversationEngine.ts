@@ -234,6 +234,7 @@ import {
 } from './anaCommercialRulesService.js';
 import { ANA_COMMERCIAL_RULES } from '../config/anaCommercialRules.js';
 import {
+  buildLeadQualificationBridgeReply,
   classifyPendingResolutionChoice,
   detectAnaKnowledgeGap,
   validateKnowledgeGapResolutionOffer,
@@ -644,7 +645,7 @@ function normalizeFirstGreetingCommittedReply(params: {
   }
   if (!/\?/.test(next)) {
     if (next.length > 0 && !/[.!?]$/.test(next)) next = `${next}.`;
-    next = `${next} Me conta, qual ponto voce quer entender primeiro?`.replace(/\s{2,}/g, ' ').trim();
+    next = `${next} Voce esta buscando o lote para morar, investir ou construir?`.replace(/\s{2,}/g, ' ').trim();
     changed = true;
   }
   const firstReplyGreetingOnly = isFirstReplyGreetingOnlyMessage(next);
@@ -1076,7 +1077,7 @@ function buildOnlyNewLazerItemsReply(newItems: string[]): string {
 function isLocationLinkRequest(text: string): boolean {
   const n = normText(text || '');
   if (!n) return false;
-  return /\b(tem o link da localizacao|tem link da localizacao|link da localizacao|link de localizacao|google maps|maps|mapa|rota|como chegar|manda localizacao|manda a localizacao|me envia a localizacao|me envia localizacao|me manda localizacao|me manda a localizacao)\b/.test(n);
+  return /\b(tem o link da localizacao|tem link da localizacao|link da localizacao|link de localizacao|link com a localizacao|google maps|maps|mapa|rota|como chegar|manda localizacao|manda a localizacao|me envia a localizacao|me envia localizacao|me manda localizacao|me manda a localizacao|localizacao exata|endereco com numero|tem numero|numero do endereco)\b/.test(n);
 }
 
 function isImageMaterialRequest(text: string): boolean {
@@ -1099,6 +1100,21 @@ function isProactiveVideoOfferIntent(text: string): boolean {
 
 function pickAuthorizedLocationLink(vars: Record<string, unknown>): string | null {
   const entries = Object.entries(vars || {});
+  const exactPriorityKeys = new Set([
+    'google_maps_url',
+    'location_url',
+    'maps_url',
+    'localizacao_link',
+    'mapa_url',
+  ]);
+  const exactPriorityCandidates = entries.filter(([k, v]) => {
+    const key = normText(k);
+    const val = String(v ?? '').trim();
+    if (!val || !/^https?:\/\//i.test(val)) return false;
+    return exactPriorityKeys.has(key);
+  });
+  if (exactPriorityCandidates[0]?.[1]) return String(exactPriorityCandidates[0][1]).trim();
+
   const candidates = entries.filter(([k, v]) => {
     const key = normText(k);
     const val = String(v ?? '').trim();
@@ -1107,6 +1123,40 @@ function pickAuthorizedLocationLink(vars: Record<string, unknown>): string | nul
     return /(mapa|maps|localizacao|localizacao_link|google|endereco|rota)/.test(key);
   });
   return candidates[0]?.[1] ? String(candidates[0][1]).trim() : null;
+}
+
+function pickAuthorizedLocationAddress(vars: Record<string, unknown>): {
+  addressComplete: string | null;
+  addressNumber: string | null;
+} {
+  const entries = Object.entries(vars || {}).map(([key, value]) => [normText(key), String(value ?? '').trim()] as const);
+  const findValue = (keys: string[]): string | null => {
+    for (const key of keys) {
+      const found = entries.find(([k, v]) => k === key && v.length > 0);
+      if (found?.[1]) return found[1];
+    }
+    return null;
+  };
+
+  return {
+    addressComplete: findValue(['endereco_completo', 'endereco', 'address_full']),
+    addressNumber: findValue(['endereco_numero', 'numero_endereco', 'address_number']),
+  };
+}
+
+function buildEvoraLocationOverview(args: {
+  addressComplete?: string | null;
+  addressNumber?: string | null;
+}): string {
+  const addressComplete = String(args.addressComplete ?? '').trim();
+  const addressNumber = String(args.addressNumber ?? '').trim();
+  if (addressComplete) {
+    if (addressNumber && !addressComplete.includes(addressNumber)) {
+      return `${addressComplete}, numero ${addressNumber}.`;
+    }
+    return addressComplete.endsWith('.') ? addressComplete : `${addressComplete}.`;
+  }
+  return 'O Evora fica em Atibaia, na regiao da Pedreira, proximo ao bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.';
 }
 
 function pickLocationLinkFromKnowledge(knowledgeText: string): string | null {
@@ -3814,6 +3864,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     const vars = ent ? await getVariablesMap(ent.id) : {};
     const authorizedLocationLink = pickAuthorizedLocationLink(vars);
+    const authorizedLocationAddress = pickAuthorizedLocationAddress(vars);
     let commercialSnapshots: CommercialSnapshot[] = [];
     if (mode === 'scoped' && ent) {
       commercialSnapshots = [{ enterpriseName: ent.name, variables: vars }];
@@ -5204,15 +5255,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     if (!evoraKnowledgeDrivenMode && isLocationLinkRequest(trimmed) && isEvoraEnterpriseName(ent?.name ?? null)) {
       const resolvedLocationLink = authorizedLocationLink ?? knowledgeLocationLink;
-      const locationLinkMessages = resolvedLocationLink
-        ? [
-            resolvedLocationLink,
-            'O Évora fica em Atibaia, na região da Pedreira, próximo ao bairro Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I.',
-          ]
-        : [
-            'Não tenho um link de localização liberado para envio por aqui.',
-            'O Évora fica em Atibaia, na região da Pedreira, próximo ao bairro Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I.',
-          ];
+      const locationLinkMessages = [
+        buildLeadQualificationBridgeReply({
+          matchedIntent: 'exact_location_link',
+          locationOverview: buildEvoraLocationOverview({
+            addressComplete: authorizedLocationAddress.addressComplete,
+            addressNumber: authorizedLocationAddress.addressNumber,
+          }),
+          locationLink: resolvedLocationLink,
+          addressComplete: authorizedLocationAddress.addressComplete,
+          addressNumber: authorizedLocationAddress.addressNumber,
+        }),
+      ];
       const committedLocationLink = commitTurnResponse({
         handler: 'deterministic_location_link',
         reason: 'location_link_request',
@@ -5282,6 +5336,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       requestedAxis: requestedAxisForPolicy,
     });
     const isKnowledgeGapTurn = knowledgeGapMeta.hasKnowledgeGap === true;
+    const deterministicKnowledgeGapBridgeReply = isKnowledgeGapTurn
+      ? buildLeadQualificationBridgeReply({
+          matchedIntent: knowledgeGapMeta.matchedIntent ?? null,
+          locationOverview: buildEvoraLocationOverview({
+            addressComplete: authorizedLocationAddress.addressComplete,
+            addressNumber: authorizedLocationAddress.addressNumber,
+          }),
+          locationLink: authorizedLocationLink ?? knowledgeLocationLink,
+          addressComplete: authorizedLocationAddress.addressComplete,
+          addressNumber: authorizedLocationAddress.addressNumber,
+        })
+      : null;
     let knowledgeGapOfferValidationResult: ReturnType<typeof validateKnowledgeGapResolutionOffer> | null = null;
     if (isKnowledgeGapTurn) {
       console.log('[ANA_KNOWLEDGE_GAP_DETECTED]', {
@@ -6788,8 +6854,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         llmSuccess: result.success,
         rawLen: rawTrimmed.length,
       });
-      const safeKnowledgeGapFallback =
-        'Essa informacao precisa ser confirmada com seguranca. Posso te encaminhar para o corretor responsavel ou, se preferir, te ajudar a agendar uma visita?';
+      const safeKnowledgeGapFallback = buildLeadQualificationBridgeReply({
+        matchedIntent: knowledgeGapMeta.matchedIntent ?? null,
+        locationOverview: buildEvoraLocationOverview({
+          addressComplete: authorizedLocationAddress.addressComplete,
+          addressNumber: authorizedLocationAddress.addressNumber,
+        }),
+        locationLink: authorizedLocationLink ?? knowledgeLocationLink,
+        addressComplete: authorizedLocationAddress.addressComplete,
+        addressNumber: authorizedLocationAddress.addressNumber,
+      });
       structured = buildRecoveredReplyStructured(safeKnowledgeGapFallback, effectiveConv.classification);
       recoveredTextUsed = true;
       console.log('[ANA_KNOWLEDGE_GAP_SAFE_OFFER_FALLBACK_USED]', {
@@ -9118,6 +9192,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       flowStateParsed = finalPolicyResult.flowState;
       await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
     }
+    if (isKnowledgeGapTurn && deterministicKnowledgeGapBridgeReply && deterministicKnowledgeGapBridgeReply.trim()) {
+      replyText = deterministicKnowledgeGapBridgeReply.trim();
+      console.log('[ANA_KNOWLEDGE_GAP_BRIDGE_APPLIED]', {
+        conversationId,
+        matchedIntent: knowledgeGapMeta.matchedIntent ?? null,
+      });
+    }
 
     if (isKnowledgeGapTurn) {
       const knowledgeGapOfferValidation = validateKnowledgeGapResolutionOffer(replyText);
@@ -9233,8 +9314,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           hasVisitOption: knowledgeGapOfferValidationResult?.hasVisitOption ?? false,
           missing: knowledgeGapOfferValidationResult?.missing ?? ['broker', 'visit'],
         });
-        const safeKnowledgeGapFallback =
-          'Essa informacao precisa ser confirmada com seguranca. Posso te encaminhar para o corretor responsavel ou, se preferir, te ajudar a agendar uma visita?';
+        const safeKnowledgeGapFallback = buildLeadQualificationBridgeReply({
+          matchedIntent: knowledgeGapMeta.matchedIntent ?? null,
+          locationOverview: buildEvoraLocationOverview({
+            addressComplete: authorizedLocationAddress.addressComplete,
+            addressNumber: authorizedLocationAddress.addressNumber,
+          }),
+          locationLink: authorizedLocationLink ?? knowledgeLocationLink,
+          addressComplete: authorizedLocationAddress.addressComplete,
+          addressNumber: authorizedLocationAddress.addressNumber,
+        });
         const safeFallbackValidation = validateKnowledgeGapResolutionOffer(safeKnowledgeGapFallback);
         if (safeFallbackValidation.ok) {
           replyText = safeKnowledgeGapFallback;
@@ -9621,7 +9710,7 @@ function buildFirstGreetingSafeFallback(text: string): string {
     opening,
     'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas.',
     'Fica em Atibaia, com fácil acesso pela Rodovia Dom Pedro I, perto da área da Pedreira, a aproximadamente 50 minutos de São Paulo.',
-    'Me conta, qual ponto voce quer entender primeiro?',
+    'Voce esta buscando o lote para morar, investir ou construir?',
   ].join('\n\n');
 }
 
@@ -9683,6 +9772,8 @@ function buildConversationalCanonicalFallback(lastAxis: string | null): string {
   if (lastAxis === 'financiamento' || lastAxis === 'formas_pagamento') {
     return 'Temos planos estendidos em até 120x, parcelamento sem juros em até 48x e financiamento direto com a construtora.';
   }
-  return 'Posso te contar sobre os valores, a localização, o lazer ou as formas de pagamento do Évora. Qual desses pontos você quer ver primeiro?';
+  return 'Posso te ajudar de forma objetiva. Voce esta buscando o lote para morar, investir ou construir?';
 }
+
+
 

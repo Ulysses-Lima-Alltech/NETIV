@@ -1,9 +1,25 @@
 import type { CommercialAxis } from './anaCommercialAxisGuard.js';
 
+export type AnaKnowledgeGapIntent =
+  | 'lot_count'
+  | 'lot_availability'
+  | 'lot_size_options'
+  | 'exact_price'
+  | 'commercial_table'
+  | 'simulation'
+  | 'discount'
+  | 'minimum_down_payment'
+  | 'lot_eligibility'
+  | 'surveillance_cameras'
+  | 'exact_location_link'
+  | 'disponibilidade'
+  | 'preco'
+  | 'financiamento';
+
 export interface AnaKnowledgeGapResult {
   hasKnowledgeGap: boolean;
   reason: string;
-  matchedIntent?: string;
+  matchedIntent?: AnaKnowledgeGapIntent | string;
   allowedNextActions: ['offer_broker_handoff', 'offer_visit_scheduling'];
   instructionForModel: string;
 }
@@ -16,7 +32,9 @@ export interface KnowledgeGapResolutionOfferValidation {
 }
 
 const DEFAULT_MODEL_INSTRUCTION =
-  'A informação solicitada pelo cliente não está disponível com segurança na base autorizada ou depende de validação humana. Não invente dados. Responda de forma natural, curta e consultiva. Conduza oferecendo duas possibilidades: encaminhar para o corretor responsável ou agendar uma visita.';
+  'A informacao solicitada pelo cliente nao esta disponivel com seguranca na base autorizada ou depende de validacao humana. Nao invente dados. Responda de forma natural, curta e consultiva. Conduza oferecendo duas possibilidades: encaminhar para o corretor responsavel ou agendar uma visita.';
+const DEFAULT_LOCATION_OVERVIEW =
+  'O Evora fica em Atibaia, na regiao da Pedreira, proximo ao bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.';
 
 function n(text: string | null | undefined): string {
   return String(text || '')
@@ -27,15 +45,18 @@ function n(text: string | null | undefined): string {
     .trim();
 }
 
-const GAP_PATTERNS: Array<{ pattern: RegExp; intent: string; reason: string }> = [
+const GAP_PATTERNS: Array<{ pattern: RegExp; intent: AnaKnowledgeGapIntent; reason: string }> = [
   { pattern: /\b(quantos?\s+lotes?|numero\s+de\s+lotes?)\b/, intent: 'lot_count', reason: 'lot_count_not_authorized' },
   { pattern: /\b(lote menor|menor lote|quais lotes|lote na quadra|lotes disponiveis|disponibilidade de lote)\b/, intent: 'lot_availability', reason: 'lot_availability_requires_human_validation' },
+  { pattern: /\b(quais?\s+os?\s+tamanhos?|opcoes?\s+de\s+tamanho|metragens?|metragem\s+dos\s+lotes?|tamanho\s+dos\s+lotes?|quais?\s+tamanhos?)\b/, intent: 'lot_size_options', reason: 'lot_size_options_requires_human_validation' },
   { pattern: /\b(preco exato|valor exato|quanto custa exatamente|valor final)\b/, intent: 'exact_price', reason: 'exact_price_not_authorized' },
   { pattern: /\b(me manda a tabela|manda a tabela|tabela comercial)\b/, intent: 'commercial_table', reason: 'commercial_table_blocked' },
   { pattern: /\b(simulacao|simular|faz uma simulacao)\b/, intent: 'simulation', reason: 'simulation_requires_human_validation' },
   { pattern: /\b(consegue desconto|tem desconto|negociar desconto)\b/, intent: 'discount', reason: 'discount_not_authorized' },
-  { pattern: /\b(entrada minima|entrada mínima|qual a entrada)\b/, intent: 'minimum_down_payment', reason: 'down_payment_not_authorized' },
+  { pattern: /\b(entrada minima|qual a entrada)\b/, intent: 'minimum_down_payment', reason: 'down_payment_not_authorized' },
   { pattern: /\b(qual lote eu consigo comprar)\b/, intent: 'lot_eligibility', reason: 'eligibility_requires_human_validation' },
+  { pattern: /\b(circuito\s+(?:interno\s+)?de\s+cameras?|monitoramento\s+por\s+cameras?|cftv|tem\s+camera|tem\s+cameras?)\b/, intent: 'surveillance_cameras', reason: 'surveillance_confirmation_requires_human_validation' },
+  { pattern: /\b(manda\s+a?\s*localizacao|link\s+da\s+localizacao|link\s+com\s+a\s+localizacao|me\s+envia\s+a\s+localizacao|como\s+chegar|localizacao\s+exata|endereco\s+com\s+numero|tem\s+numero|numero\s+do\s+endereco)\b/, intent: 'exact_location_link', reason: 'exact_location_link_requires_authorized_source' },
 ];
 
 export function detectAnaKnowledgeGap(args: {
@@ -75,12 +96,97 @@ export function detectAnaKnowledgeGap(args: {
   };
 }
 
+function pickBestLocationSummary(args: {
+  locationOverview?: string | null;
+  addressComplete?: string | null;
+  addressNumber?: string | null;
+}): string {
+  const addressComplete = String(args.addressComplete ?? '').trim();
+  const addressNumber = String(args.addressNumber ?? '').trim();
+  const locationOverview = String(args.locationOverview ?? '').trim();
+
+  if (addressComplete) {
+    if (addressNumber && !addressComplete.includes(addressNumber)) {
+      return `${addressComplete}, numero ${addressNumber}.`;
+    }
+    return addressComplete.endsWith('.') ? addressComplete : `${addressComplete}.`;
+  }
+  if (locationOverview) return locationOverview.endsWith('.') ? locationOverview : `${locationOverview}.`;
+  return DEFAULT_LOCATION_OVERVIEW;
+}
+
+export interface BuildLeadQualificationBridgeReplyArgs {
+  matchedIntent?: string | null;
+  locationOverview?: string | null;
+  locationLink?: string | null;
+  addressComplete?: string | null;
+  addressNumber?: string | null;
+}
+
+export function buildLeadQualificationBridgeReply(args: BuildLeadQualificationBridgeReplyArgs): string {
+  const intent = String(args.matchedIntent ?? '').trim();
+  const link = String(args.locationLink ?? '').trim();
+
+  if (intent === 'lot_size_options') {
+    return [
+      'No Evora, os lotes sao a partir de 360 m2.',
+      'Eu nao tenho todas as opcoes de metragem liberadas por aqui.',
+      'O corretor consegue te passar as opcoes disponiveis certinho.',
+      'Voce prefere que eu encaminhe seu atendimento ou quer agendar uma visita?',
+    ].join(' ');
+  }
+
+  if (intent === 'surveillance_cameras') {
+    return [
+      'Sobre circuito interno de cameras, eu nao tenho essa confirmacao liberada com seguranca por aqui.',
+      'Posso te encaminhar para o corretor responsavel confirmar esse ponto ou, se preferir, te ajudar a agendar uma visita.',
+    ].join(' ');
+  }
+
+  if (intent === 'exact_location_link') {
+    const summary = pickBestLocationSummary({
+      locationOverview: args.locationOverview,
+      addressComplete: args.addressComplete,
+      addressNumber: args.addressNumber,
+    });
+    if (link) {
+      return [
+        summary,
+        `Aqui esta a localizacao: ${link}.`,
+        'Se preferir, posso te encaminhar para o corretor responsavel ou te ajudar a agendar uma visita.',
+      ].join(' ');
+    }
+    return [
+      summary,
+      'Eu nao tenho um link de localizacao exata liberado por aqui.',
+      'Posso te encaminhar para o corretor responsavel ou te ajudar a agendar uma visita.',
+    ].join(' ');
+  }
+
+  if (intent === 'lot_count' || intent === 'lot_availability' || intent === 'lot_eligibility') {
+    return [
+      'Eu nao tenho essa informacao de disponibilidade liberada com seguranca por aqui.',
+      'Posso te encaminhar para o corretor responsavel confirmar as opcoes ou, se preferir, te ajudar a agendar uma visita.',
+    ].join(' ');
+  }
+
+  if (intent === 'exact_price' || intent === 'discount' || intent === 'commercial_table' || intent === 'simulation') {
+    return [
+      'Eu nao tenho esse detalhe comercial liberado com seguranca por aqui.',
+      'Posso te encaminhar para o corretor responsavel para te passar certinho ou, se preferir, te ajudar a agendar uma visita.',
+    ].join(' ');
+  }
+
+  return [
+    'Essa informacao precisa ser confirmada com seguranca.',
+    'Posso te encaminhar para o corretor responsavel ou, se preferir, te ajudar a agendar uma visita?',
+  ].join(' ');
+}
+
 export function validateKnowledgeGapResolutionOffer(replyText: string): KnowledgeGapResolutionOfferValidation {
   const text = n(replyText);
   const hasBrokerOption =
-    /\b(corretor|consultor responsavel|consultor responsável|responsavel pelo atendimento|responsável pelo atendimento|especialista|atendimento humano)\b/.test(
-      text
-    );
+    /\b(corretor|consultor responsavel|responsavel pelo atendimento|especialista|atendimento humano)\b/.test(text);
   const hasVisitOption =
     /\b(visita|agendar visita|agendamento de visita|marcar visita|conhecer o empreendimento|conhecer o stand)\b/.test(
       text
@@ -104,29 +210,28 @@ export function classifyPendingResolutionChoice(
   if (!text) return 'ambiguous';
 
   const brokerExplicit =
-    /\b(corretor|consultor|especialista|atendimento humano|responsavel|responsável|falar com alguem|falar com alguém|me encaminha|pode encaminhar|melhor o corretor|prefiro o corretor)\b/.test(
+    /\b(corretor|consultor|especialista|atendimento humano|responsavel|falar com alguem|me encaminha|pode encaminhar|melhor o corretor|prefiro o corretor)\b/.test(
       text
     );
   if (brokerExplicit) return 'broker';
 
   const visitExplicit =
-    /\b(visita|agendar visita|marcar visita|quero visitar|conhecer o empreendimento|conhecer o stand|ir ate o local|ir até o local|presencial)\b/.test(
+    /\b(visita|agendar visita|marcar visita|quero visitar|conhecer o empreendimento|conhecer o stand|ir ate o local|presencial)\b/.test(
       text
     );
   if (visitExplicit) return 'visit';
 
   if (
-    /\b(nao quero|não quero|nao|não|agora nao|agora não|nao quero visita|não quero visita|nao quero agendar|não quero agendar)\b/.test(
+    /\b(nao quero|nao|agora nao|nao quero visita|nao quero agendar)\b/.test(
       text
     )
   ) {
     return 'decline_or_ambiguous';
   }
 
-  if (
-    /^(sim|ok|pode|pode ser|pode sim|tanto faz|beleza|claro|acho que sim|vamos)$/.test(text)
-  ) {
+  if (/^(sim|ok|pode|pode ser|pode sim|tanto faz|beleza|claro|acho que sim|vamos)$/.test(text)) {
     return 'ambiguous';
   }
   return 'ambiguous';
 }
+
