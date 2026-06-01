@@ -214,6 +214,23 @@ export function isVisitSchedulingAckOnlyMessage(text: string): boolean {
   return /^(sim|ok|ta|tÃ¡|certo|beleza|perfeito|combinado|aguardo|fico no aguardo|ok aguardo|ok aguardo agendamento|aguardo agendamento|pode ser|pode sim)$/.test(n);
 }
 
+export function isExplicitVisitSchedulingAcceptance(text: string): boolean {
+  const n = norm(text);
+  if (!n) return false;
+  if (/^(visita|quero visitar|prefiro visita|pode ser a visita)$/.test(n)) return true;
+  return /\b(quero agendar|quero marcar visita|vamos marcar|pode agendar|quero conhecer o stand|agendar visita|marcar visita)\b/.test(
+    n
+  );
+}
+
+export function isCommercialQuestionThatShouldBypassVisitScheduling(text: string): boolean {
+  const n = norm(text);
+  if (!n) return false;
+  return /\b(lote|lotes|tamanho|metragem|valor|preco|parcela|entrada|financiamento|localizacao|endereco|seguranca|camera|cameras|portaria|lazer|condominio|obra|entrega|disponibilidade|tabela|desconto|simulacao|qual|quais|tem|existe|me fala|me manda|nao entendi|vi que)\b/.test(
+    n
+  );
+}
+
 export function isVisitSchedulingConfirmationMessage(text: string): boolean {
   const n = norm(text).replace(/[.,;:!?]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!n) return false;
@@ -279,6 +296,17 @@ export function isAssistantVisitOfferContextMessage(text: string | null | undefi
 }
 
 export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): boolean {
+  const explicitVisitAcceptance = isExplicitVisitSchedulingAcceptance(input.userMessage);
+  const confirmedAcceptedVisitFlow =
+    input.flowState.visitScheduling?.accepted === true &&
+    (input.flowState.pendingVisitScheduling === true || input.flowState.visitScheduling?.active === true);
+  if (
+    isCommercialQuestionThatShouldBypassVisitScheduling(input.userMessage) &&
+    !explicitVisitAcceptance &&
+    !confirmedAcceptedVisitFlow
+  ) {
+    return false;
+  }
   const axes = [input.resolvedIntent, input.primaryAxis, input.currentAxis, input.requestedAxis]
     .map((x) => norm(String(x ?? '')))
     .filter(Boolean);
@@ -312,6 +340,7 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
     if (ackOnlyMessage) return confirmationContextKind === 'visit_confirmation' || hasVisitOfferContext;
     return schedulingContinuation || hasVisitSchedulingWords(input.userMessage);
   }
+  if (explicitVisitAcceptance) return true;
   if (hasVisitSchedulingWords(input.userMessage)) return true;
   if (ackOnlyMessage && (confirmationContextKind === 'visit_confirmation' || hasVisitOfferContext)) return true;
   return false;
@@ -932,6 +961,22 @@ export function reconstructVisitStateFromRecentMessages(input: {
       reconstructed: false,
       lowConfidence: false,
       reason: 'no_visit_cues',
+      nextState: input.flowState,
+    };
+  }
+  const hasUserSchedulingSignals = userMessages.some(
+    (msg) =>
+      isExplicitVisitSchedulingAcceptance(msg) ||
+      hasVisitSchedulingWords(msg) ||
+      parseDateMention(msg, referenceNow) != null ||
+      parseTimeHmFromText(msg, { allowStandaloneHour: true }) != null ||
+      parsePeriodFromText(msg) != null
+  );
+  if (!hasUserSchedulingSignals) {
+    return {
+      reconstructed: false,
+      lowConfidence: false,
+      reason: 'assistant_offer_without_user_acceptance',
       nextState: input.flowState,
     };
   }

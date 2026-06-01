@@ -166,6 +166,8 @@ import {
 } from '../utils/anaDocSendIntent.js';
 import {
   handleVisitSchedulingDeterministically,
+  isCommercialQuestionThatShouldBypassVisitScheduling,
+  isExplicitVisitSchedulingAcceptance,
   hasProhibitedVisitSchedulingPhrase,
   isAssistantVisitOfferContextMessage,
   isVisitSchedulingAckOnlyMessage,
@@ -4622,6 +4624,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
       referenceNow: lastUserMessageAt,
     });
+    const explicitVisitSchedulingAcceptanceThisTurn = isExplicitVisitSchedulingAcceptance(trimmed);
+    const confirmedAcceptedVisitFlowActive =
+      flowStateParsed.visitScheduling?.accepted === true &&
+      (flowStateParsed.pendingVisitScheduling === true || flowStateParsed.visitScheduling?.active === true);
+    const shouldBypassVisitSchedulingForCommercialQuestion =
+      isCommercialQuestionThatShouldBypassVisitScheduling(trimmed) &&
+      !explicitVisitSchedulingAcceptanceThisTurn &&
+      !confirmedAcceptedVisitFlowActive;
     const ackOnlyVisitCandidate = isVisitSchedulingAckOnlyMessage(trimmed);
     const lastAssistantAskedVisitOffer =
       shortConfirmationContext.lastAssistantQuestionType === 'visit_offer' ||
@@ -4636,6 +4646,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       : (effectiveConv.pending_resolution_choice === true &&
         pendingResolutionChoiceIntent !== null &&
         pendingResolutionChoiceIntent !== 'visit')
+        ? false
+      : shouldBypassVisitSchedulingForCommercialQuestion
         ? false
       : rawDirectVisitSchedulingIntent;
     const hadVisitFlowSignalsBeforeSuppression =
@@ -4725,11 +4737,51 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       flowStateParsed.pendingVisitScheduling === true &&
       isVisitSchedulingTopicSwitchMessage(trimmed);
     const visitSchedulingFlowActiveForTurn =
+      !shouldBypassVisitSchedulingForCommercialQuestion &&
       !visitTopicSwitchRequested &&
       !visitFlowSuppressedByConfirmationContext &&
       (directVisitSchedulingIntent ||
         flowStateParsed.pendingVisitScheduling === true ||
         flowStateParsed.visitScheduling?.active === true);
+    if (shouldBypassVisitSchedulingForCommercialQuestion) {
+      console.log('[ANA_VISIT_SCHEDULING_BYPASSED_COMMERCIAL_QUESTION]', {
+        conversationId,
+        userMessagePreview: trimmed.slice(0, 220),
+        previousPendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
+        previousVisitAccepted: flowStateParsed.visitScheduling?.accepted === true,
+        reason: 'commercial_question_without_explicit_visit_acceptance',
+      });
+      const hasWeakPendingVisitState =
+        flowStateParsed.pendingVisitScheduling === true || flowStateParsed.visitScheduling?.active === true;
+      if (hasWeakPendingVisitState && flowStateParsed.visitScheduling?.accepted !== true) {
+        const clearedVisitState: CommercialFlowState = {
+          ...flowStateParsed,
+          pendingVisitScheduling: false,
+          pendingVisitDateLabel: null,
+          pendingVisitDay: null,
+          pendingVisitDate: null,
+          pendingVisitTime: null,
+          pendingVisitPeriod: null,
+          pendingVisitEnterpriseId: null,
+          pendingVisitInvalidTime: null,
+          pendingVisitMissingSlot: null,
+          pendingVisitCustomerName: null,
+          pendingVisitConfirmationAsked: false,
+          visitScheduling: flowStateParsed.visitScheduling
+            ? {
+                ...flowStateParsed.visitScheduling,
+                active: false,
+              }
+            : undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await mergeConversationCommercialFlowState(conversationId, clearedVisitState);
+        flowStateParsed = clearedVisitState;
+        console.log('[ANA_VISIT_STATE_CLEARED_AFTER_FALSE_POSITIVE]', {
+          conversationId,
+        });
+      }
+    }
     if (visitSchedulingFlowActiveForTurn) {
       console.log('[ANA_VISIT_FLOW_ACTIVE]', {
         conversationId,

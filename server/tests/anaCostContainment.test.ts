@@ -25,6 +25,8 @@ import {
 import { selectAnaNextFollowupQuestion, selectSingleSafeNextTopic } from '../utils/anaFollowupQuestionService.js';
 import {
   handleVisitSchedulingDeterministically,
+  isCommercialQuestionThatShouldBypassVisitScheduling,
+  isExplicitVisitSchedulingAcceptance,
   isVisitSchedulingConfirmationMessage,
   isVisitSchedulingIntent,
   isVisitSchedulingTopicSwitchMessage,
@@ -1896,6 +1898,58 @@ test('apos envio de fotos, prepara follow-up com "o que achou"', () => {
   assert.match(decision.text, /o que achou\?/i);
 });
 
+test('aceite explicito de visita e reconhecido', () => {
+  assert.equal(isExplicitVisitSchedulingAcceptance('quero agendar uma visita'), true);
+  assert.equal(isExplicitVisitSchedulingAcceptance('pode ser a visita'), true);
+  assert.equal(isExplicitVisitSchedulingAcceptance('quero visitar'), true);
+});
+
+test('pergunta comercial de metragem deve bypass de agendamento', () => {
+  assert.equal(
+    isCommercialQuestionThatShouldBypassVisitScheduling('Vi que tem lotes a partir de 300 m². Quais os tamanhos?'),
+    true
+  );
+  assert.equal(isExplicitVisitSchedulingAcceptance('Vi que tem lotes a partir de 300 m². Quais os tamanhos?'), false);
+});
+
+test('isVisitSchedulingIntent nao captura pergunta comercial sem aceite explicito', () => {
+  const shouldSchedule = isVisitSchedulingIntent({
+    userMessage: 'qual o tamanho do lote?',
+    flowState: {
+      pendingVisitScheduling: true,
+      visitScheduling: {
+        active: true,
+        accepted: false,
+        offered: true,
+        requestedDateText: null,
+        requestedTimeText: null,
+        requestedPeriodText: null,
+        normalizedDate: null,
+        normalizedTime: null,
+        nameCollected: false,
+        customerName: null,
+        status: 'none',
+      },
+    },
+    lastAssistantMessage: 'Se preferir, posso te ajudar a agendar uma visita.',
+    enterpriseId: 1,
+  });
+  assert.equal(shouldSchedule, false);
+});
+
+test('reconstrucao de visita nao ativa estado com oferta da Ana sem aceite do cliente', () => {
+  const result = reconstructVisitStateFromRecentMessages({
+    flowState: {},
+    recentMessages: [
+      { role: 'assistant', content: 'Se preferir, posso te ajudar a agendar uma visita.' },
+      { role: 'user', content: 'qual o tamanho do lote?' },
+    ],
+    enterpriseId: 1,
+  });
+  assert.equal(result.reconstructed, false);
+  assert.equal(result.reason, 'assistant_offer_without_user_acceptance');
+});
+
 test('apos envio de video, prepara follow-up com "o que achou"', () => {
   const decision = __testOnlyResolveMediaPostSendFollowup({
     flowState: {},
@@ -2546,6 +2600,8 @@ test('logs de orquestracao de turno estao presentes', () => {
   assert.match(source, /\[ANA_FIRST_GREETING_FINAL_NORMALIZED\]/);
   assert.match(source, /\[ANA_FIRST_GREETING_FORBIDDEN_PHRASE_REMOVED\]/);
   assert.match(source, /\[ANA_COMMERCIAL_RULES_BYPASSED_CANONICAL_BASE\]/);
+  assert.match(source, /\[ANA_VISIT_SCHEDULING_BYPASSED_COMMERCIAL_QUESTION\]/);
+  assert.match(source, /\[ANA_VISIT_STATE_CLEARED_AFTER_FALSE_POSITIVE\]/);
 
   const guardsSource = readFileSync(path.resolve(process.cwd(), 'utils/anaEvoraCommercialGuards.ts'), 'utf8');
   assert.match(guardsSource, /\[ANA_NO_REPEAT_MESSAGE_GUARD\]/);
