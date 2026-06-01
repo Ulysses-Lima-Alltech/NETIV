@@ -126,6 +126,12 @@ function tempToStage(t: string | null | undefined): string | null {
 
 function mapConversationWithPreviewRow(r: ConversationWithPreview) {
   const isHandoff = r.handoff === true || (r.classification ?? '') === 'Handoff';
+  const assignedBrokerNameRaw = (r as { assigned_broker_name?: string | null }).assigned_broker_name ?? null;
+  const assignedBrokerIdRaw = (r as { assigned_broker_id?: number | null }).assigned_broker_id ?? null;
+  const brokerNotificationStatusRaw =
+    (r as { broker_notification_status?: string | null }).broker_notification_status ?? null;
+  const brokerPushNotificationStatusRaw =
+    (r as { broker_push_notification_status?: string | null }).broker_push_notification_status ?? null;
   return {
     id: String(r.id),
     channel: r.channel,
@@ -152,11 +158,10 @@ function mapConversationWithPreviewRow(r: ConversationWithPreview) {
     leadSourceRaw: r.lead_source_raw ?? null,
     createdAt: r.created_at.toISOString(),
     updatedAt: r.updated_at.toISOString(),
-    assignedBrokerName: (r as { assigned_broker_name?: string | null }).assigned_broker_name ?? null,
-    assignedBrokerId: (r as { assigned_broker_id?: number | null }).assigned_broker_id ?? null,
-    brokerNotificationStatus: (r as { broker_notification_status?: string | null }).broker_notification_status ?? null,
-    brokerPushNotificationStatus:
-      (r as { broker_push_notification_status?: string | null }).broker_push_notification_status ?? null,
+    assignedBrokerName: isHandoff ? assignedBrokerNameRaw : null,
+    assignedBrokerId: isHandoff ? assignedBrokerIdRaw : null,
+    brokerNotificationStatus: isHandoff ? brokerNotificationStatusRaw : null,
+    brokerPushNotificationStatus: isHandoff ? brokerPushNotificationStatusRaw : null,
     conversationType: (r as { conversation_type?: string | null }).conversation_type ?? 'CLIENT',
     manualClosedAt: (r as { manual_closed_at?: Date | null }).manual_closed_at?.toISOString() ?? null,
     manualClosedByUserId: (r as { manual_closed_by_user_id?: number | null }).manual_closed_by_user_id ?? null,
@@ -661,10 +666,10 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       leadStage: tempToStage(conv.lead_temperature),
       handoff: isHandoff,
       attendanceMode: isHandoff ? 'handoff' : 'ana',
-      assignedBrokerId: conv.assigned_broker_id ?? null,
-      assignedBrokerName: brokerRow?.full_name ?? null,
-      brokerNotificationStatus: conv.broker_notification_status ?? null,
-      brokerPushNotificationStatus: conv.broker_push_notification_status ?? null,
+      assignedBrokerId: isHandoff ? (conv.assigned_broker_id ?? null) : null,
+      assignedBrokerName: isHandoff ? (brokerRow?.full_name ?? null) : null,
+      brokerNotificationStatus: isHandoff ? (conv.broker_notification_status ?? null) : null,
+      brokerPushNotificationStatus: isHandoff ? (conv.broker_push_notification_status ?? null) : null,
       ...conversationReserveToPublic(conv),
     });
     void publishConversationUpdated(conv.id);
@@ -877,14 +882,33 @@ router.post('/conversations/:id/send', conditionalManualFileUpload, async (req, 
 });
 
 router.get('/conversations/:id/messages', async (req, res) => {
+  let step = 'start';
   try {
     const id = parseInt(req.params.id, 10);
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
+    console.log('[WHATSAPP_GET_MESSAGES_START]', { conversationId: id });
+    step = 'assert_access';
     if (!(await assertCanAccessConversation(req as AuthenticatedRequest, res, id))) return;
+    step = 'load_conversation';
     const conv = await getConversationById(id);
+    console.log('[WHATSAPP_GET_MESSAGES_CONVERSATION_LOADED]', {
+      conversationId: id,
+      found: conv != null,
+    });
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
+    step = 'load_messages';
     const rows = await getMessagesByConversationId(id);
+    console.log('[WHATSAPP_GET_MESSAGES_MESSAGES_LOADED]', {
+      conversationId: id,
+      count: rows.length,
+    });
+    step = 'load_window';
     const window = await getConversationWhatsAppWindowStatus(id);
+    console.log('[WHATSAPP_GET_MESSAGES_WINDOW_LOADED]', {
+      conversationId: id,
+      isOpen: window.isOpen,
+      reason: window.reason,
+    });
     res.json({
       conversationId: id,
       window,
@@ -910,7 +934,13 @@ router.get('/conversations/:id/messages', async (req, res) => {
       }),
     });
   } catch (e) {
-    console.error('[WhatsApp] GET messages:', e);
+    const id = parseInt(req.params.id, 10);
+    console.error('[WHATSAPP_GET_MESSAGES_FAILED]', {
+      conversationId: Number.isNaN(id) ? null : id,
+      step,
+      error: e instanceof Error ? e.message : String(e),
+      stack: e instanceof Error ? e.stack : null,
+    });
     res.status(500).json({ error: 'Erro ao listar mensagens.' });
   }
 });

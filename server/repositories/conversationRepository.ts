@@ -307,8 +307,18 @@ async function clearNonHandoffAssignedBroker(conversationId: number): Promise<vo
   }
 }
 
+async function safeClearNonHandoffAssignedBroker(conversationId: number): Promise<void> {
+  try {
+    await clearNonHandoffAssignedBroker(conversationId);
+  } catch (error) {
+    console.error('[NON_HANDOFF_ASSIGNED_BROKER_CLEANUP_FAILED]', {
+      conversationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export async function getConversationById(id: number): Promise<ConversationRow | null> {
-  await clearNonHandoffAssignedBroker(id);
   const { rows } = await query<ConversationRow>(`SELECT * FROM conversations WHERE id = $1`, [id]);
   return rows[0] ?? null;
 }
@@ -870,7 +880,6 @@ export async function listConversationsWithPreview(
 
 /** Uma linha no mesmo formato da listagem (preview + JOINs), por id. */
 export async function getConversationWithPreviewById(id: number): Promise<ConversationWithPreview | null> {
-  await clearNonHandoffAssignedBroker(id);
   const { rows } = await query<ConversationWithPreview>(
     `SELECT c.*,
       (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_preview,
