@@ -1,4 +1,4 @@
-import type { Conversation } from '../types';
+﻿import type { Conversation } from '../types';
 import { formatConversationTime, formatStatus } from '../utils/format';
 import { FlameIcon } from './FlameIcon';
 
@@ -128,7 +128,7 @@ export function ConversationListItem({
             className="inline-flex max-w-[140px] items-center truncate rounded-full border border-[#a7f3d0] bg-[#ecfdf5] px-2 py-[3px] text-[10px] font-medium text-[#047857]"
             title={conversation.assignedBrokerName}
           >
-            {`Corretor: ${conversation.assignedBrokerName}`}
+            {conversation.assignedBrokerName}
           </span>
         )}
 
@@ -157,3 +157,4 @@ export function ConversationListItem({
     </div>
   );
 }
+
