@@ -38,6 +38,12 @@ export type BrokerAssignmentResult = {
   handoffReason: string;
 };
 
+const ALLOWED_ASSIGNMENT_REASONS = new Set([
+  'explicit_broker_request',
+  'pending_resolution_broker_choice',
+  'manual_classification_handoff',
+]);
+
 function normalizeReason(input: string | null | undefined): string {
   const raw = String(input ?? '').trim();
   if (!raw) return 'customer_requested_broker';
@@ -279,6 +285,49 @@ export async function assignConversationToNextBroker(args: {
   try {
     await client.query('BEGIN');
 
+    const guardConversationResult = await client.query<{
+      id: number;
+      pending_resolution_choice: boolean | null;
+      classification: string | null;
+      handoff: boolean | null;
+      last_user_message_preview: string | null;
+    }>(
+      `SELECT
+         c.id,
+         c.pending_resolution_choice,
+         c.classification,
+         c.handoff,
+         (
+           SELECT m.content
+           FROM messages m
+           WHERE m.conversation_id = c.id AND m.role = 'user'
+           ORDER BY m.created_at DESC
+           LIMIT 1
+         ) AS last_user_message_preview
+       FROM conversations c
+       WHERE c.id = $1
+       FOR UPDATE`,
+      [conversationId]
+    );
+    const guardConversation = guardConversationResult.rows[0] ?? null;
+    if (!guardConversation) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    if (!ALLOWED_ASSIGNMENT_REASONS.has(requestedReason)) {
+      console.log('[ANA_BROKER_ASSIGNMENT_BLOCKED_NO_EXPLICIT_REQUEST]', {
+        conversationId,
+        reason: requestedReason,
+        userMessagePreview: String(guardConversation.last_user_message_preview ?? '').slice(0, 220),
+        pendingResolutionChoice: guardConversation.pending_resolution_choice === true,
+        classifiedChoice: null,
+        currentClassification: guardConversation.classification ?? null,
+        currentHandoff: guardConversation.handoff === true,
+      });
+      await client.query('ROLLBACK');
+      return null;
+    }
+
     const conversationResult = await client.query<AssignmentConversationRow>(
       `SELECT
          c.id,
@@ -291,7 +340,7 @@ export async function assignConversationToNextBroker(args: {
        FROM conversations c
        LEFT JOIN enterprises e ON e.id = c.enterprise_id
        WHERE c.id = $1
-       FOR UPDATE`,
+       FOR UPDATE OF c`,
       [conversationId]
     );
     const conversation = conversationResult.rows[0] ?? null;

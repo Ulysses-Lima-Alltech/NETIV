@@ -936,7 +936,10 @@ function replyStartsWithGreeting(text: string): boolean {
 
 function startsWithComposedCordialGreeting(text: string): boolean {
   const n = normFinalGuard(text || '');
-  return /^(oi|ola)\s*[!,.]?\s*(bom dia|boa tarde|boa noite)\s*[!,.]?\s*tudo bem\s*\?/.test(n);
+  return (
+    /^(oi|ola)\s*[!,.]?\s*(bom dia|boa tarde|boa noite)\s*[!,.]?\s*tudo bem\s*\?/.test(n) ||
+    /^(ola|oi|bom dia|boa tarde|boa noite|opa)\b/.test(n)
+  );
 }
 
 function stripOpeningGreetingPrefix(text: string): string {

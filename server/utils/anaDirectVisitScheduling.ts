@@ -74,6 +74,13 @@ export interface VisitSchedulingContinuationInput {
   referenceNow?: Date;
 }
 
+export interface VisitSchedulingSlotAnswerInput {
+  userMessage: string;
+  flowState: CommercialFlowState;
+  lastAssistantMessage?: string | null;
+  referenceNow?: Date;
+}
+
 export interface VisitHistoryMessage {
   role: 'assistant' | 'user';
   content?: string | null;
@@ -231,6 +238,25 @@ export function isCommercialQuestionThatShouldBypassVisitScheduling(text: string
   );
 }
 
+export function isVisitSchedulingSlotAnswer(input: VisitSchedulingSlotAnswerInput): boolean {
+  const userMessage = input.userMessage;
+  const referenceNow = input.referenceNow ?? new Date();
+  if (isExplicitVisitSchedulingAcceptance(userMessage)) return true;
+  if (isVisitSchedulingConfirmationMessage(userMessage)) return true;
+  if (parseDateMention(userMessage, referenceNow) != null) return true;
+  if (parseTimeHmFromText(userMessage, { allowStandaloneHour: true }) != null) return true;
+  if (parsePeriodFromText(userMessage) != null) return true;
+
+  const askedNameByState = input.flowState.pendingVisitMissingSlot === 'nome';
+  const askedNameByAssistant = /\b(como posso te chamar|qual seu nome|qual o seu nome|me passa seu nome)\b/.test(
+    norm(input.lastAssistantMessage || '')
+  );
+  if (askedNameByState || askedNameByAssistant) {
+    return extractVisitNameFromUserMessage(userMessage) != null;
+  }
+  return false;
+}
+
 export function isVisitSchedulingConfirmationMessage(text: string): boolean {
   const n = norm(text).replace(/[.,;:!?]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!n) return false;
@@ -297,13 +323,16 @@ export function isAssistantVisitOfferContextMessage(text: string | null | undefi
 
 export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): boolean {
   const explicitVisitAcceptance = isExplicitVisitSchedulingAcceptance(input.userMessage);
-  const confirmedAcceptedVisitFlow =
-    input.flowState.visitScheduling?.accepted === true &&
-    (input.flowState.pendingVisitScheduling === true || input.flowState.visitScheduling?.active === true);
+  const slotAnswer = isVisitSchedulingSlotAnswer({
+    userMessage: input.userMessage,
+    flowState: input.flowState,
+    lastAssistantMessage: input.lastAssistantMessage,
+    referenceNow: input.referenceNow,
+  });
   if (
     isCommercialQuestionThatShouldBypassVisitScheduling(input.userMessage) &&
     !explicitVisitAcceptance &&
-    !confirmedAcceptedVisitFlow
+    !slotAnswer
   ) {
     return false;
   }
@@ -333,6 +362,8 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
     return false;
   }
   if (input.flowState.pendingVisitScheduling === true) {
+    if (slotAnswer) return true;
+    if (isCommercialQuestionThatShouldBypassVisitScheduling(input.userMessage) && !explicitVisitAcceptance) return false;
     return true;
   }
   if (shortConfirmationSuppressesVisit) return false;

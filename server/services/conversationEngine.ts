@@ -168,6 +168,7 @@ import {
   handleVisitSchedulingDeterministically,
   isCommercialQuestionThatShouldBypassVisitScheduling,
   isExplicitVisitSchedulingAcceptance,
+  isVisitSchedulingSlotAnswer,
   hasProhibitedVisitSchedulingPhrase,
   isAssistantVisitOfferContextMessage,
   isVisitSchedulingAckOnlyMessage,
@@ -1715,9 +1716,16 @@ function rowsToHistory(
 }
 
 const HANDOFF_INTENT_PATTERNS = [
+  'quero falar com corretor',
+  'prefiro corretor',
+  'me encaminha para um corretor',
+  'me encaminha pra um corretor',
+  'me passa para um corretor',
+  'me passa pra um corretor',
   'quero falar com um humano', 'quero falar com humano', 'falar com um humano',
   'quero um atendente', 'quero atendente', 'preciso de atendente',
   'prefiro falar com uma pessoa', 'prefiro falar com pessoa', 'falar com pessoa',
+  'melhor falar com uma pessoa',
   'me passa para alguem', 'passa para alguem', 'me passa um atendente',
   'quero atendimento humano', 'atendimento humano',
   'transferir para humano', 'transfere para humano',
@@ -1802,6 +1810,10 @@ function hasAnaInternalInstructionLeak(text: string): boolean {
 
 function hasExplicitHandoffIntent(message: string): boolean {
   return HANDOFF_INTENT_PATTERNS.some((p) => normText(message).includes(p));
+}
+
+function buildEvoraFirstReplySafeFallback(): string {
+  return 'Olá! O Évora é um loteamento fechado em Atibaia, na região da Pedreira, com lotes a partir de 360 m², lazer completo e segurança 24 horas. Você está buscando o lote para morar, investir ou construir?';
 }
 
 function userExplicitlyAskedPriceInCurrentTurn(message: string): boolean {
@@ -2828,7 +2840,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         `UPDATE conversations
          SET handoff = true,
              classification = 'Handoff',
-             handoff_reason = COALESCE(handoff_reason, 'customer_requested_broker'),
+             handoff_reason = COALESCE(handoff_reason, 'explicit_broker_request'),
              handoff_requested_at = COALESCE(handoff_requested_at, NOW()),
              updated_at = NOW()
          WHERE id = $1`,
@@ -3003,11 +3015,84 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
-    if (hasExplicitHandoffIntent(trimmed)) {
-      console.warn('explicit_handoff_intent_detected_no_auto_handoff', {
-        origin: 'conversationEngine.hasExplicitHandoffIntent',
+    const explicitBrokerRequest = hasExplicitHandoffIntent(trimmed);
+    const isFirstContactEnterpriseInterest = isFirstContactEnterpriseInterestMessage(trimmed);
+    const shouldAssignBroker =
+      (effectiveConv.pending_resolution_choice === true && pendingResolutionChoiceIntent === 'broker') ||
+      explicitBrokerRequest;
+    const brokerAssignReason =
+      effectiveConv.pending_resolution_choice === true && pendingResolutionChoiceIntent === 'broker'
+        ? 'pending_resolution_broker_choice'
+        : explicitBrokerRequest
+          ? 'explicit_broker_request'
+          : null;
+    console.log('[ANA_BROKER_ASSIGNMENT_DECISION]', {
+      conversationId,
+      shouldAssignBroker,
+      reason: brokerAssignReason,
+      explicitBrokerRequest,
+      pendingResolutionChoice: effectiveConv.pending_resolution_choice === true,
+      classifiedChoice: pendingResolutionChoiceIntent,
+      isFirstContactEnterpriseInterest,
+    });
+
+    if (explicitBrokerRequest) {
+      const explicitReply =
+        'Perfeito. Vou te encaminhar agora para um corretor te atender de forma personalizada.';
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_explicit_broker_send';
+        return;
+      }
+      const explicitSend = await sendAnaOutboundMessages({
         conversationId,
+        toPhoneNumber,
+        text: explicitReply,
+        phase: 'ana_explicit_broker_request',
+        replyPipelineToken,
       });
+      if (!explicitSend.success || explicitSend.metaMessageIds.length === 0) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'explicit_broker_request_send_failed';
+        return;
+      }
+      let assignment: Awaited<ReturnType<typeof assignConversationToNextBroker>> = null;
+      try {
+        assignment = await assignConversationToNextBroker({
+          conversationId,
+          reason: 'explicit_broker_request',
+        });
+      } catch (error) {
+        console.error('[ANA_BROKER_ASSIGNMENT_FAILED]', {
+          conversationId,
+          reason: 'explicit_broker_request',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      if (assignment) {
+        await verifyAndRepairHandoffAfterBrokerAssignment(assignment);
+        if (assignment.assignedBrokerId != null) {
+          const enterpriseNameForNotification = assignment.enterpriseName ?? 'empreendimento';
+          await sendBrokerPendingAttendanceTemplate({
+            brokerPhone: assignment.assignedBrokerPhone,
+            brokerName: assignment.assignedBrokerName,
+            customerNameOrPhone: assignment.customerNameOrPhone,
+            enterpriseName: enterpriseNameForNotification,
+            conversationId,
+          });
+          await sendBrokerPendingAttendancePush({
+            brokerId: assignment.assignedBrokerId,
+            conversationId,
+            enterpriseId: assignment.enterpriseId,
+            customerNameOrPhone: assignment.customerNameOrPhone,
+            enterpriseName: enterpriseNameForNotification,
+          });
+          await publishConversationUpdated(conversationId);
+        }
+      }
+      anaTurnAuditOutcome = 'sent';
+      anaTurnAuditBlockedReason = null;
+      return;
     }
 
     if (ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY) {
@@ -4518,12 +4603,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             try {
               assignment = await assignConversationToNextBroker({
                 conversationId,
-                reason: 'customer_requested_broker',
+                reason: 'pending_resolution_broker_choice',
               });
             } catch (error) {
               console.error('[ANA_BROKER_ASSIGNMENT_FAILED]', {
                 conversationId,
-                reason: 'customer_requested_broker',
+                reason: 'pending_resolution_broker_choice',
                 error: error instanceof Error ? error.message : String(error),
               });
             }
@@ -4628,10 +4713,29 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const confirmedAcceptedVisitFlowActive =
       flowStateParsed.visitScheduling?.accepted === true &&
       (flowStateParsed.pendingVisitScheduling === true || flowStateParsed.visitScheduling?.active === true);
+    const commercialQuestionThisTurn = isCommercialQuestionThatShouldBypassVisitScheduling(trimmed);
+    const visitSchedulingSlotAnswerThisTurn = isVisitSchedulingSlotAnswer({
+      userMessage: trimmed,
+      flowState: flowStateParsed,
+      lastAssistantMessage: lastAssistantPlain,
+      referenceNow: lastUserMessageAt,
+    });
     const shouldBypassVisitSchedulingForCommercialQuestion =
-      isCommercialQuestionThatShouldBypassVisitScheduling(trimmed) &&
+      commercialQuestionThisTurn &&
       !explicitVisitSchedulingAcceptanceThisTurn &&
-      !confirmedAcceptedVisitFlowActive;
+      !visitSchedulingSlotAnswerThisTurn;
+    console.log('[ANA_VISIT_SCHEDULING_BYPASS_EVALUATED]', {
+      conversationId,
+      commercialQuestionThisTurn,
+      explicitVisitSchedulingAcceptanceThisTurn,
+      visitSchedulingSlotAnswerThisTurn,
+      confirmedAcceptedVisitFlowActive,
+      shouldBypassVisitSchedulingForCommercialQuestion,
+      pendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
+      visitActive: flowStateParsed.visitScheduling?.active === true,
+      visitAccepted: flowStateParsed.visitScheduling?.accepted === true,
+      visitStatus: flowStateParsed.visitScheduling?.status ?? null,
+    });
     const ackOnlyVisitCandidate = isVisitSchedulingAckOnlyMessage(trimmed);
     const lastAssistantAskedVisitOffer =
       shortConfirmationContext.lastAssistantQuestionType === 'visit_offer' ||
@@ -4740,8 +4844,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       !shouldBypassVisitSchedulingForCommercialQuestion &&
       !visitTopicSwitchRequested &&
       !visitFlowSuppressedByConfirmationContext &&
-      (directVisitSchedulingIntent ||
-        flowStateParsed.pendingVisitScheduling === true ||
+      (explicitVisitSchedulingAcceptanceThisTurn ||
+        visitSchedulingSlotAnswerThisTurn ||
+        directVisitSchedulingIntent ||
+        (flowStateParsed.pendingVisitScheduling === true && !commercialQuestionThisTurn) ||
         flowStateParsed.visitScheduling?.active === true);
     if (shouldBypassVisitSchedulingForCommercialQuestion) {
       console.log('[ANA_VISIT_SCHEDULING_BYPASSED_COMMERCIAL_QUESTION]', {
@@ -4753,7 +4859,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
       const hasWeakPendingVisitState =
         flowStateParsed.pendingVisitScheduling === true || flowStateParsed.visitScheduling?.active === true;
-      if (hasWeakPendingVisitState && flowStateParsed.visitScheduling?.accepted !== true) {
+      if (hasWeakPendingVisitState) {
+        const previousVisitScheduling = flowStateParsed.visitScheduling ?? null;
+        const preserveScheduled = previousVisitScheduling?.status === 'scheduled';
         const clearedVisitState: CommercialFlowState = {
           ...flowStateParsed,
           pendingVisitScheduling: false,
@@ -4767,10 +4875,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           pendingVisitMissingSlot: null,
           pendingVisitCustomerName: null,
           pendingVisitConfirmationAsked: false,
-          visitScheduling: flowStateParsed.visitScheduling
+          visitScheduling: previousVisitScheduling
             ? {
-                ...flowStateParsed.visitScheduling,
+                ...previousVisitScheduling,
                 active: false,
+                accepted: preserveScheduled ? previousVisitScheduling.accepted : false,
               }
             : undefined,
           updatedAt: new Date().toISOString(),
@@ -8294,6 +8403,33 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       };
 
       if (finalEmptyFallbackGuard.blocked) {
+        if (
+          isFirstAnaReply &&
+          (finalEmptyFallbackGuard.reason === 'first_reply_missing_greeting' ||
+            isFirstContactEnterpriseInterestMessage(trimmed))
+        ) {
+          const safeFallback = buildEvoraFirstReplySafeFallback();
+          console.log('[ANA_FIRST_REPLY_SAFE_FALLBACK_SENT]', {
+            conversationId,
+            reason: 'first_reply_safe_fallback',
+            previousBlockedReason: finalEmptyFallbackGuard.reason,
+          });
+          const safeSend = await sendAnaOutboundMessages({
+            conversationId,
+            toPhoneNumber,
+            text: safeFallback,
+            phase: 'ana_first_reply_safe_fallback',
+            replyPipelineToken,
+          });
+          if (safeSend.success && safeSend.metaMessageIds.length > 0) {
+            anaTurnAuditOutcome = 'sent';
+            anaTurnAuditBlockedReason = null;
+            anaTurnDiagnostics.finalResponse.replySource = 'deterministic_fallback';
+            anaTurnDiagnostics.finalResponse.handoffUsed = false;
+            anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+            return;
+          }
+        }
         anaTurnAuditOutcome = 'blocked';
         anaTurnAuditBlockedReason = `empty_fallback_guard_${finalEmptyFallbackGuard.reason ?? 'blocked'}`;
         anaTurnAuditGuardsApplied.outboundReason = anaTurnAuditBlockedReason;
@@ -8313,7 +8449,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           retryAttempted: false,
           chunkCount: anaTurnDiagnostics.rag.evidenceChunkCount,
           chunkIds: anaTurnDiagnostics.rag.evidenceChunkIds,
-          internalErrorOnly: true,
+          internalErrorOnly: false,
         });
         return;
       }

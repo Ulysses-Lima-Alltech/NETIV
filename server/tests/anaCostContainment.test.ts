@@ -27,6 +27,7 @@ import {
   handleVisitSchedulingDeterministically,
   isCommercialQuestionThatShouldBypassVisitScheduling,
   isExplicitVisitSchedulingAcceptance,
+  isVisitSchedulingSlotAnswer,
   isVisitSchedulingConfirmationMessage,
   isVisitSchedulingIntent,
   isVisitSchedulingTopicSwitchMessage,
@@ -1950,6 +1951,111 @@ test('reconstrucao de visita nao ativa estado com oferta da Ana sem aceite do cl
   assert.equal(result.reason, 'assistant_offer_without_user_acceptance');
 });
 
+test('caso 1: pergunta comercial bypassa visita mesmo com accepted=true ativo', () => {
+  const commercialQuestionThisTurn = isCommercialQuestionThatShouldBypassVisitScheduling('qual o tamanho do lote?');
+  const explicitVisitSchedulingAcceptanceThisTurn = isExplicitVisitSchedulingAcceptance('qual o tamanho do lote?');
+  const visitSchedulingSlotAnswerThisTurn = isVisitSchedulingSlotAnswer({
+    userMessage: 'qual o tamanho do lote?',
+    flowState: {
+      pendingVisitScheduling: false,
+      visitScheduling: {
+        active: true,
+        accepted: true,
+        offered: true,
+        requestedDateText: null,
+        requestedTimeText: null,
+        requestedPeriodText: null,
+        normalizedDate: null,
+        normalizedTime: null,
+        nameCollected: false,
+        customerName: null,
+        status: 'none',
+      },
+    },
+    lastAssistantMessage: 'Perfeito. Para qual dia você prefere agendar a visita?',
+  });
+  const shouldBypassVisitSchedulingForCommercialQuestion =
+    commercialQuestionThisTurn &&
+    !explicitVisitSchedulingAcceptanceThisTurn &&
+    !visitSchedulingSlotAnswerThisTurn;
+
+  assert.equal(shouldBypassVisitSchedulingForCommercialQuestion, true);
+});
+
+test('caso 2: resposta de slot com pending=true nao bypassa visita', () => {
+  const commercialQuestionThisTurn = isCommercialQuestionThatShouldBypassVisitScheduling('amanhã às 10h');
+  const explicitVisitSchedulingAcceptanceThisTurn = isExplicitVisitSchedulingAcceptance('amanhã às 10h');
+  const visitSchedulingSlotAnswerThisTurn = isVisitSchedulingSlotAnswer({
+    userMessage: 'amanhã às 10h',
+    flowState: {
+      pendingVisitScheduling: true,
+      pendingVisitMissingSlot: 'periodo_ou_horario',
+      visitScheduling: {
+        active: true,
+        accepted: true,
+        offered: true,
+        requestedDateText: null,
+        requestedTimeText: null,
+        requestedPeriodText: null,
+        normalizedDate: null,
+        normalizedTime: null,
+        nameCollected: false,
+        customerName: null,
+        status: 'none',
+      },
+    },
+    lastAssistantMessage: 'Perfeito, amanhã. Qual horário fica melhor para você?',
+  });
+  const shouldBypassVisitSchedulingForCommercialQuestion =
+    commercialQuestionThisTurn &&
+    !explicitVisitSchedulingAcceptanceThisTurn &&
+    !visitSchedulingSlotAnswerThisTurn;
+
+  assert.equal(shouldBypassVisitSchedulingForCommercialQuestion, false);
+});
+
+test('caso 3: pergunta comercial com pending=true bypassa visita', () => {
+  const commercialQuestionThisTurn = isCommercialQuestionThatShouldBypassVisitScheduling('tem câmera?');
+  const explicitVisitSchedulingAcceptanceThisTurn = isExplicitVisitSchedulingAcceptance('tem câmera?');
+  const visitSchedulingSlotAnswerThisTurn = isVisitSchedulingSlotAnswer({
+    userMessage: 'tem câmera?',
+    flowState: {
+      pendingVisitScheduling: true,
+      pendingVisitMissingSlot: 'periodo_ou_horario',
+      visitScheduling: {
+        active: true,
+        accepted: true,
+        offered: true,
+        requestedDateText: null,
+        requestedTimeText: null,
+        requestedPeriodText: null,
+        normalizedDate: null,
+        normalizedTime: null,
+        nameCollected: false,
+        customerName: null,
+        status: 'none',
+      },
+    },
+    lastAssistantMessage: 'Perfeito. Qual horário você prefere para a visita?',
+  });
+  const shouldBypassVisitSchedulingForCommercialQuestion =
+    commercialQuestionThisTurn &&
+    !explicitVisitSchedulingAcceptanceThisTurn &&
+    !visitSchedulingSlotAnswerThisTurn;
+
+  assert.equal(shouldBypassVisitSchedulingForCommercialQuestion, true);
+});
+
+test('caso 4: aceite explícito entra no fluxo de visita', () => {
+  assert.equal(isExplicitVisitSchedulingAcceptance('quero agendar uma visita'), true);
+  const slotAnswer = isVisitSchedulingSlotAnswer({
+    userMessage: 'quero agendar uma visita',
+    flowState: {},
+    lastAssistantMessage: null,
+  });
+  assert.equal(slotAnswer, true);
+});
+
 test('apos envio de video, prepara follow-up com "o que achou"', () => {
   const decision = __testOnlyResolveMediaPostSendFollowup({
     flowState: {},
@@ -2601,6 +2707,7 @@ test('logs de orquestracao de turno estao presentes', () => {
   assert.match(source, /\[ANA_FIRST_GREETING_FORBIDDEN_PHRASE_REMOVED\]/);
   assert.match(source, /\[ANA_COMMERCIAL_RULES_BYPASSED_CANONICAL_BASE\]/);
   assert.match(source, /\[ANA_VISIT_SCHEDULING_BYPASSED_COMMERCIAL_QUESTION\]/);
+  assert.match(source, /\[ANA_VISIT_SCHEDULING_BYPASS_EVALUATED\]/);
   assert.match(source, /\[ANA_VISIT_STATE_CLEARED_AFTER_FALSE_POSITIVE\]/);
 
   const guardsSource = readFileSync(path.resolve(process.cwd(), 'utils/anaEvoraCommercialGuards.ts'), 'utf8');
