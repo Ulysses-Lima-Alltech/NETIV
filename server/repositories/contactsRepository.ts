@@ -186,40 +186,70 @@ export async function assignContactToConversation(conversationId: number, contac
   await q(db).query(
     `UPDATE conversations
      SET contact_id = $2,
-         assigned_broker_id = (
-           SELECT c.owner_user_id FROM contacts c WHERE c.id = $2
-         ),
          updated_at = NOW()
      WHERE id = $1`,
     [conversationId, contactId]
   );
+  const owner = await q(db).query<{ owner_user_id: number | null }>(
+    `SELECT owner_user_id FROM contacts WHERE id = $1 LIMIT 1`,
+    [contactId]
+  );
+  const contactOwnerUserId = owner.rows[0]?.owner_user_id ?? null;
+  if (contactOwnerUserId != null) {
+    console.log('[CONTACT_OWNER_NOT_COPIED_TO_CONVERSATION_ASSIGNED_BROKER]', {
+      conversationId,
+      contactId,
+      contactOwnerUserId,
+    });
+  }
   if (!db) await trySyncContactEnterpriseFromLinkedConversations(contactId);
 }
 
 export async function syncConversationOwnerFromContact(conversationId: number): Promise<void> {
-  await query(
-    `UPDATE conversations conv
-     SET assigned_broker_id = c.owner_user_id,
-         updated_at = NOW()
-     FROM contacts c
+  const { rows } = await query<{
+    contact_id: number | null;
+    owner_user_id: number | null;
+  }>(
+    `SELECT conv.contact_id, c.owner_user_id
+     FROM conversations conv
+     LEFT JOIN contacts c ON c.id = conv.contact_id
      WHERE conv.id = $1
-       AND conv.contact_id = c.id
-       AND conv.assigned_broker_id IS DISTINCT FROM c.owner_user_id`,
+     LIMIT 1`,
     [conversationId]
   );
+  const contactId = rows[0]?.contact_id ?? null;
+  const contactOwnerUserId = rows[0]?.owner_user_id ?? null;
+  if (contactId != null && contactOwnerUserId != null) {
+    console.log('[CONTACT_OWNER_NOT_COPIED_TO_CONVERSATION_ASSIGNED_BROKER]', {
+      conversationId,
+      contactId,
+      contactOwnerUserId,
+    });
+  }
 }
 
 /** Idempotente: alinha assigned_broker_id de todas as conversas com contact_id ao owner do contato. */
 export async function syncAllConversationOwnersFromContacts(): Promise<number> {
-  const result = await query(
-    `UPDATE conversations conv
-     SET assigned_broker_id = c.owner_user_id,
-         updated_at = NOW()
-     FROM contacts c
-     WHERE conv.contact_id = c.id
-       AND conv.assigned_broker_id IS DISTINCT FROM c.owner_user_id`
+  const { rows } = await query<{
+    conversation_id: number;
+    contact_id: number;
+    owner_user_id: number;
+  }>(
+    `SELECT conv.id AS conversation_id, conv.contact_id, c.owner_user_id
+     FROM conversations conv
+     INNER JOIN contacts c ON c.id = conv.contact_id
+     WHERE c.owner_user_id IS NOT NULL
+     ORDER BY conv.id DESC
+     LIMIT 50`
   );
-  return result.rowCount ?? 0;
+  for (const row of rows) {
+    console.log('[CONTACT_OWNER_NOT_COPIED_TO_CONVERSATION_ASSIGNED_BROKER]', {
+      conversationId: row.conversation_id,
+      contactId: row.contact_id,
+      contactOwnerUserId: row.owner_user_id,
+    });
+  }
+  return 0;
 }
 
 export async function touchContactInteractionByConversation(params: {
@@ -259,14 +289,6 @@ export async function releaseContactOwnersByCorretor(corretorId: number): Promis
          owner_assignment_source = 'broker_inactivated',
          updated_at = NOW()
      WHERE owner_user_id = $1`,
-    [corretorId]
-  );
-  await query(
-    `UPDATE conversations conv
-     SET assigned_broker_id = NULL,
-         updated_at = NOW()
-     WHERE conv.contact_id IN (SELECT id FROM contacts WHERE owner_user_id IS NULL)
-       AND conv.assigned_broker_id = $1`,
     [corretorId]
   );
   return result.rowCount ?? 0;
@@ -542,11 +564,22 @@ export async function setContactOwnerAdmin(params: {
     [params.contactId, params.ownerUserId, params.source, params.assignedByUserId]
   );
   const row = rows[0] ?? null;
-  if (row) {
-    await query(
-      `UPDATE conversations SET assigned_broker_id = $2, updated_at = NOW() WHERE contact_id = $1`,
-      [row.id, row.owner_user_id]
+  if (row?.owner_user_id != null) {
+    const linkedConversations = await query<{ conversation_id: number }>(
+      `SELECT id AS conversation_id
+       FROM conversations
+       WHERE contact_id = $1
+       ORDER BY id DESC
+       LIMIT 50`,
+      [row.id]
     );
+    for (const conv of linkedConversations.rows) {
+      console.log('[CONTACT_OWNER_NOT_COPIED_TO_CONVERSATION_ASSIGNED_BROKER]', {
+        conversationId: conv.conversation_id,
+        contactId: row.id,
+        contactOwnerUserId: row.owner_user_id,
+      });
+    }
   }
   return row;
 }

@@ -12,7 +12,6 @@ import {
   assignContactToConversation,
   findContactById,
   findOrCreateContactByPhone,
-  syncConversationOwnerFromContact,
   trySyncContactEnterpriseFromLinkedConversations,
 } from './contactsRepository.js';
 import {
@@ -243,7 +242,6 @@ export async function findOrCreateConversation(
   const conv = rows[0];
   if (contact?.id && conv.id) {
     await assignContactToConversation(conv.id, contact.id);
-    await syncConversationOwnerFromContact(conv.id);
   }
   if (conv?.id) {
     if (createdNow) void publishConversationCreated(conv.id);
@@ -252,8 +250,65 @@ export async function findOrCreateConversation(
   return conv;
 }
 
+async function clearNonHandoffAssignedBroker(conversationId: number): Promise<void> {
+  const { rows } = await query<{
+    conversation_id: number;
+    contact_id: number | null;
+    previous_assigned_broker_id: number;
+    contact_owner_user_id: number | null;
+  }>(
+    `WITH target AS (
+       SELECT
+         conv.id AS conversation_id,
+         conv.contact_id,
+         conv.assigned_broker_id AS previous_assigned_broker_id,
+         ct.owner_user_id AS contact_owner_user_id
+       FROM conversations conv
+       LEFT JOIN contacts ct ON ct.id = conv.contact_id
+       WHERE conv.id = $1
+         AND conv.assigned_broker_id IS NOT NULL
+         AND COALESCE(conv.handoff, false) = false
+         AND COALESCE(conv.classification, '') <> 'Handoff'
+       FOR UPDATE
+     )
+     UPDATE conversations conv
+     SET assigned_broker_id = NULL,
+         assigned_broker_at = NULL,
+         broker_notified_at = NULL,
+         broker_notification_status = NULL,
+         broker_notification_error = NULL,
+         broker_notification_template = NULL,
+         broker_push_notified_at = NULL,
+         broker_push_notification_status = NULL,
+         broker_push_notification_error = NULL,
+         updated_at = NOW()
+     FROM target t
+     WHERE conv.id = t.conversation_id
+     RETURNING
+       t.conversation_id,
+       t.contact_id,
+       t.previous_assigned_broker_id,
+       t.contact_owner_user_id`,
+    [conversationId]
+  );
+
+  for (const row of rows) {
+    if (
+      row.contact_id != null &&
+      row.contact_owner_user_id != null &&
+      row.previous_assigned_broker_id === row.contact_owner_user_id
+    ) {
+      console.log('[CONTACT_OWNER_NOT_COPIED_TO_CONVERSATION_ASSIGNED_BROKER]', {
+        conversationId: row.conversation_id,
+        contactId: row.contact_id,
+        contactOwnerUserId: row.contact_owner_user_id,
+      });
+    }
+  }
+}
+
 export async function getConversationById(id: number): Promise<ConversationRow | null> {
-  await syncConversationOwnerFromContact(id);
+  await clearNonHandoffAssignedBroker(id);
   const { rows } = await query<ConversationRow>(`SELECT * FROM conversations WHERE id = $1`, [id]);
   return rows[0] ?? null;
 }
@@ -815,7 +870,7 @@ export async function listConversationsWithPreview(
 
 /** Uma linha no mesmo formato da listagem (preview + JOINs), por id. */
 export async function getConversationWithPreviewById(id: number): Promise<ConversationWithPreview | null> {
-  await syncConversationOwnerFromContact(id);
+  await clearNonHandoffAssignedBroker(id);
   const { rows } = await query<ConversationWithPreview>(
     `SELECT c.*,
       (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_preview,

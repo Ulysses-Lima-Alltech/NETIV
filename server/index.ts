@@ -60,10 +60,10 @@ initPostgres()
     try {
       const synced = await syncAllConversationOwnersFromContacts();
       if (synced > 0) {
-        console.log(`[startup] Sync contacts.owner_user_id â†’ conversations.assigned_broker_id: ${synced} conversa(Ãµes).`);
+        console.log(`[startup] Legacy contact owner sync ignored: ${synced} conversa(oes).`);
       }
     } catch (e) {
-      console.warn('[startup] Sync assigned_broker desde contacts:', e instanceof Error ? e.message : e);
+      console.warn('[startup] Legacy contact owner sync check failed:', e instanceof Error ? e.message : e);
     }
 
     try {
