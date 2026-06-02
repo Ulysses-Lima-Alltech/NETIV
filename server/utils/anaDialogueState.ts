@@ -1,4 +1,4 @@
-import type { CommercialFlowState } from './commercialFlowState.js';
+import type { CommercialFlowState, LeadQualificationState } from './commercialFlowState.js';
 
 export interface AnaDialoguePolicyState {
   greetedAt?: string | null;
@@ -29,6 +29,7 @@ export interface AnaDialoguePolicyState {
   topicsAlreadyAnswered?: string[];
   lastCommittedHandler?: string | null;
   lastCommittedAt?: string | null;
+  leadQualification?: LeadQualificationState;
 }
 
 const MAX_RECENT = 6;
@@ -98,6 +99,7 @@ export function getAnaDialoguePolicyState(flowState: CommercialFlowState | null 
     topicsAlreadyAnswered: compactTopicList(raw.topicsAlreadyAnswered),
     lastCommittedHandler: raw.lastCommittedHandler ?? null,
     lastCommittedAt: raw.lastCommittedAt ?? null,
+    leadQualification: raw.leadQualification,
   };
 }
 

@@ -252,6 +252,19 @@ import {
   questionsAreEquivalent,
   type AnaCommittedQuestionType,
 } from '../utils/anaFinalQuestionPolicy.js';
+import {
+  buildEvoraShortPresentationAfterName,
+  buildLeadQualificationNameQuestion,
+  extractLeadQualificationSignals,
+  getLeadQualificationState,
+  isObjectiveCustomerQuestion,
+  markLeadQualificationQuestionAsked,
+  mergeLeadQualificationState,
+  selectNextLeadQualificationQuestion,
+  shouldAskNameFirst,
+  stripTrailingQuestion,
+  type LeadQualificationQuestionSelection,
+} from '../utils/anaLeadQualificationPolicy.js';
 
 /** Desligado para rastrear o fluxo real com [ANA_ENGINE_TRACE]. */
 const ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY = false;
@@ -782,7 +795,8 @@ function normalizeFirstGreetingCommittedReply(params: {
     }
   }
   const firstReplyGreetingOnly = isFirstReplyGreetingOnlyMessage(next);
-  if (firstContactEnterpriseInterest && (firstReplyGreetingOnly || !hasEnterprisePresentationContent(next))) {
+  const asksCustomerName = replyExplicitlyAsksCustomerName(next);
+  if (firstContactEnterpriseInterest && !asksCustomerName && (firstReplyGreetingOnly || !hasEnterprisePresentationContent(next))) {
     const reason = firstReplyGreetingOnly ? 'greeting_only' : 'missing_enterprise_intro';
     const blockedPreview = next.slice(0, 220);
     next = buildFirstGreetingSafeFallback(userText);
@@ -3837,6 +3851,40 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     );
 
+    const evoraLeadQualificationEnabled = isEvoraEnterpriseName(ent?.name ?? null);
+    let leadQualificationStateBeforeTurn = getLeadQualificationState(flowStateParsed);
+    let leadQualificationStateForTurn = leadQualificationStateBeforeTurn;
+    let leadQualificationSignalsChangedThisTurn = false;
+    let leadQualificationNameCollectedThisTurn = false;
+    const objectiveCustomerQuestionThisTurn = isObjectiveCustomerQuestion(trimmed);
+    if (evoraLeadQualificationEnabled) {
+      const extractedQualificationSignals = extractLeadQualificationSignals(trimmed, leadQualificationStateBeforeTurn);
+      const knownQualificationName =
+        trustedCustomerName || effectiveConv.customer_name || linkedContact?.first_name || linkedContact?.full_name || null;
+      if (knownQualificationName && !leadQualificationStateBeforeTurn.nameCollected) {
+        extractedQualificationSignals.name = knownQualificationName;
+        extractedQualificationSignals.customerName = knownQualificationName;
+        extractedQualificationSignals.nameCollected = true;
+      }
+      const hasExtractedSignals = Object.keys(extractedQualificationSignals).length > 0;
+      if (hasExtractedSignals) {
+        leadQualificationSignalsChangedThisTurn = true;
+        flowStateParsed = mergeLeadQualificationState(flowStateParsed, extractedQualificationSignals);
+        leadQualificationStateForTurn = getLeadQualificationState(flowStateParsed);
+        console.log('[ANA_LEAD_QUALIFICATION_STATE_EXTRACTED]', {
+          conversationId,
+          state: leadQualificationStateForTurn,
+        });
+        if (!leadQualificationStateBeforeTurn.nameCollected && leadQualificationStateForTurn.nameCollected) {
+          leadQualificationNameCollectedThisTurn = true;
+          console.log('[ANA_LEAD_QUALIFICATION_NAME_COLLECTED]', {
+            conversationId,
+            customerName: leadQualificationStateForTurn.name ?? leadQualificationStateForTurn.customerName ?? null,
+          });
+        }
+      }
+    }
+
     const proactiveVideoIntent = isProactiveVideoOfferIntent(trimmed) && !isVideoMaterialRequest(trimmed);
     const visitFlowContextActive =
       appointmentPreflight.active ||
@@ -5882,6 +5930,104 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           }
         : null;
     const effectiveCommercialRule = forcedCommercialRule ?? commercialRule ?? canonicalLocationFallbackRule;
+    if (
+      !effectiveCommercialRule &&
+      !isKnowledgeGapTurn &&
+      leadQualificationSignalsChangedThisTurn &&
+      !objectiveCustomerQuestionThisTurn &&
+      anaDecision.canRespond &&
+      anaDecision.outboundAllowed
+    ) {
+      const qualificationQuestionHistory = collectRecentAssistantQuestionsForFinalCheck({
+        flowState: flowStateParsed,
+        recentMessages: rows.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+      });
+      const nextQualificationQuestion = selectNextLeadQualificationQuestion({
+        state: getLeadQualificationState(flowStateParsed),
+        userMessage: trimmed,
+        customerName: trustedCustomerName || effectiveConv.customer_name || null,
+        recentQuestions: qualificationQuestionHistory,
+      });
+      let qualificationReply = leadQualificationNameCollectedThisTurn
+        ? buildEvoraShortPresentationAfterName(trustedCustomerName || effectiveConv.customer_name || null)
+        : 'Entendi.';
+      if (nextQualificationQuestion) {
+        flowStateParsed = markLeadQualificationQuestionAsked(flowStateParsed, nextQualificationQuestion);
+        qualificationReply = `${qualificationReply}\n\n${nextQualificationQuestion.question}`.trim();
+        console.log('[ANA_LEAD_QUALIFICATION_NEXT_QUESTION_SELECTED]', {
+          conversationId,
+          key: nextQualificationQuestion.key,
+          question: nextQualificationQuestion.question,
+        });
+        if (nextQualificationQuestion.key === 'name') {
+          console.log('[ANA_LEAD_QUALIFICATION_NAME_ASKED]', {
+            conversationId,
+            source: 'qualification_continuation',
+          });
+        }
+      } else {
+        console.log('[ANA_LEAD_QUALIFICATION_QUESTION_SKIPPED_ALREADY_ASKED]', {
+          conversationId,
+          askedQualificationKeys: getLeadQualificationState(flowStateParsed).askedQualificationKeys,
+        });
+      }
+      const committedQualificationReply = commitTurnResponse({
+        handler: 'lead_qualification_policy',
+        reason: 'lead_qualification_signal',
+        parts: [qualificationReply],
+        stage: 'lead_qualification_policy',
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+        shouldCallQwen: false,
+      });
+      if (!committedQualificationReply.committed || !committedQualificationReply.text.trim()) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'lead_qualification_commit_blocked';
+        return;
+      }
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_lead_qualification_send';
+        return;
+      }
+      const qualificationSend = await sendAnaOutboundMessages({
+        conversationId,
+        toPhoneNumber,
+        text: committedQualificationReply.text,
+        phase: 'lead_qualification_policy',
+        replyPipelineToken,
+      });
+      if (!qualificationSend.success || qualificationSend.metaMessageIds.length === 0) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'lead_qualification_send_failed';
+        return;
+      }
+      if (replyExplicitlyAsksCustomerName(committedQualificationReply.text)) {
+        await markAnaAskedForCustomerName(conversationId);
+      }
+      const committedQualificationState = updateConversationStateFromCommittedReply({
+        conversationId,
+        flowState: flowStateParsed,
+        finalReplyParts: committedQualificationReply.parts,
+        finalReplyText: committedQualificationReply.text,
+        handler: 'lead_qualification_policy',
+        currentTopic: anaTurnContextResolved?.currentTopic ?? null,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+      });
+      flowStateParsed = committedQualificationState.nextState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+      anaTurnAuditOutcome = 'sent';
+      anaTurnAuditBlockedReason = null;
+      anaTurnAuditLlmStatus = 'skipped';
+      anaTurnAuditModel = 'lead_qualification_policy';
+      anaTurnDiagnostics.finalResponse.replySource = 'commercial_rules_intent';
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      return;
+    }
     const shouldEnforceCanonicalPriorityRule =
       effectiveCommercialRule != null &&
       (
@@ -6117,11 +6263,6 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
 
       if (isFirstContactRule && isFirstAnaReply) {
-        const recentAssistantRepliesForFirstContact = [...rows]
-          .filter((m) => m.role === 'assistant')
-          .map((m) => (m.content || '').trim())
-          .filter((msg) => msg.length > 0)
-          .slice(-10);
         const firstContactQuestionHistory = collectRecentAssistantQuestionsForFinalCheck({
           flowState: flowStateParsed,
           recentMessages: rows.map((message) => ({
@@ -6129,16 +6270,35 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             content: message.content,
           })),
         });
-        const firstContactQuestion = pickEvoraFirstContactQuestion({
-          recentQuestions: firstContactQuestionHistory,
-          recentAssistantReplies: recentAssistantRepliesForFirstContact,
+        const shouldAskName = shouldAskNameFirst({
+          isFirstAnaReply,
+          isEvora: isEvoraEnterpriseName(ent?.name ?? null),
+          hasKnownCustomerName,
+          state: getLeadQualificationState(flowStateParsed),
+          userMessage: trimmed,
         });
+        const nonNameFirstContactQuestion = selectNextLeadQualificationQuestion({
+          state: getLeadQualificationState(flowStateParsed),
+          userMessage: trimmed,
+          customerName: trustedCustomerName || effectiveConv.customer_name || null,
+          recentQuestions: firstContactQuestionHistory,
+        });
+        const firstContactQuestionSelection: LeadQualificationQuestionSelection = shouldAskName
+          ? { key: 'name', question: buildLeadQualificationNameQuestion() }
+          : nonNameFirstContactQuestion ?? {
+              key: 'purpose',
+              question: 'Voce esta olhando o Evora mais pensando em morar, investir ou ainda esta conhecendo as possibilidades?',
+            };
+        const firstContactQuestion = firstContactQuestionSelection.question;
+        flowStateParsed = markLeadQualificationQuestionAsked(flowStateParsed, firstContactQuestionSelection);
+        if (shouldAskName) {
+          console.log('[ANA_LEAD_QUALIFICATION_NAME_ASKED]', {
+            conversationId,
+            source: 'first_contact',
+          });
+        }
         const firstContactMessages = dedupeMessageParts(
-          [
-            ANA_COMMERCIAL_RULES.firstContactMessages[0] ?? '',
-            ANA_COMMERCIAL_RULES.firstContactMessages[1] ?? '',
-            firstContactQuestion,
-          ],
+          [firstContactQuestion],
           {
             conversationId,
             stage: 'evora_first_contact_split',
@@ -6179,6 +6339,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           anaTurnAuditBlockedReason = 'first_contact_send_failed';
           return;
         }
+        if (replyExplicitlyAsksCustomerName(committedFirstContact.text)) {
+          await markAnaAskedForCustomerName(conversationId);
+        }
         const committedFirstContactState = updateConversationStateFromCommittedReply({
           conversationId,
           flowState: flowStateParsed,
@@ -6209,7 +6372,71 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         return;
       }
 
+      const leadQualificationTopicByRule = (() => {
+        if (effectiveCommercialRule.ruleId === 'preco_valor_lote' || effectiveCommercialRule.ruleId === 'parcela_simulacao') return 'valores';
+        if (effectiveCommercialRule.ruleId === 'localizacao_endereco' || effectiveCommercialRule.ruleId === 'endereco') return 'localizacao';
+        if (effectiveCommercialRule.ruleId === 'areas_lazer') return 'lazer';
+        if (effectiveCommercialRule.ruleId === 'seguranca_portaria') return 'seguranca';
+        if (
+          effectiveCommercialRule.ruleId === 'metragem_faixa' ||
+          effectiveCommercialRule.ruleId === 'metragem_especifica' ||
+          effectiveCommercialRule.ruleId === 'quantidade_lotes_info_gap'
+        ) return 'lotes';
+        return null;
+      })();
+      if (
+        evoraLeadQualificationEnabled &&
+        leadQualificationTopicByRule &&
+        commercialMessagesToSend.length > 0 &&
+        effectiveCommercialRule.ruleId !== 'endereco'
+      ) {
+        const qualificationQuestionHistory = collectRecentAssistantQuestionsForFinalCheck({
+          flowState: flowStateParsed,
+          recentMessages: rows.map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
+        });
+        const nextQualificationQuestion = selectNextLeadQualificationQuestion({
+          state: getLeadQualificationState(flowStateParsed),
+          userMessage: trimmed,
+          customerName: trustedCustomerName || effectiveConv.customer_name || null,
+          answeredTopic: leadQualificationTopicByRule,
+          recentQuestions: qualificationQuestionHistory,
+        });
+        if (nextQualificationQuestion) {
+          const commercialReplyBody = stripTrailingQuestion(commercialMessagesToSend.join('\n\n'));
+          commercialMessagesToSend.length = 0;
+          commercialMessagesToSend.push(`${commercialReplyBody}\n\n${nextQualificationQuestion.question}`.trim());
+          flowStateParsed = markLeadQualificationQuestionAsked(flowStateParsed, nextQualificationQuestion);
+          console.log('[ANA_FINAL_QUESTION_SELECTED_FROM_QUALIFICATION]', {
+            conversationId,
+            key: nextQualificationQuestion.key,
+            topic: leadQualificationTopicByRule,
+            question: nextQualificationQuestion.question,
+          });
+          console.log('[ANA_LEAD_QUALIFICATION_NEXT_QUESTION_SELECTED]', {
+            conversationId,
+            key: nextQualificationQuestion.key,
+            question: nextQualificationQuestion.question,
+          });
+          if (nextQualificationQuestion.key === 'name') {
+            console.log('[ANA_LEAD_QUALIFICATION_NAME_ASKED]', {
+              conversationId,
+              source: 'commercial_rule_followup',
+            });
+          }
+        } else {
+          console.log('[ANA_LEAD_QUALIFICATION_QUESTION_SKIPPED_ALREADY_ASKED]', {
+            conversationId,
+            topic: leadQualificationTopicByRule,
+            askedQualificationKeys: getLeadQualificationState(flowStateParsed).askedQualificationKeys,
+          });
+        }
+      }
+
       const shouldAskNameAfterCommercialReply =
+        !evoraLeadQualificationEnabled &&
         !hasKnownCustomerName &&
         effectiveCommercialRule.ruleId !== 'visita_agendamento' &&
         effectiveCommercialRule.ruleId !== 'localizacao_endereco' &&
@@ -10464,15 +10691,8 @@ function isFirstReplyGreetingOnlyMessage(text: string): boolean {
 }
 
 function buildFirstGreetingSafeFallback(text: string): string {
-  const n = normalizeAnaLocalTextForRules(text);
-  const asksHowAreYou = /\b(tudo bem|td bem|como vai|como voce esta|como você está)\b/.test(n);
-  const opening = asksHowAreYou ? 'Oi! Tudo bem sim 😊' : 'Olá! Claro.';
-
-  return [
-    opening,
-    'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas.',
-    'Fica em Atibaia, com fácil acesso pela Rodovia Dom Pedro I, perto da área da Pedreira, a aproximadamente 50 minutos de São Paulo.',
-  ].join('\n\n');
+  void text;
+  return buildLeadQualificationNameQuestion();
 }
 
 function isGenericInterestFollowup(text: string): boolean {

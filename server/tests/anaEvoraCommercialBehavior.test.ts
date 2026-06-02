@@ -11,7 +11,7 @@ import {
   isExplicitResolutionChoice,
 } from '../utils/anaKnowledgeGapGuard.js';
 
-test('first-contact Evora gera 3 mensagens separadas com 1 pergunta final', () => {
+test('first-contact Evora pergunta nome antes da apresentacao longa', () => {
   const rule = resolveAnaCommercialRule({
     enterpriseName: 'Evora',
     userMessage: 'Oi, queria saber mais sobre o Evora',
@@ -19,12 +19,10 @@ test('first-contact Evora gera 3 mensagens separadas com 1 pergunta final', () =
   });
   assert.equal(rule?.ruleId, 'first_contact');
   const msgs = rule?.messages ?? [];
-  assert.equal(msgs.length, 3);
-  assert.match(msgs[0] || '', /loteamento fechado em Atibaia/i);
-  assert.match(msgs[1] || '', /Rodovia Dom Pedro I/i);
-  assert.match(msgs[1] || '', /Pedreira/i);
-  assert.match(msgs[1] || '', /50 minutos de Sao Paulo|50 minutos de São Paulo/i);
-  const q = msgs[2] || '';
+  assert.equal(msgs.length, 1);
+  const q = msgs[0] || '';
+  assert.match(q, /nome/i);
+  assert.doesNotMatch(q, /loteamento fechado em Atibaia/i);
   assert.equal((q.match(/\?/g) || []).length, 1);
   assert.match(q, /\?$/);
 });
@@ -144,7 +142,7 @@ test('oferta corretor/visita nao bloqueia pergunta nova', () => {
 test('seguranca responde com portaria 24 horas e controle de acesso', () => {
   const rule = resolveAnaCommercialRule({
     enterpriseName: 'Evora',
-    userMessage: 'segurança',
+    userMessage: 'seguranca',
     isFirstAnaReply: false,
   });
   assert.equal(rule?.ruleId, 'seguranca_portaria');
@@ -158,7 +156,7 @@ test('seguranca responde com portaria 24 horas e controle de acesso', () => {
 test('tem seguranca nao responde apenas que seguranca e prioridade', () => {
   const rule = resolveAnaCommercialRule({
     enterpriseName: 'Evora',
-    userMessage: 'tem segurança?',
+    userMessage: 'tem seguranca?',
     isFirstAnaReply: false,
   });
   const text = (rule?.messages ?? []).join('\n');
@@ -171,12 +169,12 @@ test('tem seguranca nao responde apenas que seguranca e prioridade', () => {
 test('tem camera nao confirma camera e oferece corretor', () => {
   const rule = resolveAnaCommercialRule({
     enterpriseName: 'Evora',
-    userMessage: 'tem câmera?',
+    userMessage: 'tem camera?',
     isFirstAnaReply: false,
   });
   assert.equal(rule, null);
   const gap = detectAnaKnowledgeGap({
-    userMessage: 'tem câmera?',
+    userMessage: 'tem camera?',
   });
   assert.equal(gap.hasKnowledgeGap, true);
   assert.equal(gap.matchedIntent, 'surveillance_cameras');
@@ -205,7 +203,7 @@ test('respostas canonicas nao prometem ponto de referencia ou referencia pela Do
 test('localizacao ainda envia endereco e link quando cliente pede endereco ou mapa', () => {
   const endereco = finalizeAnaReplyText('Nao tenho aqui.', {
     enterpriseName: 'Evora',
-    userMessage: 'qual o endereço?',
+    userMessage: 'qual o endereco?',
   });
   assert.match(endereco, /Estrada dos Pires/i);
   assert.match(endereco, /Rio Abaixo/i);

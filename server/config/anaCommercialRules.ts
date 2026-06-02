@@ -20,11 +20,9 @@
 
 export const ANA_COMMERCIAL_RULES = {
   enterpriseKey: 'evora',
-  askNameMessage: 'Ah, e qual é o seu nome? Assim já te atendo melhor por aqui.',
+  askNameMessage: 'Antes de seguir, para eu te ajudar melhor por aqui, poderia me informar seu nome?',
   firstContactMessages: [
-    'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas.',
-    'Fácil acesso pela Rodovia Dom Pedro I, perto da área da Pedreira, a aproximadamente 50 minutos de São Paulo.',
-    'Você quer começar por valores, localização ou lazer?',
+    'Olá, tudo bem. Antes de mais nada, para eu te ajudar melhor por aqui, poderia me informar seu nome?',
   ],
   byIntent: {
     preco_valor_lote: [

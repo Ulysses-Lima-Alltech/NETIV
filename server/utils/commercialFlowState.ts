@@ -19,6 +19,27 @@ export type MaterialSendStatus =
   | 'enterprise_not_resolved'
   | 'material_type_not_resolved';
 
+export type LeadQualificationPurpose = 'moradia' | 'investimento' | 'construcao' | 'familia' | 'pesquisa';
+export type LeadQualificationProductFit = 'loteamento' | 'casa' | 'apartamento' | 'indefinido';
+
+export interface LeadQualificationState {
+  name: string | null;
+  nameAsked: boolean;
+  nameCollected: boolean;
+  customerName: string | null;
+  purpose: LeadQualificationPurpose | null;
+  productFit: LeadQualificationProductFit | null;
+  knowsAtibaia: boolean | null;
+  currentCity: string | null;
+  buyingTimeline: string | null;
+  budgetRangeKnown: boolean | null;
+  budgetRangeText: string | null;
+  visitInterest: boolean | null;
+  materialOffered: boolean;
+  lastQualificationQuestion: string | null;
+  askedQualificationKeys: string[];
+}
+
 /** Estado persistido em `conversations.commercial_flow_state` (JSON). */
 export interface CommercialFlowState {
   stage?: string;
@@ -104,6 +125,7 @@ export interface CommercialFlowState {
     topicsAlreadyAnswered?: string[];
     lastCommittedHandler?: string | null;
     lastCommittedAt?: string | null;
+    leadQualification?: LeadQualificationState;
   };
 }
 
