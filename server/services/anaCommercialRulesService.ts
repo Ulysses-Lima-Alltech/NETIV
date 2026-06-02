@@ -60,6 +60,9 @@ function isValorCondominioIntent(n: string): boolean {
 function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_contact'> | null {
   const n = normalizeText(userMessage);
   if (!n) return null;
+  const asksSurveillanceCamera = hasAny(n, [
+    /\b(cameras?|circuito\s+interno|monitoramento|cftv)\b/,
+  ]);
   const installmentTerms = [
     /\bvalor\s+da?\s+parcela\b/,
     /\bvalor\s+parcela\b/,
@@ -76,7 +79,7 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
   if (hasAny(n, [/\b(lazer|areas? de lazer|area comum|amenidades|piscina|academia|playground|coworking|beach tennis|campo society)\b/])) {
     return 'areas_lazer';
   }
-  if (hasAny(n, [/\b(seguranca|portaria|controle de acesso)\b/])) {
+  if (!asksSurveillanceCamera && hasAny(n, [/\b(seguranca|portaria|controle de acesso)\b/])) {
     return 'seguranca_portaria';
   }
   if (hasAny(n, [/\b(quantos lotes|numero de lotes|vai ter quantos lotes)\b/])) {

@@ -2237,7 +2237,7 @@ test('pedido direto "e a seguranca?" responde seguranca sem pedir permissao', ()
     disableFollowupQuestion: true,
   });
 
-  assert.match(policy.text, /portaria 24 horas com controle de acesso/i);
+  assert.match(policy.text, /portaria 24 horas (?:com|e) controle de acesso/i);
   assert.equal(/quer que eu te explique a seguranca/i.test(policy.text), false);
 });
 
@@ -2252,7 +2252,7 @@ test('pedido direto "seguranca" responde seguranca', () => {
     disableFollowupQuestion: true,
   });
 
-  assert.match(policy.text, /portaria 24 horas com controle de acesso/i);
+  assert.match(policy.text, /portaria 24 horas (?:com|e) controle de acesso/i);
   assert.equal(/quer que eu te explique a seguranca/i.test(policy.text), false);
 });
 
@@ -2284,7 +2284,7 @@ test('"sim" apos oferta de seguranca responde seguranca e nao repete pergunta', 
     },
   });
 
-  assert.match(policy.text, /portaria 24 horas com controle de acesso/i);
+  assert.match(policy.text, /portaria 24 horas (?:com|e) controle de acesso/i);
   assert.equal(/quer que eu te explique a seguranca/i.test(policy.text), false);
 });
 
@@ -2419,7 +2419,7 @@ test('frase de fallback ruim nunca fica na resposta final', () => {
   });
 
   assert.equal(/posso te responder de forma mais objetiva nesse ponto/i.test(policy.text), false);
-  assert.match(policy.text, /portaria 24 horas com controle de acesso/i);
+  assert.match(policy.text, /portaria 24 horas (?:com|e) controle de acesso/i);
 });
 
 test('conversa aberta "me convence" nao cai em regra deterministica e segue trilha Qwen', () => {
@@ -2681,7 +2681,7 @@ test('"sim" usa estado commitado de oferta unica de seguranca e responde seguran
     },
   });
 
-  assert.match(policy.text, /portaria 24 horas com controle de acesso/i);
+  assert.match(policy.text, /portaria 24 horas (?:com|e) controle de acesso/i);
   assert.equal(/me confirma so qual ponto/i.test(policy.text), false);
 });
 

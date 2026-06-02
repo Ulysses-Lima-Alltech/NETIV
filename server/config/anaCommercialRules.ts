@@ -68,7 +68,7 @@ export const ANA_COMMERCIAL_RULES = {
       'O lazer do Évora é bem completo para o dia a dia da família.\n\nTem piscina adulto, piscina infantil, academia, salão de festas, playground, coworking, espaço zen, fireplace, quadra de beach tennis, campo society, praça interna e áreas verdes.\n\nTambém conta com estação para carros elétricos e portaria 24h com controle de acesso.\n\nQuer que eu te fale mais sobre a segurança ou sobre a localização?',
     ],
     seguranca_portaria: [
-      'O Évora conta com portaria 24 horas com controle de acesso.',
+      'O Évora conta com portaria 24 horas e controle de acesso, trazendo mais segurança para moradores e visitantes.\n\nQuer que eu te fale também sobre o lazer ou sobre a localização?',
     ],
     quantidade_lotes_info_gap: [
       'O Évora tem 145 lotes no total, com opções a partir de 360 m².\n\nQuer que eu te explique as opções de tamanho?',

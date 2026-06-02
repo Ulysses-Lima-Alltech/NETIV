@@ -135,7 +135,7 @@ export function buildLeadQualificationBridgeReply(args: BuildLeadQualificationBr
 
   if (intent === 'surveillance_cameras') {
     return [
-      'Sobre circuito interno de cameras, eu nao tenho essa confirmacao liberada com seguranca por aqui.',
+      'Sobre cameras ou monitoramento interno, eu nao tenho essa confirmacao liberada com seguranca por aqui.',
       'Posso te encaminhar para o corretor responsavel confirmar esse ponto ou, se preferir, te ajudar a agendar uma visita.',
     ].join(' ');
   }

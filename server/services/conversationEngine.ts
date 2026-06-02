@@ -626,7 +626,7 @@ function pickContextualCommercialFollowupQuestion(args: {
   const userNorm = normText(args.userMessage || '');
   const byHint: string[] = [];
   if (args.topicHint === 'location') {
-    byHint.push('Quer que eu te passe também um ponto de referência no trajeto pela Dom Pedro I?');
+    byHint.push('Quer que eu te fale agora sobre valores ou lazer?');
   } else if (args.topicHint === 'price') {
     byHint.push('Quer que eu te explique também as formas de pagamento?');
   } else if (args.topicHint === 'leisure') {
@@ -638,8 +638,13 @@ function pickContextualCommercialFollowupQuestion(args: {
   }
 
   const contextualByUser: string[] = [];
+  const userAskedLocationLink = /\b(mapa|maps|google maps|link|localizacao exata|como chegar|manda|me envia|envia|endereco)\b/.test(userNorm);
   if (/\b(localizacao|onde fica|regiao|bairro|pedreira|rio abaixo|dom pedro)\b/.test(userNorm)) {
-    contextualByUser.push('Quer que eu te passe também um ponto de referência no trajeto pela Dom Pedro I?');
+    contextualByUser.push(
+      userAskedLocationLink
+        ? 'Quer que eu te fale agora sobre valores ou lazer?'
+        : 'Quer que eu te envie o link da localização?'
+    );
   }
   if (/\b(valor|preco|investimento|quanto custa|m2|metro quadrado)\b/.test(userNorm)) {
     contextualByUser.push('Quer que eu te explique também as formas de pagamento?');
@@ -666,6 +671,41 @@ function pickContextualCommercialFollowupQuestion(args: {
     }
   }
   return null;
+}
+
+function hasUnsupportedLocationPromise(text: string | null | undefined): boolean {
+  const n = normText(String(text ?? '')).replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  if (!n) return false;
+  return (
+    /ponto\s+de\s+refer(?:e|ê)ncia/.test(n) ||
+    /refer(?:e|ê)ncia\s+(?:no\s+)?trajeto/.test(n) ||
+    /refer(?:e|ê)ncia\s+(?:pela\s+)?dom\s+pedro\s+i/.test(n) ||
+    /refer(?:e|ê)ncia\s+de\s+acesso/.test(n) ||
+    /posso\s+te\s+explicar\s+o\s+trajeto/.test(n)
+  );
+}
+
+function pickSafeLocationPromiseReplacement(originalText: string): string {
+  const n = normText(originalText || '');
+  if (/\b(localizacao|onde fica|regiao|bairro|pedreira|rio abaixo|dom pedro)\b/.test(n) && !/\b(link|maps|mapa)\b/.test(n)) {
+    return 'Quer que eu te envie o link da localização?';
+  }
+  return 'Quer que eu te fale agora sobre valores ou lazer?';
+}
+
+function sanitizeUnsupportedLocationPromiseText(text: string): { text: string; changed: boolean } {
+  const raw = String(text || '').trim();
+  if (!hasUnsupportedLocationPromise(raw)) return { text: raw, changed: false };
+
+  const chunks = raw.match(/[^.!?\n]+[.!?]?|\n+/g) ?? [raw];
+  const kept = chunks
+    .map((chunk) => chunk.trim())
+    .filter((chunk) => chunk.length > 0 && !hasUnsupportedLocationPromise(chunk));
+  let next = kept.join(' ').replace(/\s{2,}/g, ' ').trim();
+  if (!next || !/\?\s*$/.test(next)) {
+    next = [next, pickSafeLocationPromiseReplacement(raw)].filter(Boolean).join(' ').trim();
+  }
+  return { text: next, changed: true };
 }
 
 function pickEvoraFirstContactQuestion(args: {
@@ -1306,7 +1346,11 @@ export const __testOnlySanitizeEvoraRestrictedKnowledgeForAna = sanitizeEvoraRes
 function hasConversationalUnsupportedPromise(text: string): boolean {
   const n = normText(text || '');
   if (!n) return false;
-  return /(vamos detalhar|detalhar um pouco mais|posso detalhar|te passo|posso te passar|te envio|posso enviar|referencia de acesso)/.test(n);
+  return (
+    /(vamos detalhar|detalhar um pouco mais|posso detalhar|te passo|posso te passar|te envio|posso enviar)/.test(n) ||
+    /refer(?:e|ê)ncia\s+de\s+acesso/.test(n) ||
+    hasUnsupportedLocationPromise(n)
+  );
 }
 
 function isBrokenEnumeratedReply(text: string): boolean {
@@ -2934,7 +2978,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       userMessage: trimmed,
       parts: dedupedParts,
     });
-    const committedParts = firstGreetingNormalized.parts;
+    const locationPromiseGuardedParts = firstGreetingNormalized.parts
+      .map((part) => {
+        const guarded = sanitizeUnsupportedLocationPromiseText(part);
+        if (guarded.changed) {
+          console.log('[ANA_UNSUPPORTED_LOCATION_PROMISE_BLOCKED]', {
+            conversationId,
+            blockedTextPreview: part.slice(0, 220),
+          });
+        }
+        return guarded.text;
+      })
+      .filter((part) => part.trim().length > 0);
+    const committedParts = dedupeMessageParts(locationPromiseGuardedParts, {
+      conversationId,
+      stage: `${params.stage}_location_promise_guard`,
+    });
     if (committedParts.length === 0) {
       return { committed: false, text: '', parts: [] };
     }

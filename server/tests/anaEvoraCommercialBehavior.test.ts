@@ -2,9 +2,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import { ANA_COMMERCIAL_RULES } from '../config/anaCommercialRules.js';
 import { resolveAnaCommercialRule } from '../services/anaCommercialRulesService.js';
 import { finalizeAnaReplyText } from '../utils/anaReplyFinalize.js';
-import { detectAnaKnowledgeGap, isExplicitResolutionChoice } from '../utils/anaKnowledgeGapGuard.js';
+import {
+  buildLeadQualificationBridgeReply,
+  detectAnaKnowledgeGap,
+  isExplicitResolutionChoice,
+} from '../utils/anaKnowledgeGapGuard.js';
 
 test('first-contact Evora gera 3 mensagens separadas com 1 pergunta final', () => {
   const rule = resolveAnaCommercialRule({
@@ -134,6 +139,89 @@ test('oferta corretor/visita nao bloqueia pergunta nova', () => {
   assert.equal(isExplicitResolutionChoice('me fala da regiao'), null);
   assert.equal(isExplicitResolutionChoice('e o lazer?'), null);
   assert.equal(isExplicitResolutionChoice('quantos lotes tem?'), null);
+});
+
+test('seguranca responde com portaria 24 horas e controle de acesso', () => {
+  const rule = resolveAnaCommercialRule({
+    enterpriseName: 'Evora',
+    userMessage: 'segurança',
+    isFirstAnaReply: false,
+  });
+  assert.equal(rule?.ruleId, 'seguranca_portaria');
+  const text = (rule?.messages ?? []).join('\n');
+  assert.match(text, /portaria 24 horas/i);
+  assert.match(text, /controle de acesso/i);
+  assert.match(text, /moradores e visitantes/i);
+  assert.match(text, /lazer ou sobre a localiza/i);
+});
+
+test('tem seguranca nao responde apenas que seguranca e prioridade', () => {
+  const rule = resolveAnaCommercialRule({
+    enterpriseName: 'Evora',
+    userMessage: 'tem segurança?',
+    isFirstAnaReply: false,
+  });
+  const text = (rule?.messages ?? []).join('\n');
+  assert.equal(rule?.ruleId, 'seguranca_portaria');
+  assert.equal(/seguran[cç]a\s+[ée]\s+(uma\s+)?prioridade/i.test(text), false);
+  assert.match(text, /portaria 24 horas/i);
+  assert.match(text, /controle de acesso/i);
+});
+
+test('tem camera nao confirma camera e oferece corretor', () => {
+  const rule = resolveAnaCommercialRule({
+    enterpriseName: 'Evora',
+    userMessage: 'tem câmera?',
+    isFirstAnaReply: false,
+  });
+  assert.equal(rule, null);
+  const gap = detectAnaKnowledgeGap({
+    userMessage: 'tem câmera?',
+  });
+  assert.equal(gap.hasKnowledgeGap, true);
+  assert.equal(gap.matchedIntent, 'surveillance_cameras');
+  const reply = buildLeadQualificationBridgeReply({
+    matchedIntent: gap.matchedIntent,
+  });
+  assert.match(reply, /cameras ou monitoramento interno/i);
+  assert.match(reply, /nao tenho essa confirmacao liberada com seguranca/i);
+  assert.match(reply, /corretor responsavel confirmar esse ponto/i);
+  assert.equal(/\b(?:tem|conta com|possui)\s+cameras?\b/i.test(reply), false);
+});
+
+test('respostas canonicas nao prometem ponto de referencia ou referencia pela Dom Pedro I', () => {
+  const commercialTexts = [
+    ...ANA_COMMERCIAL_RULES.firstContactMessages,
+    ...Object.values(ANA_COMMERCIAL_RULES.byIntent).flat(),
+  ].join('\n');
+  const engineSource = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  for (const text of [commercialTexts, engineSource]) {
+    assert.doesNotMatch(text, /ponto de refer[eê]ncia no trajeto/i);
+    assert.doesNotMatch(text, /refer[eê]ncia no trajeto/i);
+    assert.doesNotMatch(text, /refer[eê]ncia pela Dom Pedro I/i);
+  }
+});
+
+test('localizacao ainda envia endereco e link quando cliente pede endereco ou mapa', () => {
+  const endereco = finalizeAnaReplyText('Nao tenho aqui.', {
+    enterpriseName: 'Evora',
+    userMessage: 'qual o endereço?',
+  });
+  assert.match(endereco, /Estrada dos Pires/i);
+  assert.match(endereco, /Rio Abaixo/i);
+
+  const mapa = finalizeAnaReplyText('Nao tenho aqui.', {
+    enterpriseName: 'Evora',
+    userMessage: 'me manda o mapa',
+  });
+  assert.match(mapa, /https:\/\/maps\.app\.goo\.gl\/jBoxPM6XRut2iXHSA\?g_st=ic/);
+
+  const localizacao = finalizeAnaReplyText('Nao tenho aqui.', {
+    enterpriseName: 'Evora',
+    userMessage: 'onde fica?',
+  });
+  assert.match(localizacao, /Atibaia/i);
+  assert.match(localizacao, /Rodovia Dom Pedro I/i);
 });
 
 test('Obrigado vira Obrigada', () => {

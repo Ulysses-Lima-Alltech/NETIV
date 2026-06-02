@@ -690,7 +690,7 @@ function replyAnswersDeterministicTopic(replyText: string, topic: DeterministicT
     return /\bainda nao tenho essa informacao exata liberada por aqui\b/.test(n);
   }
   if (topic === 'seguranca') {
-    return /\bportaria 24 horas com controle de acesso\b/.test(n);
+    return /\bportaria 24 horas (?:com|e) controle de acesso\b/.test(n);
   }
   if (topic === 'lazer') {
     return (
@@ -734,9 +734,10 @@ function buildCanonicalPagamentoReply(): string {
 }
 
 function buildCanonicalSegurancaReply(opts: { shouldOfferLazer: boolean }): string {
-  const base = 'O Evora conta com portaria 24 horas com controle de acesso.';
+  const base =
+    'O Evora conta com portaria 24 horas e controle de acesso, trazendo mais seguranca para moradores e visitantes.';
   if (!opts.shouldOfferLazer) return base;
-  return `${base} Quer que eu te fale tambem sobre lazer?`;
+  return `${base} Quer que eu te fale tambem sobre o lazer ou sobre a localizacao?`;
 }
 
 function buildCanonicalLocalizacaoReply(): string {
