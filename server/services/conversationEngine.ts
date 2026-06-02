@@ -249,6 +249,7 @@ import {
   extractLastQuestionSentenceFromReply,
   inferCommittedQuestionType,
   mergeRecentQuestions,
+  questionsAreEquivalent,
   type AnaCommittedQuestionType,
 } from '../utils/anaFinalQuestionPolicy.js';
 
@@ -665,6 +666,23 @@ function pickContextualCommercialFollowupQuestion(args: {
     }
   }
   return null;
+}
+
+function pickEvoraFirstContactQuestion(args: {
+  recentQuestions: string[];
+  recentAssistantReplies: string[];
+}): string {
+  const canonical = 'Me conta, quais são suas dúvidas? Vou responder todas.';
+  const variation = 'Você quer começar por valores, localização ou lazer?';
+  const variationUsedBefore =
+    args.recentQuestions.some((q) => questionsAreEquivalent(q, variation)) ||
+    args.recentAssistantReplies.some((reply) => questionsAreEquivalent(extractLastQuestionSentenceFromReply(reply), variation));
+  const canonicalUsedBefore =
+    args.recentQuestions.some((q) => questionsAreEquivalent(q, canonical)) ||
+    args.recentAssistantReplies.some((reply) => questionsAreEquivalent(extractLastQuestionSentenceFromReply(reply), canonical));
+  const candidate = variationUsedBefore ? canonical : variation;
+  if (variationUsedBefore && canonicalUsedBefore) return variation;
+  return candidate;
 }
 
 function normalizeFirstGreetingCommittedReply(params: {
@@ -1303,6 +1321,19 @@ function isBrokenEnumeratedReply(text: string): boolean {
   return false;
 }
 
+function countEvoraRegionCoreSignals(text: string): number {
+  const n = normalizeAnaLocalTextForRules(text || '');
+  if (!n) return 0;
+  const checks = [
+    /\batibaia\b/.test(n),
+    /\bpedreira\b/.test(n) && /\brio abaixo\b/.test(n),
+    /\bdom pedro i\b/.test(n),
+    /\b50\b/.test(n) && /\bminutos\b/.test(n) && /\bsao paulo\b/.test(n),
+    /\b(qualidade de vida|natureza|perfil mais tranquilo|contato com natureza)\b/.test(n),
+  ];
+  return checks.filter(Boolean).length;
+}
+
 function dedupeMessageParts(parts: string[], logContext: { conversationId: number; stage: string }): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -1342,6 +1373,18 @@ function dedupeMessageParts(parts: string[], logContext: { conversationId: numbe
     const clean = (raw || '').trim();
     if (!clean) continue;
     const key = normalizeAnaLocalTextForRules(clean).replace(/[.!?]+$/g, '').trim();
+    const regionCoreDuplicate = accepted.some((prev) => {
+      const prevCore = countEvoraRegionCoreSignals(prev);
+      const nextCore = countEvoraRegionCoreSignals(clean);
+      return prevCore >= 4 && nextCore >= 4;
+    });
+    if (regionCoreDuplicate) {
+      console.log('[ANA_REGION_DUPLICATE_MESSAGE_BLOCKED]', {
+        conversationId: logContext.conversationId,
+        blockedMessagePreview: clean.slice(0, 160),
+      });
+      continue;
+    }
     if (seen.has(key) || accepted.some((prev) => isNearDuplicate(clean, prev))) {
       console.log('[ANA_DUPLICATE_RESPONSE_PART_SUPPRESSED]', {
         conversationId: logContext.conversationId,
@@ -5986,9 +6029,104 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         messagePartsCount: commercialMessagesToSend.length,
       });
 
+      if (isFirstContactRule && isFirstAnaReply) {
+        const recentAssistantRepliesForFirstContact = [...rows]
+          .filter((m) => m.role === 'assistant')
+          .map((m) => (m.content || '').trim())
+          .filter((msg) => msg.length > 0)
+          .slice(-10);
+        const firstContactQuestionHistory = collectRecentAssistantQuestionsForFinalCheck({
+          flowState: flowStateParsed,
+          recentMessages: rows.map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
+        });
+        const firstContactQuestion = pickEvoraFirstContactQuestion({
+          recentQuestions: firstContactQuestionHistory,
+          recentAssistantReplies: recentAssistantRepliesForFirstContact,
+        });
+        const firstContactMessages = dedupeMessageParts(
+          [
+            ANA_COMMERCIAL_RULES.firstContactMessages[0] ?? '',
+            ANA_COMMERCIAL_RULES.firstContactMessages[1] ?? '',
+            firstContactQuestion,
+          ],
+          {
+            conversationId,
+            stage: 'evora_first_contact_split',
+          }
+        ).filter(Boolean);
+        console.log('[ANA_FIRST_CONTACT_RESPONSE_SPLIT]', {
+          conversationId,
+          messageCount: firstContactMessages.length,
+        });
+        const committedFirstContact = commitTurnResponse({
+          handler: 'deterministic_commercial_rule_first_contact',
+          reason: 'rule_first_contact_split',
+          parts: firstContactMessages,
+          stage: 'commercial_rule_first_contact_split',
+          requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+          commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+          shouldCallQwen: false,
+        });
+        if (!committedFirstContact.committed || !committedFirstContact.text.trim()) {
+          anaTurnAuditOutcome = 'blocked';
+          anaTurnAuditBlockedReason = 'first_contact_commit_blocked';
+          return;
+        }
+        if (isPipelineStale(conversationId, replyPipelineToken)) {
+          anaTurnAuditOutcome = 'silent';
+          anaTurnAuditBlockedReason = 'pipeline_stale_before_first_contact_send';
+          return;
+        }
+        const firstContactSend = await sendAnaOutboundMessages({
+          conversationId,
+          toPhoneNumber,
+          text: committedFirstContact.text,
+          phase: 'commercial_rules',
+          replyPipelineToken,
+        });
+        if (!firstContactSend.success || firstContactSend.metaMessageIds.length === 0) {
+          anaTurnAuditOutcome = 'send_failed';
+          anaTurnAuditBlockedReason = 'first_contact_send_failed';
+          return;
+        }
+        const committedFirstContactState = updateConversationStateFromCommittedReply({
+          conversationId,
+          flowState: flowStateParsed,
+          finalReplyParts: committedFirstContact.parts,
+          finalReplyText: committedFirstContact.text,
+          handler: 'deterministic_commercial_rule_first_contact',
+          currentTopic: anaTurnContextResolved?.currentTopic ?? null,
+          requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+          commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+        });
+        flowStateParsed = committedFirstContactState.nextState;
+        await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+        await applyAnaConversationUpdate(conversationId, {
+          classification: 'Qualificado',
+          lead_temperature: maxLeadTemperature(effectiveConv.lead_temperature, 'quente'),
+          handoff: false,
+        });
+        console.log('[ANA_CANONICAL_TURN_SHORT_CIRCUITED]', {
+          conversationId,
+          intent: 'first_contact',
+        });
+        anaTurnAuditOutcome = 'sent';
+        anaTurnAuditBlockedReason = null;
+        anaTurnAuditLlmStatus = 'skipped';
+        anaTurnAuditModel = 'commercial_rules';
+        anaTurnDiagnostics.finalResponse.replySource = effectiveCommercialRule.replySource;
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        return;
+      }
+
       const shouldAskNameAfterCommercialReply =
         !hasKnownCustomerName &&
         effectiveCommercialRule.ruleId !== 'visita_agendamento' &&
+        effectiveCommercialRule.ruleId !== 'localizacao_endereco' &&
+        effectiveCommercialRule.ruleId !== 'endereco' &&
         effectiveCommercialRule.ruleId !== 'quantidade_lotes_info_gap' &&
         effectiveCommercialRule.ruleId !== 'metragem_faixa' &&
         effectiveCommercialRule.ruleId !== 'metragem_especifica' &&
@@ -6245,6 +6383,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           outboundMetaMessageId: lastCommercialRuleMetaMessageId,
         }
       );
+      console.log('[ANA_CANONICAL_TURN_SHORT_CIRCUITED]', {
+        conversationId,
+        intent: effectiveCommercialRule.ruleId,
+      });
       return;
     }
     }

@@ -615,9 +615,13 @@ function isUserAskingEvoraPrice(text: string | null | undefined): boolean {
 function isUserAskingSpecificLotSize(text: string | null | undefined): boolean {
   const n = normClosure(text || '');
   if (!n) return false;
-  if (!/\b(lote|terreno)\b/.test(n)) return false;
   if (!/\b\d{2,4}\s*m(?:2|²)?\b/.test(n)) return false;
   if (/\b(valor|preco|preço|investimento|r\$|metro quadrado)\b/.test(n)) return false;
+  const hasSpecificIntent =
+    /\b(lote|terreno)\b/.test(n) ||
+    /\b(tem|quero|procuro)\b/.test(n) ||
+    n.length <= 28;
+  if (!hasSpecificIntent) return false;
   return true;
 }
 
