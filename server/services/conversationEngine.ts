@@ -260,6 +260,7 @@ import {
 } from '../utils/anaFinalQuestionPolicy.js';
 import {
   buildEvoraShortPresentationAfterName,
+  buildEvoraLeadQualificationProgressReply,
   buildLeadQualificationNameQuestion,
   extractLeadQualificationSignals,
   getLeadQualificationState,
@@ -1464,9 +1465,55 @@ function dedupeMessageParts(parts: string[], logContext: { conversationId: numbe
   return out;
 }
 
+function scrubClientVisibleBrandLeak(text: string): string {
+  return String(text || '')
+    .replace(/\bANA\s*[-–—]\s*NETIV\s*[-–—]\s*QMAPE\b/gi, 'Ana')
+    .replace(/\bNETIV\s*[-–—]\s*QMAPE\b/gi, '')
+    .replace(/\bQMAPE\s*[-–—]\s*NETIV\b/gi, '')
+    .replace(/\bNETIV\b/gi, '')
+    .replace(/\bQMAPE\b/gi, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function splitRhetoricalSeparatorsForWhatsApp(part: string): string[] {
+  const source = scrubClientVisibleBrandLeak(part)
+    .replace(/^[ \t]*[-–—]\s+/gm, '')
+    .trim();
+  if (!source) return [];
+  const pieces: string[] = [];
+  let current = '';
+  const separator = /\s+(?:—|–|-)\s+/g;
+  let lastIndex = 0;
+  for (const match of source.matchAll(separator)) {
+    const before = source.slice(lastIndex, match.index).trim();
+    const afterStart = (match.index ?? 0) + match[0].length;
+    if (current) current = `${current} ${before}`.trim();
+    else current = before;
+    const nextSeparatorIndex = source.slice(afterStart).search(separator);
+    const after =
+      nextSeparatorIndex >= 0
+        ? source.slice(afterStart, afterStart + nextSeparatorIndex).trim()
+        : source.slice(afterStart).trim();
+    const leftIsShortOpener = current.length <= 16 && /^[A-Za-zÀ-ÿ]+\.?$/i.test(current);
+    if (leftIsShortOpener && after) {
+      current = `${current.replace(/[.]$/g, '')},`;
+    } else if (current) {
+      pieces.push(current);
+      current = '';
+    }
+    lastIndex = afterStart;
+  }
+  const tail = source.slice(lastIndex).trim();
+  const finalPiece = [current, tail].filter(Boolean).join(' ').replace(/\s+,/g, ',').trim();
+  if (finalPiece) pieces.push(finalPiece);
+  return pieces.length > 0 ? pieces : [source];
+}
+
 function splitAnaOutboundMessages(text: string): string[] {
   return String(text || '')
     .split(/\r?\n+/)
+    .flatMap((part) => splitRhetoricalSeparatorsForWhatsApp(part))
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
 }
@@ -5948,9 +5995,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         customerName: trustedCustomerName || effectiveConv.customer_name || null,
         recentQuestions: qualificationQuestionHistory,
       });
-      let qualificationReply = leadQualificationNameCollectedThisTurn
-        ? buildEvoraShortPresentationAfterName(trustedCustomerName || effectiveConv.customer_name || null)
-        : 'Entendi.';
+      let qualificationReply = buildEvoraLeadQualificationProgressReply({
+        previousState: leadQualificationStateBeforeTurn,
+        currentState: getLeadQualificationState(flowStateParsed),
+        userMessage: trimmed,
+        nextQuestionKey: nextQualificationQuestion?.key ?? null,
+      });
       if (nextQualificationQuestion) {
         flowStateParsed = markLeadQualificationQuestionAsked(flowStateParsed, nextQualificationQuestion);
         qualificationReply = `${qualificationReply}\n\n${nextQualificationQuestion.question}`.trim();
@@ -6294,8 +6344,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             source: 'first_contact',
           });
         }
+        const firstContactIntro =
+          !shouldAskName && firstContactQuestionSelection.key === 'purpose'
+            ? buildEvoraShortPresentationAfterName(
+                trustedCustomerName ||
+                  effectiveConv.customer_name ||
+                  getLeadQualificationState(flowStateParsed).name ||
+                  null
+              )
+            : null;
         const firstContactMessages = dedupeMessageParts(
-          [firstContactQuestion],
+          [firstContactIntro, firstContactQuestion].filter((part): part is string => Boolean(part && part.trim())),
           {
             conversationId,
             stage: 'evora_first_contact_split',

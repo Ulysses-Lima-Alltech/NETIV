@@ -20,7 +20,10 @@ test('primeiro contato só dispara para interesse inicial no empreendimento', ()
     previousAssistantMessage: null,
   });
   assert.equal(first?.ruleId, 'first_contact');
-  assert.deepEqual(first?.messages, ANA_COMMERCIAL_RULES.firstContactMessages);
+  assert.deepEqual(first?.messages, [
+    'Claro, posso te ajudar com o Évora.',
+    'Antes de te passar as melhores informações, me conta seu nome?',
+  ]);
 
   const firstWithPrice = resolveAnaCommercialRule({
     enterpriseName: 'Évora',

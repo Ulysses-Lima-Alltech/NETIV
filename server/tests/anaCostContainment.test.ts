@@ -2801,6 +2801,20 @@ test('split de outbound da Ana envia cada linha como mensagem separada', () => {
   assert.deepEqual(parts, ['linha 1', 'linha 2', 'linha 3']);
 });
 
+test('split de outbound remove separador retorico e marca interna antes do envio', () => {
+  const parts = __testOnlySplitAnaOutboundMessages(
+    'Perfeito — o Évora é esse perfil.\nÉ uma região tranquila - ideal para qualidade de vida.\n- Lazer completo\nAna - NETIV - QMAPE'
+  );
+  assert.deepEqual(parts, [
+    'Perfeito, o Évora é esse perfil.',
+    'É uma região tranquila',
+    'ideal para qualidade de vida.',
+    'Lazer completo',
+    'Ana',
+  ]);
+  assert.equal(parts.some((part) => /NETIV|QMAPE|—| - /.test(part)), false);
+});
+
 test('policy em modo knowledge-driven nao injeta pergunta artificial de topico', () => {
   const policy = applyAnaConversationPolicy({
     conversationId: 4100,

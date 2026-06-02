@@ -12,6 +12,7 @@ export type LeadQualificationQuestionKey =
   | 'purpose'
   | 'productFit'
   | 'knowsAtibaia'
+  | 'topicChoice'
   | 'currentCity'
   | 'buyingTimeline'
   | 'budgetRange'
@@ -252,7 +253,7 @@ export function mergeLeadQualificationState(
 }
 
 export function buildLeadQualificationNameQuestion(): string {
-  return 'Ola, tudo bem. Antes de mais nada, para eu te ajudar melhor por aqui, poderia me informar seu nome?';
+  return 'Claro, posso te ajudar com o Évora.\n\nAntes de te passar as melhores informações, me conta seu nome?';
 }
 
 export function shouldAskNameFirst(context: {
@@ -300,43 +301,54 @@ export function selectNextLeadQualificationQuestion(context: {
   if (!state.purpose && !asked.has('purpose')) {
     candidates.push({
       key: 'purpose',
-      question: `Legal${prefix}. Voce esta olhando o Evora mais pensando em morar, investir ou ainda esta conhecendo as possibilidades?`,
+      question: `Você está olhando mais para morar, investir ou ainda está conhecendo as possibilidades?`,
     });
   }
   if (!state.productFit && !asked.has('productFit')) {
     candidates.push({
       key: 'productFit',
-      question: 'Voce ja esta buscando especificamente um loteamento fechado ou ainda esta comparando com outros tipos de imovel?',
+      question: 'Você já está buscando especificamente um loteamento fechado ou ainda está comparando com outros tipos de imóvel?',
     });
   }
   if (state.knowsAtibaia === null && !asked.has('knowsAtibaia')) {
     candidates.push({
       key: 'knowsAtibaia',
-      question: 'Voce ja conhece Atibaia ou esta comecando a olhar a regiao agora?',
+      question: 'Você já conhece Atibaia ou está começando a olhar a região agora?',
+    });
+  }
+  if (
+    state.purpose != null &&
+    state.productFit != null &&
+    (state.knowsAtibaia === false || Boolean(state.currentCity)) &&
+    !asked.has('topicChoice')
+  ) {
+    candidates.push({
+      key: 'topicChoice',
+      question: 'Você quer entender mais sobre a localização, o lazer ou as opções de lote?',
     });
   }
   if (!state.currentCity && !asked.has('currentCity')) {
     candidates.push({
       key: 'currentCity',
-      question: 'Hoje voce mora em Atibaia ou vem de outra cidade?',
+      question: 'Hoje você mora em Atibaia ou vem de outra cidade?',
     });
   }
   if (!state.buyingTimeline && !asked.has('buyingTimeline')) {
     candidates.push({
       key: 'buyingTimeline',
-      question: 'Voce esta pensando em comprar ainda este ano ou esta em uma fase mais inicial de pesquisa?',
+      question: 'Você está pensando em comprar ainda este ano ou está em uma fase mais inicial de pesquisa?',
     });
   }
   if (state.budgetRangeKnown === null && !asked.has('budgetRange')) {
     candidates.push({
       key: 'budgetRange',
-      question: 'Voce ja tem uma faixa de investimento em mente ou prefere primeiro entender as opcoes do Evora?',
+      question: 'Você já tem uma faixa de investimento em mente ou prefere primeiro entender as opções do Évora?',
     });
   }
   if (!state.materialOffered && !asked.has('visitOrMaterial') && shouldOfferMaterialOrVisit({ state })) {
     candidates.push({
       key: 'visitOrMaterial',
-      question: 'Com base no que voce esta buscando, quer que eu te envie o material do Evora ou prefere falar com um corretor?',
+      question: 'Com base no que você está buscando, quer que eu te envie o material do Évora ou prefere falar com um corretor?',
     });
   }
 
@@ -405,6 +417,47 @@ export function stripTrailingQuestion(text: string): string {
 
 export function buildEvoraShortPresentationAfterName(customerName?: string | null): string {
   const firstName = cleanName(customerName)?.split(/\s+/)[0] ?? null;
-  const prefix = firstName ? `Perfeito, ${firstName}. ` : 'Perfeito. ';
-  return `${prefix}O Evora e um loteamento fechado em Atibaia, com lotes a partir de 360 m2, lazer completo e acesso pela Rodovia Dom Pedro I.`;
+  const prefix = firstName ? `Prazer, ${firstName}.` : 'Prazer.';
+  return `${prefix}\n\nVou te fazer algumas perguntas rápidas para entender melhor o seu momento e te mostrar a melhor oportunidade no Évora.`;
+}
+
+export function buildEvoraLeadQualificationProgressReply(args: {
+  previousState: LeadQualificationState;
+  currentState: LeadQualificationState;
+  userMessage: string;
+  nextQuestionKey?: LeadQualificationQuestionKey | null;
+}): string {
+  const previous = args.previousState;
+  const current = args.currentState;
+  const nextKey = args.nextQuestionKey ?? null;
+
+  if (!previous.nameCollected && current.nameCollected) {
+    return buildEvoraShortPresentationAfterName(current.name ?? current.customerName ?? null);
+  }
+
+  if (!previous.purpose && current.purpose) {
+    if (current.purpose === 'moradia' || current.purpose === 'familia') {
+      return 'Perfeito. Para moradia, o Évora faz bastante sentido porque une loteamento fechado, área verde, lazer e uma região mais tranquila de Atibaia.';
+    }
+    if (current.purpose === 'investimento') {
+      return 'Perfeito. Para investimento, o Évora pode fazer sentido pela proposta de loteamento fechado em Atibaia, com lotes a partir de 360 m² e uma região com boa procura.';
+    }
+    if (current.purpose === 'construcao') {
+      return 'Perfeito. Para construir, o Évora conversa bem com quem quer mais espaço, segurança e liberdade para planejar uma casa em loteamento fechado.';
+    }
+    return 'Perfeito. Então vou te orientar de um jeito simples para você entender se o Évora combina com o seu momento.';
+  }
+
+  if (!previous.productFit && current.productFit === 'loteamento') {
+    return 'Ótimo, então o perfil do Évora está bem alinhado com o que você procura.';
+  }
+
+  if (nextKey === 'topicChoice' || (!previous.knowsAtibaia && current.knowsAtibaia === false)) {
+    return [
+      'Atibaia é uma região muito procurada por quem quer sair um pouco da correria de São Paulo sem ficar longe demais.',
+      'O Évora fica na região da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I. É uma proposta mais tranquila, com contato com natureza e estrutura de loteamento fechado.',
+    ].join('\n\n');
+  }
+
+  return 'Certo, vou seguir te orientando pelo que faz mais sentido para o seu perfil.';
 }

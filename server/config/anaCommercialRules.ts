@@ -20,9 +20,9 @@
 
 export const ANA_COMMERCIAL_RULES = {
   enterpriseKey: 'evora',
-  askNameMessage: 'Antes de seguir, para eu te ajudar melhor por aqui, poderia me informar seu nome?',
+  askNameMessage: 'Antes de te passar as melhores informações, me conta seu nome?',
   firstContactMessages: [
-    'Olá, tudo bem. Antes de mais nada, para eu te ajudar melhor por aqui, poderia me informar seu nome?',
+    'Claro, posso te ajudar com o Évora.\n\nAntes de te passar as melhores informações, me conta seu nome?',
   ],
   byIntent: {
     preco_valor_lote: [
@@ -47,7 +47,7 @@ export const ANA_COMMERCIAL_RULES = {
       'O financiamento é facilitado por ser direto com a construtora, com menos burocracia e mais facilidade para você.',
     ],
     localizacao_endereco: [
-      'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I e a aproximadamente 50 minutos de São Paulo. É uma região com perfil mais tranquilo, contato com natureza e boa qualidade de vida. Quer que eu te envie também o endereço certinho?',
+      'O Évora fica na região da Pedreira, no bairro Rio Abaixo, em Atibaia, com acesso pela Rodovia Dom Pedro I.\n\nPara quem vem de São Paulo, a ideia é ter mais tranquilidade e contato com natureza a aproximadamente 50 minutos de São Paulo.\n\nVocê pretende usar mais como moradia principal ou como uma casa para finais de semana?',
     ],
     endereco: [
       'Fica na Estrada dos Pires, s/n, na região da Pedreira, bairro Rio Abaixo, em Atibaia.',
@@ -63,10 +63,10 @@ export const ANA_COMMERCIAL_RULES = {
       'O valor de condomínio vai depender das definições feitas pelos próprios moradores e associação do condomínio, mas temos uma estimativa entre R$400,00 e R$700,00.',
     ],
     areas_lazer: [
-      'O lazer do Évora é bem completo para o dia a dia da família.\n\nTem piscina adulto, piscina infantil, academia, salão de festas, playground, coworking, espaço zen, fireplace, quadra de beach tennis, campo society, praça interna e áreas verdes.\n\nTambém conta com estação para carros elétricos e portaria 24h com controle de acesso.\n\nQuer que eu te fale mais sobre a segurança ou sobre a localização?',
+      'O lazer do Évora é bem completo para o dia a dia da família.\n\nTem piscina adulto, piscina infantil, academia, salão de festas, playground, coworking, espaço zen, fireplace, quadra de beach tennis, campo society, praça interna e áreas verdes.\n\nTambém há estação para carros elétricos e portaria 24h com controle de acesso.\n\nVocê imagina usar mais essa estrutura para rotina da família ou está pensando mais em valorização do imóvel?',
     ],
     seguranca_portaria: [
-      'O Évora conta com portaria 24 horas e controle de acesso, trazendo mais segurança para moradores e visitantes.\n\nQuer que eu te fale também sobre o lazer ou sobre a localização?',
+      'O Évora conta com portaria 24 horas e controle de acesso, o que ajuda a trazer mais tranquilidade para moradores e visitantes.\n\nNa prática, a proposta é unir loteamento fechado, controle de entrada e uma região mais tranquila de Atibaia.\n\nEsse ponto pesa bastante na sua decisão?',
     ],
     quantidade_lotes_info_gap: [
       'O Évora tem 145 lotes no total, com opções a partir de 360 m².\n\nQuer que eu te explique as opções de tamanho?',

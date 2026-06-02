@@ -19,8 +19,8 @@ test('first-contact Evora pergunta nome antes da apresentacao longa', () => {
   });
   assert.equal(rule?.ruleId, 'first_contact');
   const msgs = rule?.messages ?? [];
-  assert.equal(msgs.length, 1);
-  const q = msgs[0] || '';
+  assert.equal(msgs.length, 2);
+  const q = msgs.join('\n');
   assert.match(q, /nome/i);
   assert.doesNotMatch(q, /loteamento fechado em Atibaia/i);
   assert.equal((q.match(/\?/g) || []).length, 1);
@@ -42,10 +42,11 @@ test('regiao responde canonicamente em uma mensagem de conteudo sem link automat
   });
   assert.equal(rule?.ruleId, 'localizacao_endereco');
   const msgs = rule?.messages ?? [];
-  assert.equal(msgs.length, 1);
-  const text = msgs[0] || '';
+  assert.equal(msgs.length, 3);
+  const text = msgs.join('\n');
   assert.match(text, /Atibaia/i);
-  assert.match(text, /Pedreira\/Rio Abaixo/i);
+  assert.match(text, /Pedreira/i);
+  assert.match(text, /Rio Abaixo/i);
   assert.match(text, /Rodovia Dom Pedro I/i);
   assert.match(text, /50 minutos de Sao Paulo|50 minutos de São Paulo/i);
   assert.equal(/maps\.app\.goo\.gl|google maps|https?:\/\//i.test(text), false);
@@ -150,10 +151,10 @@ test('seguranca responde com portaria 24 horas e controle de acesso', () => {
   assert.match(text, /portaria 24 horas/i);
   assert.match(text, /controle de acesso/i);
   assert.match(text, /moradores e visitantes/i);
-  assert.match(text, /lazer ou sobre a localiza/i);
+  assert.match(text, /pesa bastante na sua decis/i);
 });
 
-test('tem seguranca nao responde apenas que seguranca e prioridade', () => {
+test('tem seguranca responde dado concreto antes de perguntar prioridade', () => {
   const rule = resolveAnaCommercialRule({
     enterpriseName: 'Evora',
     userMessage: 'tem seguranca?',
@@ -161,7 +162,6 @@ test('tem seguranca nao responde apenas que seguranca e prioridade', () => {
   });
   const text = (rule?.messages ?? []).join('\n');
   assert.equal(rule?.ruleId, 'seguranca_portaria');
-  assert.equal(/seguran[cç]a\s+[ée]\s+(uma\s+)?prioridade/i.test(text), false);
   assert.match(text, /portaria 24 horas/i);
   assert.match(text, /controle de acesso/i);
 });

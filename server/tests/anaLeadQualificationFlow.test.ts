@@ -4,6 +4,7 @@ import { resolveAnaCommercialRule } from '../services/anaCommercialRulesService.
 import { finalizeAnaReplyText } from '../utils/anaReplyFinalize.js';
 import { isExplicitResolutionChoice } from '../utils/anaKnowledgeGapGuard.js';
 import {
+  buildEvoraLeadQualificationProgressReply,
   buildEvoraShortPresentationAfterName,
   buildLeadQualificationNameQuestion,
   extractLeadQualificationSignals,
@@ -61,7 +62,9 @@ test('cliente informa nome salva e recebe apresentacao curta com qualificacao', 
   assert.equal(getLeadQualificationState(state).nameCollected, true);
   assert.equal(qualification?.key, 'purpose');
   const reply = `${buildEvoraShortPresentationAfterName('Joao')}\n\n${qualification?.question}`;
-  assert.match(reply, /Evora e um loteamento fechado em Atibaia/i);
+  assert.match(reply, /perguntas rápidas/i);
+  assert.match(reply, /melhor oportunidade no Évora/i);
+  assert.match(reply, /morar, investir/i);
   assert.equal(countQuestions(reply), 1);
 });
 
@@ -85,8 +88,20 @@ test('cliente ignora nome e pergunta valor recebe canonico e qualificacao', () =
 });
 
 test('cliente responde objetivo salva purpose e pergunta proximo dado', () => {
-  let state: CommercialFlowState = {};
-  state = mergeLeadQualificationState(state, extractLeadQualificationSignals('quero morar', getLeadQualificationState(state)));
+  let state: CommercialFlowState = {
+    dialoguePolicy: {
+      leadQualification: {
+        ...getLeadQualificationState({}),
+        name: 'Joao',
+        customerName: 'Joao',
+        nameAsked: true,
+        nameCollected: true,
+        askedQualificationKeys: ['name', 'purpose'],
+      },
+    },
+  };
+  const previousState = getLeadQualificationState(state);
+  state = mergeLeadQualificationState(state, extractLeadQualificationSignals('quero morar', previousState));
   const qualification = selectNextLeadQualificationQuestion({
     state: getLeadQualificationState(state),
     userMessage: 'quero morar',
@@ -94,6 +109,63 @@ test('cliente responde objetivo salva purpose e pergunta proximo dado', () => {
   assert.equal(getLeadQualificationState(state).purpose, 'moradia');
   assert.equal(qualification?.key, 'productFit');
   assert.match(qualification?.question ?? '', /loteamento fechado/i);
+  const reply = `${buildEvoraLeadQualificationProgressReply({
+    previousState,
+    currentState: getLeadQualificationState(state),
+    userMessage: 'quero morar',
+    nextQuestionKey: qualification?.key,
+  })}\n\n${qualification?.question}`;
+  assert.match(reply, /Para moradia/i);
+  assert.match(reply, /área verde|lazer/i);
+});
+
+test('sequencia consultiva passa por loteamento e apresenta regiao antes de escolher topico', () => {
+  let state: CommercialFlowState = {
+    dialoguePolicy: {
+      leadQualification: {
+        ...getLeadQualificationState({}),
+        name: 'Joao',
+        customerName: 'Joao',
+        nameAsked: true,
+        nameCollected: true,
+        purpose: 'moradia',
+        askedQualificationKeys: ['name', 'purpose', 'productFit'],
+      },
+    },
+  };
+  let previousState = getLeadQualificationState(state);
+  state = mergeLeadQualificationState(state, extractLeadQualificationSignals('quero loteamento mesmo', previousState));
+  let selection = selectNextLeadQualificationQuestion({
+    state: getLeadQualificationState(state),
+    userMessage: 'quero loteamento mesmo',
+  });
+  let reply = `${buildEvoraLeadQualificationProgressReply({
+    previousState,
+    currentState: getLeadQualificationState(state),
+    userMessage: 'quero loteamento mesmo',
+    nextQuestionKey: selection?.key,
+  })}\n\n${selection?.question}`;
+  assert.equal(selection?.key, 'knowsAtibaia');
+  assert.match(reply, /perfil do Évora está bem alinhado/i);
+  assert.match(reply, /conhece Atibaia/i);
+
+  state = markLeadQualificationQuestionAsked(state, selection!);
+  previousState = getLeadQualificationState(state);
+  state = mergeLeadQualificationState(state, extractLeadQualificationSignals('estou vendo agora, moro em São Paulo', previousState));
+  selection = selectNextLeadQualificationQuestion({
+    state: getLeadQualificationState(state),
+    userMessage: 'estou vendo agora, moro em São Paulo',
+  });
+  reply = `${buildEvoraLeadQualificationProgressReply({
+    previousState,
+    currentState: getLeadQualificationState(state),
+    userMessage: 'estou vendo agora, moro em São Paulo',
+    nextQuestionKey: selection?.key,
+  })}\n\n${selection?.question}`;
+  assert.equal(selection?.key, 'topicChoice');
+  assert.match(reply, /Atibaia é uma região muito procurada/i);
+  assert.match(reply, /Pedreira/i);
+  assert.match(reply, /localização, o lazer ou as opções de lote/i);
 });
 
 test('seguranca responde dado canonico e pergunta qualificacao', () => {
@@ -105,7 +177,7 @@ test('seguranca responde dado canonico e pergunta qualificacao', () => {
   const reply = appendQualification((rule?.messages ?? []).join('\n'), {}, 'seguranca', 'seguranca');
   assert.match(reply, /portaria 24 horas/i);
   assert.match(reply, /controle de acesso/i);
-  assert.match(reply, /morar, investir|conhecendo as possibilidades/i);
+  assert.match(reply, /morar, investir|conhecendo as possibilidades|segurança é uma prioridade/i);
   assert.doesNotMatch(reply, /lazer ou sobre a localiza/i);
   assert.equal(countQuestions(reply), 1);
 });
@@ -119,7 +191,7 @@ test('localizacao responde canonico e pergunta sobre Atibaia', () => {
   const reply = appendQualification((rule?.messages ?? []).join('\n'), {}, 'localizacao', 'localizacao');
   assert.match(reply, /Atibaia/i);
   assert.match(reply, /Rodovia Dom Pedro I/i);
-  assert.match(reply, /conhece Atibaia|olhar a regiao/i);
+  assert.match(reply, /conhece Atibaia|olhar a região|moradia principal|finais de semana/i);
   assert.equal(countQuestions(reply), 1);
 });
 
