@@ -52,3 +52,15 @@ mover_*_para_interno*.ps1
 # Backup files with underscore suffix
 *.bak_*
 *.bak_**
+
+# Local AWS/ECS task definition dumps and Ana test exports
+tmp-taskdef*.json
+current-taskdef.json
+new-taskdef.json
+ssm-portforward.json
+ana-local-base-*.csv
+ana-prod-base-*.csv
+ana-prod-base-*.json
+ana-webhook-real-*.csv
+ana-webhook-real-*.json
+alterar_contatos_altis.sql
