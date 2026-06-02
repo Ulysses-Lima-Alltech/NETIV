@@ -1859,26 +1859,29 @@ function rowsToHistory(
   return list.filter((m) => m.content.length > 0).slice(-MAX_HISTORY);
 }
 
-const HANDOFF_INTENT_PATTERNS = [
-  'quero falar com corretor',
-  'prefiro corretor',
-  'me encaminha para um corretor',
-  'me encaminha pra um corretor',
-  'me passa para um corretor',
-  'me passa pra um corretor',
-  'quero falar com um humano', 'quero falar com humano', 'falar com um humano',
-  'quero um atendente', 'quero atendente', 'preciso de atendente',
-  'prefiro falar com uma pessoa', 'prefiro falar com pessoa', 'falar com pessoa',
-  'melhor falar com uma pessoa',
-  'me passa para alguem', 'passa para alguem', 'me passa um atendente',
-  'quero atendimento humano', 'atendimento humano',
-  'transferir para humano', 'transfere para humano',
-  'quero ser atendido por pessoa', 'atendido por pessoa',
-  'preciso falar com humano', 'preciso de um humano',
+const HANDOFF_INTENT_REGEX_PATTERNS: RegExp[] = [
+  /\bcorretor(?:a)?\b/,
+  /\bconsultor(?:a)?\b/,
+  /\bquero\s+corretor(?:a)?\b/,
+  /\bquero\s+falar\s+com\s+(?:um|uma)?\s*(?:corretor(?:a)?|consultor(?:a)?)\b/,
+  /\bfalar\s+com\s+(?:um|uma)?\s*(?:corretor(?:a)?|consultor(?:a)?)\b/,
+  /\bme\s+(?:passa|encaminha|transfere)\s+(?:pra|para)?\s*(?:um|uma)?\s*(?:corretor(?:a)?|consultor(?:a)?)\b/,
+  /\batendimento\s+humano\b/,
+  /\bquero\s+falar\s+com\s+(?:uma)?\s*pessoa\b/,
 ];
 
 function normText(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeIntentText(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function toFirstName(value: string | null | undefined): string | null {
@@ -1953,7 +1956,9 @@ function hasAnaInternalInstructionLeak(text: string): boolean {
 }
 
 function hasExplicitHandoffIntent(message: string): boolean {
-  return HANDOFF_INTENT_PATTERNS.some((p) => normText(message).includes(p));
+  const normalized = normalizeIntentText(message);
+  if (!normalized) return false;
+  return HANDOFF_INTENT_REGEX_PATTERNS.some((re) => re.test(normalized));
 }
 
 function buildEvoraFirstReplySafeFallback(): string {
@@ -3193,8 +3198,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       classifiedChoice: pendingResolutionChoiceIntent,
       isFirstContactEnterpriseInterest,
     });
+    console.log('[ANA_BROKER_EXPLICIT_REQUEST_DETECTED]', {
+      conversationId,
+      userMessagePreview: trimmed.slice(0, 220),
+      explicitBrokerRequest,
+      pendingResolutionChoiceIntent,
+      shouldAssignBroker,
+      brokerAssignReason,
+    });
 
-    if (explicitBrokerRequest) {
+    if (shouldAssignBroker && brokerAssignReason) {
+      console.log('[ANA_BROKER_ASSIGNMENT_BRANCH_ENTERED]', {
+        conversationId,
+        reason: brokerAssignReason,
+      });
       const explicitReply =
         'Perfeito. Vou te encaminhar agora para um corretor te atender de forma personalizada.';
       if (isPipelineStale(conversationId, replyPipelineToken)) {
@@ -3206,24 +3223,27 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationId,
         toPhoneNumber,
         text: explicitReply,
-        phase: 'ana_explicit_broker_request',
+        phase:
+          brokerAssignReason === 'pending_resolution_broker_choice'
+            ? 'ana_pending_resolution_broker_choice'
+            : 'ana_explicit_broker_request',
         replyPipelineToken,
       });
       if (!explicitSend.success || explicitSend.metaMessageIds.length === 0) {
         anaTurnAuditOutcome = 'send_failed';
-        anaTurnAuditBlockedReason = 'explicit_broker_request_send_failed';
+        anaTurnAuditBlockedReason = `${brokerAssignReason}_send_failed`;
         return;
       }
       let assignment: Awaited<ReturnType<typeof assignConversationToNextBroker>> = null;
       try {
         assignment = await assignConversationToNextBroker({
           conversationId,
-          reason: 'explicit_broker_request',
+          reason: brokerAssignReason,
         });
       } catch (error) {
         console.error('[ANA_BROKER_ASSIGNMENT_FAILED]', {
           conversationId,
-          reason: 'explicit_broker_request',
+          reason: brokerAssignReason,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -3248,6 +3268,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           await publishConversationUpdated(conversationId);
         }
       }
+      console.log('[ANA_BROKER_ASSIGNMENT_STARTED]', {
+        conversationId,
+        reason: brokerAssignReason,
+      });
+      console.log('[ANA_HANDOFF_ACCEPTED_BY_CUSTOMER]', {
+        conversationId,
+        reason: brokerAssignReason,
+      });
       anaTurnAuditOutcome = 'sent';
       anaTurnAuditBlockedReason = null;
       return;
