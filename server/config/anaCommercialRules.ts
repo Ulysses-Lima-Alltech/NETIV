@@ -2,6 +2,7 @@
   | 'first_contact'
   | 'preco_valor_lote'
   | 'metragem_faixa'
+  | 'metragem_especifica'
   | 'parcela_simulacao'
   | 'entrada'
   | 'formas_pagamento'
@@ -22,14 +23,18 @@ export const ANA_COMMERCIAL_RULES = {
   askNameMessage: 'Ah, e qual é o seu nome? Assim já te atendo melhor por aqui.',
   firstContactMessages: [
     'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², infraestrutura planejada, lazer completo e segurança 24 horas.',
-    'Fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, em uma região com qualidade de vida e contato com a natureza.',
+    'Fácil acesso pela Rodovia Dom Pedro I, perto da área da Pedreira, a aproximadamente 50 minutos de São Paulo.',
+    'Me conta, quais são suas dúvidas? Vou responder todas.',
   ],
   byIntent: {
     preco_valor_lote: [
-      'O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.',
+      'O Évora tem lotes a partir de R$279.000,00, com metro quadrado a partir de R$775,00. O valor final depende da unidade e das condições escolhidas.\n\nQuer que eu te explique também as formas de pagamento?',
     ],
     metragem_faixa: [
-      'No Évora, os lotes ficam na faixa de 360 m² a 775 m². Para confirmar metragem específica e unidade disponível, o corretor responsável valida em tempo real.',
+      'Os lotes do Évora vão de 360 m² a 725 m². As opções específicas variam conforme a unidade disponível.\n\nQuer que eu te explique os tipos de lote que existem no empreendimento?',
+    ],
+    metragem_especifica: [
+      'Os lotes do Évora ficam na faixa de 360 m² a 725 m². Eu não consigo confirmar disponibilidade de uma metragem específica por aqui, porque isso muda conforme as unidades disponíveis.\n\nPosso te encaminhar para o corretor responsável ou, se preferir, te ajudar a agendar uma visita?',
     ],
     parcela_simulacao: [
       'A parcela depende da forma de pagamento e da opção escolhida.\n\nTemos planos estendidos em até 120x para parcelas mais baixas, parcelamento sem juros em até 48x e financiamento direto com a construtora.\n\nQuer que eu encaminhe para um corretor fazer uma simulação certinha pra você?',
@@ -44,10 +49,10 @@ export const ANA_COMMERCIAL_RULES = {
       'O financiamento é facilitado por ser direto com a construtora, com menos burocracia e mais facilidade para você.',
     ],
     localizacao_endereco: [
-      'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, em uma região com qualidade de vida e contato com a natureza.',
+      'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I e a aproximadamente 50 minutos de São Paulo. É uma região com perfil mais tranquilo, contato com natureza e boa qualidade de vida.\n\nQuer que eu te envie também o endereço certinho?',
     ],
     endereco: [
-      'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, em uma região com qualidade de vida e contato com a natureza.',
+      'Fica na Estrada dos Pires, s/n, na região da Pedreira, bairro Rio Abaixo, em Atibaia.',
     ],
     visita_agendamento: [
       'Perfeito! Pra agendarmos sua visita, só preciso saber seu nome, dia e horário que prefere.',
@@ -60,13 +65,13 @@ export const ANA_COMMERCIAL_RULES = {
       'O valor de condomínio vai depender das definições feitas pelos próprios moradores e associação do condomínio, mas temos uma estimativa entre R$400,00 e R$700,00.',
     ],
     areas_lazer: [
-      'As áreas de lazer do Évora incluem:\nPiscina adulto\nAcademia\nSalão de festas\nPlayground\nCoworking\nEspaço zen\nFireplace\nQuadra de beach tennis\nCampo society\nEstação para carros elétricos\nPortaria 24h com controle de acesso.',
+      'O lazer do Évora é bem completo para o dia a dia da família.\n\nTem piscina adulto, piscina infantil, academia, salão de festas, playground, coworking, espaço zen, fireplace, quadra de beach tennis, campo society, praça interna e áreas verdes.\n\nTambém conta com estação para carros elétricos e portaria 24h com controle de acesso.\n\nQuer que eu te fale mais sobre a segurança ou sobre a localização?',
     ],
     seguranca_portaria: [
       'O Évora conta com portaria 24 horas com controle de acesso.',
     ],
     quantidade_lotes_info_gap: [
-      'Ainda não tenho essa informação exata liberada por aqui.\n\nPosso te encaminhar para o corretor responsável ou, se preferir, te ajudar a agendar uma visita.',
+      'O Évora tem 145 lotes no total, com opções a partir de 360 m².\n\nQuer que eu te explique as opções de tamanho?',
     ],
     disponibilidade_simulacao_desconto: [
       'Esses detalhes variam conforme as opções disponíveis. Posso te encaminhar para o corretor responsável ou, se preferir, te ajudar a agendar uma visita.',

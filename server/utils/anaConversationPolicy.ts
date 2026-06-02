@@ -711,18 +711,13 @@ function replyAnswersDeterministicTopic(replyText: string, topic: DeterministicT
 
 function buildCanonicalLazerReply(): string {
   return [
-    'As areas de lazer do Evora incluem:',
-    'Piscina adulto',
-    'Academia',
-    'Salao de festas',
-    'Playground',
-    'Coworking',
-    'Espaco zen',
-    'Fireplace',
-    'Quadra de beach tennis',
-    'Campo society',
-    'Estacao para carros eletricos',
-    'Portaria 24h com controle de acesso.',
+    'O lazer do Evora e bem completo para o dia a dia da familia.',
+    '',
+    'Tem piscina adulto, piscina infantil, academia, salao de festas, playground, coworking, espaco zen, fireplace, quadra de beach tennis, campo society, praca interna e areas verdes.',
+    '',
+    'Tambem conta com estacao para carros eletricos e portaria 24h com controle de acesso.',
+    '',
+    'Quer que eu te fale mais sobre a seguranca ou sobre a localizacao?',
   ].join('\n');
 }
 
@@ -749,11 +744,11 @@ function buildCanonicalLocalizacaoReply(): string {
 }
 
 function buildCanonicalValoresReply(): string {
-  return 'O valor inicial do Evora e a partir de R$279.000,00, e o metro quadrado comeca em R$775,00.';
+  return 'O Evora tem lotes a partir de R$279.000,00, com metro quadrado a partir de R$775,00. O valor final depende da unidade e das condicoes escolhidas.';
 }
 
 function buildLotCountInfoGapReply(): string {
-  return 'No Evora, os lotes ficam na faixa de 360 m2 a 775 m2. Para confirmar metragem especifica e unidade disponivel, o corretor responsavel valida em tempo real.';
+  return 'O Evora tem 145 lotes no total, com opcoes a partir de 360 m2.';
 }
 
 function buildDeterministicTopicReply(params: {

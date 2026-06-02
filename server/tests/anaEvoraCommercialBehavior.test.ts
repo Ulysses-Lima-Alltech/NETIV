@@ -14,10 +14,10 @@ test('primeira resposta do fluxo comercial exige pergunta contextual no engine',
   assert.match(source, /pickContextualCommercialFollowupQuestion/);
 });
 
-test('regiao/localizacao usa base canonica do Evora', () => {
+test('regiao/localizacao usa base canonica do Evora sem referencia inventada', () => {
   const rule = resolveAnaCommercialRule({
-    enterpriseName: 'Évora',
-    userMessage: 'onde fica?',
+    enterpriseName: 'Evora',
+    userMessage: 'me fala da regiao',
     isFirstAnaReply: false,
   });
   assert.equal(rule?.ruleId, 'localizacao_endereco');
@@ -25,7 +25,8 @@ test('regiao/localizacao usa base canonica do Evora', () => {
   assert.match(text, /Atibaia/i);
   assert.match(text, /Pedreira\/Rio Abaixo/i);
   assert.match(text, /Rodovia Dom Pedro I/i);
-  assert.match(text, /50 minutos de São Paulo/i);
+  assert.match(text, /50 minutos de Sao Paulo|50 minutos de São Paulo/i);
+  assert.equal(/Pinheirinho/i.test(text), false);
 });
 
 test('localizacao com link envia em partes separadas no engine', () => {
@@ -33,76 +34,91 @@ test('localizacao com link envia em partes separadas no engine', () => {
   assert.match(source, /\[ANA_LOCATION_RESPONSE_SPLIT\]/);
   assert.match(source, /\[ANA_LOCATION_LINK_SENT\]/);
   assert.match(source, /locationLinkMessages\.push\(resolvedLocationLink\)/);
+  assert.match(source, /https:\/\/maps\.app\.goo\.gl\/jBoxPM6XRut2iXHSA\?g_st=ic/);
 });
 
 test('pergunta de valor responde base canonica sem fallback de ausencia de dado', () => {
   const output = finalizeAnaReplyText('Ainda nao tenho esse valor por aqui.', {
-    enterpriseName: 'Évora',
+    enterpriseName: 'Evora',
     userMessage: 'qual o valor do lote?',
   });
   assert.match(output, /R\$279\.000,00/);
   assert.match(output, /R\$775,00/);
+  assert.match(output, /valor final depende da unidade/i);
   assert.equal(/nao tenho|não tenho/i.test(output), false);
 });
 
+test('quantidade de lotes responde 145', () => {
+  const rule = resolveAnaCommercialRule({
+    enterpriseName: 'Evora',
+    userMessage: 'quantos lotes tem?',
+    isFirstAnaReply: false,
+  });
+  assert.equal(rule?.ruleId, 'quantidade_lotes_info_gap');
+  const text = (rule?.messages || []).join(' ');
+  assert.match(text, /\b145\b/);
+});
+
 test('pedido de metragem especifica nao confirma disponibilidade pontual', () => {
-  const output = finalizeAnaReplyText('Sim, há lotes de 420 m² disponíveis.', {
-    enterpriseName: 'Évora',
+  const output = finalizeAnaReplyText('Sim, ha lotes de 420 m2 disponiveis.', {
+    enterpriseName: 'Evora',
     userMessage: 'tem lote de 420m?',
   });
-  assert.match(output, /360 m² a 775 m²/i);
-  assert.match(output, /corretor responsável|corretor responsavel/i);
+  assert.match(output, /360 m² a 725 m²|360 m2 a 725 m2/i);
+  assert.match(output, /nao consigo confirmar disponibilidade|não consigo confirmar disponibilidade/i);
   assert.equal(/sim,\s*h[aá]/i.test(output), false);
 });
 
-test('"qual o tamanho" responde faixa de metragem sem prometer unidade', () => {
+test('metragem geral responde faixa 360 a 725 sem prometer unidade', () => {
   const output = finalizeAnaReplyText('Posso confirmar depois.', {
-    enterpriseName: 'Évora',
+    enterpriseName: 'Evora',
     userMessage: 'qual o tamanho dos lotes?',
   });
-  assert.match(output, /360 m² a 775 m²/i);
-  assert.match(output, /corretor responsável|corretor responsavel/i);
+  assert.match(output, /360 m² a 725 m²|360 m2 a 725 m2/i);
+  assert.match(output, /opcoes especificas variam|opções específicas variam/i);
 });
 
-test('lazer vem em formato WhatsApp com itens autorizados e sem numeral quebrado', () => {
-  const output = finalizeAnaReplyText('Tem algum ponto específico que você quer que eu detalhe melhor?', {
-    enterpriseName: 'Évora',
-    userMessage: 'quais as áreas de lazer?',
+test('lazer vem bonito e sem numeral quebrado', () => {
+  const output = finalizeAnaReplyText('Tem algum ponto especifico que voce quer que eu detalhe melhor?', {
+    enterpriseName: 'Evora',
+    userMessage: 'e o lazer?',
   });
-  assert.match(output, /Piscina adulto/);
-  assert.match(output, /Academia/);
-  assert.match(output, /Salão de festas|Salao de festas/);
-  assert.match(output, /Playground/);
-  assert.match(output, /Coworking/);
-  assert.match(output, /Espaço zen|Espaco zen/);
-  assert.match(output, /Fireplace/);
-  assert.match(output, /Quadra de beach tennis/);
-  assert.match(output, /Campo society/);
-  assert.match(output, /Estação para carros elétricos|Estacao para carros eletricos/);
-  assert.match(output, /Portaria 24h com controle de acesso/);
-  assert.equal(/\n\d+\s*$/.test(output), false);
+  assert.match(output, /piscina adulto/i);
+  assert.match(output, /piscina infantil/i);
+  assert.match(output, /academia/i);
+  assert.match(output, /salao de festas|salão de festas/i);
+  assert.match(output, /playground/i);
+  assert.match(output, /coworking/i);
+  assert.match(output, /espaco zen|espaço zen/i);
+  assert.match(output, /fireplace/i);
+  assert.match(output, /beach tennis/i);
+  assert.match(output, /campo society/i);
+  assert.match(output, /praca interna|praça interna/i);
+  assert.match(output, /areas verdes|áreas verdes/i);
+  assert.equal(/(^|\n)\s*1\s*$/m.test(output), false);
 });
 
-test('"me conta mais" depois de lazer nao inventa detalhe nem gera lista quebrada', () => {
+test('"me conta mais" depois de lazer nao inventa detalhe', () => {
   const output = finalizeAnaReplyText('1', {
-    enterpriseName: 'Évora',
+    enterpriseName: 'Evora',
     userMessage: 'me conta mais',
   });
-  assert.equal(/\b1\b/.test(output), false);
-  assert.match(output, /segurança|seguranca|localização|localizacao|corretor/i);
+  assert.equal(/(^|\n)\s*1\s*$/m.test(output), false);
+  assert.match(output, /quer seguir pela seguranca ou pela localizacao|quer seguir pela segurança ou pela localização/i);
 });
 
-test('"Obrigado" vira "Obrigada" no guard final', () => {
+test('"Obrigado" vira "Obrigada"', () => {
   const output = finalizeAnaReplyText('Muito obrigado pela mensagem. Obrigado!', {
-    enterpriseName: 'Évora',
+    enterpriseName: 'Evora',
     userMessage: 'ok',
   });
   assert.equal(/obrigado/i.test(output), false);
   assert.match(output, /obrigada/i);
 });
 
-test('pergunta nova apos oferta continua bypassando pending_resolution_choice', () => {
-  assert.equal(isExplicitResolutionChoice('tem lote de 420m?'), null);
+test('oferta corretor/visita nao bloqueia pergunta nova', () => {
+  assert.equal(isExplicitResolutionChoice('tem seguranca?'), null);
+  assert.equal(isExplicitResolutionChoice('qual o valor?'), null);
 });
 
 test('preco nao entra em knowledge gap apenas por eixo', () => {

@@ -1159,7 +1159,7 @@ function buildOnlyNewLazerItemsReply(newItems: string[]): string {
 function isLocationLinkRequest(text: string): boolean {
   const n = normText(text || '');
   if (!n) return false;
-  return /\b(tem o link da localizacao|tem link da localizacao|link da localizacao|link de localizacao|link com a localizacao|google maps|maps|mapa|rota|como chegar|manda localizacao|manda a localizacao|manda a localizacao pfv|me envia a localizacao|me envia localizacao|me manda localizacao|me manda a localizacao|localizacao exata|endereco com numero|tem numero|numero do endereco|onde fica|nao entendi onde fica|endereco|localizacao)\b/.test(
+  return /\b(tem o link da localizacao|tem link da localizacao|link da localizacao|link de localizacao|link com a localizacao|google maps|maps|mapa|rota|como chegar|manda localizacao|manda a localizacao|manda a localizacao pfv|me envia a localizacao|me envia localizacao|me manda localizacao|me manda a localizacao|localizacao exata|endereco com numero|tem numero|numero do endereco|tem o endereco|me passa o endereco|qual o endereco)\b/.test(
     n
   );
 }
@@ -1256,6 +1256,18 @@ function buildEvoraLocationOverview(args: {
     return `${canonicalBase} Endereco de referencia: ${addressLabel}.`;
   }
   return canonicalBase;
+}
+
+function buildEvoraRegionCanonicalReply(): string {
+  return 'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I e a aproximadamente 50 minutos de São Paulo. É uma região com perfil mais tranquilo, contato com natureza e boa qualidade de vida.';
+}
+
+function buildEvoraAddressCanonicalReply(): string {
+  return 'Fica na Estrada dos Pires, s/n, na região da Pedreira, bairro Rio Abaixo, em Atibaia.';
+}
+
+function getEvoraCanonicalMapsLink(): string {
+  return 'https://maps.app.goo.gl/jBoxPM6XRut2iXHSA?g_st=ic';
 }
 
 function pickLocationLinkFromKnowledge(knowledgeText: string): string | null {
@@ -5551,11 +5563,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     if (isLocationLinkRequest(trimmed) && isEvoraEnterpriseName(ent?.name ?? null)) {
-      const resolvedLocationLink = authorizedLocationLink ?? knowledgeLocationLink;
-      const locationOverview = buildEvoraLocationOverview({
-        addressComplete: authorizedLocationAddress.addressComplete,
-        addressNumber: authorizedLocationAddress.addressNumber,
-      });
+      const resolvedLocationLink = getEvoraCanonicalMapsLink();
+      const locationOverview = buildEvoraAddressCanonicalReply();
       const finalQuestionHistory = collectRecentAssistantQuestionsForFinalCheck({
         flowState: flowStateParsed,
         recentMessages: rows.map((message) => ({
@@ -5569,18 +5578,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         topicHint: 'location',
       });
       const locationLinkMessages: string[] = [locationOverview];
-      if (resolvedLocationLink) {
-        locationLinkMessages.push(resolvedLocationLink);
-        console.log('[ANA_LOCATION_LINK_SENT]', {
-          conversationId,
-          linkPreview: resolvedLocationLink.slice(0, 120),
-        });
-      } else {
-        locationLinkMessages.push('No momento, eu nao tenho um link de mapa autorizado por aqui.');
-        console.log('[ANA_LOCATION_LINK_UNAVAILABLE]', {
-          conversationId,
-        });
-      }
+      locationLinkMessages.push(resolvedLocationLink);
+      console.log('[ANA_LOCATION_LINK_SENT]', {
+        conversationId,
+        linkPreview: resolvedLocationLink.slice(0, 120),
+      });
       if (contextualLocationQuestion) {
         locationLinkMessages.push(contextualLocationQuestion);
       }
@@ -5679,7 +5681,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
     }
 
-    if (!evoraKnowledgeDrivenMode) {
+    if (isEvoraEnterpriseName(ent?.name ?? null)) {
     const commercialRule = resolveAnaCommercialRule({
       enterpriseName: ent?.name ?? null,
       userMessage: trimmed,
@@ -5750,11 +5752,23 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           }
         : null;
     const effectiveCommercialRule = forcedCommercialRule ?? commercialRule ?? canonicalLocationFallbackRule;
+    const shouldEnforceCanonicalPriorityRule =
+      effectiveCommercialRule != null &&
+      (
+        effectiveCommercialRule.ruleId === 'first_contact' ||
+        effectiveCommercialRule.ruleId === 'preco_valor_lote' ||
+        effectiveCommercialRule.ruleId === 'quantidade_lotes_info_gap' ||
+        effectiveCommercialRule.ruleId === 'metragem_faixa' ||
+        effectiveCommercialRule.ruleId === 'metragem_especifica' ||
+        effectiveCommercialRule.ruleId === 'localizacao_endereco' ||
+        effectiveCommercialRule.ruleId === 'endereco' ||
+        effectiveCommercialRule.ruleId === 'areas_lazer'
+      );
     if (
       effectiveCommercialRule &&
       anaDecision.canRespond &&
       anaDecision.outboundAllowed &&
-      !isKnowledgeGapTurn
+      (shouldEnforceCanonicalPriorityRule || !isKnowledgeGapTurn)
     ) {
       console.log('[ANA_LLM_DECISION]', {
         conversationId,
@@ -5842,6 +5856,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           axis: effectiveCommercialRule.commercialAxis,
         });
       }
+      if (effectiveCommercialRule.ruleId === 'metragem_especifica') {
+        console.log('[ANA_SPECIFIC_LOT_SIZE_REQUEST_DETECTED]', {
+          conversationId,
+          userPreview: trimmed.slice(0, 180),
+        });
+        console.log('[ANA_SPECIFIC_LOT_AVAILABILITY_BLOCKED]', {
+          conversationId,
+          reason: 'canonical_specific_lot_size_reply',
+        });
+      }
       if (effectiveCommercialRule.inheritedIntent === 'payment_terms') {
         console.log('[ANA_PAYMENT_INTENT_CONTEXT_GUARD]', {
           conversationId,
@@ -5861,6 +5885,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         effectiveCommercialRule.ruleId === 'seguranca_portaria' ||
         effectiveCommercialRule.ruleId === 'quantidade_lotes_info_gap' ||
         effectiveCommercialRule.ruleId === 'metragem_faixa' ||
+        effectiveCommercialRule.ruleId === 'metragem_especifica' ||
         effectiveCommercialRule.ruleId === 'preco_valor_lote' ||
         effectiveCommercialRule.ruleId === 'parcela_simulacao' ||
         effectiveCommercialRule.ruleId === 'formas_pagamento' ||
@@ -5966,6 +5991,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         effectiveCommercialRule.ruleId !== 'visita_agendamento' &&
         effectiveCommercialRule.ruleId !== 'quantidade_lotes_info_gap' &&
         effectiveCommercialRule.ruleId !== 'metragem_faixa' &&
+        effectiveCommercialRule.ruleId !== 'metragem_especifica' &&
         effectiveCommercialRule.ruleId !== 'preco_valor_lote' &&
         effectiveCommercialRule.ruleId !== 'parcela_simulacao' &&
         effectiveCommercialRule.ruleId !== 'entrada' &&
@@ -8722,10 +8748,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (lastAxisForRepetition === 'lazer') {
         replyText = buildCanonicalLazerFullReply();
       } else if (lastAxisForRepetition === 'localizacao') {
-        replyText =
-          'Claro. O Évora fica em Atibaia, na região da Pedreira, com acesso pela Rodovia Dom Pedro I e a cerca de 50 minutos de São Paulo.';
+        replyText = `Claro. ${buildEvoraRegionCanonicalReply()}`;
       } else if (lastAxisForRepetition === 'preco') {
-        replyText = 'Claro. O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.';
+        replyText =
+          'Claro. O Évora tem lotes a partir de R$279.000,00, com metro quadrado a partir de R$775,00. O valor final depende da unidade e das condições escolhidas.';
       } else if (lastAxisForRepetition === 'financiamento') {
         replyText =
           'Claro. Temos planos estendidos em até 120x, parcelamento sem juros em até 48x e financiamento direto com a construtora.';
@@ -10245,7 +10271,8 @@ function buildConversationalCanonicalContext(lastAxis: string | null): string {
   return [
     'CONTEXTO CANÔNICO AUTORIZADO',
     '- Évora é loteamento fechado em Atibaia.',
-    '- Lotes na faixa de 360 m² a 775 m².',
+    '- Quantidade total de lotes: 145.',
+    '- Lotes na faixa de 360 m² a 725 m².',
     '- Valor inicial a partir de R$279.000,00.',
     '- Metro quadrado a partir de R$775,00.',
     '- Região da Pedreira / bairro Rio Abaixo.',
@@ -10273,7 +10300,7 @@ function buildConversationalCanonicalFallback(lastAxis: string | null): string {
     return 'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, em uma região com qualidade de vida e contato com a natureza.';
   }
   if (lastAxis === 'preco' || lastAxis === 'preco_valor_lote') {
-    return 'O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.';
+    return 'O Évora tem lotes a partir de R$279.000,00, com metro quadrado a partir de R$775,00. O valor final depende da unidade e das condições escolhidas.';
   }
   if (lastAxis === 'financiamento' || lastAxis === 'formas_pagamento') {
     return 'Temos planos estendidos em até 120x, parcelamento sem juros em até 48x e financiamento direto com a construtora.';

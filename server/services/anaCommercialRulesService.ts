@@ -84,9 +84,16 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
   }
   if (
     hasAny(n, [
-      /\b(quais?\s+os?\s+tamanhos?|qual\s+o\s+tamanho|metragem|metragens|tamanho\s+dos\s+lotes?)\b/,
       /\b(lote|terreno)\s*(de|com)?\s*\d{2,4}\s*m(?:2|²)?\b/,
-      /\b\d{2,4}\s*m(?:2|²)\b/,
+      /\btem\s+\d{2,4}\s*m(?:2|²)?\b/,
+      /\bquero\s+um\s+lote\s+de\s+\d{2,4}\s*m(?:2|²)?\b/,
+    ])
+  ) {
+    return 'metragem_especifica';
+  }
+  if (
+    hasAny(n, [
+      /\b(quais?\s+os?\s+tamanhos?|qual\s+o\s+tamanho|metragem|metragens|tamanho\s+dos\s+lotes?)\b/,
     ])
   ) {
     return 'metragem_faixa';
@@ -97,7 +104,7 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
 
   if (
     hasAny(n, [
-      /\b(qual o preco|quero saber preco|queria saber preco|quanto custa|qual o valor|valor do lote|valor dos lotes|quanto e o lote|a partir de quanto|preco|valor|investimento|metro quadrado|m2)\b/,
+      /\b(qual o preco|quero saber preco|queria saber preco|quanto custa|qual o valor|valor do lote|valor dos lotes|quanto e o lote|a partir de quanto|preco|valor|investimento|metro quadrado|m2|m²)\b/,
     ])
   ) {
     return 'preco_valor_lote';
@@ -152,6 +159,7 @@ export type ResolvedAnaCommercialRule = {
 function axisFromIntent(intent: AnaCommercialIntent): AnaCommercialAxis {
   if (intent === 'preco_valor_lote') return 'price';
   if (intent === 'metragem_faixa') return 'availability';
+  if (intent === 'metragem_especifica') return 'availability';
   if (intent === 'parcela_simulacao') return 'installment';
   if (intent === 'formas_pagamento' || intent === 'financiamento') return 'payment_terms';
   if (intent === 'entrada') return 'entry';

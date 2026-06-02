@@ -78,10 +78,10 @@ const EVORA_LOCATION_REPLY =
   'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, em uma região com qualidade de vida e contato com a natureza.';
 
 const EVORA_ADDRESS_REPLY =
-  'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, em uma região com qualidade de vida e contato com a natureza.';
+  'Fica na Estrada dos Pires, s/n, na região da Pedreira, bairro Rio Abaixo, em Atibaia.';
 
 const EVORA_MAPS_REPLY =
-  'Eu não tenho um link de localização exata liberado por aqui. Posso te encaminhar para o corretor responsável ou, se preferir, te ajudar a agendar uma visita.';
+  'https://maps.app.goo.gl/jBoxPM6XRut2iXHSA?g_st=ic';
 
 function isUserAskingAboutLocation(text: string | null | undefined): boolean {
   const n = normClosure(text || '');
@@ -132,7 +132,7 @@ function isUserAskingAboutLazer(text: string | null | undefined): boolean {
 }
 
 const EVORA_LAZER_REPLY =
-  'As áreas de lazer do Évora incluem:\nPiscina adulto\nAcademia\nSalão de festas\nPlayground\nCoworking\nEspaço zen\nFireplace\nQuadra de beach tennis\nCampo society\nEstação para carros elétricos\nPortaria 24h com controle de acesso.';
+  'O lazer do Évora é bem completo para o dia a dia da família.\n\nTem piscina adulto, piscina infantil, academia, salão de festas, playground, coworking, espaço zen, fireplace, quadra de beach tennis, campo society, praça interna e áreas verdes.\n\nTambém conta com estação para carros elétricos e portaria 24h com controle de acesso.';
 
 function replyHasEvoraLazerItems(text: string): boolean {
   const n = normClosure(text || '');
@@ -174,7 +174,7 @@ function forceEvoraLazerReplyWhenNeeded(reply: string, opts?: FinalizeAnaReplyOp
 }
 
 const EVORA_LAZER_CONTINUATION_SAFE_REPLY =
-  'Posso te detalhar agora a parte de segurança ou de localização. Se preferir, também te conecto ao corretor para confirmar pontos específicos.';
+  'Sobre lazer, o principal é essa estrutura completa para convivência, família e atividades do dia a dia. Para detalhes específicos de cada espaço, o corretor consegue complementar melhor. Quer seguir pela segurança ou pela localização?';
 
 function userAskedToContinueDetails(text: string | null | undefined): boolean {
   const n = normClosure(text || '');
@@ -492,7 +492,7 @@ const BROKER_DETAIL_ROUTING_TEXT =
   'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?';
 
 const EVORA_LOT_COUNT_ROUTING_REPLY =
-  'No Évora, os lotes ficam na faixa de 360 m² a 775 m². Para confirmar metragem específica e unidade disponível, o corretor responsável valida em tempo real.';
+  'O Évora tem 145 lotes no total, com opções a partir de 360 m².';
 
 const DISCOUNT_ROUTING_REPLY =
   'Desconto ou condição especial depende de análise. O corretor consegue te passar isso certinho no atendimento. Que tal marcarmos uma visita?';
@@ -580,15 +580,17 @@ function sanitizeDiscountRestrictedReply(text: string, userMessage?: string | nu
 }
 
 const EVORA_PRICE_REPLY =
-  'O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.';
+  'O Évora tem lotes a partir de R$279.000,00, com metro quadrado a partir de R$775,00. O valor final depende da unidade e das condições escolhidas.';
 
 const EVORA_PAYMENT_REPLY =
   'A entrada padrão é de 20%. Para parcelas mais baixas, temos planos estendidos em até 120x; para parcelamento sem juros, temos planos em até 48x + IGPM. O financiamento é direto com a construtora, com menos burocracia.';
 
 const EVORA_INSTALLMENT_REDIRECT_REPLY =
   'A simulação certinha depende do lote e do plano escolhido. O corretor te passa tudo direitinho no atendimento. Que tal marcarmos uma visita?';
+const EVORA_LOT_SIZE_GENERAL_REPLY =
+  'Os lotes do Évora vão de 360 m² a 725 m². As opções específicas variam conforme a unidade disponível.';
 const EVORA_LOT_SIZE_RANGE_REPLY =
-  'No Évora, os lotes ficam na faixa de 360 m² a 775 m². Para confirmar metragem específica e unidade disponível, o corretor responsável valida em tempo real.';
+  'Os lotes do Évora ficam na faixa de 360 m² a 725 m². Eu não consigo confirmar disponibilidade de uma metragem específica por aqui, porque isso muda conforme as unidades disponíveis.';
 
 function isUserAskingEvoraInstallment(text: string | null | undefined): boolean {
   const n = normClosure(text || '');
@@ -641,12 +643,16 @@ function sanitizeEvoraPriceAndPaymentReply(text: string, opts?: FinalizeAnaReply
     console.log('[ANA_SPECIFIC_LOT_AVAILABILITY_BLOCKED]', {
       reason: 'specific_lot_size_needs_broker_confirmation',
     });
-    return EVORA_LOT_SIZE_RANGE_REPLY;
+    return `${EVORA_LOT_SIZE_RANGE_REPLY} Posso te encaminhar para o corretor responsável ou, se preferir, te ajudar a agendar uma visita?`;
   }
-  if (isUserAskingLotSizeRange(userMessage)) return EVORA_LOT_SIZE_RANGE_REPLY;
+  if (isUserAskingLotSizeRange(userMessage)) {
+    return `${EVORA_LOT_SIZE_GENERAL_REPLY} Quer que eu te explique os tipos de lote que existem no empreendimento?`;
+  }
   if (isUserAskingEvoraInstallment(userMessage)) return EVORA_INSTALLMENT_REDIRECT_REPLY;
   if (isUserAskingEvoraPayment(userMessage)) return EVORA_PAYMENT_REPLY;
-  if (isUserAskingEvoraPrice(userMessage)) return EVORA_PRICE_REPLY;
+  if (isUserAskingEvoraPrice(userMessage)) {
+    return `${EVORA_PRICE_REPLY} Quer que eu te explique também as formas de pagamento?`;
+  }
 
   if (/\bpreco\b.*\bnao foi divulgado\b/i.test(normClosure(clean))) {
     return EVORA_PRICE_REPLY;

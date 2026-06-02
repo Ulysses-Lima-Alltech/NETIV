@@ -46,9 +46,7 @@ function n(text: string | null | undefined): string {
 }
 
 const GAP_PATTERNS: Array<{ pattern: RegExp; intent: AnaKnowledgeGapIntent; reason: string }> = [
-  { pattern: /\b(quantos?\s+lotes?|numero\s+de\s+lotes?)\b/, intent: 'lot_count', reason: 'lot_count_not_authorized' },
   { pattern: /\b(lote menor|menor lote|quais lotes|lote na quadra|lotes disponiveis|disponibilidade de lote)\b/, intent: 'lot_availability', reason: 'lot_availability_requires_human_validation' },
-  { pattern: /\b(quais?\s+os?\s+tamanhos?|opcoes?\s+de\s+tamanho|metragens?|metragem\s+dos\s+lotes?|tamanho\s+dos\s+lotes?|quais?\s+tamanhos?)\b/, intent: 'lot_size_options', reason: 'lot_size_options_requires_human_validation' },
   { pattern: /\b(preco exato|valor exato|quanto custa exatamente|valor final)\b/, intent: 'exact_price', reason: 'exact_price_not_authorized' },
   { pattern: /\b(me manda a tabela|manda a tabela|tabela comercial)\b/, intent: 'commercial_table', reason: 'commercial_table_blocked' },
   { pattern: /\b(simulacao|simular|faz uma simulacao)\b/, intent: 'simulation', reason: 'simulation_requires_human_validation' },
@@ -78,7 +76,7 @@ export function detectAnaKnowledgeGap(args: {
     }
   }
 
-  if (axis === 'disponibilidade' || axis === 'financiamento') {
+  if (axis === 'financiamento') {
     return {
       hasKnowledgeGap: true,
       reason: `axis_${axis}_requires_authorized_or_human_validation`,
@@ -129,9 +127,9 @@ export function buildLeadQualificationBridgeReply(args: BuildLeadQualificationBr
 
   if (intent === 'lot_size_options') {
     return [
-      'No Evora, os lotes ficam na faixa de 360 m2 a 775 m2.',
+      'Os lotes do Evora ficam na faixa de 360 m2 a 725 m2.',
       'Para confirmar metragem especifica e unidade disponivel, o corretor responsavel valida em tempo real.',
-      'Se preferir, posso te conectar com o corretor.',
+      'Posso te encaminhar para o corretor responsavel ou, se preferir, te ajudar a agendar uma visita?',
     ].join(' ');
   }
 
