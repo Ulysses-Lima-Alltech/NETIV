@@ -64,3 +64,12 @@ ana-prod-base-*.json
 ana-webhook-real-*.csv
 ana-webhook-real-*.json
 alterar_contatos_altis.sql
+
+# Any local ECS/AWS task definition dumps
+*taskdef*.json
+taskdef*.json
+new-taskdef*.json
+tmp-taskdef*.json
+current-taskdef.json
+new-taskdef.json
+ssm-portforward.json
