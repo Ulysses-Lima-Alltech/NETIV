@@ -299,7 +299,7 @@ test('observabilidade: engine registra decisão de chamada do Qwen e contexto', 
 
 test('modo conversacional local/Qwen permite texto natural com responseFormatJson false', () => {
   const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
-  assert.match(source, /const responseFormatJsonForTurn = !conversationalQwenMode/);
+  assert.match(source, /const responseFormatJsonForTurn = isKnowledgeGapTurn === true \? false : !conversationalQwenMode/);
   assert.match(source, /responseFormatJson: responseFormatJsonForTurn/);
 });
 

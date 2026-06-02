@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyLlmProviderError } from '../utils/llmProviderDiagnostics.js';
+import { classifyLlmProviderError, detectLlmProvider } from '../utils/llmProviderDiagnostics.js';
+
+test('detecta Bedrock por env ou baseUrl', () => {
+  const previous = process.env.ANA_PROVIDER;
+  process.env.ANA_PROVIDER = 'bedrock';
+  assert.equal(detectLlmProvider(null), 'bedrock');
+  if (previous === undefined) delete process.env.ANA_PROVIDER;
+  else process.env.ANA_PROVIDER = previous;
+
+  assert.equal(detectLlmProvider('bedrock'), 'bedrock');
+});
 
 test('classifica quota/billing em 429', () => {
   const result = classifyLlmProviderError({

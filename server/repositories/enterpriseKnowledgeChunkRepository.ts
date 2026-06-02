@@ -6,12 +6,24 @@ import {
   type TemporalStatus,
 } from '../utils/knowledgeChunkClassifier.js';
 
-const MAX_CONTEXT_CHARS = 48_000;
-/** Garante contexto mínimo no modo focado mesmo quando o overlap lexical com a mensagem é fraco. */
-const MIN_CHUNKS_IN_PROMPT = 5;
-const MAX_CHUNKS_IN_PROMPT = 16;
-const EXPANDED_MIN_CHUNKS_IN_PROMPT = 10;
-const EXPANDED_MAX_CHUNKS_IN_PROMPT = 28;
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return Math.floor(value);
+}
+
+const MAX_CONTEXT_CHARS = readPositiveIntEnv('ANA_RAG_MAX_CONTEXT_CHARS', 9_000);
+const MAX_CHUNKS_IN_PROMPT = readPositiveIntEnv('ANA_RAG_MAX_CHUNKS', 3);
+/** Mantém RAG seletivo; sem forçar preenchimento com trechos fracos. */
+const MIN_CHUNKS_IN_PROMPT = Math.min(readPositiveIntEnv('ANA_RAG_MIN_CHUNKS', 1), MAX_CHUNKS_IN_PROMPT);
+const EXPANDED_MAX_CHUNKS_IN_PROMPT = readPositiveIntEnv(
+  'ANA_RAG_EXPANDED_MAX_CHUNKS',
+  Math.max(MAX_CHUNKS_IN_PROMPT, Math.min(6, MAX_CHUNKS_IN_PROMPT * 2))
+);
+const EXPANDED_MIN_CHUNKS_IN_PROMPT = Math.min(
+  readPositiveIntEnv('ANA_RAG_EXPANDED_MIN_CHUNKS', Math.min(2, EXPANDED_MAX_CHUNKS_IN_PROMPT)),
+  EXPANDED_MAX_CHUNKS_IN_PROMPT
+);
 
 function normWords(s: string): Set<string> {
   const n = s

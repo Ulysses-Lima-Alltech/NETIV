@@ -1,4 +1,4 @@
-export type LlmProvider = 'openai' | 'openrouter' | 'local' | 'mock' | 'unknown';
+export type LlmProvider = 'openai' | 'openrouter' | 'bedrock' | 'local' | 'mock' | 'unknown';
 
 export type LlmClassifiedError =
   | 'OPENAI_INSUFFICIENT_QUOTA_OR_BILLING'
@@ -27,8 +27,11 @@ export interface ClassifiedLlmError {
 }
 
 export function detectLlmProvider(baseUrl: string | null | undefined): LlmProvider {
+  const forcedProvider = String(process.env.ANA_PROVIDER ?? '').trim().toLowerCase();
+  if (forcedProvider === 'bedrock') return 'bedrock';
   const raw = String(baseUrl ?? '').trim().toLowerCase();
   if (!raw) return 'openai';
+  if (raw === 'bedrock' || raw.includes('bedrock')) return 'bedrock';
   if (raw.includes('openrouter.ai')) return 'openrouter';
   if (
     raw.includes('localhost') ||

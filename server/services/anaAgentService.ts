@@ -458,6 +458,12 @@ const LANGUAGE_HINT: Record<string, string> = {
   culta: 'Tom culto.',
 };
 
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return Math.floor(value);
+}
+
 /** Linhas de variáveis no padrão visual WhatsApp (referência para a Ana replicar ao responder). */
 function formatVars(v: Record<string, string>): string {
   return [
@@ -833,8 +839,9 @@ ${buildFirstReplyCommercialOpeningInstructions(opts)}
 ${buildCustomerNameInstructions(opts)}`;
   }
 
+  const knowledgePromptMaxChars = readPositiveIntEnv('ANA_PROMPT_KNOWLEDGE_MAX_CHARS', 6_000);
   const know = opts.knowledgeText.trim()
-    ? `\n--- Base de conhecimento (trechos + arquivos) ---\n${opts.knowledgeText.slice(0, 52_000)}`
+    ? `\n--- Base de conhecimento (trechos + arquivos) ---\n${opts.knowledgeText.slice(0, knowledgePromptMaxChars)}`
     : '';
 
   if (opts.mode === 'triage' || !opts.enterprise) {

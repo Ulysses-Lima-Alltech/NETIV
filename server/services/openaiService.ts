@@ -5,6 +5,7 @@
   type LlmClassifiedError,
   type LlmProvider,
 } from '../utils/llmProviderDiagnostics.js';
+import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import {
   estimateLlmCostUsd,
   type LlmModelPrice,
@@ -94,6 +95,12 @@ type ChatCompletionApiResponse = {
   error?: { message?: string; code?: string; type?: string; param?: string };
 };
 
+type BedrockUsageShape = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+};
+
 function numberOrZero(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n) || n <= 0) return 0;
@@ -109,6 +116,13 @@ function parseUsage(usage: ChatCompletionUsage | undefined): NonNullable<Generat
     inputTokens
   );
   return { inputTokens, cachedInputTokens, outputTokens, totalTokens };
+}
+
+function parseBedrockUsage(usage: BedrockUsageShape | undefined): NonNullable<GenerateCompletionResult['usage']> {
+  const inputTokens = numberOrZero(usage?.inputTokens);
+  const outputTokens = numberOrZero(usage?.outputTokens);
+  const totalTokens = numberOrZero(usage?.totalTokens) || inputTokens + outputTokens;
+  return { inputTokens, cachedInputTokens: 0, outputTokens, totalTokens };
 }
 
 async function recordLlmUsage(params: {
@@ -175,8 +189,197 @@ async function recordLlmUsage(params: {
   }
 }
 
+function resolveBedrockRegion(): string {
+  return (
+    process.env.ANA_BEDROCK_REGION ||
+    process.env.AWS_BEDROCK_REGION ||
+    process.env.AWS_REGION ||
+    process.env.AWS_DEFAULT_REGION ||
+    'us-east-1'
+  );
+}
+
+function resolveBedrockModel(model: string): string {
+  return (process.env.ANA_BEDROCK_MODEL_ID || model || 'qwen.qwen3-next-80b-a3b').trim();
+}
+
+function buildBedrockConversePayload(messages: ChatMessage[]): {
+  system: Array<{ text: string }> | undefined;
+  messages: Array<{ role: 'user' | 'assistant'; content: Array<{ text: string }> }>;
+} {
+  const systemText = messages
+    .filter((message) => message.role === 'system' && message.content.trim().length > 0)
+    .map((message) => message.content.trim())
+    .join('\n\n');
+  const bedrockMessages: Array<{ role: 'user' | 'assistant'; content: Array<{ text: string }> }> = [];
+  for (const message of messages) {
+    if (message.role === 'system') continue;
+    const content = message.content.trim();
+    if (!content) continue;
+    const role: 'user' | 'assistant' = message.role === 'assistant' ? 'assistant' : 'user';
+    const previous = bedrockMessages[bedrockMessages.length - 1];
+    if (previous && previous.role === role) {
+      previous.content[0] = { text: `${previous.content[0]?.text ?? ''}\n\n${content}`.trim() };
+    } else {
+      bedrockMessages.push({ role, content: [{ text: content }] });
+    }
+  }
+  if (bedrockMessages.length === 0) {
+    bedrockMessages.push({ role: 'user', content: [{ text: 'Responda ao atendimento atual da Ana.' }] });
+  }
+  return {
+    system: systemText ? [{ text: systemText }] : undefined,
+    messages: bedrockMessages,
+  };
+}
+
+async function generateBedrockConverseCompletion(
+  params: GenerateCompletionParams
+): Promise<GenerateCompletionResult> {
+  const provider: LlmProvider = 'bedrock';
+  const model = resolveBedrockModel(params.model);
+  const startedAt = Date.now();
+  const payload = buildBedrockConversePayload(params.messages);
+  const client = new BedrockRuntimeClient({ region: resolveBedrockRegion() });
+  const maxTokens = Number.isFinite(params.maxTokens) && params.maxTokens > 0 ? Math.floor(params.maxTokens) : 220;
+  const temperature =
+    Number.isFinite(params.temperature) && params.temperature >= 0
+      ? Math.max(0, Math.min(params.temperature, 1))
+      : 0.5;
+
+  try {
+    const result = await client.send(
+      new ConverseCommand({
+        modelId: model,
+        system: payload.system,
+        messages: payload.messages,
+        inferenceConfig: {
+          maxTokens,
+          temperature,
+        },
+      })
+    );
+    const usage = parseBedrockUsage(result.usage);
+    const cost = estimateLlmCostUsd({
+      model,
+      inputTokens: usage.inputTokens,
+      cachedInputTokens: usage.cachedInputTokens,
+      outputTokens: usage.outputTokens,
+    });
+    const content = (result.output?.message?.content ?? [])
+      .map((block) => ('text' in block ? block.text ?? '' : ''))
+      .join('')
+      .trim();
+    const requestId = result.$metadata.requestId ?? null;
+    const httpStatus = result.$metadata.httpStatusCode ?? null;
+
+    if (!content) {
+      await recordLlmUsage({
+        tracking: params.costTracking,
+        provider,
+        model,
+        usage,
+        success: false,
+        errorCode: 'EMPTY_RESPONSE',
+        latencyMs: Date.now() - startedAt,
+        requestId,
+        httpStatus,
+        price: cost.price,
+        priceMissing: cost.priceMissing,
+        estimatedCostUsd: cost.estimatedCostUsd,
+      });
+      return {
+        success: false,
+        error: 'Resposta vazia do Bedrock Converse.',
+        provider,
+        model,
+        httpStatus: httpStatus ?? undefined,
+        errorCode: 'EMPTY_RESPONSE',
+        classifiedError: 'UNKNOWN_LLM_ERROR',
+        usage,
+        estimatedCostUsd: cost.estimatedCostUsd,
+      };
+    }
+
+    await recordLlmUsage({
+      tracking: params.costTracking,
+      provider,
+      model,
+      usage,
+      success: true,
+      errorCode: null,
+      latencyMs: Date.now() - startedAt,
+      requestId,
+      httpStatus,
+      price: cost.price,
+      priceMissing: cost.priceMissing,
+      estimatedCostUsd: cost.estimatedCostUsd,
+    });
+    return {
+      success: true,
+      content,
+      httpStatus: httpStatus ?? undefined,
+      provider,
+      model,
+      usage,
+      estimatedCostUsd: cost.estimatedCostUsd,
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    const errorWithCode = error as {
+      name?: string;
+      Code?: string;
+      code?: string;
+      $metadata?: { httpStatusCode?: number };
+    };
+    const classified = classifyLlmProviderError({
+      provider,
+      httpStatus: errorWithCode.$metadata?.httpStatusCode ?? null,
+      providerErrorCode: errorWithCode.name ?? errorWithCode.Code ?? errorWithCode.code ?? null,
+      message: msg,
+    });
+    const usage = parseBedrockUsage(undefined);
+    const cost = estimateLlmCostUsd({
+      model,
+      inputTokens: usage.inputTokens,
+      cachedInputTokens: usage.cachedInputTokens,
+      outputTokens: usage.outputTokens,
+    });
+    await recordLlmUsage({
+      tracking: params.costTracking,
+      provider,
+      model,
+      usage,
+      success: false,
+      errorCode: classified.providerErrorCode ?? classified.classifiedError,
+      latencyMs: Date.now() - startedAt,
+      requestId: null,
+      httpStatus: classified.httpStatus,
+      price: cost.price,
+      priceMissing: cost.priceMissing,
+      estimatedCostUsd: cost.estimatedCostUsd,
+    });
+    return {
+      success: false,
+      error: classified.sanitizedMessage,
+      httpStatus: classified.httpStatus ?? undefined,
+      provider,
+      model,
+      errorCode: classified.providerErrorCode,
+      errorType: classified.providerErrorType,
+      classifiedError: classified.classifiedError,
+      usage,
+      estimatedCostUsd: cost.estimatedCostUsd,
+    };
+  }
+}
+
 export async function generateChatCompletion(params: GenerateCompletionParams): Promise<GenerateCompletionResult> {
   let { apiKey, baseUrl, model, messages, temperature, maxTokens, responseFormatJson } = params;
+
+  if (detectLlmProvider(baseUrl) === 'bedrock') {
+    return generateBedrockConverseCompletion(params);
+  }
 
   const localLlmEnabled = String(process.env.ANA_LOCAL_LLM_ENABLED || '').trim().toLowerCase() === 'true';
 

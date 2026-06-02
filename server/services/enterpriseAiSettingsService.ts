@@ -13,7 +13,7 @@ const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_MODEL_HOT = getDefaultOpenAiModelHot();
 const DEFAULT_MODEL_COLD = getDefaultOpenAiModelCold();
 
-export type AiProvider = 'openai';
+export type AiProvider = 'openai' | 'bedrock';
 export type AiApiKeySource = 'enterprise' | 'global_fallback';
 export type AiBlockedReason =
   | 'emergency_block'
@@ -217,6 +217,22 @@ function normalizeBaseUrl(value: string | null | undefined): string | null {
   return normalized.replace(/\/$/, '');
 }
 
+function resolveRuntimeProvider(): AiProvider {
+  return String(process.env.ANA_PROVIDER ?? '').trim().toLowerCase() === 'bedrock'
+    ? 'bedrock'
+    : 'openai';
+}
+
+function resolveBedrockModelId(): string {
+  return (process.env.ANA_BEDROCK_MODEL_ID || 'qwen.qwen3-next-80b-a3b').trim();
+}
+
+function resolveAnaMaxTokens(fallback: number): number {
+  const value = Number(process.env.ANA_MAX_OUTPUT_TOKENS);
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return Math.floor(value);
+}
+
 function assertAllowedModelOrNull(
   model: string | null | undefined,
   field: string,
@@ -293,7 +309,7 @@ function resolveFromRows(
   global: GlobalAiSettings,
   enterprise: EnterpriseAiSettings | null
 ): ResolvedEnterpriseAiSettings {
-  const provider: AiProvider = 'openai';
+  const provider: AiProvider = resolveRuntimeProvider();
   const useGlobalDefaults = enterprise?.useGlobalDefaults ?? true;
   const aiEnabled = enterprise?.aiEnabled ?? true;
   const emergencyBlockEnabled = enterprise?.emergencyBlockEnabled ?? false;
@@ -302,14 +318,22 @@ function resolveFromRows(
   const ownApiKey = trimOrNull(enterprise?.openaiApiKey);
   const globalApiKey = trimOrNull(global.openaiApiKey);
   const hasOwnApiKey = ownApiKey != null;
-  const modelHotLeadRaw = trimOrNull(enterprise?.modelHotLead) ?? trimOrNull(global.modelHotLead);
-  const modelColdLeadRaw = trimOrNull(enterprise?.modelColdLead) ?? trimOrNull(global.modelColdLead);
+  const modelHotLeadRaw =
+    provider === 'bedrock'
+      ? resolveBedrockModelId()
+      : trimOrNull(enterprise?.modelHotLead) ?? trimOrNull(global.modelHotLead);
+  const modelColdLeadRaw =
+    provider === 'bedrock'
+      ? resolveBedrockModelId()
+      : trimOrNull(enterprise?.modelColdLead) ?? trimOrNull(global.modelColdLead);
 
 
   const openaiBaseUrl =
-    normalizeBaseUrl(enterprise?.openaiBaseUrl) ??
-    normalizeBaseUrl(global.openaiBaseUrl) ??
-    DEFAULT_OPENAI_BASE_URL;
+    provider === 'bedrock'
+      ? 'bedrock'
+      : normalizeBaseUrl(enterprise?.openaiBaseUrl) ??
+        normalizeBaseUrl(global.openaiBaseUrl) ??
+        DEFAULT_OPENAI_BASE_URL;
   const modelHotLead = modelHotLeadRaw && isAllowedOpenAiModel(modelHotLeadRaw, openaiBaseUrl)
     ? modelHotLeadRaw
     : null;
@@ -319,7 +343,7 @@ function resolveFromRows(
   const resolvedModelHotLead = modelHotLead ?? DEFAULT_MODEL_HOT;
   const resolvedModelColdLead = modelColdLead ?? DEFAULT_MODEL_COLD;
   const temperature = global.temperature;
-  const maxTokens = global.maxTokens;
+  const maxTokens = provider === 'bedrock' ? resolveAnaMaxTokens(global.maxTokens) : global.maxTokens;
   const leadScoreThreshold = global.leadScoreThreshold;
 
   if (emergencyBlockEnabled) {
@@ -385,6 +409,31 @@ function resolveFromRows(
       openaiApiKey: null,
       openaiApiKeyId: trimOrNull(enterprise?.openaiApiKeyId) ?? trimOrNull(global.openaiApiKeyId),
       openaiProjectId: trimOrNull(enterprise?.openaiProjectId) ?? trimOrNull(global.openaiProjectId),
+      openaiBaseUrl,
+      modelHotLead: resolvedModelHotLead,
+      modelColdLead: resolvedModelColdLead,
+      temperature,
+      maxTokens,
+      leadScoreThreshold,
+      aiEnabled,
+      emergencyBlockEnabled,
+      costTrackingEnabled,
+      useGlobalDefaults,
+      hasOwnApiKey,
+    };
+  }
+
+  if (provider === 'bedrock') {
+    return {
+      enterpriseId,
+      provider,
+      blocked: false,
+      reason: null,
+      blockedMessage: null,
+      apiKeySource: null,
+      openaiApiKey: 'bedrock',
+      openaiApiKeyId: null,
+      openaiProjectId: null,
       openaiBaseUrl,
       modelHotLead: resolvedModelHotLead,
       modelColdLead: resolvedModelColdLead,
