@@ -386,6 +386,8 @@ export function detectClientConversationClosure(userMessage: string): boolean {
 export interface FinalizeAnaReplyOptions {
   /** Mensagem atual do cliente — usada para detectar encerramento e não forçar pergunta. */
   userMessage?: string | null;
+  /** Última mensagem da Ana — usada para interpretar respostas curtas a perguntas sobre Atibaia/região. */
+  lastAssistantMessage?: string | null;
   /** Modo foco: respostas informativas podem terminar sem "?" forçado. */
   conversationMode?: 'triage' | 'scoped' | 'inactive_linked';
   /** true somente na primeira resposta da Ana na conversa. */
@@ -593,6 +595,15 @@ const EVORA_OPEN_GUIDANCE_UNCERTAIN_REPLY =
 const EVORA_OPEN_GUIDANCE_CHALLENGE_REPLY =
   'Faz sentido perguntar isso.\n\nO ponto é que o Évora junta uma região mais tranquila de Atibaia com acesso pela Rodovia Dom Pedro I, lotes a partir de 360 m², lazer e portaria 24h.\n\nIsso ajuda tanto para morar com mais espaço quanto para pensar em valorização.\n\nVocê quer que eu explique primeiro a localização ou os valores?';
 
+const EVORA_ATIBAIA_REGION_CONTEXT_REPLY =
+  'Sem problema, vou te situar.\n\nAtibaia é uma cidade muito procurada por quem quer sair um pouco da correria de São Paulo, mas sem ficar longe demais.\n\nO Évora fica na região da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.\n\nVocê quer que eu te explique mais sobre a região ou sobre a estrutura do loteamento?';
+
+const EVORA_ATIBAIA_REGION_UNKNOWN_REPLY =
+  'Claro, essa é uma dúvida importante.\n\nAtibaia tem um perfil mais tranquilo, com bastante natureza, clima agradável e boa estrutura para quem quer morar com mais qualidade de vida.\n\nNo caso do Évora, ele fica na região da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.\n\nVocê está pensando em sair de São Paulo para morar com mais calma ou ainda está só comparando possibilidades?';
+
+const EVORA_SAO_PAULO_CONTEXT_REPLY =
+  'Então faz sentido eu te explicar a diferença.\n\nPara quem vem de São Paulo, o Évora tem uma proposta de mais espaço, tranquilidade e contato com natureza, sem ficar tão distante da capital.\n\nAtibaia fica a cerca de 50 minutos de São Paulo, dependendo do ponto de saída, e o acesso ao Évora é pela Rodovia Dom Pedro I.\n\nVocê quer entender mais sobre o deslocamento ou sobre a estrutura do loteamento?';
+
 function isOpenCommercialUncertaintyMessage(text: string | null | undefined): boolean {
   const n = normClosure(text || '');
   if (!n) return false;
@@ -610,6 +621,50 @@ function isChallengeContinuationMessage(text: string | null | undefined): boolea
 function isUncertainContinuationMessage(text: string | null | undefined): boolean {
   const n = normClosure(text || '');
   return /\b(nao sei|não sei|n sei)\b/.test(n);
+}
+
+function isAssistantAskingAtibaiaRegionContext(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return (
+    /\b(conhece atibaia|comecando a olhar a regiao|começando a olhar a região|olhar a regiao|olhar a região)\b/.test(n) ||
+    /\b(mora em atibaia|vem de outra cidade|entender a regiao|entender a região)\b/.test(n)
+  );
+}
+
+function isSaoPauloRegionContinuation(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return /^(sao paulo|sp)$/.test(n) || /\b(sou de sao paulo|moro em sao paulo|venho de sao paulo|vim de sao paulo|sou de sp|moro em sp|venho de sp)\b/.test(n);
+}
+
+function isUnknownThereRegionContinuation(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return /\b(nao sei como e la|não sei como é lá|nao sei como eh la|nao conheco la|não conheço lá|como e la|como é lá)\b/.test(n);
+}
+
+function isNegativeAtibaiaRegionContinuation(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return /\b(ainda nao|ainda não|nao conheco|não conheço|nao sei|não sei|n sei)\b/.test(n);
+}
+
+function buildEvoraRegionContextReplyForUser(userMessage: string | null | undefined): string | null {
+  if (isSaoPauloRegionContinuation(userMessage)) return EVORA_SAO_PAULO_CONTEXT_REPLY;
+  if (isUnknownThereRegionContinuation(userMessage)) return EVORA_ATIBAIA_REGION_UNKNOWN_REPLY;
+  if (isNegativeAtibaiaRegionContinuation(userMessage)) return EVORA_ATIBAIA_REGION_CONTEXT_REPLY;
+  return null;
+}
+
+function rescueEvoraRegionContextReply(text: string, opts?: FinalizeAnaReplyOptions): string {
+  const clean = String(text || '').trim();
+  if (!clean) return clean;
+  if (opts?.isKnowledgeGapTurn === true) return clean;
+  if (detectClientConversationClosure(opts?.userMessage ?? '')) return clean;
+  if (!isEvoraScopedContext(opts) && !isEvoraContext(clean, opts?.lastAssistantMessage ?? opts?.userMessage ?? null)) return clean;
+  if (!isAssistantAskingAtibaiaRegionContext(opts?.lastAssistantMessage ?? null)) return clean;
+  return buildEvoraRegionContextReplyForUser(opts?.userMessage ?? null) ?? clean;
 }
 
 function isNeutralAcknowledgementOnly(text: string): boolean {
@@ -652,7 +707,7 @@ function rescueNeutralOpenCommercialReply(text: string, opts?: FinalizeAnaReplyO
   if (opts?.isKnowledgeGapTurn === true) return clean;
   if (detectClientConversationClosure(opts?.userMessage ?? '')) return clean;
 
-  const evoraScoped = isEvoraScopedContext(opts) || isEvoraContext(clean, opts?.userMessage ?? null);
+  const evoraScoped = isEvoraScopedContext(opts) || isEvoraContext(clean, opts?.lastAssistantMessage ?? opts?.userMessage ?? null);
   if (!evoraScoped) return clean;
 
   const userNeedsGuidance = isOpenCommercialUncertaintyMessage(opts?.userMessage ?? null);
@@ -1004,7 +1059,8 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   const forbiddenQuestionStrip = stripForbiddenFixedQualificationQuestion(multiTopicSafe);
   const feminineGuard = enforceFeminineSelfReference(forbiddenQuestionStrip.text || evoraAvailabilitySafe);
   const finalText = feminineGuard.text || forbiddenQuestionStrip.text || evoraAvailabilitySafe;
-  const neutralSafe = rescueNeutralOpenCommercialReply(finalText, opts);
+  const regionContextSafe = rescueEvoraRegionContextReply(finalText, opts);
+  const neutralSafe = rescueNeutralOpenCommercialReply(regionContextSafe, opts);
   const questionSafe = countQuestions(neutralSafe) > 1 ? sanitizeTooManyQuestionsReply(neutralSafe) : neutralSafe;
   return sanitizeAnaClientVisibleReplyText(questionSafe).slice(0, 4000);
 }

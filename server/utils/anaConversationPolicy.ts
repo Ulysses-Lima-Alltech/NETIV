@@ -88,6 +88,49 @@ function buildLocationProgressBridgeReply(): string {
   ].join(' ');
 }
 
+const EVORA_ATIBAIA_REGION_CONTEXT_REPLY =
+  'Sem problema, vou te situar.\n\nAtibaia é uma cidade muito procurada por quem quer sair um pouco da correria de São Paulo, mas sem ficar longe demais.\n\nO Évora fica na região da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.\n\nVocê quer que eu te explique mais sobre a região ou sobre a estrutura do loteamento?';
+
+const EVORA_ATIBAIA_REGION_UNKNOWN_REPLY =
+  'Claro, essa é uma dúvida importante.\n\nAtibaia tem um perfil mais tranquilo, com bastante natureza, clima agradável e boa estrutura para quem quer morar com mais qualidade de vida.\n\nNo caso do Évora, ele fica na região da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.\n\nVocê está pensando em sair de São Paulo para morar com mais calma ou ainda está só comparando possibilidades?';
+
+const EVORA_SAO_PAULO_CONTEXT_REPLY =
+  'Então faz sentido eu te explicar a diferença.\n\nPara quem vem de São Paulo, o Évora tem uma proposta de mais espaço, tranquilidade e contato com natureza, sem ficar tão distante da capital.\n\nAtibaia fica a cerca de 50 minutos de São Paulo, dependendo do ponto de saída, e o acesso ao Évora é pela Rodovia Dom Pedro I.\n\nVocê quer entender mais sobre o deslocamento ou sobre a estrutura do loteamento?';
+
+function isAssistantAskingAtibaiaRegionContext(text: string | null | undefined): boolean {
+  const n = norm(text || '');
+  if (!n) return false;
+  return (
+    /\b(conhece atibaia|comecando a olhar a regiao|olhar a regiao)\b/.test(n) ||
+    /\b(mora em atibaia|vem de outra cidade|entender a regiao)\b/.test(n)
+  );
+}
+
+function isSaoPauloRegionContinuation(text: string | null | undefined): boolean {
+  const n = norm(text || '');
+  if (!n) return false;
+  return /^(sao paulo|sp)$/.test(n) || /\b(sou de sao paulo|moro em sao paulo|venho de sao paulo|vim de sao paulo|sou de sp|moro em sp|venho de sp)\b/.test(n);
+}
+
+function isUnknownThereRegionContinuation(text: string | null | undefined): boolean {
+  const n = norm(text || '');
+  if (!n) return false;
+  return /\b(nao sei como e la|nao sei como eh la|nao conheco la|como e la)\b/.test(n);
+}
+
+function isNegativeAtibaiaRegionContinuation(text: string | null | undefined): boolean {
+  const n = norm(text || '');
+  if (!n) return false;
+  return /\b(ainda nao|nao conheco|nao sei|n sei)\b/.test(n);
+}
+
+function buildEvoraRegionContextReplyForUser(userMessage: string | null | undefined): string | null {
+  if (isSaoPauloRegionContinuation(userMessage)) return EVORA_SAO_PAULO_CONTEXT_REPLY;
+  if (isUnknownThereRegionContinuation(userMessage)) return EVORA_ATIBAIA_REGION_UNKNOWN_REPLY;
+  if (isNegativeAtibaiaRegionContinuation(userMessage)) return EVORA_ATIBAIA_REGION_CONTEXT_REPLY;
+  return null;
+}
+
 function startsWithGreeting(text: string): boolean {
   return /^(oi|ol[aá]|bom dia|boa tarde|boa noite)\b/i.test((text || '').trim());
 }
@@ -1117,6 +1160,17 @@ export function applyAnaConversationPolicy(
     overrideQuestionType || (state.lastAssistantQuestionType ?? null),
     overrideOfferedTopics ?? state.lastOfferedTopics ?? []
   );
+  if (!isKnowledgeGapTurn && !visitFlowActive && isAssistantAskingAtibaiaRegionContext(lastAssistantQuestionContext.questionText)) {
+    const regionContextReply = buildEvoraRegionContextReplyForUser(input.userMessage);
+    if (regionContextReply) {
+      reply = regionContextReply;
+      appliedRules.push('atibaia_region_context_answered');
+      console.log('[ANA_ATIBAIA_REGION_CONTEXT_ANSWERED]', {
+        conversationId: input.conversationId,
+        userMessage: input.userMessage.slice(0, 120),
+      });
+    }
+  }
   const userAffirmative = isAffirmativeUserReply(input.userMessage) || isAckLikeMessage(input.userMessage);
   const userContinuationDemand = isContinuationDemandUserReply(input.userMessage);
   const requestedTopicAction = resolveRequestedTopicAction({

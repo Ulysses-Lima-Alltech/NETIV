@@ -267,6 +267,49 @@ test('ainda nao nao termina em resposta neutra sem avanco', () => {
   assert.match(output.trim(), /\?$/);
 });
 
+test('ainda nao apos pergunta sobre Atibaia responde contexto da regiao', () => {
+  const output = finalizeAnaReplyText('Sem problema. Vou te explicar por partes. O que mais te faz hesitar em dar o próximo passo?', {
+    enterpriseName: 'Evora',
+    userMessage: 'ainda nao',
+    lastAssistantMessage: 'Você já conhece Atibaia ou está começando a olhar a região agora?',
+  });
+  assert.match(output, /Atibaia/i);
+  assert.match(output, /correria de S[aã]o Paulo|correria de SÃ£o Paulo/i);
+  assert.match(output, /Rodovia Dom Pedro I/i);
+  assert.doesNotMatch(output, /hesitar|Posso te ajudar de forma objetiva/i);
+  assert.doesNotMatch(output, /Lucas Nogueira/i);
+  assert.equal((output.match(/\?/g) || []).length, 1);
+  assert.match(output.trim(), /\?$/);
+});
+
+test('nao sei como e la responde regiao sem perguntar onde mora', () => {
+  const output = finalizeAnaReplyText('Certo, vou seguir te orientando pelo que faz mais sentido para o seu perfil. Hoje você mora em Atibaia ou vem de outra cidade?', {
+    enterpriseName: 'Evora',
+    userMessage: 'não sei como é lá',
+    lastAssistantMessage: 'Você já conhece Atibaia ou está começando a olhar a região agora?',
+  });
+  assert.match(output, /Atibaia/i);
+  assert.match(output, /perfil mais tranquilo|natureza/i);
+  assert.match(output, /Rodovia Dom Pedro I/i);
+  assert.doesNotMatch(output, /Hoje voc[êe] mora em Atibaia|vem de outra cidade/i);
+  assert.equal((output.match(/\?/g) || []).length, 1);
+});
+
+test('sao paulo apos contexto de regiao compara capital e Atibaia', () => {
+  const output = finalizeAnaReplyText('Posso te ajudar de forma objetiva com as informações do empreendimento. Você já tem alguma ideia do tipo de espaço que busca lá em São Paulo?', {
+    enterpriseName: 'Evora',
+    userMessage: 'sao paulo',
+    lastAssistantMessage: 'Hoje você mora em Atibaia ou vem de outra cidade?',
+  });
+  assert.match(output, /São Paulo|SÃ£o Paulo/i);
+  assert.match(output, /Atibaia/i);
+  assert.match(output, /50 minutos/i);
+  assert.match(output, /Rodovia Dom Pedro I/i);
+  assert.doesNotMatch(output, /tipo de espa[cç]o que busca|Posso te ajudar de forma objetiva/i);
+  assert.doesNotMatch(output, /Lucas Nogueira/i);
+  assert.equal((output.match(/\?/g) || []).length, 1);
+});
+
 test('nao sei conduz com contexto e opcoes', () => {
   const output = finalizeAnaReplyText('Sem problema.', {
     enterpriseName: 'Evora',

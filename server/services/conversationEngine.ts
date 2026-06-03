@@ -4980,6 +4980,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (pendingResolutionResult.success && pendingResolutionReplyRaw) {
         const pendingResolutionReply = finalizeAnaReplyText(pendingResolutionReplyRaw, {
           userMessage: trimmed,
+          lastAssistantMessage: lastAssistantPlain,
           conversationMode: mode,
           isFirstAnaReply,
           enterpriseName: ent?.name ?? null,
@@ -9074,6 +9075,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             }).slice(0, 4000)
           : finalizeAnaReplyText(replyBody, {
               userMessage: trimmed,
+              lastAssistantMessage: lastAssistantPlain,
               conversationMode: mode,
               isFirstAnaReply,
               enterpriseName: ent?.name ?? null,
@@ -9144,6 +9146,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           })
         : finalizeAnaReplyText(finalEvidenceGuard.text, {
             userMessage: trimmed,
+            lastAssistantMessage: lastAssistantPlain,
             conversationMode: mode,
             isFirstAnaReply,
             enterpriseName: ent?.name ?? null,
@@ -9183,6 +9186,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
       finalTextGuard = finalizeAnaReplyText(finalTextGuard, {
         userMessage: trimmed,
+        lastAssistantMessage: lastAssistantPlain,
         conversationMode: mode,
         isFirstAnaReply,
         enterpriseName: ent?.name ?? null,
@@ -9525,6 +9529,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         const recoveredReplyLimited = applyAnaHardLengthGuard({
           text: finalizeAnaReplyText(recoveredReplyRaw, {
             userMessage: trimmed,
+            lastAssistantMessage: lastAssistantPlain,
             conversationMode: mode,
             isFirstAnaReply,
             enterpriseName: ent?.name ?? null,
@@ -10511,6 +10516,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         if (knowledgeGapRetryResult.success && knowledgeGapRetryRaw) {
           replyText = finalizeAnaReplyText(knowledgeGapRetryRaw, {
             userMessage: trimmed,
+            lastAssistantMessage: lastAssistantPlain,
             conversationMode: mode,
             isFirstAnaReply,
             enterpriseName: ent?.name ?? null,
@@ -10669,6 +10675,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (finalQuestionRetryResult.success && finalQuestionRetryRaw) {
         const retryCandidate = finalizeAnaReplyText(finalQuestionRetryRaw, {
           userMessage: trimmed,
+          lastAssistantMessage: lastAssistantPlain,
           conversationMode: mode,
           isFirstAnaReply,
           enterpriseName: ent?.name ?? null,

@@ -2813,6 +2813,43 @@ test('split de outbound permite quatro mensagens curtas com uma pergunta final',
   assert.match(parts[3] ?? '', /\?$/);
 });
 
+test('policy responde regiao quando cliente diz ainda nao apos pergunta sobre Atibaia', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 5200,
+    userMessage: 'ainda nao',
+    replyText: 'Sem problema. Vou te explicar por partes. O que mais te faz hesitar em dar o próximo passo?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [
+      { role: 'assistant', content: 'Você já conhece Atibaia ou está começando a olhar a região agora?' },
+      { role: 'user', content: 'ainda nao' },
+    ],
+  });
+  assert.match(policy.text, /Atibaia/i);
+  assert.match(policy.text, /Rodovia Dom Pedro I/i);
+  assert.doesNotMatch(policy.text, /hesitar|Posso te ajudar de forma objetiva/i);
+  assert.equal((policy.text.match(/\?/g) || []).length, 1);
+});
+
+test('policy trata sao paulo como contexto de origem apos pergunta de regiao', () => {
+  const policy = applyAnaConversationPolicy({
+    conversationId: 5201,
+    userMessage: 'sao paulo',
+    replyText: 'Posso te ajudar de forma objetiva com as informações do empreendimento. Você já tem alguma ideia do tipo de espaço que busca lá em São Paulo?',
+    isFirstAnaReply: false,
+    flowState: {},
+    recentMessages: [
+      { role: 'assistant', content: 'Hoje você mora em Atibaia ou vem de outra cidade?' },
+      { role: 'user', content: 'sao paulo' },
+    ],
+  });
+  assert.match(policy.text, /São Paulo|SÃ£o Paulo/i);
+  assert.match(policy.text, /Atibaia/i);
+  assert.match(policy.text, /Rodovia Dom Pedro I/i);
+  assert.doesNotMatch(policy.text, /tipo de espa[cç]o que busca|Posso te ajudar de forma objetiva/i);
+  assert.equal((policy.text.match(/\?/g) || []).length, 1);
+});
+
 test('split de outbound remove separador retorico e marca interna antes do envio', () => {
   const parts = __testOnlySplitAnaOutboundMessages(
     'Perfeito — o Évora é esse perfil.\nÉ uma região tranquila - ideal para qualidade de vida.\n- Lazer completo\nAna - NETIV - QMAPE'
