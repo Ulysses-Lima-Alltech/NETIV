@@ -155,7 +155,8 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
 
   if (
     hasAny(n, [
-      /\b(localizacao|regiao|onde fica|fica onde|bairro|pedreira|rio abaixo|como chegar|me enviar a localizacao|me manda a localizacao)\b/,
+      /^(localizacao|qual a localizacao|onde fica|fica onde|bairro|pedreira|rio abaixo)$/,
+      /\b(qual a localizacao|onde fica|fica onde|como chegar|me enviar a localizacao|me manda a localizacao|manda localizacao|manda a localizacao|manda o mapa|google maps|link do maps|rota)\b/,
     ])
   ) {
     return 'localizacao_endereco';

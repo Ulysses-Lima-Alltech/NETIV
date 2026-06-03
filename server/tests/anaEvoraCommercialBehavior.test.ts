@@ -35,10 +35,10 @@ test('engine contem split deterministico de first-contact e short-circuit canoni
   assert.match(source, /deterministic_commercial_rule_first_contact/);
 });
 
-test('regiao responde canonicamente em uma mensagem de conteudo sem link automatico', () => {
+test('pergunta objetiva de localizacao responde canonicamente em uma mensagem de conteudo sem link automatico', () => {
   const rule = resolveAnaCommercialRule({
     enterpriseName: 'Evora',
-    userMessage: 'me fala da regiao la',
+    userMessage: 'onde fica?',
     isFirstAnaReply: false,
   });
   assert.equal(rule?.ruleId, 'localizacao_endereco');
@@ -404,13 +404,19 @@ test('engine resolve mensagens curtas de regiao como region_deep_dive e solicita
   assert.match(source, /region_deep_dive/);
   assert.match(source, /fala mais/);
   assert.match(source, /me explica mais/);
+  assert.match(source, /quero saber mais/);
+  assert.match(source, /localizacao\|regiao\|atibaia/);
   assert.match(source, /me fala mais de la/);
   assert.match(source, /e dai/);
+  assert.match(source, /e a regiao/);
+  assert.match(source, /como e atibaia/);
   assert.match(source, /da regiao/);
   assert.match(source, /mas \(vc\|voce\) ia falar da regiao/);
   assert.match(source, /generic_followup_after_region_context/);
+  assert.match(source, /\[ANA_REGION_DEEP_DIVE_DETECTED\]/);
   assert.match(source, /\[ANA_PENDING_REGION_TOPIC_RESOLVED\]/);
   assert.match(source, /\[ANA_REGION_RAG_CONTEXT_REQUESTED\]/);
+  assert.match(source, /\[ANA_QWEN_REQUIRED_FOR_REGION_DEEP_DIVE\]/);
   assert.match(source, /regiao bragantina gastronomia Avenida Lucas Nogueira Garcez clima/);
   assert.match(source, /Pedreira Rio Abaixo Rodovia Dom Pedro I 50 minutos Sao Paulo/);
 });
@@ -422,6 +428,53 @@ test('region_deep_dive nao cai em lotes, lazer, corretor ou localizacao curta ca
   assert.match(source, /topic === 'region_deep_dive'\) return null/);
   assert.match(source, /!isRegionDeepDiveResolved[\s\S]*canonicalLocationFallbackRule/);
   assert.match(source, /requestedTopic === 'region_deep_dive'[\s\S]*\? null[\s\S]*location_link_handler/);
+  assert.match(source, /\[ANA_LOCATION_CANONICAL_BLOCKED_BY_REGION_DEEP_DIVE\]/);
   assert.match(source, /\[ANA_LOCATION_SHORT_CANONICAL_SKIPPED_FOR_REGION_DEEP_DIVE\]/);
   assert.match(source, /isGenericInterestFollowup\(trimmed\) && !isRegionDeepDiveResolved/);
+});
+
+test('aprofundamento de regiao/localizacao/Atibaia nao usa regra comercial curta', () => {
+  const deepDiveMessages = [
+    'quero saber mais da localizacao',
+    'quero saber mais da região',
+    'quero saber mais sobre Atibaia',
+    'me fala mais da regiao',
+    'e a regiao?',
+    'da regiao!',
+    'como é Atibaia?',
+    'me explica a região',
+  ];
+
+  for (const userMessage of deepDiveMessages) {
+    const rule = resolveAnaCommercialRule({
+      enterpriseName: 'Evora',
+      userMessage,
+      isFirstAnaReply: false,
+    });
+    assert.notEqual(rule?.ruleId, 'localizacao_endereco', userMessage);
+    assert.notEqual(rule?.ruleId, 'endereco', userMessage);
+  }
+});
+
+test('pedidos objetivos de endereco/mapa ainda podem usar localizacao curta', () => {
+  const location = resolveAnaCommercialRule({
+    enterpriseName: 'Evora',
+    userMessage: 'onde fica?',
+    isFirstAnaReply: false,
+  });
+  assert.equal(location?.ruleId, 'localizacao_endereco');
+
+  const address = resolveAnaCommercialRule({
+    enterpriseName: 'Evora',
+    userMessage: 'qual o endereço?',
+    isFirstAnaReply: false,
+  });
+  assert.equal(address?.ruleId, 'endereco');
+
+  const map = resolveAnaCommercialRule({
+    enterpriseName: 'Evora',
+    userMessage: 'manda o mapa',
+    isFirstAnaReply: false,
+  });
+  assert.equal(map?.ruleId, 'localizacao_endereco');
 });

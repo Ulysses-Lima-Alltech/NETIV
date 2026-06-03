@@ -434,18 +434,32 @@ function isGenericPendingTopicFollowup(text: string | null | undefined): boolean
   const n = normText(text || '').replace(/[.!?]+$/g, '').trim();
   if (!n) return false;
   return (
-    /^(fala mais|me explica mais|me fala mais|me fala mais de la|e dai|e dai\?)$/.test(n) ||
-    /^(me fale mais|explica mais|explica melhor|me conta mais|continua)$/.test(n)
+    /^(fala mais|me explica mais|me fala mais|me fala mais de la|e dai|e dai\?|nao conheco nada)$/.test(n) ||
+    /^(me fale mais|explica mais|explica melhor|me conta mais|continua|como e la|como e atibaia)$/.test(n)
+  );
+}
+
+function isObjectiveLocationCanonicalRequest(text: string | null | undefined): boolean {
+  const n = normText(text || '').replace(/[.!?]+$/g, '').trim();
+  if (!n) return false;
+  return (
+    /^(onde fica|fica onde|qual a localizacao|qual o endereco|endereco|localizacao|localizacao exata|endereco exato)$/.test(n) ||
+    /\b(qual a localizacao|qual o endereco|endereco exato|localizacao exata|link do maps|google maps|manda o mapa|me manda o mapa|manda localizacao|manda a localizacao|me manda a localizacao|como chegar|rota)\b/.test(n)
   );
 }
 
 function isExplicitRegionDeepDiveRequest(text: string | null | undefined): boolean {
   const n = normText(text || '').replace(/[.!?]+$/g, '').trim();
   if (!n) return false;
+  if (isObjectiveLocationCanonicalRequest(text)) return false;
   return (
-    /^(da regiao|regiao|sobre a regiao|fala da regiao|me fala da regiao)$/.test(n) ||
+    /^(da regiao|regiao|sobre a regiao|fala da regiao|me fala da regiao|e a regiao)$/.test(n) ||
     /^mas (vc|voce) ia falar da regiao$/.test(n) ||
-    /\bia falar da regiao\b/.test(n)
+    /\bia falar da regiao\b/.test(n) ||
+    /\b(quero saber mais|queria saber mais|me fala mais|me fale mais|fala mais|me explica|me explica mais|me explica a|explica)\b[\s\S]{0,80}\b(localizacao|regiao|atibaia)\b/.test(n) ||
+    /\b(localizacao|regiao|atibaia)\b[\s\S]{0,80}\b(quero saber mais|queria saber mais|me fala mais|me fale mais|fala mais|me explica|explica melhor)\b/.test(n) ||
+    /\b(eu moro em sp|moro em sp|sou de sp|sao paulo)\b[\s\S]{0,120}\b(nao conheco|nao conheco nada|como e|atibaia|regiao)\b/.test(n) ||
+    /\b(nao conheco nada|nao conheco a regiao|nao conheco atibaia|como e la|como e atibaia|me explica a regiao)\b/.test(n)
   );
 }
 
@@ -496,11 +510,15 @@ function getRecentAssistantContextForPendingTopic(rows: Array<{ role: string; co
 
 function resolvePendingRegionDeepDiveTopic(input: {
   currentUserText: string;
+  expandedUserText?: string | null;
   rows: Array<{ role: string; content: string }>;
   lastAssistantQuestionText?: string | null;
   lastOfferedTopics?: string[] | null;
 }): { resolved: boolean; reason: string | null; assistantContextPreview: string } {
-  const explicitRegion = isExplicitRegionDeepDiveRequest(input.currentUserText);
+  const textForDetection = [input.currentUserText, input.expandedUserText ?? '']
+    .filter(Boolean)
+    .join('\n');
+  const explicitRegion = isExplicitRegionDeepDiveRequest(textForDetection);
   const genericFollowup = isGenericPendingTopicFollowup(input.currentUserText);
   if (!explicitRegion && !genericFollowup) {
     return { resolved: false, reason: null, assistantContextPreview: '' };
@@ -574,6 +592,7 @@ function mapCommercialAxisToTurnTopic(axis: CommercialAxis | null): AnaTurnTopic
 function resolveAnaConversationTurn(input: {
   conversationId: number;
   currentUserText: string;
+  expandedUserText?: string | null;
   rows: Array<{ role: string; content: string }>;
   flowState: CommercialFlowState;
   lastAssistantQuestionText: string | null;
@@ -591,6 +610,7 @@ function resolveAnaConversationTurn(input: {
   const lastOutboundText = [...recentHistory].reverse().find((row) => row.role === 'assistant')?.content?.trim() || null;
   const pendingRegionTopic = resolvePendingRegionDeepDiveTopic({
     currentUserText: input.currentUserText,
+    expandedUserText: input.expandedUserText,
     rows: input.rows,
     lastAssistantQuestionText: input.lastAssistantQuestionText,
     lastOfferedTopics: input.lastOfferedTopics,
@@ -4513,6 +4533,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const shortConversationContext = fullUserUtterances.slice(-2_400);
     const pendingRegionDeepDiveBeforeRag = resolvePendingRegionDeepDiveTopic({
       currentUserText: trimmed,
+      expandedUserText: userMessageForReasoning,
       rows: rows.map((row) => ({ role: row.role, content: String(row.content ?? '') })),
       lastAssistantQuestionText: shortConfirmationContext.lastAssistantQuestionText ?? null,
       lastOfferedTopics: shortConfirmationContext.lastOfferedTopics ?? [],
@@ -4758,6 +4779,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     anaTurnContextResolved = resolveAnaConversationTurn({
       conversationId,
       currentUserText: trimmed,
+      expandedUserText: userMessageForReasoning,
       rows: rows.map((row) => ({ role: row.role, content: String(row.content ?? '') })),
       flowState: flowStateParsed,
       lastAssistantQuestionText: shortConfirmationContext.lastAssistantQuestionText ?? null,
@@ -4768,6 +4790,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const isRegionDeepDiveResolved =
       anaTurnContextResolved.requestedTopic === 'region_deep_dive' || pendingRegionDeepDiveBeforeRag.resolved;
     if (isRegionDeepDiveResolved) {
+      console.log('[ANA_REGION_DEEP_DIVE_DETECTED]', {
+        conversationId,
+        requestedTopic: anaTurnContextResolved.requestedTopic,
+        commercialAxis: anaTurnContextResolved.commercialAxis,
+        reason: pendingRegionDeepDiveBeforeRag.reason,
+        userText: trimmed.slice(0, 160),
+        expandedUserText: userMessageForReasoning.slice(0, 220),
+      });
       console.log('[ANA_PENDING_REGION_TOPIC_RESOLVED]', {
         conversationId,
         requestedTopic: anaTurnContextResolved.requestedTopic,
@@ -4776,6 +4806,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         decisionPath: anaTurnContextResolved.decisionPath,
         userText: trimmed.slice(0, 160),
         assistantContextPreview: pendingRegionDeepDiveBeforeRag.assistantContextPreview,
+      });
+      console.log('[ANA_QWEN_REQUIRED_FOR_REGION_DEEP_DIVE]', {
+        conversationId,
+        requestedTopic: anaTurnContextResolved.requestedTopic,
+        commercialAxis: anaTurnContextResolved.commercialAxis,
+        reason: 'region_deep_dive_requires_rag_qwen',
       });
     }
     if (
@@ -6204,6 +6240,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           }
         : null;
     if (isRegionDeepDiveResolved && (commercialRuleFromMessage || locationLikeIntent || addressLikeIntent)) {
+      console.log('[ANA_LOCATION_CANONICAL_BLOCKED_BY_REGION_DEEP_DIVE]', {
+        conversationId,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        blockedRule: commercialRuleFromMessage?.ruleId ?? (addressLikeIntent ? 'endereco' : 'localizacao_endereco'),
+        userMessagePreview: trimmed.slice(0, 180),
+      });
       console.log('[ANA_LOCATION_SHORT_CANONICAL_SKIPPED_FOR_REGION_DEEP_DIVE]', {
         conversationId,
         requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
@@ -9786,6 +9828,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         lastAxis: lastAxisForRepetition,
       });
     } else if (isGenericInterestFollowup(trimmed) && isRegionDeepDiveResolved) {
+      console.log('[ANA_LOCATION_CANONICAL_BLOCKED_BY_REGION_DEEP_DIVE]', {
+        conversationId,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        blockedRule: 'generic_followup_location_canonical',
+        userMessagePreview: trimmed.slice(0, 180),
+      });
       console.log('[ANA_LOCATION_SHORT_CANONICAL_SKIPPED_FOR_REGION_DEEP_DIVE]', {
         conversationId,
         requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
