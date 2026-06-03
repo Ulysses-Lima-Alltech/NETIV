@@ -2804,6 +2804,15 @@ test('split de outbound da Ana envia cada linha como mensagem separada', () => {
   assert.deepEqual(parts, ['Linha 1.', 'Linha 2.', 'Linha 3.']);
 });
 
+test('split de outbound permite quatro mensagens curtas com uma pergunta final', () => {
+  const parts = __testOnlySplitAnaOutboundMessages(
+    'Sem problema.\n\nVou te explicar por partes.\n\nO Évora fica em Atibaia, na região da Pedreira.\n\nVocê quer entender primeiro a região ou a estrutura do empreendimento?'
+  );
+  assert.equal(parts.length, 4);
+  assert.equal((parts.join(' ').match(/\?/g) || []).length, 1);
+  assert.match(parts[3] ?? '', /\?$/);
+});
+
 test('split de outbound remove separador retorico e marca interna antes do envio', () => {
   const parts = __testOnlySplitAnaOutboundMessages(
     'Perfeito — o Évora é esse perfil.\nÉ uma região tranquila - ideal para qualidade de vida.\n- Lazer completo\nAna - NETIV - QMAPE'

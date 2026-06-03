@@ -584,6 +584,89 @@ function applyShortMaterialReplyPolicy(
   return keepTwoShortSentencesMax(text);
 }
 
+const EVORA_OPEN_GUIDANCE_DEFAULT_REPLY =
+  'Sem problema.\n\nVou te explicar por partes.\n\nO Évora fica em Atibaia, na região da Pedreira, bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I. Ele combina loteamento fechado, lazer, portaria 24h e lotes a partir de 360 m².\n\nVocê quer entender primeiro a região ou a estrutura do empreendimento?';
+
+const EVORA_OPEN_GUIDANCE_UNCERTAIN_REPLY =
+  'Sem problema.\n\nEu te ajudo a organizar isso. O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², lazer e portaria 24h.\n\nDá para olhar por três caminhos: região, estrutura ou valores.\n\nVocê quer começar por qual deles?';
+
+const EVORA_OPEN_GUIDANCE_CHALLENGE_REPLY =
+  'Faz sentido perguntar isso.\n\nO ponto é que o Évora junta uma região mais tranquila de Atibaia com acesso pela Rodovia Dom Pedro I, lotes a partir de 360 m², lazer e portaria 24h.\n\nIsso ajuda tanto para morar com mais espaço quanto para pensar em valorização.\n\nVocê quer que eu explique primeiro a localização ou os valores?';
+
+function isOpenCommercialUncertaintyMessage(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return (
+    /\b(ainda nao|ainda não|nao sei|não sei|n sei|nao conheco|não conheço|vamos devagar|calma)\b/.test(n) ||
+    /^(e dai|e daí|dai|daí)\??$/.test(n)
+  );
+}
+
+function isChallengeContinuationMessage(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  return /^(e dai|e daí|dai|daí)\??$/.test(n);
+}
+
+function isUncertainContinuationMessage(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  return /\b(nao sei|não sei|n sei)\b/.test(n);
+}
+
+function isNeutralAcknowledgementOnly(text: string): boolean {
+  const n = normClosure(text || '').replace(/\?+$/g, '').trim();
+  if (!n) return false;
+  if (n.length > 140) return false;
+  const usefulSignals = /\b(evora|atibaia|loteamento|lotes?|portaria|lazer|localizacao|localização|pedreira|rio abaixo|dom pedro|valores?|metragem|corretor)\b/.test(n);
+  if (usefulSignals) return false;
+  const withoutNeutral = n
+    .replace(/\btudo bem\b/g, ' ')
+    .replace(/\bvamos devagar(?: entao)?\b/g, ' ')
+    .replace(/\bentendi\b/g, ' ')
+    .replace(/\bcerto\b/g, ' ')
+    .replace(/\bperfeito\b/g, ' ')
+    .replace(/\blegal\b/g, ' ')
+    .replace(/\bbeleza\b/g, ' ')
+    .replace(/\bsem problema\b/g, ' ')
+    .replace(/\bok\b/g, ' ')
+    .replace(/[.!?,\s]+/g, ' ')
+    .trim();
+  return withoutNeutral.length === 0;
+}
+
+function endsWithNeutralAcknowledgementWithoutAdvance(text: string): boolean {
+  const raw = String(text || '').trim();
+  if (!raw || /\?\s*$/.test(raw)) return false;
+  const tail = splitSentencesCompact(raw).slice(-2).join(' ');
+  return isNeutralAcknowledgementOnly(tail);
+}
+
+function selectEvoraOpenGuidanceReply(userMessage: string | null | undefined): string {
+  if (isChallengeContinuationMessage(userMessage)) return EVORA_OPEN_GUIDANCE_CHALLENGE_REPLY;
+  if (isUncertainContinuationMessage(userMessage)) return EVORA_OPEN_GUIDANCE_UNCERTAIN_REPLY;
+  return EVORA_OPEN_GUIDANCE_DEFAULT_REPLY;
+}
+
+function rescueNeutralOpenCommercialReply(text: string, opts?: FinalizeAnaReplyOptions): string {
+  const clean = String(text || '').trim();
+  if (!clean) return clean;
+  if (opts?.isKnowledgeGapTurn === true) return clean;
+  if (detectClientConversationClosure(opts?.userMessage ?? '')) return clean;
+
+  const evoraScoped = isEvoraScopedContext(opts) || isEvoraContext(clean, opts?.userMessage ?? null);
+  if (!evoraScoped) return clean;
+
+  const userNeedsGuidance = isOpenCommercialUncertaintyMessage(opts?.userMessage ?? null);
+  const shortNeutral = isNeutralAcknowledgementOnly(clean);
+  const neutralEndingWithoutQuestion = endsWithNeutralAcknowledgementWithoutAdvance(clean);
+  const lacksUsefulQuestion = !/\?\s*$/.test(clean);
+
+  if (shortNeutral || (userNeedsGuidance && (neutralEndingWithoutQuestion || lacksUsefulQuestion))) {
+    return selectEvoraOpenGuidanceReply(opts?.userMessage ?? null);
+  }
+
+  return clean;
+}
+
 const BROKER_DETAIL_ROUTING_TEXT =
   'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?';
 
@@ -892,7 +975,7 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   const base = normalizeWhitespacePreservingLines(stripMarkdownArtifactsForWhatsApp((text || '').trim()));
   const noReintro = stripMidConversationReintroduction(base, isFirstAnaReply);
   const materialShort = applyShortMaterialReplyPolicy(noReintro, opts?.userMessage ?? null);
-  const compact = keepTwoShortSentencesMax(sanitizeDuplicatedGreetingPrefix(materialShort));
+  const compact = sanitizeDuplicatedGreetingPrefix(materialShort);
   const evoraLocation = forceEvoraLocationReplyWhenNeeded(compact, opts);
   const humanLazer = humanizeLazerReplyWhenNeeded(evoraLocation, opts?.userMessage ?? null);
   const withOpenQuestion = isKnowledgeGapTurn
@@ -921,7 +1004,9 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   const forbiddenQuestionStrip = stripForbiddenFixedQualificationQuestion(multiTopicSafe);
   const feminineGuard = enforceFeminineSelfReference(forbiddenQuestionStrip.text || evoraAvailabilitySafe);
   const finalText = feminineGuard.text || forbiddenQuestionStrip.text || evoraAvailabilitySafe;
-  return sanitizeAnaClientVisibleReplyText(finalText).slice(0, 4000);
+  const neutralSafe = rescueNeutralOpenCommercialReply(finalText, opts);
+  const questionSafe = countQuestions(neutralSafe) > 1 ? sanitizeTooManyQuestionsReply(neutralSafe) : neutralSafe;
+  return sanitizeAnaClientVisibleReplyText(questionSafe).slice(0, 4000);
 }
 
 function enforceFeminineSelfReference(text: string): { text: string; changed: boolean } {
@@ -1009,7 +1094,7 @@ export function applyAnaHardLengthGuard(params: {
   maxChars?: number;
   preserveLineBreaks?: boolean;
 }): string {
-  const maxChars = Math.max(120, Math.min(360, params.maxChars ?? 300));
+  const maxChars = Math.max(120, Math.min(600, params.maxChars ?? 300));
   const enterpriseName = (params.enterpriseName || '').trim();
   const sourceText = params.preserveLineBreaks
     ? (params.text || '').trim()
@@ -1022,16 +1107,21 @@ export function applyAnaHardLengthGuard(params: {
     if (lines.length === 0) return '';
     const kept: string[] = [];
     let total = 0;
+    let questionUsed = false;
     for (const line of lines) {
+      const hasQuestion = line.includes('?');
+      if (hasQuestion && questionUsed) continue;
       const plus = (kept.length > 0 ? 1 : 0) + line.length;
       if (total + plus > maxChars) break;
       kept.push(line);
       total += plus;
+      if (hasQuestion) questionUsed = true;
     }
     const out = (kept.join('\n').trim() || truncateAtWordBoundary(cleaned.replace(/\n+/g, ' '), maxChars))
       .slice(0, maxChars)
       .trim();
-    return sanitizeLeadingLabelPrefix(out, enterpriseName);
+    const questionSafe = countQuestions(out) > 1 ? sanitizeTooManyQuestionsReply(out) : out;
+    return sanitizeLeadingLabelPrefix(questionSafe, enterpriseName);
   }
 
   const inputSentences = splitSentencesCompact(cleaned);

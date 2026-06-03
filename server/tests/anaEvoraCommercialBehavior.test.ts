@@ -254,6 +254,66 @@ test('finalizador remove reticencias e corrige acentuacao visivel', () => {
   assert.match(output, /Você|opções|m²|Évora/);
 });
 
+test('ainda nao nao termina em resposta neutra sem avanco', () => {
+  const output = finalizeAnaReplyText('Tudo bem. Vamos devagar entao.', {
+    enterpriseName: 'Evora',
+    userMessage: 'ainda nao',
+  });
+  assert.doesNotMatch(output, /^Tudo bem\. Vamos devagar/i);
+  assert.match(output, /Ã‰vora|Évora/i);
+  assert.match(output, /Atibaia/i);
+  assert.match(output, /loteamento fechado/i);
+  assert.equal((output.match(/\?/g) || []).length, 1);
+  assert.match(output.trim(), /\?$/);
+});
+
+test('nao sei conduz com contexto e opcoes', () => {
+  const output = finalizeAnaReplyText('Sem problema.', {
+    enterpriseName: 'Evora',
+    userMessage: 'não sei',
+  });
+  assert.match(output, /organizar isso/i);
+  assert.match(output, /regi[aã]o, estrutura ou valores|regiÃ£o, estrutura ou valores/i);
+  assert.equal((output.match(/\?/g) || []).length, 1);
+  assert.match(output.trim(), /\?$/);
+});
+
+test('e dai explica melhor sem defensividade', () => {
+  const output = finalizeAnaReplyText('Certo.', {
+    enterpriseName: 'Evora',
+    userMessage: 'e dai?',
+  });
+  assert.match(output, /Faz sentido perguntar isso/i);
+  assert.match(output, /Atibaia/i);
+  assert.match(output, /valoriza|valorização|valorizaÃ§Ã£o/i);
+  assert.doesNotMatch(output, /obviamente|voce precisa entender|vocÃª precisa entender|nao foi isso/i);
+  assert.equal((output.match(/\?/g) || []).length, 1);
+});
+
+test('vamos devagar tambem recebe conteudo util e pergunta final', () => {
+  const output = finalizeAnaReplyText('Vamos devagar entao.', {
+    enterpriseName: 'Evora',
+    userMessage: 'vamos devagar',
+  });
+  const parts = output.split(/\r?\n+/).map((part) => part.trim()).filter(Boolean);
+  assert.equal(parts.length >= 3, true);
+  assert.match(output, /Rio Abaixo|Dom Pedro I/i);
+  assert.equal((output.match(/\?/g) || []).length, 1);
+  assert.match(output.trim(), /\?$/);
+});
+
+test('finalizador limita perguntas sem limitar mensagens curtas', () => {
+  const output = finalizeAnaReplyText(
+    'Sem problema.\n\nO Évora fica em Atibaia.\n\nVocê quer saber localização?\n\nVocê quer saber valores?',
+    {
+      enterpriseName: 'Evora',
+      userMessage: 'não sei',
+    }
+  );
+  assert.equal((output.match(/\?/g) || []).length <= 1, true);
+  assert.match(output, /Atibaia/i);
+});
+
 test('preco nao entra em knowledge gap apenas por eixo', () => {
   const result = detectAnaKnowledgeGap({
     userMessage: 'qual o valor do lote?',

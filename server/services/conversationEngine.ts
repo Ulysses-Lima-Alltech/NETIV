@@ -9192,13 +9192,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const preserveListFormatting =
       anaDecision.responseMode === 'structured' ||
       (operationalResolverFired && /\n\s*(?:-|\*)\s+/.test(finalTextGuard));
+    const preserveWhatsappParagraphs =
+      finalTextGuard.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length > 1;
     const hardLimitedReply = shouldPreserveFullLazerList
       ? finalTextGuard.slice(0, 4000).trim()
       : applyAnaHardLengthGuard({
           text: finalTextGuard,
           enterpriseName: ent?.name ?? null,
-          maxChars: preserveListFormatting ? 360 : ANA_OUTBOUND_MAX_CHARS,
-          preserveLineBreaks: preserveListFormatting,
+          maxChars: preserveListFormatting || preserveWhatsappParagraphs ? 560 : ANA_OUTBOUND_MAX_CHARS,
+          preserveLineBreaks: preserveListFormatting || preserveWhatsappParagraphs,
         });
     let finalOutboundEval = evaluateAnaOutboundText({
       reply: hardLimitedReply,
@@ -9712,13 +9714,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     if (postPolicyReply !== replyText) {
       const preservePostPolicyLines = /\n\s*(?:[-*•]|\d+[.)])\s+/u.test(postPolicyReply);
-      const limitedPostPolicyReply = preservePostPolicyLines
+      const preservePostPolicyParagraphs =
+        postPolicyReply.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length > 1;
+      const limitedPostPolicyReply = preservePostPolicyLines || preservePostPolicyParagraphs
         ? postPolicyReply.slice(0, 4000).trim()
         : applyAnaHardLengthGuard({
             text: postPolicyReply,
             enterpriseName: ent?.name ?? null,
-            maxChars: ANA_OUTBOUND_MAX_CHARS,
-            preserveLineBreaks: preservePostPolicyLines,
+            maxChars: preservePostPolicyLines || preservePostPolicyParagraphs ? 560 : ANA_OUTBOUND_MAX_CHARS,
+            preserveLineBreaks: preservePostPolicyLines || preservePostPolicyParagraphs,
           });
       const postPolicyEval = evaluateAnaOutboundText({
         reply: limitedPostPolicyReply,
