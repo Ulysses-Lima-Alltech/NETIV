@@ -31,7 +31,7 @@ test('caso 2: sem empreendimento identificado, resposta deve continuar atendimen
 
 test('caso 3: pergunta explicita sobre Evora nao deve induzir triagem generica', () => {
   const guard = evaluateAnaEmptyFallbackGuard({
-    reply: 'O Evora e um loteamento fechado em Atibaia com foco em seguranca e lazer. Voce prefere começar por valores, localizacao ou visita?',
+    reply: 'Tenho informacoes do Evora com foco em seguranca e lazer. Voce prefere começar por valores, localizacao ou visita?',
     userMessage: 'quero saber mais sobre o Evora',
     isFirstAnaReply: false,
     knowledgeText: 'Evora em Atibaia.',

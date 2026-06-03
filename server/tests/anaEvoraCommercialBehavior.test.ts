@@ -261,9 +261,8 @@ test('ainda nao nao termina em resposta neutra sem avanco', () => {
     userMessage: 'ainda nao',
   });
   assert.doesNotMatch(output, /^Tudo bem\. Vamos devagar/i);
-  assert.match(output, /Ã‰vora|Évora/i);
-  assert.match(output, /Atibaia/i);
-  assert.match(output, /loteamento fechado/i);
+  assert.match(output, /informa|confirmad|regi/i);
+  assert.doesNotMatch(output, /loteamento fechado em Atibaia/i);
   assert.equal((output.match(/\?/g) || []).length, 1);
   assert.match(output.trim(), /\?$/);
 });
@@ -328,8 +327,8 @@ test('e dai explica melhor sem defensividade', () => {
     userMessage: 'e dai?',
   });
   assert.match(output, /Faz sentido perguntar isso/i);
-  assert.match(output, /Atibaia/i);
-  assert.match(output, /valoriza|valorização|valorizaÃ§Ã£o/i);
+  assert.match(output, /informa|confirmad|localiza/i);
+  assert.doesNotMatch(output, /loteamento fechado em Atibaia/i);
   assert.doesNotMatch(output, /obviamente|voce precisa entender|vocÃª precisa entender|nao foi isso/i);
   assert.equal((output.match(/\?/g) || []).length, 1);
 });
@@ -341,7 +340,8 @@ test('vamos devagar tambem recebe conteudo util e pergunta final', () => {
   });
   const parts = output.split(/\r?\n+/).map((part) => part.trim()).filter(Boolean);
   assert.equal(parts.length >= 3, true);
-  assert.match(output, /Rio Abaixo|Dom Pedro I/i);
+  assert.match(output, /informa|confirmad|regi/i);
+  assert.doesNotMatch(output, /loteamento fechado em Atibaia/i);
   assert.equal((output.match(/\?/g) || []).length, 1);
   assert.match(output.trim(), /\?$/);
 });

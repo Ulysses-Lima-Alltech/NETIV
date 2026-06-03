@@ -406,12 +406,12 @@ test('sem resposta segura nao envia fallback generico', () => {
 
 test('sanitiza resposta valida com perguntas finais em excesso sem esvaziar conteudo', () => {
   const input =
-    'O Evora e um loteamento fechado em Atibaia com boa infraestrutura e opcoes de lazer. Quer ver localizacao em detalhes? Quer que eu te explique lazer ou condicoes de compra?';
+    'O empreendimento tem boa infraestrutura e opcoes de lazer. Quer ver localizacao em detalhes? Quer que eu te explique lazer ou condicoes de compra?';
   const output = sanitizeTooManyQuestionsReply(input);
 
   assert.equal(output.length > 0, true);
   assert.equal((output.match(/\?/g) || []).length <= 1, true);
-  assert.match(output, /loteamento fechado em Atibaia/i);
+  assert.doesNotMatch(output, /loteamento fechado em Atibaia/i);
   const hasSafeQuestion =
     output.includes('Quer que eu te fale mais sobre a localização?') ||
     output.includes('Quer saber mais sobre a localização ou prefere falar com um corretor?') ||
@@ -455,11 +455,7 @@ test('finalizeAnaReplyText nao aplica fallback de lotes para pergunta de localiz
   const output = finalizeAnaReplyText('O Évora fica em Atibaia, com acesso pela Rodovia Dom Pedro I.', {
     userMessage: 'Onde fica?',
   });
-  assert.equal(
-    output ===
-      'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².',
-    false
-  );
+  assert.doesNotMatch(output, /loteamento fechado em Atibaia/i);
   assert.match(output, /atibaia|rodovia dom pedro/i);
 });
 
@@ -467,11 +463,7 @@ test('finalizeAnaReplyText nao aplica fallback de lotes para pergunta de valor',
   const output = finalizeAnaReplyText('O valor inicial parte de R$ 279.000,00.', {
     userMessage: 'Quanto está o lote?',
   });
-  assert.equal(
-    output ===
-      'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².',
-    false
-  );
+  assert.doesNotMatch(output, /loteamento fechado em Atibaia/i);
   assert.match(output, /r\$\s*279\.000,00|valor inicial/i);
 });
 
@@ -652,7 +644,7 @@ test('regra first_contact do Evora nao inclui pergunta fixa de qualificacao', ()
 
 test('finalizeAnaReplyText remove pergunta fixa proibida e preserva parte informativa', () => {
   const output = finalizeAnaReplyText(
-    'Olá! O Évora é um loteamento fechado em Atibaia, na região da Pedreira, com lotes a partir de 360 m², lazer completo e segurança 24 horas. Você está buscando o lote para morar, investir ou construir?',
+    'Olá! Tenho informações confirmadas do Évora para te ajudar. Você está buscando o lote para morar, investir ou construir?',
     {
       enterpriseName: 'Residencial Évora',
       userMessage: 'Oi, queria saber mais sobre o Évora',
@@ -661,15 +653,16 @@ test('finalizeAnaReplyText remove pergunta fixa proibida e preserva parte inform
   );
 
   assert.equal(/morar,\s*investir\s+ou\s+construir/i.test(output), false);
-  assert.match(output, /Évora|Atibaia|Pedreira/i);
+  assert.match(output, /Évora|informa/i);
 });
 
 test('fallback seguro de primeira resposta no engine nao contem pergunta fixa', () => {
   const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
-  const safeFallbackLine = source.match(/function buildEvoraFirstReplySafeFallback\(\): string \{\s*return '([^']+)'/);
+  const safeFallbackFunction = source.match(/function buildEvoraFirstReplySafeFallback\(\): string \{[\s\S]*?\n\}/)?.[0] ?? '';
 
-  assert.equal(safeFallbackLine != null, true);
-  assert.equal(/morar,\s*investir\s+ou\s+construir/i.test(safeFallbackLine?.[1] ?? ''), false);
+  assert.match(safeFallbackFunction, /buildLeadQualificationNameQuestion\(\)/);
+  assert.doesNotMatch(safeFallbackFunction, /morar,\s*investir\s+ou\s+construir/i);
+  assert.doesNotMatch(safeFallbackFunction, /loteamento fechado em Atibaia/i);
 });
 
 test('codigo produtivo nao contem frase fixa de qualificacao', () => {
@@ -792,7 +785,7 @@ test('pedido de simulacao puxa pergunta de corretor', () => {
     disableFollowupQuestion: false,
   });
 
-  assert.match(policy.text, /quer que eu encaminhe para um corretor te passar certinho\?/i);
+  assert.match(policy.text, /corretor consegue te passar certinho/i);
 });
 
 test('fluxo de visita ativo suprime oferta de midia e ancora no slot faltante', () => {
@@ -2371,7 +2364,7 @@ test('primeira saudacao suprime CTA de topico antigo no inicio da resposta', () 
   const policy = applyAnaConversationPolicy({
     conversationId: 207,
     userMessage: 'oi',
-    replyText: 'Quer saber tambem sobre localizacao? O Evora e um loteamento fechado em Atibaia.',
+    replyText: 'Quer saber tambem sobre localizacao? Posso te ajudar por aqui.',
     isFirstAnaReply: true,
     flowState: {
       dialoguePolicy: {

@@ -279,6 +279,10 @@ const ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY = false;
 const ANA_ENGINE_DIAGNOSTIC_TEXT = 'Diagnóstico: cheguei no conversation engine.';
 const ANA_PROVIDER_FAILURE_HANDOFF_REPLY =
   'Vou encaminhar seu atendimento para um consultor te ajudar com essa informação certinho.';
+const ANA_LLM_FIRST_TECHNICAL_FALLBACK_REPLY =
+  'Tive uma instabilidade para consultar as informações agora. Posso encaminhar você para um corretor ou te ajudar a marcar uma visita?';
+const ANA_LLM_FIRST_MISSING_INFO_REPLY =
+  'Não tenho esse detalhe confirmado por aqui. O corretor consegue te passar certinho. Quer que eu te encaminhe ou prefere agendar uma visita?';
 const MAX_ANA_GENERATION_ATTEMPTS = 5;
 const ANA_DEBUG_QWEN_RAW = String(process.env.ANA_DEBUG_QWEN_RAW || '').trim().toLowerCase() === 'true';
 const ANA_LLM_FIRST_COMMERCIAL_REPLIES =
@@ -1161,20 +1165,21 @@ function buildCanonicalSafeReplyForMissingRag(params: {
   axis: CommercialAxis | null;
   isEvora: boolean;
 }): string {
-  if (params.axis === 'preco' || params.axis === 'financiamento' || params.axis === 'disponibilidade') {
-    return 'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?';
-  }
-  if (params.isEvora) {
-    return [
-      'O Évora é um loteamento fechado em Atibaia, na região da Pedreira, com fácil acesso pela Rodovia Dom Pedro I.',
-      'Tem lotes a partir de 360 m², lazer completo e segurança com portaria 24h.',
-      'Para detalhes específicos que variam conforme disponibilidade, quer que eu encaminhe para um corretor te passar certinho?',
-    ].join(' ');
-  }
-  if (params.axis === 'localizacao') {
-    return 'Posso te orientar pela localização geral do empreendimento. Se você quiser o detalhe exato, quer que eu encaminhe para um corretor te passar certinho?';
-  }
-  return 'Posso te ajudar com as informações gerais do empreendimento. Para os detalhes específicos que variam, quer que eu encaminhe para um corretor te passar certinho?';
+  void params;
+  return ANA_LLM_FIRST_MISSING_INFO_REPLY;
+}
+
+function isLlmFirstCommercialTurn(params: {
+  isEvora: boolean;
+  userMessage: string;
+  requestedAxis: CommercialAxis | null;
+  requestedTopic: AnaTurnTopic | null;
+}): boolean {
+  if (!ANA_LLM_FIRST_COMMERCIAL_REPLIES || !params.isEvora) return false;
+  if (params.requestedAxis != null) return true;
+  if (params.requestedTopic != null && !['visita', 'corretor', 'rota'].includes(params.requestedTopic)) return true;
+  const n = normText(params.userMessage || '');
+  return /\b(queria saber mais|quero saber mais|tenho interesse|me fala mais|evora|empreendimento|loteamento|morar|moradia|investir|investimento|lazer|regiao|localizacao|valor|preco|pagamento|seguranca|obras|condominio)\b/.test(n);
 }
 
 function axisHumanLabel(axis: CommercialAxis): string {
@@ -1953,18 +1958,14 @@ function buildSafeCommercialPartialReply(params: {
   }
 
   if (/\bvalor(?:es)?|preco|disponibilidade|simul|desconto|condic|entrada|parcela\b/.test(n)) {
-    blocks.push(
-      'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?'
-    );
+    blocks.push(ANA_LLM_FIRST_MISSING_INFO_REPLY);
     console.log('ANA_UNSUPPORTED_DETAIL_ROUTED_TO_BROKER', {
       detailType: 'pricing_or_availability_or_custom_condition',
     });
   }
 
   if (blocks.length === 0) {
-    blocks.push(
-      'Consigo te adiantar os pontos gerais do empreendimento e, para os detalhes especificos, quer que eu encaminhe para um corretor te passar certinho?'
-    );
+    blocks.push(ANA_LLM_FIRST_MISSING_INFO_REPLY);
   }
 
   return blocks.join('\n\n');
@@ -2273,7 +2274,7 @@ function hasExplicitHandoffIntent(message: string): boolean {
 }
 
 function buildEvoraFirstReplySafeFallback(): string {
-  return 'Olá! O Évora é um loteamento fechado em Atibaia, na região da Pedreira, com lotes a partir de 360 m², lazer completo e segurança 24 horas.';
+  return buildLeadQualificationNameQuestion();
 }
 
 function userExplicitlyAskedPriceInCurrentTurn(message: string): boolean {
@@ -7626,6 +7627,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     if (tokenBudgetDecision.shouldBlock) {
+      if (
+        isLlmFirstCommercialTurn({
+          isEvora: isEvoraEnterpriseName(ent?.name ?? null),
+          userMessage: trimmed,
+          requestedAxis: currentAxisForRepetition ?? requestedAxisForPolicy,
+          requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        })
+      ) {
+        console.log('[ANA_COMMERCIAL_FALLBACK_BLOCKED_BY_LLM_FIRST]', {
+          conversationId,
+          fallbackType: 'token_budget_fallback',
+          requestedAxis: currentAxisForRepetition ?? requestedAxisForPolicy,
+          requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        });
+      }
       const budgetFallbackReply = buildCanonicalSafeReplyForMissingRag({
         axis: currentAxisForRepetition,
         isEvora: isEvoraEnterpriseName(ent?.name ?? null),
@@ -8315,10 +8331,32 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
     if (!structured && isLocalQwenRuntime && !conversationalQwenMode && !isKnowledgeGapTurn) {
-      const canonicalSafeReply = buildCanonicalSafeReplyForMissingRag({
-        axis: currentAxisForRepetition,
+      const llmFirstCommercialParseFailure = isLlmFirstCommercialTurn({
         isEvora: isEvoraEnterpriseName(ent?.name ?? null),
+        userMessage: trimmed,
+        requestedAxis: currentAxisForRepetition ?? requestedAxisForPolicy,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
       });
+      if (llmFirstCommercialParseFailure) {
+        console.log('[ANA_COMMERCIAL_FALLBACK_BLOCKED_BY_LLM_FIRST]', {
+          conversationId,
+          fallbackType: 'local_qwen_json_repair_failed',
+          requestedAxis: currentAxisForRepetition ?? requestedAxisForPolicy,
+          requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        });
+        console.log('[ANA_LLM_FIRST_TECHNICAL_FALLBACK_USED]', {
+          conversationId,
+          reason: 'local_qwen_json_repair_failed',
+          requestedAxis: currentAxisForRepetition ?? requestedAxisForPolicy,
+          requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        });
+      }
+      const canonicalSafeReply = llmFirstCommercialParseFailure
+        ? ANA_LLM_FIRST_TECHNICAL_FALLBACK_REPLY
+        : buildCanonicalSafeReplyForMissingRag({
+            axis: currentAxisForRepetition,
+            isEvora: isEvoraEnterpriseName(ent?.name ?? null),
+          });
       structured = buildRecoveredReplyStructured(canonicalSafeReply, effectiveConv.classification);
       recoveredTextUsed = true;
       console.log('[ANA_RAG_CONTEXT_MISSING_BLOCKED_FREEFORM]', {
@@ -8442,6 +8480,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           const retryReason = mapRetryReason(retryErrorPayload);
           let deterministicRetryReply: string | null = null;
           let schedulingStateMerged = false;
+          const llmFirstCommercialFailure = isLlmFirstCommercialTurn({
+            isEvora: isEvoraEnterpriseName(ent?.name ?? null),
+            userMessage: trimmed,
+            requestedAxis: currentAxisForRepetition ?? requestedAxisForPolicy,
+            requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+          });
 
           const retrySchedulingGuard = applyAnaVisitSchedulingGuard({
             conversationId,
@@ -8458,6 +8502,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             flowStateParsed = retrySchedulingGuard.nextState;
             await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
             schedulingStateMerged = true;
+          } else if (llmFirstCommercialFailure) {
+            deterministicRetryReply = ANA_LLM_FIRST_TECHNICAL_FALLBACK_REPLY;
+            console.log('[ANA_COMMERCIAL_FALLBACK_BLOCKED_BY_LLM_FIRST]', {
+              conversationId,
+              fallbackType: 'retryable_failure_safe_reply',
+              requestedAxis: currentAxisForRepetition ?? requestedAxisForPolicy,
+              requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+            });
+            console.log('[ANA_LLM_FIRST_TECHNICAL_FALLBACK_USED]', {
+              conversationId,
+              reason: retryReason,
+              requestedAxis: currentAxisForRepetition ?? requestedAxisForPolicy,
+              requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+            });
           } else if (isGratitudeOnlyMessage(trimmed)) {
             deterministicRetryReply =
               'De nada! Se precisar de mais alguma informação sobre o Évora, estou por aqui.';
@@ -11401,7 +11459,7 @@ function isConversationalGenericFollowup(text: string): boolean {
 function buildConversationalCanonicalContext(lastAxis: string | null): string {
   return [
     'CONTEXTO CANÔNICO AUTORIZADO',
-    '- Évora é loteamento fechado em Atibaia.',
+    '- Évora: empreendimento em Atibaia.',
     '- Quantidade total de lotes: 145.',
     '- Lotes na faixa de 360 m² a 725 m².',
     '- Valor inicial a partir de R$279.000,00.',

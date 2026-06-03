@@ -12,7 +12,7 @@ import {
 } from './anaDialogueState.js';
 
 const BROKER_HANDOFF_ASK =
-  'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?';
+  'Não tenho esse detalhe confirmado por aqui. O corretor consegue te passar certinho. Quer que eu te encaminhe ou prefere agendar uma visita?';
 const VISIT_SLOT_WINDOW = 'Temos disponibilidade de segunda a sabado, das 09h as 18h.';
 
 const SPECIFIC_DETAIL_FALLBACK_STATEMENT = 'Posso te ajudar com mais detalhes do empreendimento.';
@@ -175,7 +175,7 @@ function stripLeadingStaleTopicCta(text: string): { text: string; changed: boole
     .trim();
   if (!next) {
     return {
-      text: 'O Evora e um loteamento fechado em Atibaia, com lotes a partir de 360 m2, infraestrutura planejada, lazer completo e seguranca 24 horas.',
+      text: 'Claro, posso seguir te ajudando por aqui.',
       changed: true,
     };
   }
@@ -305,7 +305,7 @@ function stripMediaOffer(text: string): string {
 function stripBrokerAsk(text: string): string {
   return (text || '')
     .replace(
-      /esses detalhes podem variar conforme disponibilidade\.?\s*quer que eu encaminhe para um corretor te passar certinho\??/gi,
+      /esses detalhes podem variar conforme disponibilidade\.?\s*(?:quer\s+)?(?:que\s+eu\s+)?encaminh(?:e|ar)[^?]{0,80}corretor[^?]*\??/gi,
       ''
     )
     .replace(/\s{2,}/g, ' ')

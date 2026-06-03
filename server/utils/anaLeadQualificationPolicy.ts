@@ -467,7 +467,7 @@ export function buildEvoraLeadQualificationProgressReply(args: {
       return 'Perfeito. Para moradia, o Évora faz bastante sentido porque une loteamento fechado, área verde, lazer e uma região mais tranquila de Atibaia.';
     }
     if (current.purpose === 'investimento') {
-      return 'Perfeito. Para investimento, o Évora pode fazer sentido pela proposta de loteamento fechado em Atibaia, com lotes a partir de 360 m² e uma região com boa procura.';
+      return 'Perfeito. Para investimento, faz sentido olhar com calma os pontos de valorização, perfil da região e condições disponíveis.';
     }
     if (current.purpose === 'construcao') {
       return 'Perfeito. Para construir, o Évora conversa bem com quem quer mais espaço, segurança e liberdade para planejar uma casa em loteamento fechado.';

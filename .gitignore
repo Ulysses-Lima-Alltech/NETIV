@@ -73,3 +73,6 @@ tmp-taskdef*.json
 current-taskdef.json
 new-taskdef.json
 ssm-portforward.json
+
+# Local Ana/Qwen temporary scripts
+server/tmp-test-*.ts

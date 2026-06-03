@@ -587,13 +587,13 @@ function applyShortMaterialReplyPolicy(
 }
 
 const EVORA_OPEN_GUIDANCE_DEFAULT_REPLY =
-  'Sem problema.\n\nVou te explicar por partes.\n\nO Évora fica em Atibaia, na região da Pedreira, bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I. Ele combina loteamento fechado, lazer, portaria 24h e lotes a partir de 360 m².\n\nVocê quer entender primeiro a região ou a estrutura do empreendimento?';
+  'Sem problema.\n\nPosso te explicar por partes com as informações confirmadas.\n\nVocê quer entender primeiro a região ou a estrutura do empreendimento?';
 
 const EVORA_OPEN_GUIDANCE_UNCERTAIN_REPLY =
-  'Sem problema.\n\nEu te ajudo a organizar isso. O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m², lazer e portaria 24h.\n\nDá para olhar por três caminhos: região, estrutura ou valores.\n\nVocê quer começar por qual deles?';
+  'Sem problema.\n\nEu te ajudo a organizar isso sem atropelar.\n\nVocê quer começar por região, estrutura ou valores?';
 
 const EVORA_OPEN_GUIDANCE_CHALLENGE_REPLY =
-  'Faz sentido perguntar isso.\n\nO ponto é que o Évora junta uma região mais tranquila de Atibaia com acesso pela Rodovia Dom Pedro I, lotes a partir de 360 m², lazer e portaria 24h.\n\nIsso ajuda tanto para morar com mais espaço quanto para pensar em valorização.\n\nVocê quer que eu explique primeiro a localização ou os valores?';
+  'Faz sentido perguntar isso.\n\nPosso te explicar os pontos com calma e só com informação confirmada.\n\nVocê quer que eu explique primeiro a localização ou os valores?';
 
 const EVORA_ATIBAIA_REGION_CONTEXT_REPLY =
   'Sem problema, vou te situar.\n\nAtibaia é uma cidade muito procurada por quem quer sair um pouco da correria de São Paulo, mas sem ficar longe demais.\n\nO Évora fica na região da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.\n\nVocê quer que eu te explique mais sobre a região ou sobre a estrutura do loteamento?';
@@ -723,7 +723,7 @@ function rescueNeutralOpenCommercialReply(text: string, opts?: FinalizeAnaReplyO
 }
 
 const BROKER_DETAIL_ROUTING_TEXT =
-  'Esses detalhes podem variar conforme disponibilidade. Quer que eu encaminhe para um corretor te passar certinho?';
+  'Não tenho esse detalhe confirmado por aqui. O corretor consegue te passar certinho. Quer que eu te encaminhe ou prefere agendar uma visita?';
 
 const EVORA_LOT_COUNT_ROUTING_REPLY =
   'O Évora tem 145 lotes no total, com opções a partir de 360 m².';
