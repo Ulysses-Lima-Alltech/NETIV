@@ -12,14 +12,14 @@ import {
 } from './anaDialogueState.js';
 
 const BROKER_HANDOFF_ASK =
-  'Essa parte depende de confirmação atualizada. Posso te ajudar a seguir com um corretor ou marcar uma visita?';
+  '';
 const VISIT_SLOT_WINDOW = 'Temos disponibilidade de segunda a sabado, das 09h as 18h.';
 
-const SPECIFIC_DETAIL_FALLBACK_STATEMENT = 'Posso te ajudar com mais detalhes do empreendimento.';
+const SPECIFIC_DETAIL_FALLBACK_STATEMENT = '';
 
 const GENERIC_SINGLE_FOLLOWUP_FALLBACK =
-  'Posso seguir por valores, lazer, localizacao, seguranca ou formas de pagamento. Qual desses pontos faz mais sentido agora?';
-const BANNED_GENERIC_FALLBACK = 'Posso te responder de forma mais objetiva nesse ponto.';
+  '';
+const BANNED_GENERIC_FALLBACK = '';
 const GENERIC_LOOP_PATTERNS: RegExp[] = [
   /tem algum ponto espec[ií]fico que voc[eê] quer que eu detalhe melhor\??/i,
   /tem algum ponto espec[ií]fico que voc[eê] quer saber\??/i,

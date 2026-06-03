@@ -278,11 +278,11 @@ import {
 const ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY = false;
 const ANA_ENGINE_DIAGNOSTIC_TEXT = 'Diagnóstico: cheguei no conversation engine.';
 const ANA_PROVIDER_FAILURE_HANDOFF_REPLY =
-  'Vou encaminhar seu atendimento para um consultor te ajudar com essa informação certinho.';
+  '';
 const ANA_LLM_FIRST_TECHNICAL_FALLBACK_REPLY =
-  'Tive uma instabilidade para consultar as informações agora. Posso continuar te ajudando por aqui ou, se preferir, te encaminhar para um corretor?';
+  '';
 const ANA_LLM_FIRST_MISSING_INFO_REPLY =
-  'Essa parte depende de confirmação atualizada. Posso te ajudar a seguir com um corretor ou marcar uma visita?';
+  '';
 const ANA_NAME_QUESTION_REPAIR_REPLY =
   'Perfeito. Só para eu seguir certinho, como posso te chamar?';
 const MAX_ANA_GENERATION_ATTEMPTS = 5;
@@ -6865,7 +6865,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           enterpriseName: ent?.name ?? null,
           hintedTopic: 'entrega_prazo',
         });
-        const fallbackEntrega = 'Ainda não tenho essa previsão exata liberada por aqui.';
+        const fallbackEntrega = '';
         const fallbackEntregaBrokerAsk =
           'Quer que eu encaminhe para um corretor te passar essa informação certinho?';
         let resolvedEntrega = operational?.dataFound ? operational.answer : fallbackEntrega;

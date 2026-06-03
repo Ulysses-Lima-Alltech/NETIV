@@ -155,8 +155,8 @@ export function computeAppointmentPreflight(
 
 /** Resposta estável quando o JSON falhou mas o fluxo é claramente de agendamento. */
 export const ANA_FALLBACK_APPOINTMENT_FLOW_REPLY =
-  'Pelo histórico, você está organizando uma visita. Para eu registrar certinho: em qual empreendimento e qual dia e horário posso confirmar para você?';
+  '';
 
 /** Quando já há contexto de visita ou contestação de data — não reiniciar triagem. */
 export const ANA_FALLBACK_APPOINTMENT_CONTINUATION_REPLY =
-  'Entendi. Me diga qual data e horário você quer para a visita — se algo que eu disse antes estiver errado, pode corrigir que eu ajusto agora.';
+  '';

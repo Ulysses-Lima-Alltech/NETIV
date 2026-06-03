@@ -1,4 +1,4 @@
-export const ANA_EMERGENCY_HANDOFF_ENV = 'ANA_EMERGENCY_HANDOFF';
+export const ANA_EMERGENCY_HANDOFF_ENV = '';
 
 export const ANA_EMERGENCY_HANDOFF_MESSAGE =
   'Ol\u00e1! Obrigada pelo seu contato e pelo interesse.\n\n' +
