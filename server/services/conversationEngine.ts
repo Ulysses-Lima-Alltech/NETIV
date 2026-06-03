@@ -1182,6 +1182,34 @@ function isLlmFirstCommercialTurn(params: {
   return /\b(queria saber mais|quero saber mais|tenho interesse|me fala mais|evora|empreendimento|loteamento|morar|moradia|investir|investimento|lazer|regiao|localizacao|valor|preco|pagamento|seguranca|obras|condominio)\b/.test(n);
 }
 
+function isInitialQualificationClarificationMessage(text: string | null | undefined): boolean {
+  const n = normText(text || '').replace(/[.!?]+$/g, '').trim();
+  if (!n) return false;
+  return (
+    /^(nao entendi|nao entendi nada|como assim|como assim|pode explicar|pode explicar melhor|explica melhor|me explica melhor)$/.test(n) ||
+    /\b(nao entendi|não entendi|como assim|pode explicar|explica melhor)\b/.test(String(text || '').toLowerCase())
+  );
+}
+
+function buildInitialQualificationClarificationReply(params: {
+  lastAssistantMessage?: string | null;
+  state: ReturnType<typeof getLeadQualificationState>;
+}): string {
+  const last = normText(params.lastAssistantMessage || '');
+  if (!params.state.nameCollected && /\b(nome|como posso te chamar|me conta seu nome)\b/.test(last)) {
+    return [
+      'Sem problema, eu explico melhor.',
+      'Eu pergunto seu nome só para te atender de forma mais organizada por aqui.',
+      'Como posso te chamar?',
+    ].join('\n\n');
+  }
+  return [
+    'Sem problema, eu explico melhor.',
+    'Vou te fazer perguntas simples para entender o que você procura e te passar as informações certas do Évora.',
+    'Você está olhando mais para morar, investir ou só conhecendo por enquanto?',
+  ].join('\n\n');
+}
+
 function axisHumanLabel(axis: CommercialAxis): string {
   if (axis === 'metragem_tipologia') return 'metragem';
   if (axis === 'financiamento') return 'formas de pagamento';
@@ -6304,9 +6332,82 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
       });
     }
+    const shouldHandleInitialQualificationClarification =
+      evoraLeadQualificationEnabled &&
+      ANA_LLM_FIRST_COMMERCIAL_REPLIES &&
+      isInitialQualificationClarificationMessage(trimmed) &&
+      (
+        getLeadQualificationState(flowStateParsed).nameAsked ||
+        Boolean(getLeadQualificationState(flowStateParsed).lastQualificationQuestion) ||
+        /\b(nome|morar|investir|conhecendo|possibilidades|momento|procur)\b/.test(normText(lastAssistantPlain || ''))
+      );
+    if (shouldHandleInitialQualificationClarification) {
+      const clarificationRepairReply = buildInitialQualificationClarificationReply({
+        lastAssistantMessage: lastAssistantPlain,
+        state: getLeadQualificationState(flowStateParsed),
+      });
+      console.log('[ANA_MISSING_RAG_FALLBACK_BLOCKED_FOR_CONVERSATION_STATE]', {
+        conversationId,
+        reason: 'initial_qualification_clarification',
+        userMessagePreview: trimmed.slice(0, 120),
+      });
+      console.log('[ANA_CLARIFICATION_REPAIR_HANDLED]', {
+        conversationId,
+        lastAssistantQuestion: (lastAssistantPlain || '').slice(0, 220),
+      });
+      const committedClarificationRepair = commitTurnResponse({
+        handler: 'lead_qualification_policy',
+        reason: 'initial_qualification_clarification',
+        parts: [clarificationRepairReply],
+        stage: 'lead_qualification_clarification',
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+        shouldCallQwen: false,
+      });
+      if (!committedClarificationRepair.committed || !committedClarificationRepair.text.trim()) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'lead_qualification_clarification_commit_blocked';
+        return;
+      }
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_lead_qualification_clarification_send';
+        return;
+      }
+      const clarificationRepairSend = await sendAnaOutboundMessages({
+        conversationId,
+        toPhoneNumber,
+        text: committedClarificationRepair.text,
+        phase: 'lead_qualification_policy',
+        replyPipelineToken,
+      });
+      if (!clarificationRepairSend.success || clarificationRepairSend.metaMessageIds.length === 0) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'lead_qualification_clarification_send_failed';
+        return;
+      }
+      const committedClarificationState = updateConversationStateFromCommittedReply({
+        conversationId,
+        flowState: flowStateParsed,
+        finalReplyParts: committedClarificationRepair.parts,
+        finalReplyText: committedClarificationRepair.text,
+        handler: 'lead_qualification_policy',
+        currentTopic: anaTurnContextResolved?.currentTopic ?? null,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+      });
+      flowStateParsed = committedClarificationState.nextState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+      anaTurnAuditOutcome = 'sent';
+      anaTurnAuditBlockedReason = null;
+      anaTurnAuditLlmStatus = 'skipped';
+      anaTurnAuditModel = 'lead_qualification_policy';
+      anaTurnDiagnostics.finalResponse.replySource = 'lead_qualification_policy';
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      return;
+    }
     if (
       !effectiveCommercialRule &&
-      !ANA_LLM_FIRST_COMMERCIAL_REPLIES &&
       !isKnowledgeGapTurn &&
       leadQualificationSignalsChangedThisTurn &&
       !objectiveCustomerQuestionThisTurn &&
@@ -6350,6 +6451,22 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         console.log('[ANA_LEAD_QUALIFICATION_QUESTION_SKIPPED_ALREADY_ASKED]', {
           conversationId,
           askedQualificationKeys: getLeadQualificationState(flowStateParsed).askedQualificationKeys,
+        });
+      }
+      if (leadQualificationNameCollectedThisTurn) {
+        console.log('[ANA_NAME_CAPTURED_LLM_FIRST_BYPASS]', {
+          conversationId,
+          customerName: getLeadQualificationState(flowStateParsed).name ?? getLeadQualificationState(flowStateParsed).customerName ?? null,
+        });
+        console.log('[ANA_INITIAL_QUALIFICATION_CONTINUED_AFTER_NAME]', {
+          conversationId,
+          nextQuestionKey: nextQualificationQuestion?.key ?? null,
+        });
+      } else if (ANA_LLM_FIRST_COMMERCIAL_REPLIES) {
+        console.log('[ANA_MISSING_RAG_FALLBACK_BLOCKED_FOR_CONVERSATION_STATE]', {
+          conversationId,
+          reason: 'lead_qualification_signal',
+          userMessagePreview: trimmed.slice(0, 120),
         });
       }
       const committedQualificationReply = commitTurnResponse({
@@ -6402,7 +6519,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       anaTurnAuditBlockedReason = null;
       anaTurnAuditLlmStatus = 'skipped';
       anaTurnAuditModel = 'lead_qualification_policy';
-      anaTurnDiagnostics.finalResponse.replySource = 'commercial_rules_intent';
+      anaTurnDiagnostics.finalResponse.replySource = 'lead_qualification_policy';
       anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
       return;
     }

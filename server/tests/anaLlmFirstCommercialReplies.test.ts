@@ -42,7 +42,11 @@ test('commercial deterministic rules are bypassed before final reply when LLM-fi
   );
   assert.match(
     engineSource,
-    /!effectiveCommercialRule &&\s*!ANA_LLM_FIRST_COMMERCIAL_REPLIES[\s\S]*leadQualificationSignalsChangedThisTurn/
+    /!effectiveCommercialRule &&\s*!isKnowledgeGapTurn &&\s*leadQualificationSignalsChangedThisTurn/
+  );
+  assert.doesNotMatch(
+    engineSource,
+    /!effectiveCommercialRule &&\s*!ANA_LLM_FIRST_COMMERCIAL_REPLIES[\s\S]{0,120}leadQualificationSignalsChangedThisTurn/
   );
 });
 
@@ -84,4 +88,25 @@ test('production scenarios cannot use the fixed overview as fallback', () => {
       assert.doesNotMatch(engineSource, forbidden, `${userMessage} must not have fixed overview fallback`);
     }
   }
+});
+
+test('conversation state bypasses missing-RAG fallback in LLM-first mode', () => {
+  assert.match(engineSource, /\[ANA_NAME_CAPTURED_LLM_FIRST_BYPASS\]/);
+  assert.match(engineSource, /\[ANA_INITIAL_QUALIFICATION_CONTINUED_AFTER_NAME\]/);
+  assert.match(engineSource, /\[ANA_CLARIFICATION_REPAIR_HANDLED\]/);
+  assert.match(engineSource, /\[ANA_MISSING_RAG_FALLBACK_BLOCKED_FOR_CONVERSATION_STATE\]/);
+  assert.match(engineSource, /isInitialQualificationClarificationMessage\(trimmed\)/);
+  assert.match(engineSource, /buildInitialQualificationClarificationReply/);
+});
+
+test('clarification repair explains initial qualification instead of missing-data fallback', () => {
+  assert.match(engineSource, /function buildInitialQualificationClarificationReply/);
+  assert.match(engineSource, /Sem problema, eu explico melhor/);
+  assert.match(engineSource, /perguntas simples/);
+  assert.match(engineSource, /morar, investir ou só conhecendo/);
+  const clarificationStart = engineSource.indexOf('function buildInitialQualificationClarificationReply');
+  const clarificationEnd = engineSource.indexOf('function axisHumanLabel', clarificationStart);
+  const clarificationBlock = engineSource.slice(clarificationStart, clarificationEnd);
+  assert.doesNotMatch(clarificationBlock, /Não tenho esse detalhe confirmado/);
+  assert.doesNotMatch(clarificationBlock, /corretor consegue te passar certinho/);
 });

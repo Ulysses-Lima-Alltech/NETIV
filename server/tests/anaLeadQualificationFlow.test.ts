@@ -68,6 +68,66 @@ test('cliente informa nome salva e recebe apresentacao curta com qualificacao', 
   assert.equal(countQuestions(reply), 1);
 });
 
+test('Ulysses apos pergunta de nome nao cai em fallback de dado ausente', () => {
+  let state: CommercialFlowState = {
+    dialoguePolicy: {
+      leadQualification: { ...getLeadQualificationState({}), nameAsked: true, askedQualificationKeys: ['name'] },
+    },
+  };
+  const previousState = getLeadQualificationState(state);
+  state = mergeLeadQualificationState(state, extractLeadQualificationSignals('Ulysses', previousState));
+  const selection = selectNextLeadQualificationQuestion({
+    state: getLeadQualificationState(state),
+    userMessage: 'Ulysses',
+    customerName: 'Ulysses',
+  });
+  const reply = `${buildEvoraLeadQualificationProgressReply({
+    previousState,
+    currentState: getLeadQualificationState(state),
+    userMessage: 'Ulysses',
+    nextQuestionKey: selection?.key,
+  })}\n\n${selection?.question}`;
+
+  assert.equal(getLeadQualificationState(state).name, 'Ulysses');
+  assert.equal(selection?.key, 'purpose');
+  assert.match(reply, /Prazer, Ulysses/i);
+  assert.match(reply, /morar, investir/i);
+  assert.doesNotMatch(reply, /N[aã]o tenho esse detalhe confirmado/i);
+});
+
+test('respostas de qualificacao nao caem em fallback de dado ausente', () => {
+  for (const userMessage of ['morar', 'investir', 'estou pesquisando']) {
+    let state: CommercialFlowState = {
+      dialoguePolicy: {
+        leadQualification: {
+          ...getLeadQualificationState({}),
+          name: 'Ulysses',
+          customerName: 'Ulysses',
+          nameAsked: true,
+          nameCollected: true,
+          askedQualificationKeys: ['name', 'purpose'],
+        },
+      },
+    };
+    const previousState = getLeadQualificationState(state);
+    state = mergeLeadQualificationState(state, extractLeadQualificationSignals(userMessage, previousState));
+    const selection = selectNextLeadQualificationQuestion({
+      state: getLeadQualificationState(state),
+      userMessage,
+    });
+    const reply = `${buildEvoraLeadQualificationProgressReply({
+      previousState,
+      currentState: getLeadQualificationState(state),
+      userMessage,
+      nextQuestionKey: selection?.key,
+    })}\n\n${selection?.question ?? ''}`;
+
+    assert.doesNotMatch(reply, /N[aã]o tenho esse detalhe confirmado/i, userMessage);
+    assert.doesNotMatch(reply, /corretor consegue te passar certinho/i, userMessage);
+    assert.match(reply, /Perfeito|Certo|orientar|pesquisa|investimento|moradia/i, userMessage);
+  }
+});
+
 test('cliente ignora nome e pergunta valor recebe canonico e qualificacao', () => {
   const state: CommercialFlowState = {
     dialoguePolicy: {
