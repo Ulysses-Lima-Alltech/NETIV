@@ -47,16 +47,80 @@ test('desambiguação: pergunta de taxa cai em valor_condominio', () => {
 test('entrada não cai em formas de pagamento', () => {
   const rule = resolve('Quero saber quanto tenho que pagar de entrada');
   assert.equal(rule?.ruleId, 'entrada');
-  assert.match((rule?.messages[0] ?? ''), /20%/);
+  assert.equal(rule?.financialIntentType, 'personalized_financial_simulation');
+  assert.match((rule?.messages ?? []).join(' '), /corretor consegue montar certinho/i);
 });
 
 test('formas de pagamento mantém 120x e 48x', () => {
-  const rule = resolve('Formas de pagamento');
+  const rule = resolve('quais as formas de pagamento?');
   assert.equal(rule?.ruleId, 'formas_pagamento');
   assert.equal(rule?.commercialAxis, 'payment_terms');
+  assert.equal(rule?.financialIntentType, 'payment_terms_general');
   const all = (rule?.messages ?? []).join(' ');
   assert.match(all, /120x/);
   assert.match(all, /48x/);
+  assert.match(all, /financiamento direto com a construtora/i);
+  assert.match(all, /menos burocracia e mais facilidade/i);
+  assert.match(all, /entrada, parcela exata ou simulação personalizada/i);
+  assert.match(all, /encaminhe para uma simulação|tamanhos dos lotes/i);
+});
+
+test('pagamento geral cobre parcelamento e financiamento direto', () => {
+  for (const message of [
+    'como funciona o pagamento?',
+    'tem parcelamento?',
+    'dá para parcelar?',
+    'financia direto com a construtora?',
+  ]) {
+    const rule = resolve(message);
+    assert.equal(rule?.financialIntentType, 'payment_terms_general', message);
+    assert.match((rule?.messages ?? []).join(' '), /120x/i, message);
+    assert.match((rule?.messages ?? []).join(' '), /48x/i, message);
+  }
+});
+
+test('"quero" após oferta de formas de pagamento herda pagamento geral autorizado', () => {
+  const rule = resolveAnaCommercialRule({
+    enterpriseName: 'Évora',
+    userMessage: 'quero',
+    isFirstAnaReply: false,
+    previousAssistantMessage: 'Quer que eu te explique também as formas de pagamento?',
+  });
+  assert.equal(rule?.ruleId, 'formas_pagamento');
+  assert.equal(rule?.inheritedIntent, 'payment_terms');
+  assert.equal(rule?.financialIntentType, 'payment_terms_general');
+  const all = (rule?.messages ?? []).join(' ');
+  assert.match(all, /120x/);
+  assert.match(all, /48x/);
+  assert.match(all, /financiamento direto com a construtora/i);
+  assert.doesNotMatch(all, /precisa ser confirmada com segurança/i);
+});
+
+test('pedidos personalizados financeiros conduzem para corretor ou simulação', () => {
+  const cases = [
+    ['tem entrada?', 'entrada'],
+    ['quanto fica por mês?', 'parcela_simulacao'],
+    ['faz uma simulação', 'parcela_simulacao'],
+    ['tem desconto?', 'disponibilidade_simulacao_desconto'],
+    ['me passa a tabela comercial', 'disponibilidade_simulacao_desconto'],
+  ] as const;
+
+  for (const [message, expectedRuleId] of cases) {
+    const rule = resolve(message);
+    assert.equal(rule?.ruleId, expectedRuleId, message);
+    assert.equal(rule?.financialIntentType, 'personalized_financial_simulation', message);
+    assert.match((rule?.messages ?? []).join(' '), /corretor|simulação/i, message);
+    assert.doesNotMatch((rule?.messages ?? []).join(' '), /R\$\s*\d/i, message);
+  }
+});
+
+test('pedido de lotes disponíveis encaminha disponibilidade atualizada ao corretor', () => {
+  const rule = resolve('quero saber sobre os lotes disponíveis');
+  assert.equal(rule?.ruleId, 'disponibilidade_simulacao_desconto');
+  const all = (rule?.messages ?? []).join(' ');
+  assert.match(all, /disponibilidade atualizada/i);
+  assert.match(all, /corretor/i);
+  assert.match(all, /tamanhos gerais dos lotes|faixa de metragem|proposta do loteamento/i);
 });
 
 test('preço responde valor inicial e metro quadrado', () => {
@@ -82,4 +146,5 @@ test('"quanto fica por mês" cai em installment', () => {
   const rule = resolve('quanto fica por mês?');
   assert.equal(rule?.ruleId, 'parcela_simulacao');
   assert.equal(rule?.commercialAxis, 'installment');
+  assert.equal(rule?.financialIntentType, 'personalized_financial_simulation');
 });

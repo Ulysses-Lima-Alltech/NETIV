@@ -7,16 +7,23 @@ import { resolveAnaCommercialRule } from '../services/anaCommercialRulesService.
 
 test('Teste 1: sem nome conhecido em entrada usa ordem resposta -> nome -> CTA no engine', () => {
   const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
-  assert.match(source, /commercialRule\.ruleId === 'entrada'/);
-  assert.match(source, /commercialMessagesToSend\.push\(answer\)/);
-  assert.match(source, /Qual é o seu nome\? Assim eu consigo te atender melhor por aqui\./);
-  assert.match(source, /corretor consegue simular certinho com as opções disponíveis\. Quer que eu te ajude a agendar uma visita\?/i);
+  assert.match(source, /shouldAskNameAfterCommercialReply/);
+  assert.match(source, /effectiveCommercialRule\.ruleId !== 'entrada'/);
+  assert.match(source, /commercialMessagesToSend\.push\(ANA_COMMERCIAL_RULES\.askNameMessage\)/);
+  const entrada = resolveAnaCommercialRule({
+    enterpriseName: 'Évora',
+    userMessage: 'qual a entrada?',
+    isFirstAnaReply: false,
+    previousAssistantMessage: null,
+  });
+  assert.match((entrada?.messages ?? []).join(' '), /simular.*corretor consegue|corretor consegue.*simular|simulação/i);
 });
 
 test('Teste 2: nome conhecido evita pergunta de nome', () => {
   const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
   assert.match(source, /hasKnownCustomerName/);
-  assert.match(source, /if \(!hasKnownCustomerName\) commercialMessagesToSend\.push/);
+  assert.match(source, /!hasKnownCustomerName/);
+  assert.match(source, /shouldAskNameAfterCommercialReply/);
 });
 
 test('Teste 3: formas de pagamento mantém CTA padrão', () => {

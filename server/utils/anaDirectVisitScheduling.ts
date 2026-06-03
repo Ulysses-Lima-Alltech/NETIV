@@ -9,7 +9,7 @@ import { extractCustomerNameFromUserUtterance } from './extractCustomerNameFromM
 const SP_OFFSET = '-03:00';
 export const VISIT_WINDOW_START_MINUTES = 9 * 60;
 export const VISIT_WINDOW_END_MINUTES = 18 * 60;
-export const VISIT_WINDOW_REPLY = 'Temos disponibilidade de segunda a sÃ¡bado, das 09h Ã s 18h.';
+export const VISIT_WINDOW_REPLY = 'Temos disponibilidade de segunda a sábado, das 09h às 18h.';
 
 const PROHIBITED_VISIT_SCHEDULING_PHRASES = [
   'assim que o corretor confirmar',
@@ -995,6 +995,11 @@ export function reconstructVisitStateFromRecentMessages(input: {
       nextState: input.flowState,
     };
   }
+  const hasStrongAssistantVisitFlowCue = cueMessages.some((text) =>
+    /\b(para qual dia voce prefere agendar a visita|qual horario|como posso te chamar|posso confirmar sua visita|fora do horario|09h.*18h)\b/.test(
+      norm(text)
+    )
+  );
   const hasUserSchedulingSignals = userMessages.some(
     (msg) =>
       isExplicitVisitSchedulingAcceptance(msg) ||
@@ -1003,7 +1008,7 @@ export function reconstructVisitStateFromRecentMessages(input: {
       parseTimeHmFromText(msg, { allowStandaloneHour: true }) != null ||
       parsePeriodFromText(msg) != null
   );
-  if (!hasUserSchedulingSignals) {
+  if (!hasUserSchedulingSignals && !hasStrongAssistantVisitFlowCue) {
     return {
       reconstructed: false,
       lowConfidence: false,

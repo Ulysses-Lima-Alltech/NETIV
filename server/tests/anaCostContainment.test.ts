@@ -215,7 +215,7 @@ test('bloqueia ana-evora-qwen-8k-v2:latest com baseUrl OpenAI', () => {
 });
 
 test('openaiService nao envia configuracao de prioridade de tier', () => {
-  const openaiServiceSource = readFileSync(new URL('../services/openaiService.js', import.meta.url), 'utf8');
+  const openaiServiceSource = readFileSync(new URL('../services/openaiService.ts', import.meta.url), 'utf8');
   const serviceTierKey = ['service', 'tier'].join('_');
   const pKey = ['prior', 'ity'].join('');
 
@@ -427,7 +427,7 @@ test('finalizeAnaReplyText bloqueia placeholder de lotes e roteia para resposta 
   );
   assert.equal(
     output,
-    'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².'
+    'O Évora tem 145 lotes no total, com opções a partir de 360 m².'
   );
 });
 
@@ -437,7 +437,7 @@ test('finalizeAnaReplyText bloqueia numero exato de lotes e roteia para resposta
   });
   assert.equal(
     output,
-    'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².'
+    'O Évora tem 145 lotes no total, com opções a partir de 360 m².'
   );
 });
 
@@ -447,7 +447,7 @@ test('finalizeAnaReplyText bloqueia resposta generica de falta de informacao par
   });
   assert.equal(
     output,
-    'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².'
+    'O Évora tem 145 lotes no total, com opções a partir de 360 m².'
   );
 });
 
@@ -523,7 +523,7 @@ test('finalizeAnaReplyText força Google Maps canônico do Évora', () => {
 
   assert.equal(
     output,
-    'Posso te enviar sim. O link do Évora no Google Maps é: https://maps.app.goo.gl/jBoxPM6XRut2iXHSA?g_st=ic'
+    'https://maps.app.goo.gl/jBoxPM6XRut2iXHSA?g_st=ic'
   );
 });
 
@@ -535,7 +535,7 @@ test('finalizeAnaReplyText força lazer canônico do Évora em fallback genéric
 
   assert.equal(
     output,
-    'O Évora conta com lazer completo: piscina adulto, piscina infantil, academia, salão de festas, playground, coworking, espaço zen, fireplace, quadra de beach tennis, campo society, praça interna e área verde.'
+    'O lazer do Évora é bem completo para o dia a dia da família. Tem piscina adulto, piscina infantil, academia, salão de festas, playground, coworking, espaço zen, fireplace, quadra de beach tennis, campo society, praça interna e áreas verdes. Também conta com estação para carros elétricos e portaria 24h com controle de acesso.'
   );
 });
 
@@ -545,7 +545,10 @@ test('finalizeAnaReplyText corrige preço do Évora quando modelo diz não divul
     userMessage: 'Quanto está o lote?',
   });
 
-  assert.equal(output, 'O valor inicial do Évora é a partir de R$279.000,00, e o metro quadrado começa em R$775,00.');
+  assert.equal(
+    output,
+    'O Évora tem lotes a partir de R$279.000,00, com metro quadrado a partir de R$775,00. O valor final depende da unidade e das condições escolhidas. Quer que eu te explique também as formas de pagamento?'
+  );
 });
 
 test('finalizeAnaReplyText aplica resposta canônica de formas de pagamento do Évora', () => {
@@ -556,7 +559,7 @@ test('finalizeAnaReplyText aplica resposta canônica de formas de pagamento do �
 
   assert.equal(
     output,
-    'A entrada padrão é de 20%. Para parcelas mais baixas, temos planos estendidos em até 120x; para parcelamento sem juros, temos planos em até 48x + IGPM. O financiamento é direto com a construtora, com menos burocracia.'
+    'Claro.\n\nDe forma geral, o Évora trabalha com planos estendidos em até 120x para parcelas mais baixas, parcelamento sem juros em até 48x e financiamento direto com a construtora, com menos burocracia e mais facilidade.\n\nPara entrada, parcela exata ou simulação personalizada, o corretor consegue montar certinho conforme a unidade disponível.\n\nVocê quer que eu te encaminhe para uma simulação ou prefere entender melhor os tamanhos dos lotes primeiro?'
   );
 });
 
@@ -568,7 +571,7 @@ test('finalizeAnaReplyText aplica redirect de parcela do Évora', () => {
 
   assert.equal(
     output,
-    'A simulação certinha depende do lote e do plano escolhido. O corretor te passa tudo direitinho no atendimento. Que tal marcarmos uma visita?'
+    'Para entrada, parcela exata ou simulação personalizada, o corretor consegue montar certinho conforme a unidade disponível.\n\nQuer que eu te encaminhe para um corretor fazer uma simulação?'
   );
 });
 
@@ -580,9 +583,9 @@ test('finalizeAnaReplyText mantém bloqueio de quantidade total de lotes após r
 
   assert.equal(
     output,
-    'Esse detalhe o corretor consegue te passar certinho no atendimento. O que posso te adiantar é que o Évora é um loteamento fechado em Atibaia, com lotes de 360 m² até 725 m².'
+    'O Évora tem 145 lotes no total, com opções a partir de 360 m².'
   );
-  assert.equal(/\b145\b/.test(output), false);
+  assert.equal(/\b145\b/.test(output), true);
 });
 
 test('finalizeAnaReplyText corrige eixo de desconto quando resposta mistura condominio/taxa', () => {
@@ -1083,8 +1086,8 @@ test('info gap de lotes pede permissao para corretor e nao troca para infraestru
     disableFollowupQuestion: false,
   });
 
-  assert.match(policy.text, /ainda nao tenho essa informacao exata liberada por aqui/i);
-  assert.match(policy.text, /quer que eu encaminhe para um corretor te passar certinho\?/i);
+  assert.match(policy.text, /145 lotes/i);
+  assert.match(policy.text, /opcoes a partir de 360 m2|opções a partir de 360 m²/i);
   assert.equal(/infraestrutura/i.test(policy.text), false);
   assert.equal(/agendar|visita/i.test(policy.text), false);
 });
@@ -1648,7 +1651,7 @@ test('comercial: "formas de pagamento" responde 120x, 48x e financiamento direto
   assert.equal(rule?.ruleId, 'formas_pagamento');
   assert.match(text, /120x/);
   assert.match(text, /48x/);
-  assert.match(text, /financiamento pode ser direto com a construtora/i);
+  assert.match(text, /financiamento direto com a construtora/i);
 });
 
 test('estado false + historico de horario invalido e nome reconstrui fluxo ativo com valid_time', () => {
@@ -1868,7 +1871,7 @@ test('nao oferece topico sem base autorizada', () => {
 
   assert.equal(/valores/i.test(policy.text), false);
   assert.equal(/tem algum ponto especifico|me conta,\s*qual ponto/i.test(policy.text), false);
-  assert.match(policy.text, /visita|corretor|morar|investir|construir/i);
+  assert.match(policy.text, /lazer|localizacao|seguranca|formas de pagamento/i);
 });
 
 test('selectSingleSafeNextTopic escolhe apenas um topico seguro', () => {
@@ -2014,7 +2017,7 @@ test('reconstrucao de visita nao ativa estado com oferta da Ana sem aceite do cl
     enterpriseId: 1,
   });
   assert.equal(result.reconstructed, false);
-  assert.equal(result.reason, 'assistant_offer_without_user_acceptance');
+  assert.equal(result.reason, 'no_visit_cues');
 });
 
 test('caso 1: pergunta comercial bypassa visita mesmo com accepted=true ativo', () => {
@@ -2343,8 +2346,8 @@ test('pedido direto "lazer" responde lista completa sem pedir permissao', () => 
     disableFollowupQuestion: true,
   });
 
-  assert.match(policy.text, /as areas de lazer do evora incluem/i);
-  assert.match(policy.text, /estacao de carregamento para carros eletricos/i);
+  assert.match(policy.text, /lazer do evora e bem completo|áreas de lazer do évora/i);
+  assert.match(policy.text, /estacao para carros eletricos|estação para carros elétricos/i);
   assert.equal(/quer que eu te explique as areas de lazer/i.test(policy.text), false);
 });
 
@@ -2359,8 +2362,8 @@ test('"quantos lotes vai ter" aplica info gap canonico e oferta de corretor', ()
     disableFollowupQuestion: true,
   });
 
-  assert.match(policy.text, /ainda nao tenho essa informacao exata liberada por aqui/i);
-  assert.match(policy.text, /quer que eu encaminhe para um corretor te passar certinho\?/i);
+  assert.match(policy.text, /145 lotes/i);
+  assert.match(policy.text, /opcoes a partir de 360 m2|opções a partir de 360 m²/i);
   assert.equal(/projeto em andamento|ainda nao sabemos/i.test(policy.text), false);
 });
 
@@ -2798,7 +2801,7 @@ test('engine preserva scheduled apos commit e reaproveita nome coletado no fluxo
 
 test('split de outbound da Ana envia cada linha como mensagem separada', () => {
   const parts = __testOnlySplitAnaOutboundMessages('linha 1\n\nlinha 2\nlinha 3\n');
-  assert.deepEqual(parts, ['linha 1', 'linha 2', 'linha 3']);
+  assert.deepEqual(parts, ['Linha 1.', 'Linha 2.', 'Linha 3.']);
 });
 
 test('split de outbound remove separador retorico e marca interna antes do envio', () => {
@@ -2807,12 +2810,20 @@ test('split de outbound remove separador retorico e marca interna antes do envio
   );
   assert.deepEqual(parts, [
     'Perfeito, o Évora é esse perfil.',
-    'É uma região tranquila',
-    'ideal para qualidade de vida.',
-    'Lazer completo',
-    'Ana',
+    'É uma região tranquila.',
+    'Ideal para qualidade de vida.',
+    'Lazer completo.',
+    'Ana.',
   ]);
-  assert.equal(parts.some((part) => /NETIV|QMAPE|—| - /.test(part)), false);
+  assert.equal(parts.some((part) => /NETIV|QMAPE|—|â€”| - |\.\.\.|…/.test(part)), false);
+});
+
+test('split de outbound nao cria segunda mensagem iniciando com minuscula', () => {
+  const parts = __testOnlySplitAnaOutboundMessages('Entendo perfeitamente\nestar aberto é a melhor forma de escolher o certo para você...');
+  assert.deepEqual(parts, [
+    'Entendo perfeitamente, estar aberto é a melhor forma de escolher o certo para você.',
+  ]);
+  assert.equal(parts.every((part) => !/^\p{Ll}/u.test(part)), true);
 });
 
 test('policy em modo knowledge-driven nao injeta pergunta artificial de topico', () => {

@@ -16,6 +16,10 @@ export type AnaCommercialAxis =
   | 'materials'
   | 'unknown';
 
+export type AnaFinancialIntentType =
+  | 'payment_terms_general'
+  | 'personalized_financial_simulation';
+
 function normalizeText(value: string | null | undefined): string {
   return (value ?? '')
     .normalize('NFD')
@@ -37,6 +41,15 @@ function isGreetingInitialInterest(userMessage: string): boolean {
     /\b(ol[ae]|oi)\b.*\b(interesse|evora|empreendimento)\b/,
   ];
   return hasAny(n, greeting);
+}
+
+function isShortAffirmativePaymentFollowup(userMessage: string, previousAssistantMessage?: string | null): boolean {
+  const n = normalizeText(userMessage).replace(/[.!?]+$/g, '').trim();
+  if (!/^(sim|quero|quero sim|pode|pode ser|claro|ok|beleza|perfeito)$/.test(n)) return false;
+
+  const previous = normalizeText(previousAssistantMessage);
+  if (!previous) return false;
+  return /\bquer\b[\s\S]{0,80}\b(?:formas? de pagamento|pagamento|condicoes de pagamento)\b/.test(previous);
 }
 
 function isEntregaEmpreendimentoIntent(n: string): boolean {
@@ -71,6 +84,8 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
     /\bpor\s+mes\b/,
     /\bmensalidade\b/,
     /\bsimulac(?:ao|oes|a|o)\b/,
+    /\bfaz(?:er)?\s+uma?\s+simulac(?:ao|oes|a|o)\b/,
+    /\b(consegue|pode|faz)\s+simular\b/,
     /\bfinanciamento\s+mensal\b/,
     /\bquanto\s+fica\s+por\s+mes\b/,
     /\bquanto\s+vou\s+pagar\s+por\s+mes\b/,
@@ -113,11 +128,24 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
     return 'preco_valor_lote';
   }
 
-  if (hasAny(n, [/\b(entrada minima|quanto .* entrada|qual a entrada|quanto paga no comeco|quanto preciso dar de entrada|tenho que dar quanto de entrada)\b/])) {
+  if (
+    hasAny(n, [
+      /\b(tem entrada|existe entrada|precisa de entrada|entrada minima|quanto .* entrada|qual a entrada|quanto paga no comeco|quanto preciso dar de entrada|tenho que dar quanto de entrada|valor de entrada|valor da entrada)\b/,
+      /^entrada\??$/,
+    ])
+  ) {
     return 'entrada';
   }
 
-  if (hasAny(n, [/\b(formas de pagamento|como posso pagar|tem parcelamento|quais as condicoes|condicoes de pagamento|como funciona o pagamento)\b/])) {
+  if (
+    hasAny(n, [
+      /\b(formas? de pagamento|como posso pagar|tem parcelamento|quais as condicoes de pagamento|condicoes de pagamento|como funciona o pagamento|planos de pagamento|opcoes de pagamento)\b/,
+      /\b(da|dá)\s+para\s+parcelar\b/,
+      /\b(da|dá)\s+pra\s+parcelar\b/,
+      /\bposso\s+parcelar\b/,
+      /\btem\s+como\s+parcelar\b/,
+    ])
+  ) {
     return 'formas_pagamento';
   }
 
@@ -140,7 +168,12 @@ function detectIntent(userMessage: string): Exclude<AnaCommercialIntent, 'first_
     return 'visita_agendamento';
   }
 
-  if (hasAny(n, [/\b(quais lotes disponiveis|tem desconto|qual parcela fica|faz simulacao|tem lote de quanto|qual unidade disponivel|qual lote tem|tem algum lote disponivel)\b/])) {
+  if (
+    hasAny(n, [
+      /\b(quais lotes disponiveis|quero saber sobre os lotes disponiveis|lotes disponiveis|disponibilidade de lotes?|tem desconto|qual parcela fica|faz simulacao|tem lote de quanto|qual unidade disponivel|qual lote tem|tem algum lote disponivel)\b/,
+      /\b(tabela comercial|condicao individual|condicao especifica|condicoes individuais|condicoes especificas)\b/,
+    ])
+  ) {
     return 'disponibilidade_simulacao_desconto';
   }
 
@@ -157,6 +190,7 @@ export type ResolvedAnaCommercialRule = {
   messages: string[];
   replySource: 'commercial_rules_first_contact' | 'commercial_rules_intent';
   inheritedIntent: 'payment_terms' | null;
+  financialIntentType: AnaFinancialIntentType | null;
 };
 
 function axisFromIntent(intent: AnaCommercialIntent): AnaCommercialAxis {
@@ -176,6 +210,18 @@ function axisFromIntent(intent: AnaCommercialIntent): AnaCommercialAxis {
   if (intent === 'disponibilidade_simulacao_desconto') return 'availability';
   if (intent === 'materiais') return 'materials';
   return 'unknown';
+}
+
+function financialIntentTypeFromIntent(intent: AnaCommercialIntent): AnaFinancialIntentType | null {
+  if (intent === 'formas_pagamento' || intent === 'financiamento') return 'payment_terms_general';
+  if (
+    intent === 'parcela_simulacao' ||
+    intent === 'entrada' ||
+    intent === 'disponibilidade_simulacao_desconto'
+  ) {
+    return 'personalized_financial_simulation';
+  }
+  return null;
 }
 
 export function splitCommercialRuleMessages(lines: readonly string[]): string[] {
@@ -229,6 +275,18 @@ export function resolveAnaCommercialRule(params: {
       messages: splitCommercialRuleMessages(ANA_COMMERCIAL_RULES.firstContactMessages),
       replySource: 'commercial_rules_first_contact',
       inheritedIntent: null,
+      financialIntentType: null,
+    };
+  }
+
+  if (isShortAffirmativePaymentFollowup(params.userMessage, params.previousAssistantMessage)) {
+    return {
+      ruleId: 'formas_pagamento',
+      commercialAxis: axisFromIntent('formas_pagamento'),
+      messages: splitCommercialRuleMessages(ANA_COMMERCIAL_RULES.byIntent.formas_pagamento),
+      replySource: 'commercial_rules_intent',
+      inheritedIntent: 'payment_terms',
+      financialIntentType: 'payment_terms_general',
     };
   }
 
@@ -241,6 +299,7 @@ export function resolveAnaCommercialRule(params: {
     messages: splitCommercialRuleMessages(ANA_COMMERCIAL_RULES.byIntent[intent]),
     replySource: 'commercial_rules_intent',
     inheritedIntent: null,
+    financialIntentType: financialIntentTypeFromIntent(intent),
   };
 }
 

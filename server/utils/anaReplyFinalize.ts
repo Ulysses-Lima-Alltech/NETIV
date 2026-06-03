@@ -422,6 +422,102 @@ function normalizeWhitespacePreservingLines(text: string): string {
   return joined.trim();
 }
 
+export function sanitizeAnaClientVisibleReplyText(text: string): string {
+  let next = String(text || '').trim();
+  if (!next) return next;
+
+  next = next
+    .replace(/Ã‰vora/g, 'Évora')
+    .replace(/Ã©/g, 'é')
+    .replace(/Ã‰/g, 'É')
+    .replace(/Ã¡/g, 'á')
+    .replace(/Ã /g, 'à')
+    .replace(/Ã£/g, 'ã')
+    .replace(/Ã¢/g, 'â')
+    .replace(/Ãª/g, 'ê')
+    .replace(/Ã­/g, 'í')
+    .replace(/Ã³/g, 'ó')
+    .replace(/Ã´/g, 'ô')
+    .replace(/Ãµ/g, 'õ')
+    .replace(/Ãº/g, 'ú')
+    .replace(/Ã§/g, 'ç')
+    .replace(/Â²/g, '²')
+    .replace(/\bEvora\b/g, 'Évora')
+    .replace(/\bVoce\b/g, 'Você')
+    .replace(/\bvoce\b/g, 'você')
+    .replace(/\binformacao\b/g, 'informação')
+    .replace(/\binformacoes\b/g, 'informações')
+    .replace(/\bInformacao\b/g, 'Informação')
+    .replace(/\bopcoes\b/g, 'opções')
+    .replace(/\bOpcoes\b/g, 'Opções')
+    .replace(/\bresponsavel\b/g, 'responsável')
+    .replace(/\bResponsavel\b/g, 'Responsável')
+    .replace(/\bseguranca\b/g, 'segurança')
+    .replace(/\bSeguranca\b/g, 'Segurança')
+    .replace(/\blocalizacao\b/g, 'localização')
+    .replace(/\bLocalizacao\b/g, 'Localização')
+    .replace(/\bregiao\b/g, 'região')
+    .replace(/\bRegiao\b/g, 'Região')
+    .replace(/\bfamilia\b/g, 'família')
+    .replace(/\bcondicoes\b/g, 'condições')
+    .replace(/\bcondicao\b/g, 'condição')
+    .replace(/\bate\b(?=\s+\d+x\b)/g, 'até')
+    .replace(/\bha\b(?=\s+opções|\s+opcoes)/g, 'há')
+    .replace(/\bSao Paulo\b/g, 'São Paulo')
+    .replace(/\bnumero\b/g, 'número')
+    .replace(/\bendereco\b/g, 'endereço')
+    .replace(/\bEndereco\b/g, 'Endereço')
+    .replace(/\bhorario\b/g, 'horário')
+    .replace(/\bHorario\b/g, 'Horário')
+    .replace(/\bmanh[aã]\b/g, 'manhã')
+    .replace(/\bm2\b/gi, 'm²')
+    .replace(/\bpra você\b/gi, 'para você')
+    .replace(/\bpra voce\b/gi, 'para você')
+    .replace(/[ \t]+(?:—|–)[ \t]+/g, '. ')
+    .replace(/[ \t]+-[ \t]+/g, '. ')
+    .replace(/\s*(?:\.{3,}|…)+/g, '.')
+    .replace(/\s+([,.;!?])/g, '$1')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  const normalizedAvailability = next
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const unsafeLotAvailability =
+    /\blotes? disponiveis\b/.test(normalizedAvailability) &&
+    !/\b(corretor|consultor|nao consigo|depende|varia|atualizada)\b/.test(normalizedAvailability);
+  if (unsafeLotAvailability) {
+    const safeAvailability =
+      'Se quiser, posso te explicar melhor os tamanhos dos lotes e a proposta do loteamento.\n\nPara disponibilidade atualizada, o corretor consegue te passar certinho.';
+    const kept = next
+      .split(/(?<=[.!?])\s+|\r?\n+/)
+      .map((sentence) => sentence.trim())
+      .filter((sentence) => {
+        const sentenceNorm = sentence
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/\p{M}/gu, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        return sentenceNorm && !/\blotes? disponiveis\b/.test(sentenceNorm);
+      })
+      .join(' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    next = [kept, safeAvailability].filter(Boolean).join('\n\n').trim();
+  }
+
+  next = next.replace(/(?:\s*[.\-–—]+\s*)+$/g, (tail) => (tail.includes('?') ? '?' : '.')).trim();
+  if (next && !/[.!?]$/.test(next) && !/https?:\/\/\S+$/i.test(next)) next = `${next}.`;
+  return next;
+}
+
 /**
  * Só higieniza texto para WhatsApp: sem perguntas aleatórias, sem despedidas fixas — o conteúdo vem do modelo.
  */
@@ -583,25 +679,27 @@ const EVORA_PRICE_REPLY =
   'O Évora tem lotes a partir de R$279.000,00, com metro quadrado a partir de R$775,00. O valor final depende da unidade e das condições escolhidas.';
 
 const EVORA_PAYMENT_REPLY =
-  'A entrada padrão é de 20%. Para parcelas mais baixas, temos planos estendidos em até 120x; para parcelamento sem juros, temos planos em até 48x + IGPM. O financiamento é direto com a construtora, com menos burocracia.';
+  'Claro.\n\nDe forma geral, o Évora trabalha com planos estendidos em até 120x para parcelas mais baixas, parcelamento sem juros em até 48x e financiamento direto com a construtora, com menos burocracia e mais facilidade.\n\nPara entrada, parcela exata ou simulação personalizada, o corretor consegue montar certinho conforme a unidade disponível.\n\nVocê quer que eu te encaminhe para uma simulação ou prefere entender melhor os tamanhos dos lotes primeiro?';
 
 const EVORA_INSTALLMENT_REDIRECT_REPLY =
-  'A simulação certinha depende do lote e do plano escolhido. O corretor te passa tudo direitinho no atendimento. Que tal marcarmos uma visita?';
+  'Para entrada, parcela exata ou simulação personalizada, o corretor consegue montar certinho conforme a unidade disponível.\n\nQuer que eu te encaminhe para um corretor fazer uma simulação?';
 const EVORA_LOT_SIZE_GENERAL_REPLY =
   'Os lotes do Évora vão de 360 m² a 725 m². As opções específicas variam conforme a unidade disponível.';
 const EVORA_LOT_SIZE_RANGE_REPLY =
   'Os lotes do Évora ficam na faixa de 360 m² a 725 m². Eu não consigo confirmar disponibilidade de uma metragem específica por aqui, porque isso muda conforme as unidades disponíveis.';
+const EVORA_LOT_AVAILABILITY_BROKER_REPLY =
+  'Para disponibilidade atualizada, o corretor consegue te passar certinho.\n\nEu posso te explicar melhor os tamanhos dos lotes e a proposta do loteamento.';
 
 function isUserAskingEvoraInstallment(text: string | null | undefined): boolean {
   const n = normClosure(text || '');
   if (!n) return false;
-  return /\b(esse valor parcela|parcela|parcelamento|quanto fica por mes|quanto fica por mês|simulacao|simulação)\b/.test(n);
+  return /\b(tem entrada|existe entrada|precisa de entrada|entrada minima|valor da entrada|valor de entrada|esse valor parcela|valor da parcela|qual parcela|parcela personalizada|quanto fica por mes|quanto fica por mês|simulacao|simulação|faz uma simulacao|faz uma simulação|desconto|tabela comercial|condicao individual|condição individual|condicao especifica|condição específica)\b/.test(n);
 }
 
 function isUserAskingEvoraPayment(text: string | null | undefined): boolean {
   const n = normClosure(text || '');
   if (!n) return false;
-  return /\b(formas? de pagamento|entrada|financiamento direto|financiamento)\b/.test(n);
+  return /\b(formas? de pagamento|como posso pagar|condicoes de pagamento|condições de pagamento|como funciona o pagamento|pagamento|parcelamento|tem parcelamento|da para parcelar|dá para parcelar|da pra parcelar|dá pra parcelar|financiamento direto|financiamento|financia direto)\b/.test(n);
 }
 
 function isUserAskingEvoraPrice(text: string | null | undefined): boolean {
@@ -632,6 +730,42 @@ function isUserAskingLotSizeRange(text: string | null | undefined): boolean {
   return /\b(quais?\s+os?\s+tamanhos?|qual\s+o\s+tamanho|tamanho\s+dos\s+lotes?|metragem|metragens|faixa\s+de\s+metragem)\b/.test(
     n
   );
+}
+
+function isUserAskingEvoraLotAvailability(text: string | null | undefined): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  return /\b(lotes? disponiveis|lotes? disponivel|disponibilidade de lotes?|qual lote tem|qual unidade disponivel|tem algum lote disponivel|quais lotes)\b/.test(n);
+}
+
+function hasUnsafeLotAvailabilityPromise(text: string): boolean {
+  const n = normClosure(text || '');
+  if (!n) return false;
+  const mentionsAvailability = /\b(lotes? disponiveis|lotes? disponivel|unidades disponiveis|disponibilidade atualizada)\b/.test(n);
+  if (!mentionsAvailability) return false;
+  const routesToBroker = /\b(corretor|consultor)\b/.test(n);
+  const blocksConfirmation = /\b(nao consigo confirmar|não consigo confirmar|depende|varia conforme)\b/.test(n);
+  return !routesToBroker && !blocksConfirmation;
+}
+
+function sanitizeEvoraLotAvailabilityReply(text: string, opts?: FinalizeAnaReplyOptions): string {
+  const clean = String(text || '').trim();
+  if (!clean || !isEvoraScopedContext(opts)) return clean;
+
+  if (isUserAskingEvoraLotAvailability(opts?.userMessage ?? null)) {
+    return `${EVORA_LOT_AVAILABILITY_BROKER_REPLY}\n\nVocê prefere ver os tamanhos gerais primeiro ou falar com o corretor?`;
+  }
+
+  if (!hasUnsafeLotAvailabilityPromise(clean)) return clean;
+
+  const withoutUnsafe = clean
+    .split(/(?<=[.!?])\s+|\r?\n+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence && !hasUnsafeLotAvailabilityPromise(sentence))
+    .join(' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return [withoutUnsafe, EVORA_LOT_AVAILABILITY_BROKER_REPLY].filter(Boolean).join('\n\n').trim();
 }
 
 function sanitizeEvoraPriceAndPaymentReply(text: string, opts?: FinalizeAnaReplyOptions): string {
@@ -695,6 +829,24 @@ function removeInternalLimitationSentences(text: string): { text: string; change
   return { text: `${next}\n\n${BROKER_DETAIL_ROUTING_TEXT}`, changed: true };
 }
 
+function appendUsefulQuestionForMultiTopicReply(text: string, userMessage: string | null | undefined): string {
+  const raw = (text || '').trim();
+  if (!raw || /\?/.test(raw)) return raw;
+  const userRaw = String(userMessage || '');
+  if (!/\r?\n|;/.test(userRaw)) return raw;
+  const n = normClosure(userRaw);
+  const topicHits = [
+    /\b(localizacao|onde fica|endereco)\b/.test(n),
+    /\b(valores?|preco|investimento|pagamento|entrada|parcela)\b/.test(n),
+    /\b(lazer|seguranca|portaria)\b/.test(n),
+    /\b(lotes?|metragem|tamanho)\b/.test(n),
+  ].filter(Boolean).length;
+  if (topicHits < 2) return raw;
+  const replyNorm = normClosure(raw);
+  if (/\b(corretor|encaminhar|agendar|visita)\b/.test(replyNorm)) return raw;
+  return `${raw} Quer que eu siga por valores, localização ou formas de pagamento?`;
+}
+
 function sanitizeUnsupportedSpecificOffers(text: string): { text: string; changed: boolean } {
   const raw = (text || '').trim();
   if (!raw) return { text: raw, changed: false };
@@ -740,7 +892,7 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
   const base = normalizeWhitespacePreservingLines(stripMarkdownArtifactsForWhatsApp((text || '').trim()));
   const noReintro = stripMidConversationReintroduction(base, isFirstAnaReply);
   const materialShort = applyShortMaterialReplyPolicy(noReintro, opts?.userMessage ?? null);
-  const compact = keepTwoShortSentencesMax(materialShort);
+  const compact = keepTwoShortSentencesMax(sanitizeDuplicatedGreetingPrefix(materialShort));
   const evoraLocation = forceEvoraLocationReplyWhenNeeded(compact, opts);
   const humanLazer = humanizeLazerReplyWhenNeeded(evoraLocation, opts?.userMessage ?? null);
   const withOpenQuestion = isKnowledgeGapTurn
@@ -762,10 +914,14 @@ export function finalizeAnaReplyText(text: string, opts?: FinalizeAnaReplyOption
     ? lotCountSafe
     : sanitizeDiscountRestrictedReply(lotCountSafe, opts?.userMessage ?? null);
   const evoraPricingSafe = isKnowledgeGapTurn ? discountSafe : sanitizeEvoraPriceAndPaymentReply(discountSafe, opts);
-  const forbiddenQuestionStrip = stripForbiddenFixedQualificationQuestion(evoraPricingSafe);
-  const feminineGuard = enforceFeminineSelfReference(forbiddenQuestionStrip.text || evoraPricingSafe);
-  const finalText = feminineGuard.text || forbiddenQuestionStrip.text || evoraPricingSafe;
-  return finalText.slice(0, 4000);
+  const evoraAvailabilitySafe = isKnowledgeGapTurn ? evoraPricingSafe : sanitizeEvoraLotAvailabilityReply(evoraPricingSafe, opts);
+  const multiTopicSafe = isKnowledgeGapTurn
+    ? evoraAvailabilitySafe
+    : appendUsefulQuestionForMultiTopicReply(evoraAvailabilitySafe, opts?.userMessage ?? null);
+  const forbiddenQuestionStrip = stripForbiddenFixedQualificationQuestion(multiTopicSafe);
+  const feminineGuard = enforceFeminineSelfReference(forbiddenQuestionStrip.text || evoraAvailabilitySafe);
+  const finalText = feminineGuard.text || forbiddenQuestionStrip.text || evoraAvailabilitySafe;
+  return sanitizeAnaClientVisibleReplyText(finalText).slice(0, 4000);
 }
 
 function enforceFeminineSelfReference(text: string): { text: string; changed: boolean } {
@@ -1090,7 +1246,8 @@ function userAskedObjectiveQuestion(text: string | null | undefined): boolean {
 function userSentOnlyGreeting(text: string | null | undefined): boolean {
   const n = normFinalGuard(text || '');
   if (!n || n.length > 48) return false;
-  return /^(oi|ola|oie|opa|bom dia|boa tarde|boa noite|tudo bem|td bem)[!.? ]*$/.test(n);
+  const cleaned = n.replace(/[,.]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return /^(oi|ola|oie|opa|bom dia|boa tarde|boa noite|tudo bem|td bem|oi tudo bem|ola tudo bem|oie tudo bem|opa tudo bem)[!.? ]*$/.test(cleaned);
 }
 
 function replyStartsWithGreeting(text: string): boolean {
@@ -1173,8 +1330,8 @@ function sanitizeDuplicatedGreetingPrefix(text: string): string {
   const raw = (text || '').trim();
   if (!raw) return raw;
   return raw
-    .replace(/^(oi|ol[aá]|bom dia|boa tarde|boa noite)[!,. ]+\s*(oi|ol[aá]|bom dia|boa tarde|boa noite)\b[!,. ]*/i, '$1! ')
-    .replace(/^(oi|ol[aá])\s*,\s*(oi|ol[aá])\b[!,. ]*/i, '$1! ')
+    .replace(/^(oi|ol[aá]|bom dia|boa tarde|boa noite)[!,. ]+\s*(oi|ol[aá]|bom dia|boa tarde|boa noite)(?:[!,. ]+)/i, '$1! ')
+    .replace(/^(oi|ol[aá])\s*,\s*(oi|ol[aá])(?:[!,. ]+)/i, '$1! ')
     .replace(/\s{2,}/g, ' ')
     .trim();
 }

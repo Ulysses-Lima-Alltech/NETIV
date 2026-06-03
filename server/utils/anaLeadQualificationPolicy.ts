@@ -158,7 +158,10 @@ function inferCurrentCity(text: string): string | null {
 
 function inferBuyingTimeline(n: string): string | null {
   if (/\b(este ano|esse ano|ainda este ano|ainda esse ano|2026)\b/.test(n)) return 'este_ano';
-  if (/\b(agora|urgente|logo|rapido|rapido|proximos meses|próximos meses)\b/.test(n)) return 'curto_prazo';
+  if (/\b(urgente|logo|rapido|rapido|proximos meses|próximos meses)\b/.test(n)) return 'curto_prazo';
+  if (/\b(comprar|fechar|reservar)\b[\s\S]{0,40}\bagora\b/.test(n) || /\bagora\b[\s\S]{0,40}\b(comprar|fechar|reservar)\b/.test(n)) {
+    return 'curto_prazo';
+  }
   if (/\b(pesquisa|sem pressa|mais inicial|ano que vem|futuramente)\b/.test(n)) return 'pesquisa';
   return null;
 }
@@ -281,6 +284,18 @@ function questionRecentlyAsked(question: string, recentQuestions: string[] | nul
   return (recentQuestions ?? []).some((recent) => questionsAreEquivalent(recent, question));
 }
 
+function sanitizeLeadQualificationText(text: string): string {
+  return String(text || '')
+    .replace(/\bEvora\b/g, 'Évora')
+    .replace(/\bVoce\b/g, 'Você')
+    .replace(/\bvoce\b/g, 'você')
+    .replace(/\bopcoes\b/g, 'opções')
+    .replace(/\binformacoes\b/g, 'informações')
+    .replace(/\bm2\b/gi, 'm²')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 export function selectNextLeadQualificationQuestion(context: {
   state: LeadQualificationState;
   userMessage: string;
@@ -307,7 +322,7 @@ export function selectNextLeadQualificationQuestion(context: {
   if (!state.productFit && !asked.has('productFit')) {
     candidates.push({
       key: 'productFit',
-      question: 'Você já está buscando especificamente um loteamento fechado ou ainda está comparando com outros tipos de imóvel?',
+      question: 'Você já está procurando especificamente um loteamento fechado ou ainda está comparando com outros tipos de imóvel?',
     });
   }
   if (state.knowsAtibaia === null && !asked.has('knowsAtibaia')) {
@@ -348,7 +363,7 @@ export function selectNextLeadQualificationQuestion(context: {
   if (!state.materialOffered && !asked.has('visitOrMaterial') && shouldOfferMaterialOrVisit({ state })) {
     candidates.push({
       key: 'visitOrMaterial',
-      question: 'Com base no que você está buscando, quer que eu te envie o material do Évora ou prefere falar com um corretor?',
+      question: 'Com base no que você quer, prefere que eu envie o material do Évora ou falar com um corretor?',
     });
   }
 
@@ -363,10 +378,22 @@ export function selectNextLeadQualificationQuestion(context: {
   } else if (contextual === 'metragem' || contextual === 'lotes') {
     sorted.sort((a, b) => (a.key === 'productFit' ? -1 : b.key === 'productFit' ? 1 : 0));
   }
+  if (state.buyingTimeline === 'este_ano' || state.buyingTimeline === 'curto_prazo') {
+    sorted.sort((a, b) => {
+      const priority = (key: LeadQualificationQuestionKey): number => {
+        if (key === 'budgetRange') return 0;
+        if (key === 'visitOrMaterial') return 1;
+        if (key === 'purpose') return 2;
+        if (key === 'productFit') return 3;
+        return 4;
+      };
+      return priority(a.key) - priority(b.key);
+    });
+  }
 
   for (const candidate of sorted) {
     if (questionRecentlyAsked(candidate.question, context.recentQuestions)) continue;
-    return candidate;
+    return { ...candidate, question: sanitizeLeadQualificationText(candidate.question) };
   }
   return null;
 }
@@ -450,6 +477,13 @@ export function buildEvoraLeadQualificationProgressReply(args: {
 
   if (!previous.productFit && current.productFit === 'loteamento') {
     return 'Ótimo, então o perfil do Évora está bem alinhado com o que você procura.';
+  }
+
+  if (!previous.buyingTimeline && current.buyingTimeline) {
+    if (current.buyingTimeline === 'este_ano' || current.buyingTimeline === 'curto_prazo') {
+      return 'Ótimo, então faz sentido olhar com mais atenção as opções disponíveis agora.';
+    }
+    return 'Certo. Como você ainda está em uma fase mais inicial, posso te ajudar a comparar os pontos principais com calma.';
   }
 
   if (nextKey === 'topicChoice' || (!previous.knowsAtibaia && current.knowsAtibaia === false)) {

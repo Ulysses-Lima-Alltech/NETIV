@@ -108,6 +108,7 @@ import {
   evaluateAnaEmptyFallbackGuard,
   applyFirstUsefulGreetingStyle,
   sanitizeTooManyQuestionsReply,
+  sanitizeAnaClientVisibleReplyText,
 } from '../utils/anaReplyFinalize.js';
 import {
   applyAnaCommercialSingleAxisGuard,
@@ -1238,7 +1239,7 @@ function buildOnlyNewLazerItemsReply(newItems: string[]): string {
 function isLocationLinkRequest(text: string): boolean {
   const n = normText(text || '');
   if (!n) return false;
-  return /\b(tem o link da localizacao|tem link da localizacao|link da localizacao|link de localizacao|link com a localizacao|google maps|maps|mapa|rota|como chegar|manda localizacao|manda a localizacao|manda a localizacao pfv|me envia a localizacao|me envia localizacao|me manda localizacao|me manda a localizacao|localizacao exata|endereco com numero|tem numero|numero do endereco|tem o endereco|me passa o endereco|qual o endereco)\b/.test(
+  return /\b(tem o link da localizacao|tem link da localizacao|link da localizacao|link de localizacao|link com a localizacao|google maps|maps|mapa|rota|como chegar|manda localizacao|manda a localizacao|manda a localizacao pfv|me envia a localizacao|me envia localizacao|me manda localizacao|me manda a localizacao|nao entendi onde fica|localizacao exata|endereco com numero|tem numero|numero do endereco|tem o endereco|me passa o endereco|qual o endereco)\b/.test(
     n
   );
 }
@@ -1510,12 +1511,58 @@ function splitRhetoricalSeparatorsForWhatsApp(part: string): string[] {
   return pieces.length > 0 ? pieces : [source];
 }
 
+function startsWithLowercaseLetter(text: string): boolean {
+  if (/^https?:\/\//i.test(String(text || '').trim())) return false;
+  const first = String(text || '').trim().match(/\p{L}/u)?.[0] ?? '';
+  return Boolean(first && first === first.toLocaleLowerCase('pt-BR') && first !== first.toLocaleUpperCase('pt-BR'));
+}
+
+function uppercaseFirstLetter(text: string): string {
+  const raw = String(text || '').trim();
+  const match = raw.match(/\p{L}/u);
+  if (!match || match.index == null) return raw;
+  const idx = match.index;
+  return `${raw.slice(0, idx)}${match[0].toLocaleUpperCase('pt-BR')}${raw.slice(idx + match[0].length)}`;
+}
+
+function isShortOpeningPart(text: string): boolean {
+  const clean = String(text || '').trim();
+  const withoutPunctuation = clean.replace(/[.!?]+$/g, '').trim();
+  if (!withoutPunctuation) return false;
+  if (withoutPunctuation.length > 32 || withoutPunctuation.split(/\s+/).length > 4) return false;
+  return /^(entendo|perfeito|certo|claro|legal|ótimo|otimo|faz sentido|combinado|sim|ok)\b/i.test(withoutPunctuation);
+}
+
+function repairAnaOutboundSplitParts(parts: string[]): string[] {
+  const out: string[] = [];
+  for (const raw of parts) {
+    const part = sanitizeAnaClientVisibleReplyText(raw);
+    if (!part) continue;
+    if (out.length === 0 && startsWithLowercaseLetter(part)) {
+      out.push(uppercaseFirstLetter(part));
+      continue;
+    }
+    if (out.length > 0 && startsWithLowercaseLetter(part)) {
+      const previous = out[out.length - 1] ?? '';
+      if (isShortOpeningPart(previous)) {
+        out[out.length - 1] = `${previous.replace(/[.!?]+$/g, '')}, ${part}`.replace(/\s{2,}/g, ' ').trim();
+        continue;
+      }
+      out.push(uppercaseFirstLetter(part));
+      continue;
+    }
+    out.push(part);
+  }
+  return out;
+}
+
 function splitAnaOutboundMessages(text: string): string[] {
-  return String(text || '')
+  const rawParts = String(text || '')
     .split(/\r?\n+/)
     .flatMap((part) => splitRhetoricalSeparatorsForWhatsApp(part))
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
+  return repairAnaOutboundSplitParts(rawParts);
 }
 
 export const __testOnlySplitAnaOutboundMessages = splitAnaOutboundMessages;
@@ -3057,7 +3104,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         return guarded.text;
       })
       .filter((part) => part.trim().length > 0);
-    const committedParts = dedupeMessageParts(locationPromiseGuardedParts, {
+    const clientVisibleParts = locationPromiseGuardedParts
+      .map((part) => sanitizeAnaClientVisibleReplyText(part))
+      .filter((part) => part.trim().length > 0);
+    const committedParts = dedupeMessageParts(clientVisibleParts, {
       conversationId,
       stage: `${params.stage}_location_promise_guard`,
     });
@@ -5940,6 +5990,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             messages: splitCommercialRuleMessages(ANA_COMMERCIAL_RULES.byIntent[forcedIntentFromTurnContext]),
             replySource: 'commercial_rules_intent' as const,
             inheritedIntent: null,
+            financialIntentType:
+              forcedIntentFromTurnContext === 'formas_pagamento'
+                ? ('payment_terms_general' as const)
+                : null,
           }
         : null;
     if (
@@ -5971,6 +6025,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             ),
             replySource: 'commercial_rules_intent' as const,
             inheritedIntent: null,
+            financialIntentType: null,
           }
         : null;
     const effectiveCommercialRule = forcedCommercialRule ?? commercialRule ?? canonicalLocationFallbackRule;
@@ -6099,6 +6154,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         reason: 'deterministic_rule_matched',
         deterministicMatched: true,
         deterministicAxis: effectiveCommercialRule.commercialAxis,
+        financialIntentType: effectiveCommercialRule.financialIntentType,
         replySourceBeforeLlm: effectiveCommercialRule.replySource,
         provider: aiSettings.provider,
         model: null,
@@ -6111,6 +6167,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       console.log('[ANA_QWEN_SKIPPED_BY_DETERMINISTIC]', {
         conversationId,
         axis: effectiveCommercialRule.commercialAxis,
+        financialIntentType: effectiveCommercialRule.financialIntentType,
         ruleName: effectiveCommercialRule.ruleId,
         replyPreview: effectiveCommercialRule.messages.join(' ').slice(0, 260),
       });
@@ -9530,7 +9587,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           'Claro. O Évora tem lotes a partir de R$279.000,00, com metro quadrado a partir de R$775,00. O valor final depende da unidade e das condições escolhidas.';
       } else if (lastAxisForRepetition === 'financiamento') {
         replyText =
-          'Claro. Temos planos estendidos em até 120x, parcelamento sem juros em até 48x e financiamento direto com a construtora.';
+          'Claro.\n\nDe forma geral, o Évora trabalha com planos estendidos em até 120x para parcelas mais baixas, parcelamento sem juros em até 48x e financiamento direto com a construtora, com menos burocracia e mais facilidade.\n\nPara entrada, parcela exata ou simulação personalizada, o corretor consegue montar certinho conforme a unidade disponível.\n\nVocê quer que eu te encaminhe para uma simulação ou prefere entender melhor os tamanhos dos lotes primeiro?';
       } else {
         replyText = 'Claro. Você quer saber mais sobre localização, lazer, valores ou formas de pagamento?';
       }
@@ -11072,7 +11129,7 @@ function buildConversationalCanonicalFallback(lastAxis: string | null): string {
     return 'O Évora tem lotes a partir de R$279.000,00, com metro quadrado a partir de R$775,00. O valor final depende da unidade e das condições escolhidas.';
   }
   if (lastAxis === 'financiamento' || lastAxis === 'formas_pagamento') {
-    return 'Temos planos estendidos em até 120x, parcelamento sem juros em até 48x e financiamento direto com a construtora.';
+    return 'De forma geral, o Évora trabalha com planos estendidos em até 120x para parcelas mais baixas, parcelamento sem juros em até 48x e financiamento direto com a construtora, com menos burocracia e mais facilidade.';
   }
   return 'Posso te ajudar de forma objetiva com as informações do empreendimento.';
 }

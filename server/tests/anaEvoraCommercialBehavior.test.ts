@@ -231,6 +231,29 @@ test('Obrigado vira Obrigada', () => {
   assert.match(output, /obrigada/i);
 });
 
+test('finalizador bloqueia promessa de lotes disponiveis e conduz para corretor', () => {
+  const output = finalizeAnaReplyText(
+    'Se quiser saber mais sobre os lotes disponíveis ou os benefícios do loteamento, é só pedir!',
+    {
+      enterpriseName: 'Evora',
+      userMessage: 'legal',
+    }
+  );
+  assert.doesNotMatch(output, /lotes disponíveis/i);
+  assert.match(output, /tamanhos dos lotes|proposta do loteamento/i);
+  assert.match(output, /disponibilidade atualizada.*corretor/i);
+});
+
+test('finalizador remove reticencias e corrige acentuacao visivel', () => {
+  const output = finalizeAnaReplyText('Nao e so o portao eletronico... Voce tambem pode ver opcoes de 360 m2 no Evora', {
+    enterpriseName: 'Evora',
+    userMessage: 'seguranca',
+  });
+  assert.doesNotMatch(output, /\.\.\.|…$/);
+  assert.doesNotMatch(output, /\b(?:informacao|opcoes|responsavel|m2|Voce|Evora)\b/);
+  assert.match(output, /Você|opções|m²|Évora/);
+});
+
 test('preco nao entra em knowledge gap apenas por eixo', () => {
   const result = detectAnaKnowledgeGap({
     userMessage: 'qual o valor do lote?',

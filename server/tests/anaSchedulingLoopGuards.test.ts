@@ -13,9 +13,11 @@ test('regras comerciais cobrem entrada e pagamento', () => {
   const cfg = readFileSync(new URL('../config/anaCommercialRules.ts', import.meta.url), 'utf8');
   const svc = readFileSync(new URL('../services/anaCommercialRulesService.ts', import.meta.url), 'utf8');
   assert.match(cfg, /entrada/);
-  assert.match(cfg, /20% do valor do lote/);
+  assert.match(cfg, /parcela exata ou simulação personalizada/);
   assert.match(cfg, /120x/);
   assert.match(cfg, /48x/);
+  assert.match(svc, /payment_terms_general/);
+  assert.match(svc, /personalized_financial_simulation/);
   assert.match(svc, /entrega_empreendimento/);
   assert.match(svc, /valor_condominio/);
 });
@@ -24,7 +26,7 @@ test('resposta repetida de agendamento e bloqueada', () => {
   const source = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
   assert.match(source, /ANA_REPEATED_RESPONSE_BLOCKED/);
   assert.match(source, /isVisitSchedulingLoopFallbackReply/);
-  assert.match(source, /repeated_response_guard/);
+  assert.match(source, /repeated_visit_scheduling_reply|outbound_repeat_guard/);
 });
 
 test('logs de regra comercial obrigatoria existem', () => {

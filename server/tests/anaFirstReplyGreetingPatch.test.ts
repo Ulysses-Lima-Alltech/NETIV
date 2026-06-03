@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 test('engine corrige saudacao ausente localmente antes do retry OpenAI', () => {
-  const engineSource = readFileSync(new URL('../services/conversationEngine.js', import.meta.url), 'utf8');
+  const engineSource = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
 
   assert.match(engineSource, /\[ANA_FIRST_REPLY_GREETING_PATCHED\]/);
   assert.match(engineSource, /phase:\s*'empty_fallback_pre_retry'/);
@@ -15,7 +15,7 @@ test('engine corrige saudacao ausente localmente antes do retry OpenAI', () => {
 });
 
 test('bloco de patch de saudacao nao aciona retry OpenAI nem handoff', () => {
-  const engineSource = readFileSync(new URL('../services/conversationEngine.js', import.meta.url), 'utf8');
+  const engineSource = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
   const marker = "phase: 'empty_fallback_pre_retry'";
   const markerIndex = engineSource.indexOf(marker);
   assert.notEqual(markerIndex, -1, 'bloco de patch pre_retry precisa existir');
@@ -27,25 +27,25 @@ test('bloco de patch de saudacao nao aciona retry OpenAI nem handoff', () => {
 });
 
 test('guard de fallback vazio continua existindo para casos realmente invalidos', () => {
-  const engineSource = readFileSync(new URL('../services/conversationEngine.js', import.meta.url), 'utf8');
+  const engineSource = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
   assert.match(engineSource, /\[ANA_EMPTY_FALLBACK_GUARD\]/);
   assert.match(engineSource, /\[ANA_EMPTY_FALLBACK_BLOCKED\]/);
 });
 
 test('guard vazio nao faz segunda chamada OpenAI quando resposta valida ja existe', () => {
-  const engineSource = readFileSync(new URL('../services/conversationEngine.js', import.meta.url), 'utf8');
+  const engineSource = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
   assert.match(engineSource, /\[ANA_EMPTY_FALLBACK_GUARD_SKIP_RETRY_VALID_REPLY\]/);
   assert.doesNotMatch(engineSource, /ana_rag_empty_fallback_retry/);
 });
 
 test('rate limit bloqueia sem forcar handoff automatico', () => {
-  const engineSource = readFileSync(new URL('../services/conversationEngine.js', import.meta.url), 'utf8');
+  const engineSource = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
   assert.match(engineSource, /classifiedError === 'OPENAI_RATE_LIMIT'/);
   assert.match(engineSource, /\[ANA_RATE_LIMIT_ABORT_NO_FALLBACK\]/);
 });
 
 test('post policy nao bloqueia resposta valida quando skip do empty guard foi ativado', () => {
-  const engineSource = readFileSync(new URL('../services/conversationEngine.js', import.meta.url), 'utf8');
+  const engineSource = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
   assert.match(engineSource, /let skipPostPolicyEmptyFallbackBlock = false/);
   assert.match(engineSource, /skipPostPolicyEmptyFallbackBlock = true/);
   assert.match(engineSource, /\[ANA_EMPTY_FALLBACK_POST_POLICY_SKIP_VALID_REPLY\]/);
@@ -53,7 +53,7 @@ test('post policy nao bloqueia resposta valida quando skip do empty guard foi at
 });
 
 test('too_many_questions em resposta valida da OpenAI passa por sanitizacao local', () => {
-  const engineSource = readFileSync(new URL('../services/conversationEngine.js', import.meta.url), 'utf8');
+  const engineSource = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
   assert.match(engineSource, /sanitizeTooManyQuestionsReply/);
   assert.match(engineSource, /\[ANA_TOO_MANY_QUESTIONS_SANITIZED_VALID_REPLY\]/);
   assert.match(engineSource, /postPolicyEmptyGuard\.reason === 'too_many_questions'/);

@@ -119,6 +119,40 @@ test('cliente responde objetivo salva purpose e pergunta proximo dado', () => {
   assert.match(reply, /área verde|lazer/i);
 });
 
+test('cliente quer comprar este ano avanca para investimento sem repetir regiao', () => {
+  let state: CommercialFlowState = {
+    dialoguePolicy: {
+      leadQualification: {
+        ...getLeadQualificationState({}),
+        name: 'Joao',
+        customerName: 'Joao',
+        nameAsked: true,
+        nameCollected: true,
+        purpose: 'moradia',
+        productFit: 'loteamento',
+        askedQualificationKeys: ['name', 'purpose', 'productFit', 'buyingTimeline'],
+      },
+    },
+  };
+  const previousState = getLeadQualificationState(state);
+  state = mergeLeadQualificationState(state, extractLeadQualificationSignals('quero comprar esse ano', previousState));
+  const selection = selectNextLeadQualificationQuestion({
+    state: getLeadQualificationState(state),
+    userMessage: 'quero comprar esse ano',
+  });
+  const reply = `${buildEvoraLeadQualificationProgressReply({
+    previousState,
+    currentState: getLeadQualificationState(state),
+    userMessage: 'quero comprar esse ano',
+    nextQuestionKey: selection?.key,
+  })}\n\n${selection?.question}`;
+
+  assert.equal(getLeadQualificationState(state).buyingTimeline, 'este_ano');
+  assert.equal(selection?.key, 'budgetRange');
+  assert.match(reply, /faixa de investimento|condições/i);
+  assert.doesNotMatch(reply, /Rodovia Dom Pedro I|Pedreira|Rio Abaixo|correria de São Paulo/i);
+});
+
 test('sequencia consultiva passa por loteamento e apresenta regiao antes de escolher topico', () => {
   let state: CommercialFlowState = {
     dialoguePolicy: {
