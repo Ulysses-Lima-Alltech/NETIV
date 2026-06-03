@@ -12,7 +12,7 @@ import {
 } from './anaDialogueState.js';
 
 const BROKER_HANDOFF_ASK =
-  'Não tenho esse detalhe confirmado por aqui. O corretor consegue te passar certinho. Quer que eu te encaminhe ou prefere agendar uma visita?';
+  'Essa parte depende de confirmação atualizada. Posso te ajudar a seguir com um corretor ou marcar uma visita?';
 const VISIT_SLOT_WINDOW = 'Temos disponibilidade de segunda a sabado, das 09h as 18h.';
 
 const SPECIFIC_DETAIL_FALLBACK_STATEMENT = 'Posso te ajudar com mais detalhes do empreendimento.';

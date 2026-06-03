@@ -56,6 +56,9 @@ const SHORT_REPLY_NAME_FORBIDDEN = new Set(
   [
     // Intenção / interesse
     'quero', 'tenho', 'gostaria', 'preciso', 'interesse', 'interessado', 'interessada',
+    'morar', 'moradia', 'investir', 'investimento', 'pesquisando', 'pesquisa',
+    'conhecendo', 'olhando', 'comparando', 'possibilidades', 'possibilidade',
+    'estou', 'to', 'tô', 'tou',
     'detalhes', 'detalhe', 'mais', 'sobre', 'conhecer', 'visitar', 'agendar', 'saber',
     // Preposições / conjunções (duplicadas aqui por segurança)
     'em', 'para', 'pra', 'com', 'sem', 'por', 'de', 'do', 'da',
@@ -79,6 +82,7 @@ const SHORT_REPLY_NAME_FORBIDDEN = new Set(
     // Financeiro / comercial
     'valor', 'valores', 'preco', 'preço', 'precos', 'preços', 'financiamento',
     'parcela', 'parcelamento', 'entrada', 'fgts', 'desconto', 'oferta', 'tabela',
+    'lazer', 'seguranca', 'segurança', 'pagamento',
     // Informação genérica
     'informação', 'informacao', 'informações', 'informacoes', 'detalhes',
     // Verbos e ações comuns
@@ -194,6 +198,9 @@ function assistantRecentlyAskedForName(lastAssistantPlain: string | null | undef
   return (
     /como\s+(?:posso\s+)?(?:te\s+)?chamar/.test(s) ||
     /qual(?:\s+[eé])?\s+seu\s+nome/.test(s) ||
+    /me\s+conta\s+(?:o\s+)?seu\s+nome/.test(s) ||
+    /me\s+fala\s+(?:o\s+)?seu\s+nome/.test(s) ||
+    /\bseu\s+nome\s*\??\s*$/.test(s) ||
     /como\s+você\s+se\s+chama/.test(s) ||
     /como\s+vc\s+se\s+chama/.test(s) ||
     /posso\s+saber\s+(?:o\s+)?seu\s+nome/.test(s) ||
@@ -222,7 +229,6 @@ function extractNameShortReplyAfterAssistantAsked(
   }
   const phrase = words.map((w) => normToken(w)).join(' ');
   if (UNCERTAIN_NICKNAME_TOKENS.has(phrase)) return null;
-  if (isGreetingOrVocativeToAgentAna(compact)) return null;
   return sanitizeNameCandidate(compact);
 }
 
@@ -274,7 +280,7 @@ export function extractCustomerNameFromUserUtterance(
     }
   }
 
-  if (isGreetingOrVocativeToAgentAna(t)) return null;
+  if (isGreetingOrVocativeToAgentAna(t) && !assistantRecentlyAskedForName(ctx?.lastAssistantPlain)) return null;
 
   return extractNameShortReplyAfterAssistantAsked(t, ctx?.lastAssistantPlain);
 }
@@ -288,6 +294,9 @@ export function replyExplicitlyAsksCustomerName(replySentToCustomer: string): bo
   return (
     /como\s+(?:posso\s+)?(?:te\s+)?chamar/.test(s) ||
     /qual(?:\s+[eé])?\s+seu\s+nome/.test(s) ||
+    /me\s+conta\s+(?:o\s+)?seu\s+nome/.test(s) ||
+    /me\s+fala\s+(?:o\s+)?seu\s+nome/.test(s) ||
+    /\bseu\s+nome\s*\??\s*$/.test(s) ||
     /como\s+você\s+se\s+chama/.test(s) ||
     /como\s+vc\s+se\s+chama/.test(s) ||
     /posso\s+saber\s+(?:o\s+)?seu\s+nome/.test(s) ||

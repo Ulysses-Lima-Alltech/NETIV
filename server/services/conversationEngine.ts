@@ -280,9 +280,11 @@ const ANA_ENGINE_DIAGNOSTIC_TEXT = 'Diagnóstico: cheguei no conversation engine
 const ANA_PROVIDER_FAILURE_HANDOFF_REPLY =
   'Vou encaminhar seu atendimento para um consultor te ajudar com essa informação certinho.';
 const ANA_LLM_FIRST_TECHNICAL_FALLBACK_REPLY =
-  'Tive uma instabilidade para consultar as informações agora. Posso encaminhar você para um corretor ou te ajudar a marcar uma visita?';
+  'Tive uma instabilidade para consultar as informações agora. Posso continuar te ajudando por aqui ou, se preferir, te encaminhar para um corretor?';
 const ANA_LLM_FIRST_MISSING_INFO_REPLY =
-  'Não tenho esse detalhe confirmado por aqui. O corretor consegue te passar certinho. Quer que eu te encaminhe ou prefere agendar uma visita?';
+  'Essa parte depende de confirmação atualizada. Posso te ajudar a seguir com um corretor ou marcar uma visita?';
+const ANA_NAME_QUESTION_REPAIR_REPLY =
+  'Perfeito. Só para eu seguir certinho, como posso te chamar?';
 const MAX_ANA_GENERATION_ATTEMPTS = 5;
 const ANA_DEBUG_QWEN_RAW = String(process.env.ANA_DEBUG_QWEN_RAW || '').trim().toLowerCase() === 'true';
 const ANA_LLM_FIRST_COMMERCIAL_REPLIES =
@@ -2214,6 +2216,21 @@ function normText(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim();
 }
 
+function containsForbiddenMissingDetailFallbackText(text: string): boolean {
+  const n = normText(text || '');
+  if (!n) return false;
+  const patterns = [
+    new RegExp(['nao tenho esse', 'detalhe confirmado', 'por aqui'].join('\\s+')),
+    new RegExp([
+      ['o', 'corretor', 'consegue'].join('\\s+'),
+      ['te', 'passar'].join('\\s+'),
+      'certinho',
+    ].join('\\s+')),
+    new RegExp(['quer que eu te', 'encaminhe ou prefere', 'agendar uma visita'].join('\\s+')),
+  ];
+  return patterns.some((pattern) => pattern.test(n));
+}
+
 function normalizeIntentText(s: string): string {
   return s
     .toLowerCase()
@@ -3773,6 +3790,24 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationId,
       });
     }
+    const leadQualificationStateAtNameBoundary = getLeadQualificationState(flowStateParsed);
+    const knownCustomerNameBeforeCapture =
+      (effectiveConv.customer_name || leadQualificationStateAtNameBoundary.customerName || leadQualificationStateAtNameBoundary.name || '')
+        .trim();
+    const lastAssistantAskedCustomerNameThisTurn =
+      !knownCustomerNameBeforeCapture &&
+      (
+        replyExplicitlyAsksCustomerName(lastAssistantPlain || '') ||
+        effectiveConv.ana_asked_customer_name === true
+      );
+    if (lastAssistantAskedCustomerNameThisTurn) {
+      console.log('[ANA_NAME_VARIABLE_CAPTURE_ATTEMPT]', {
+        conversationId,
+        userMessagePreview: trimmed.slice(0, 120),
+        lastAssistantMessage: (lastAssistantPlain || '').slice(0, 220),
+        anaAskedCustomerNameFlag: effectiveConv.ana_asked_customer_name === true,
+      });
+    }
     let trustedCustomerName =
       extractCustomerNameFromUserUtterance(trimmed, { lastAssistantPlain }) || null;
     if (!trustedCustomerName && effectiveConv.ana_asked_customer_name === true) {
@@ -3790,6 +3825,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
     }
     if (trustedCustomerName) {
+      if (lastAssistantAskedCustomerNameThisTurn) {
+        console.log('[ANA_NAME_VARIABLE_NORMALIZED]', {
+          conversationId,
+          rawName: trimmed.slice(0, 80),
+          normalizedName: trustedCustomerName,
+        });
+        console.log('[ANA_NAME_VARIABLE_CAPTURED]', {
+          conversationId,
+          customerName: trustedCustomerName,
+        });
+        console.log('[ANA_NAME_CAPTURE_BYPASSED_LLM_FIRST]', {
+          conversationId,
+          customerName: trustedCustomerName,
+        });
+      }
       console.log('[ANA_CONTACT_NAME_ACCEPTED]', {
         conversationId,
         customerName: trustedCustomerName,
@@ -6077,6 +6127,80 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    if (
+      lastAssistantAskedCustomerNameThisTurn &&
+      !trustedCustomerName &&
+      !objectiveCustomerQuestionThisTurn &&
+      !isInitialQualificationClarificationMessage(trimmed)
+    ) {
+      console.log('[ANA_MISSING_RAG_FALLBACK_BLOCKED_AFTER_NAME_QUESTION]', {
+        conversationId,
+        reason: 'name_question_non_name_reply',
+        userMessagePreview: trimmed.slice(0, 120),
+        lastAssistantMessage: (lastAssistantPlain || '').slice(0, 220),
+      });
+      console.log('[ANA_MISSING_RAG_FALLBACK_BLOCKED_FOR_CONVERSATION_STATE]', {
+        conversationId,
+        reason: 'name_question_non_name_reply',
+        userMessagePreview: trimmed.slice(0, 120),
+      });
+      const committedNameQuestionRepair = commitTurnResponse({
+        handler: 'lead_qualification_policy',
+        reason: 'name_question_non_name_reply',
+        parts: [ANA_NAME_QUESTION_REPAIR_REPLY],
+        stage: 'lead_qualification_name_repair',
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+        shouldCallQwen: false,
+      });
+      if (!committedNameQuestionRepair.committed || !committedNameQuestionRepair.text.trim()) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'lead_qualification_name_repair_commit_blocked';
+        return;
+      }
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_lead_qualification_name_repair_send';
+        return;
+      }
+      const nameQuestionRepairSend = await sendAnaOutboundMessages({
+        conversationId,
+        toPhoneNumber,
+        text: committedNameQuestionRepair.text,
+        phase: 'lead_qualification_policy',
+        replyPipelineToken,
+      });
+      if (!nameQuestionRepairSend.success || nameQuestionRepairSend.metaMessageIds.length === 0) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'lead_qualification_name_repair_send_failed';
+        return;
+      }
+      flowStateParsed = markLeadQualificationQuestionAsked(flowStateParsed, {
+        key: 'name',
+        question: ANA_NAME_QUESTION_REPAIR_REPLY,
+      });
+      const committedNameRepairState = updateConversationStateFromCommittedReply({
+        conversationId,
+        flowState: flowStateParsed,
+        finalReplyParts: committedNameQuestionRepair.parts,
+        finalReplyText: committedNameQuestionRepair.text,
+        handler: 'lead_qualification_policy',
+        currentTopic: anaTurnContextResolved?.currentTopic ?? null,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
+      });
+      flowStateParsed = committedNameRepairState.nextState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+      await markAnaAskedForCustomerName(conversationId);
+      anaTurnAuditOutcome = 'sent';
+      anaTurnAuditBlockedReason = null;
+      anaTurnAuditLlmStatus = 'skipped';
+      anaTurnAuditModel = 'lead_qualification_policy';
+      anaTurnDiagnostics.finalResponse.replySource = 'lead_qualification_policy';
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      return;
+    }
+
     const evoraKnowledgeDrivenMode =
       isEvoraEnterpriseName(ent?.name ?? null) &&
       (enterpriseEvidence.hasUsableKnowledgeChunks || knowledgeText.trim().length > 0 || structuredFactsFound);
@@ -7624,7 +7748,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             'Nao invente resposta.',
             'Nao tente compensar com informacoes genericas.',
             'Nao diga "o que posso te adiantar".',
-            'Nao diga "esse detalhe o corretor consegue te passar certinho" como frase padrao.',
+            'Nao use uma frase padrao empurrando detalhe sem contexto para o corretor.',
             'Nao pergunte "qual ponto voce quer entender primeiro".',
             'Nao diga valores, quantidades, disponibilidade, tabela, simulacao ou condicoes especificas.',
             'Responda naturalmente como Ana.',
@@ -11188,6 +11312,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           reason: finalQuestionRetryResult.error || 'retry_generation_failed_or_empty',
         });
       }
+    }
+
+    if (containsForbiddenMissingDetailFallbackText(replyText)) {
+      console.log('[ANA_FORBIDDEN_MISSING_DETAIL_FALLBACK_BLOCKED]', {
+        conversationId,
+        reason: 'final_reply_contains_forbidden_missing_detail_fallback',
+        userMessagePreview: trimmed.slice(0, 160),
+        replacementPreview: ANA_LLM_FIRST_MISSING_INFO_REPLY.slice(0, 160),
+      });
+      replyText = ANA_LLM_FIRST_MISSING_INFO_REPLY;
+      anaTurnAuditGuardsApplied.forbiddenMissingDetailFallback = {
+        blocked: true,
+        replacement: 'contextual_missing_info',
+      };
     }
 
     const finalReplyParts = [replyText];

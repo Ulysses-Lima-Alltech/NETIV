@@ -72,7 +72,7 @@ export const ANA_COMMERCIAL_RULES = {
       'O Évora tem 145 lotes no total, com opções a partir de 360 m².\n\nQuer que eu te explique as opções de tamanho?',
     ],
     disponibilidade_simulacao_desconto: [
-      'Para disponibilidade atualizada, tabela comercial, desconto ou condição individual, o corretor consegue te passar certinho.\n\nEu posso te explicar os tamanhos gerais dos lotes, a faixa de metragem e a proposta do loteamento.\n\nVocê prefere ver os tamanhos gerais primeiro ou falar com o corretor?',
+      'Para disponibilidade atualizada, tabela comercial, desconto ou condição individual, essa parte depende de confirmação no atendimento.\n\nEu posso te explicar os tamanhos gerais dos lotes, a faixa de metragem e a proposta do loteamento.\n\nVocê prefere ver os tamanhos gerais primeiro ou falar com o corretor?',
     ],
     materiais: [
       'Não tenho esse material liberado para envio por aqui. Posso te encaminhar para o corretor responsável ou, se preferir, te ajudar a agendar uma visita.',

@@ -68,31 +68,56 @@ test('cliente informa nome salva e recebe apresentacao curta com qualificacao', 
   assert.equal(countQuestions(reply), 1);
 });
 
-test('Ulysses apos pergunta de nome nao cai em fallback de dado ausente', () => {
-  let state: CommercialFlowState = {
+test('nomes curtos apos pergunta de nome normalizam e nao caem em fallback de dado ausente', () => {
+  const cases = [
+    ['ulysses', 'Ulysses'],
+    ['Ulysses', 'Ulysses'],
+    ['ana clara', 'Ana Clara'],
+    ['joao', 'Joao'],
+  ] as const;
+
+  for (const [rawName, expectedName] of cases) {
+    let state: CommercialFlowState = {
+      dialoguePolicy: {
+        leadQualification: { ...getLeadQualificationState({}), nameAsked: true, askedQualificationKeys: ['name'] },
+      },
+    };
+    const previousState = getLeadQualificationState(state);
+    state = mergeLeadQualificationState(state, extractLeadQualificationSignals(rawName, previousState));
+    const selection = selectNextLeadQualificationQuestion({
+      state: getLeadQualificationState(state),
+      userMessage: rawName,
+      customerName: expectedName,
+    });
+    const reply = `${buildEvoraLeadQualificationProgressReply({
+      previousState,
+      currentState: getLeadQualificationState(state),
+      userMessage: rawName,
+      nextQuestionKey: selection?.key,
+    })}\n\n${selection?.question}`;
+
+    assert.equal(getLeadQualificationState(state).name, expectedName, rawName);
+    assert.equal(getLeadQualificationState(state).nameCollected, true, rawName);
+    assert.equal(selection?.key, 'purpose', rawName);
+    assert.match(reply, new RegExp(`Prazer, ${expectedName.split(' ')[0]}`, 'i'), rawName);
+    assert.match(reply, /morar, investir/i, rawName);
+    assert.doesNotMatch(reply, /N[aã]o tenho esse detalhe confirmado/i, rawName);
+    assert.doesNotMatch(reply, /corretor consegue te passar certinho/i, rawName);
+  }
+});
+
+test('nao entendi apos pergunta de nome nao vira nome nem fallback de dado ausente', () => {
+  const state: CommercialFlowState = {
     dialoguePolicy: {
       leadQualification: { ...getLeadQualificationState({}), nameAsked: true, askedQualificationKeys: ['name'] },
     },
   };
-  const previousState = getLeadQualificationState(state);
-  state = mergeLeadQualificationState(state, extractLeadQualificationSignals('Ulysses', previousState));
-  const selection = selectNextLeadQualificationQuestion({
-    state: getLeadQualificationState(state),
-    userMessage: 'Ulysses',
-    customerName: 'Ulysses',
-  });
-  const reply = `${buildEvoraLeadQualificationProgressReply({
-    previousState,
-    currentState: getLeadQualificationState(state),
-    userMessage: 'Ulysses',
-    nextQuestionKey: selection?.key,
-  })}\n\n${selection?.question}`;
+  const signals = extractLeadQualificationSignals('nao entendi', getLeadQualificationState(state));
 
-  assert.equal(getLeadQualificationState(state).name, 'Ulysses');
-  assert.equal(selection?.key, 'purpose');
-  assert.match(reply, /Prazer, Ulysses/i);
-  assert.match(reply, /morar, investir/i);
-  assert.doesNotMatch(reply, /N[aã]o tenho esse detalhe confirmado/i);
+  assert.equal(signals.name, undefined);
+  assert.equal(signals.customerName, undefined);
+  assert.equal(signals.nameCollected, undefined);
+  assert.equal(isObjectiveCustomerQuestion('nao entendi'), false);
 });
 
 test('respostas de qualificacao nao caem em fallback de dado ausente', () => {
@@ -124,7 +149,24 @@ test('respostas de qualificacao nao caem em fallback de dado ausente', () => {
 
     assert.doesNotMatch(reply, /N[aã]o tenho esse detalhe confirmado/i, userMessage);
     assert.doesNotMatch(reply, /corretor consegue te passar certinho/i, userMessage);
+    assert.equal(getLeadQualificationState(state).name, 'Ulysses', userMessage);
     assert.match(reply, /Perfeito|Certo|orientar|pesquisa|investimento|moradia/i, userMessage);
+  }
+});
+
+test('valor e lazer apos pergunta de nome seguem como pergunta comercial, nao como nome', () => {
+  const state: CommercialFlowState = {
+    dialoguePolicy: {
+      leadQualification: { ...getLeadQualificationState({}), nameAsked: true, askedQualificationKeys: ['name'] },
+    },
+  };
+
+  for (const userMessage of ['valor', 'lazer']) {
+    const signals = extractLeadQualificationSignals(userMessage, getLeadQualificationState(state));
+    assert.equal(signals.name, undefined, userMessage);
+    assert.equal(signals.customerName, undefined, userMessage);
+    assert.equal(signals.nameCollected, undefined, userMessage);
+    assert.equal(isObjectiveCustomerQuestion(userMessage), true, userMessage);
   }
 });
 

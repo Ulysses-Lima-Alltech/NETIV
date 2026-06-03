@@ -232,7 +232,7 @@ test('Obrigado vira Obrigada', () => {
   assert.match(output, /obrigada/i);
 });
 
-test('finalizador bloqueia promessa de lotes disponiveis e conduz para corretor', () => {
+test('finalizador bloqueia promessa de lotes disponiveis e conduz sem fallback proibido', () => {
   const output = finalizeAnaReplyText(
     'Se quiser saber mais sobre os lotes disponíveis ou os benefícios do loteamento, é só pedir!',
     {
@@ -242,7 +242,8 @@ test('finalizador bloqueia promessa de lotes disponiveis e conduz para corretor'
   );
   assert.doesNotMatch(output, /lotes disponíveis/i);
   assert.match(output, /tamanhos dos lotes|proposta do loteamento/i);
-  assert.match(output, /disponibilidade atualizada.*corretor/i);
+  assert.match(output, /disponibilidade atualizada.*confirmação no atendimento/i);
+  assert.doesNotMatch(output, /corretor consegue te passar certinho/i);
 });
 
 test('finalizador remove reticencias e corrige acentuacao visivel', () => {

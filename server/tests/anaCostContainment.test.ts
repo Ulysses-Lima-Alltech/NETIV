@@ -785,7 +785,9 @@ test('pedido de simulacao puxa pergunta de corretor', () => {
     disableFollowupQuestion: false,
   });
 
-  assert.match(policy.text, /corretor consegue te passar certinho/i);
+  assert.match(policy.text, /confirmação atualizada|confirmacao atualizada/i);
+  assert.match(policy.text, /corretor|visita/i);
+  assert.doesNotMatch(policy.text, /corretor consegue te passar certinho/i);
 });
 
 test('fluxo de visita ativo suprime oferta de midia e ancora no slot faltante', () => {

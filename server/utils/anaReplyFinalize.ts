@@ -496,7 +496,7 @@ export function sanitizeAnaClientVisibleReplyText(text: string): string {
     !/\b(corretor|consultor|nao consigo|depende|varia|atualizada)\b/.test(normalizedAvailability);
   if (unsafeLotAvailability) {
     const safeAvailability =
-      'Se quiser, posso te explicar melhor os tamanhos dos lotes e a proposta do loteamento.\n\nPara disponibilidade atualizada, o corretor consegue te passar certinho.';
+      'Se quiser, posso te explicar melhor os tamanhos dos lotes e a proposta do loteamento.\n\nPara disponibilidade atualizada, essa parte depende de confirmação no atendimento.';
     const kept = next
       .split(/(?<=[.!?])\s+|\r?\n+/)
       .map((sentence) => sentence.trim())
@@ -723,7 +723,7 @@ function rescueNeutralOpenCommercialReply(text: string, opts?: FinalizeAnaReplyO
 }
 
 const BROKER_DETAIL_ROUTING_TEXT =
-  'Não tenho esse detalhe confirmado por aqui. O corretor consegue te passar certinho. Quer que eu te encaminhe ou prefere agendar uma visita?';
+  'Essa parte depende de confirmação atualizada. Posso te ajudar a seguir com um corretor ou marcar uma visita?';
 
 const EVORA_LOT_COUNT_ROUTING_REPLY =
   'O Évora tem 145 lotes no total, com opções a partir de 360 m².';
@@ -826,7 +826,7 @@ const EVORA_LOT_SIZE_GENERAL_REPLY =
 const EVORA_LOT_SIZE_RANGE_REPLY =
   'Os lotes do Évora ficam na faixa de 360 m² a 725 m². Eu não consigo confirmar disponibilidade de uma metragem específica por aqui, porque isso muda conforme as unidades disponíveis.';
 const EVORA_LOT_AVAILABILITY_BROKER_REPLY =
-  'Para disponibilidade atualizada, o corretor consegue te passar certinho.\n\nEu posso te explicar melhor os tamanhos dos lotes e a proposta do loteamento.';
+  'Para disponibilidade atualizada, essa parte depende de confirmação no atendimento.\n\nEu posso te explicar melhor os tamanhos dos lotes e a proposta do loteamento.';
 
 function isUserAskingEvoraInstallment(text: string | null | undefined): boolean {
   const n = normClosure(text || '');

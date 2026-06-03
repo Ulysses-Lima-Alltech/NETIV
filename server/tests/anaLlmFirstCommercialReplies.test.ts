@@ -21,6 +21,12 @@ const forbiddenCommercialFallbackFragments = [
   /loteamento fechado em Atibaia/i,
 ];
 
+const forbiddenMissingDetailFallbackFragments = [
+  'Não tenho esse detalhe confirmado por aqui',
+  'O corretor consegue te passar certinho',
+  'Quer que eu te encaminhe ou prefere agendar uma visita?',
+] as const;
+
 test('LLM-first commercial replies flag is enabled by default and logs the new path', () => {
   assert.match(engineSource, /const ANA_LLM_FIRST_COMMERCIAL_REPLIES =[\s\S]*\?\? 'true'/);
   assert.match(engineSource, /\[ANA_LLM_FIRST_COMMERCIAL_ENABLED\]/);
@@ -61,6 +67,17 @@ test('commercial missing-RAG and no-LLM fallbacks are disabled by LLM-first comm
   );
 });
 
+test('LLM-first failure fallbacks use contextual non-forbidden copy', () => {
+  assert.match(
+    engineSource,
+    /Tive uma instabilidade para consultar as informações agora\. Posso continuar te ajudando por aqui ou, se preferir, te encaminhar para um corretor\?/
+  );
+  assert.match(
+    engineSource,
+    /Essa parte depende de confirmação atualizada\. Posso te ajudar a seguir com um corretor ou marcar uma visita\?/
+  );
+});
+
 test('Qwen prompt receives the LLM-first commercial instruction without increasing budgets', () => {
   assert.match(engineSource, /Responda perguntas comerciais com base no RAG\/evidencias autorizadas/);
   assert.match(engineSource, /Nao invente/);
@@ -73,6 +90,14 @@ test('fixed Evora overview fallback is absent from critical production files', (
   for (const [fileName, source] of criticalSources) {
     for (const forbidden of forbiddenCommercialFallbackFragments) {
       assert.doesNotMatch(source, forbidden, fileName);
+    }
+  }
+});
+
+test('forbidden missing-detail fallback text is absent from critical production files', () => {
+  for (const [fileName, source] of criticalSources) {
+    for (const forbidden of forbiddenMissingDetailFallbackFragments) {
+      assert.equal(source.toLowerCase().includes(forbidden.toLowerCase()), false, fileName);
     }
   }
 });
@@ -91,12 +116,36 @@ test('production scenarios cannot use the fixed overview as fallback', () => {
 });
 
 test('conversation state bypasses missing-RAG fallback in LLM-first mode', () => {
+  assert.match(engineSource, /\[ANA_NAME_VARIABLE_CAPTURE_ATTEMPT\]/);
+  assert.match(engineSource, /\[ANA_NAME_VARIABLE_CAPTURED\]/);
+  assert.match(engineSource, /\[ANA_NAME_VARIABLE_NORMALIZED\]/);
+  assert.match(engineSource, /\[ANA_NAME_CAPTURE_BYPASSED_LLM_FIRST\]/);
   assert.match(engineSource, /\[ANA_NAME_CAPTURED_LLM_FIRST_BYPASS\]/);
   assert.match(engineSource, /\[ANA_INITIAL_QUALIFICATION_CONTINUED_AFTER_NAME\]/);
   assert.match(engineSource, /\[ANA_CLARIFICATION_REPAIR_HANDLED\]/);
+  assert.match(engineSource, /\[ANA_MISSING_RAG_FALLBACK_BLOCKED_AFTER_NAME_QUESTION\]/);
   assert.match(engineSource, /\[ANA_MISSING_RAG_FALLBACK_BLOCKED_FOR_CONVERSATION_STATE\]/);
+  assert.match(engineSource, /\[ANA_FORBIDDEN_MISSING_DETAIL_FALLBACK_BLOCKED\]/);
+  assert.match(engineSource, /lastAssistantAskedCustomerNameThisTurn/);
+  assert.match(engineSource, /ANA_NAME_QUESTION_REPAIR_REPLY/);
   assert.match(engineSource, /isInitialQualificationClarificationMessage\(trimmed\)/);
   assert.match(engineSource, /buildInitialQualificationClarificationReply/);
+});
+
+test('non-name reply after name question is repaired before commercial LLM path', () => {
+  const repairStart = engineSource.indexOf('lastAssistantAskedCustomerNameThisTurn');
+  const commercialStart = engineSource.indexOf('const evoraKnowledgeDrivenMode', repairStart);
+  const repairBlock = engineSource.slice(repairStart, commercialStart);
+
+  assert.ok(repairStart >= 0, 'name-question repair boundary should exist');
+  assert.ok(commercialStart > repairStart, 'name-question repair should run before commercial mode branch');
+  assert.match(repairBlock, /!trustedCustomerName/);
+  assert.match(repairBlock, /!objectiveCustomerQuestionThisTurn/);
+  assert.match(repairBlock, /!isInitialQualificationClarificationMessage\(trimmed\)/);
+  assert.match(repairBlock, /ANA_NAME_QUESTION_REPAIR_REPLY/);
+  for (const forbidden of forbiddenMissingDetailFallbackFragments) {
+    assert.equal(repairBlock.toLowerCase().includes(forbidden.toLowerCase()), false);
+  }
 });
 
 test('clarification repair explains initial qualification instead of missing-data fallback', () => {
