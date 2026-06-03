@@ -21,6 +21,7 @@ import { handleIncomingMessage } from './conversationEngine.js';
 import { leadOriginFromMetaWhatsAppMessage } from './leadOriginResolver.js';
 import { sendTextMessage } from './whatsappMetaService.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
+import { mergeContactNameIfMissing } from '../repositories/contactsRepository.js';
 import { listEnterprises } from '../repositories/enterpriseRepository.js';
 import { listEnterpriseAliasRowsForActiveEnterprises } from '../repositories/enterpriseMatch.js';
 import { classifyLeadConversation } from './leadClassificationService.js';
@@ -29,6 +30,10 @@ import {
   sendAnaEmergencyHandoff,
 } from '../utils/anaEmergencyHandoff.js';
 
+import {
+  extractCustomerNameFromUserUtterance,
+  replyExplicitlyAsksCustomerName,
+} from '../utils/extractCustomerNameFromMessage.js';
 /** Desligado enquanto se testa o bypass no conversationEngine (`ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY`). Se true, dá `continue` e o motor não corre. */
 const ANA_DIAGNOSTIC_FIXED_REPLY = false;
 const ANA_DIAGNOSTIC_FIXED_TEXT = 'Diagnóstico: recebi sua mensagem no fluxo automático.';
@@ -447,6 +452,91 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
             externalContactIdTail: phoneDigitsTail(conv.external_contact_id, 4),
             contactPhoneTail: phoneDigitsTail(conv.contact_phone, 4),
           });
+
+
+          // HOTFIX: resposta curta de nome n�o pode depender do lead classifier.
+          // Fluxo correto: pediu nome -> cliente respondeu nome -> salva nome -> responde qualifica��o -> continue.
+          {
+            const recentForName = await getRecentConversationMessages(conv.id, 12);
+            const lastAssistantNameQuestion =
+              [...recentForName]
+                .reverse()
+                .find((m) => {
+                  const content = String(m.content ?? '').trim();
+                  return m.role === 'assistant' && replyExplicitlyAsksCustomerName(content);
+                }) ?? null;
+
+            const lastAssistantNameQuestionText = lastAssistantNameQuestion
+              ? String(lastAssistantNameQuestion.content ?? '').trim()
+              : null;
+
+            const nameFromWebhookBoundary = lastAssistantNameQuestionText
+              ? extractCustomerNameFromUserUtterance(text, {
+                  lastAssistantPlain: lastAssistantNameQuestionText,
+                })
+              : null;
+
+            if (nameFromWebhookBoundary && lastAssistantNameQuestionText) {
+              console.log('[ANA_WEBHOOK_NAME_CAPTURE_BYPASS_CLASSIFIER]', {
+                conversationId: conv.id,
+                metaMessageId: mid,
+                customerName: nameFromWebhookBoundary,
+                lastAssistantQuestion: lastAssistantNameQuestionText.slice(0, 160),
+              });
+
+              if (conv.contact_id != null) {
+                try {
+                  await mergeContactNameIfMissing(conv.contact_id, nameFromWebhookBoundary);
+                  console.log('[ANA_WEBHOOK_NAME_CONTACT_MERGED]', {
+                    conversationId: conv.id,
+                    contactId: conv.contact_id,
+                    customerName: nameFromWebhookBoundary,
+                  });
+                } catch (e) {
+                  console.error('[ANA_WEBHOOK_NAME_CONTACT_MERGE_FAILED]', {
+                    conversationId: conv.id,
+                    contactId: conv.contact_id,
+                    error: e instanceof Error ? e.message : String(e),
+                  });
+                }
+              }
+
+              if (!waReady) {
+                console.error('[ANA_WEBHOOK_NAME_QUALIFICATION_SEND_FAILED]', {
+                  conversationId: conv.id,
+                  metaMessageId: mid,
+                  reason: 'whatsapp_not_ready',
+                });
+                continue;
+              }
+
+              const qualificationReply = [
+                `Prazer, ${nameFromWebhookBoundary}.`,
+                'Vou te fazer algumas perguntas r�pidas para entender melhor seu momento e te mostrar a melhor oportunidade no �vora.',
+                'Voc� est� olhando mais para morar, investir ou ainda est� conhecendo as possibilidades?',
+              ].join('\n\n');
+
+              const nameReply = await sendTextMessage(String(msg.from), qualificationReply);
+
+              if (nameReply.success && nameReply.metaMessageId) {
+                await insertMessage(conv.id, 'assistant', qualificationReply, nameReply.metaMessageId);
+                console.log('[ANA_WEBHOOK_NAME_QUALIFICATION_SENT]', {
+                  conversationId: conv.id,
+                  metaMessageId: mid,
+                  outboundMetaMessageId: nameReply.metaMessageId,
+                });
+              } else {
+                console.error('[ANA_WEBHOOK_NAME_QUALIFICATION_SEND_FAILED]', {
+                  conversationId: conv.id,
+                  metaMessageId: mid,
+                  error: nameReply.error ?? null,
+                  code: nameReply.code ?? null,
+                });
+              }
+
+              continue;
+            }
+          }
 
           try {
             const liveConv = (await getConversationById(conv.id)) ?? conv;
