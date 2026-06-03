@@ -3708,6 +3708,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     isFirstAnaReplyForTurn = isFirstAnaReply;
     const lastAssistantBeforeUser = [...rows].reverse().find((m) => m.role === 'assistant');
     const lastAssistantPlain = lastAssistantBeforeUser?.content?.trim() || null;
+    const recentAssistantPlainTexts = rows
+      .filter((m) => m.role === 'assistant')
+      .slice(-8)
+      .map((m) => String(m.content ?? '').trim())
+      .filter(Boolean);
+    const assistantNameQuestionRegex =
+      /(?:me\s+conta|me\s+fala|me\s+diz|me\s+informa)\s+(?:o\s+)?seu\s+nome|qual(?:\s+[e�])?\s+seu\s+nome|como\s+(?:posso\s+)?(?:te\s+)?chamar|seu\s+nome\s*\??\s*$/i;
+    const nameQuestionContextPlain =
+      [...recentAssistantPlainTexts]
+        .reverse()
+        .find((text) => replyExplicitlyAsksCustomerName(text) || assistantNameQuestionRegex.test(text)) ?? null;
+    const recentAssistantAskedCustomerName = nameQuestionContextPlain != null;
     let visitStateReconstructedThisTurn = false;
     const visitStateLogPayload = {
       conversationId,
@@ -3797,7 +3809,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const lastAssistantAskedCustomerNameThisTurn =
       !knownCustomerNameBeforeCapture &&
       (
-        replyExplicitlyAsksCustomerName(lastAssistantPlain || '') ||
+        recentAssistantAskedCustomerName ||
         effectiveConv.ana_asked_customer_name === true
       );
     if (lastAssistantAskedCustomerNameThisTurn) {
@@ -3809,7 +3821,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
     }
     let trustedCustomerName =
-      extractCustomerNameFromUserUtterance(trimmed, { lastAssistantPlain }) || null;
+      extractCustomerNameFromUserUtterance(trimmed, {
+        lastAssistantPlain: nameQuestionContextPlain ?? lastAssistantPlain,
+      }) || null;
     if (!trustedCustomerName && effectiveConv.ana_asked_customer_name === true) {
       trustedCustomerName =
         extractCustomerNameFromUserUtterance(trimmed, { lastAssistantPlain: 'Como posso te chamar?' }) || null;
