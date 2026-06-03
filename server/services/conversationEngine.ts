@@ -281,6 +281,8 @@ const ANA_PROVIDER_FAILURE_HANDOFF_REPLY =
   'Vou encaminhar seu atendimento para um consultor te ajudar com essa informação certinho.';
 const MAX_ANA_GENERATION_ATTEMPTS = 5;
 const ANA_DEBUG_QWEN_RAW = String(process.env.ANA_DEBUG_QWEN_RAW || '').trim().toLowerCase() === 'true';
+const ANA_LLM_FIRST_COMMERCIAL_REPLIES =
+  String(process.env.ANA_LLM_FIRST_COMMERCIAL_REPLIES ?? 'true').trim().toLowerCase() !== 'false';
 
 type AnaEmergencyHandoffTransport = {
   sendTextMessage: (to: string, text: string) => Promise<AnaEmergencyHandoffSendResult>;
@@ -4549,6 +4551,25 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       .filter(Boolean)
       .join('\n')
       .slice(0, likelyLocalRuntimeForRag ? 3_200 : 12_000);
+    const commercialAxisForRagRequest = inferUserRequestedAxis(userMessageForReasoning);
+    const commercialTopicForRagRequest = detectRequestedTopicForTurn(userMessageForReasoning);
+    if (
+      ANA_LLM_FIRST_COMMERCIAL_REPLIES &&
+      isEvoraEnterpriseName(ent?.name ?? null) &&
+      (commercialAxisForRagRequest != null ||
+        (commercialTopicForRagRequest != null &&
+          !['visita', 'corretor', 'rota'].includes(commercialTopicForRagRequest)))
+    ) {
+      console.log('[ANA_COMMERCIAL_RAG_CONTEXT_REQUESTED]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        enterpriseName: ent?.name ?? null,
+        axis: commercialAxisForRagRequest,
+        topic: commercialTopicForRagRequest,
+        maxChunks: localQwenMaxChunks,
+        maxContextChars: promptRagMaxContextChars,
+      });
+    }
     const knowledgeParts: string[] = [];
     let ragChunksFound = 0;
     let ragRetrievalError: string | null = null;
@@ -6030,6 +6051,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const evoraKnowledgeDrivenMode =
       isEvoraEnterpriseName(ent?.name ?? null) &&
       (enterpriseEvidence.hasUsableKnowledgeChunks || knowledgeText.trim().length > 0 || structuredFactsFound);
+    if (ANA_LLM_FIRST_COMMERCIAL_REPLIES && isEvoraEnterpriseName(ent?.name ?? null)) {
+      console.log('[ANA_LLM_FIRST_COMMERCIAL_ENABLED]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        enterpriseName: ent?.name ?? null,
+      });
+    }
     if (evoraKnowledgeDrivenMode) {
       console.log('[ANA_COMMERCIAL_RULES_BYPASSED_CANONICAL_BASE]', {
         conversationId,
@@ -6254,8 +6282,30 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
     }
     const effectiveCommercialRule = forcedCommercialRule ?? commercialRule ?? canonicalLocationFallbackRule;
+    const commercialRuleAllowedAsOperationalDeterministic =
+      effectiveCommercialRule?.ruleId === 'visita_agendamento';
+    if (
+      ANA_LLM_FIRST_COMMERCIAL_REPLIES &&
+      effectiveCommercialRule &&
+      !commercialRuleAllowedAsOperationalDeterministic
+    ) {
+      console.log('[ANA_COMMERCIAL_DETERMINISTIC_BYPASSED]', {
+        conversationId,
+        ruleName: effectiveCommercialRule.ruleId,
+        axis: effectiveCommercialRule.commercialAxis,
+        replySourceBeforeLlm: effectiveCommercialRule.replySource,
+        reason: 'llm_first_commercial_replies',
+      });
+      console.log('[ANA_QWEN_REQUIRED_FOR_COMMERCIAL_REPLY]', {
+        conversationId,
+        ruleName: effectiveCommercialRule.ruleId,
+        axis: effectiveCommercialRule.commercialAxis,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+      });
+    }
     if (
       !effectiveCommercialRule &&
+      !ANA_LLM_FIRST_COMMERCIAL_REPLIES &&
       !isKnowledgeGapTurn &&
       leadQualificationSignalsChangedThisTurn &&
       !objectiveCustomerQuestionThisTurn &&
@@ -6369,6 +6419,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       );
     if (
       effectiveCommercialRule &&
+      (!ANA_LLM_FIRST_COMMERCIAL_REPLIES || commercialRuleAllowedAsOperationalDeterministic) &&
       anaDecision.canRespond &&
       anaDecision.outboundAllowed &&
       (shouldEnforceCanonicalPriorityRule || !isKnowledgeGapTurn)
@@ -7084,6 +7135,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
     }
     const shouldBlockFreeformWithoutRag =
+      !ANA_LLM_FIRST_COMMERCIAL_REPLIES &&
       !isKnowledgeGapTurn &&
       ragMissingAndKnowledgeDependent;
     if (shouldBlockFreeformWithoutRag) {
@@ -7133,6 +7185,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? !enterpriseEvidence.hasPricingInfo
         : commercialNoLlmIntent != null && isCommercialNoLlmIntentAlwaysSensitive(commercialNoLlmIntent);
     if (
+      !ANA_LLM_FIRST_COMMERCIAL_REPLIES &&
       anaBudgetConfig.priceMissingNoLlm &&
       commercialNoLlmIntent != null &&
       commercialNoLlmMissingAuthorizedData
@@ -7392,6 +7445,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       !anaDecision.canMentionPaymentSimulation
         ? 'Nao simule pagamento, entrada, parcela, prazo, juros ou desconto.'
         : null,
+      ANA_LLM_FIRST_COMMERCIAL_REPLIES && isEvoraEnterpriseName(ent?.name ?? null)
+        ? 'Responda perguntas comerciais com base no RAG/evidencias autorizadas. Nao invente. Se faltar informacao ou depender de disponibilidade/condicao atualizada, ofereca corretor ou visita naturalmente. Seja natural e comercial. Nao mencione NETIV, sistema, RAG, base, regra ou instrucao interna.'
+        : null,
       isLocalQwenRuntime
         ? 'Não copie instruções internas. Responda apenas ao cliente com fatos autorizados.'
         : null,
@@ -7404,6 +7460,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const conversationalQwenMode =
       isKnowledgeGapTurn === true ||
       (
+        !(ANA_LLM_FIRST_COMMERCIAL_REPLIES && isEvoraEnterpriseName(ent?.name ?? null)) &&
         isLocalQwenRuntime &&
         (
           isConversationalGenericFollowup(trimmed) ||
