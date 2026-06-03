@@ -346,6 +346,7 @@ function logAnaOutboundBlocked(params: {
 
 type AnaTurnTopic =
   | 'localizacao'
+  | 'region_deep_dive'
   | 'lazer'
   | 'seguranca'
   | 'valores'
@@ -410,6 +411,7 @@ function normalizeOfferedTopicForTurn(topic: string | null | undefined): AnaTurn
 function detectRequestedTopicForTurn(text: string): AnaTurnTopic | null {
   const n = normText(text || '');
   if (!n) return null;
+  if (isExplicitRegionDeepDiveRequest(text)) return 'region_deep_dive';
   if (/\b(quantos?\s+lotes?|numero\s+de\s+lotes?|vai\s+ter\s+quantos?\s+lotes?)\b/.test(n)) return 'lotes';
   if (
     /\b(link|google maps|maps|mapa|rota|como chegar|manda localizacao|manda a localizacao|me envia a localizacao|me envia localizacao|me manda a localizacao|me manda localizacao)\b/.test(
@@ -426,6 +428,124 @@ function detectRequestedTopicForTurn(text: string): AnaTurnTopic | null {
   if (/\b(visita|agendar|agendamento|marcar visita)\b/.test(n)) return 'visita';
   if (/\b(corretor|consultor|encaminha)\b/.test(n)) return 'corretor';
   return null;
+}
+
+function isGenericPendingTopicFollowup(text: string | null | undefined): boolean {
+  const n = normText(text || '').replace(/[.!?]+$/g, '').trim();
+  if (!n) return false;
+  return (
+    /^(fala mais|me explica mais|me fala mais|me fala mais de la|e dai|e dai\?)$/.test(n) ||
+    /^(me fale mais|explica mais|explica melhor|me conta mais|continua)$/.test(n)
+  );
+}
+
+function isExplicitRegionDeepDiveRequest(text: string | null | undefined): boolean {
+  const n = normText(text || '').replace(/[.!?]+$/g, '').trim();
+  if (!n) return false;
+  return (
+    /^(da regiao|regiao|sobre a regiao|fala da regiao|me fala da regiao)$/.test(n) ||
+    /^mas (vc|voce) ia falar da regiao$/.test(n) ||
+    /\bia falar da regiao\b/.test(n)
+  );
+}
+
+function detectDominantTopicFromLatestAssistant(text: string | null | undefined): AnaTurnTopic | null {
+  const n = normText(text || '');
+  if (!n) return null;
+  const hasRegion = /\b(atibaia|regiao|localizacao|pedreira|rio abaixo|dom pedro i)\b/.test(n);
+  const hasLazer = /\b(lazer|piscina|academia|playground|quadra|coworking|fireplace)\b/.test(n);
+  const hasPayment = /\b(pagamento|financiamento|parcela|entrada|120x|48x)\b/.test(n);
+  const hasLots = /\b(lotes?|metragem|360|725|disponibilidade)\b/.test(n);
+  if (hasLazer && !hasRegion && !hasPayment) return 'lazer';
+  if (hasPayment && !hasRegion && !hasLazer) return 'pagamento';
+  if (hasLots && !hasRegion && !hasLazer && !hasPayment) return 'lotes';
+  if (hasRegion) return 'localizacao';
+  return null;
+}
+
+function getRecentAssistantContextForPendingTopic(rows: Array<{ role: string; content: string }>): {
+  latestAssistant: string | null;
+  recentAssistantBlock: string;
+  recentAssistantWindow: string;
+} {
+  const recent = rows
+    .map((row) => ({
+      role: row.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+      content: String(row.content ?? '').trim(),
+    }))
+    .filter((row) => row.content.length > 0)
+    .slice(-16);
+  const assistants = recent.filter((row) => row.role === 'assistant').map((row) => row.content);
+  const latestAssistant = assistants[assistants.length - 1] ?? null;
+  const block: string[] = [];
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const row = recent[i];
+    if (!row) continue;
+    if (row.role === 'user') {
+      if (block.length > 0) break;
+      continue;
+    }
+    block.unshift(row.content);
+  }
+  return {
+    latestAssistant,
+    recentAssistantBlock: block.join('\n'),
+    recentAssistantWindow: assistants.slice(-8).join('\n'),
+  };
+}
+
+function resolvePendingRegionDeepDiveTopic(input: {
+  currentUserText: string;
+  rows: Array<{ role: string; content: string }>;
+  lastAssistantQuestionText?: string | null;
+  lastOfferedTopics?: string[] | null;
+}): { resolved: boolean; reason: string | null; assistantContextPreview: string } {
+  const explicitRegion = isExplicitRegionDeepDiveRequest(input.currentUserText);
+  const genericFollowup = isGenericPendingTopicFollowup(input.currentUserText);
+  if (!explicitRegion && !genericFollowup) {
+    return { resolved: false, reason: null, assistantContextPreview: '' };
+  }
+
+  const assistantContext = getRecentAssistantContextForPendingTopic(input.rows);
+  const contextText = [
+    assistantContext.recentAssistantBlock,
+    assistantContext.recentAssistantWindow,
+    input.lastAssistantQuestionText ?? '',
+    ...(input.lastOfferedTopics ?? []),
+  ].join('\n');
+  const nContext = normText(contextText);
+  const hasRegionContext =
+    /\b(atibaia|regiao|localizacao|pedreira|rio abaixo|dom pedro i|50 minutos|sao paulo)\b/.test(nContext);
+  if (explicitRegion) {
+    return {
+      resolved: true,
+      reason: hasRegionContext ? 'explicit_region_with_recent_context' : 'explicit_region_request',
+      assistantContextPreview: contextText.slice(0, 260),
+    };
+  }
+
+  if (!hasRegionContext) {
+    return { resolved: false, reason: null, assistantContextPreview: contextText.slice(0, 260) };
+  }
+
+  const latestDominantTopic = detectDominantTopicFromLatestAssistant(assistantContext.latestAssistant);
+  const offeredTopics = (input.lastOfferedTopics ?? [])
+    .map((topic) => normalizeOfferedTopicForTurn(topic))
+    .filter((topic): topic is AnaTurnTopic => topic != null);
+  const uniqueOfferedTopics = [...new Set(offeredTopics)];
+  const latestSingleNonRegionOffer =
+    uniqueOfferedTopics.length === 1 &&
+    uniqueOfferedTopics[0] !== 'localizacao' &&
+    latestDominantTopic === uniqueOfferedTopics[0];
+  if (latestSingleNonRegionOffer) {
+    return { resolved: false, reason: null, assistantContextPreview: contextText.slice(0, 260) };
+  }
+
+  return {
+    resolved: true,
+    reason: 'generic_followup_after_region_context',
+    assistantContextPreview: contextText.slice(0, 260),
+  };
 }
 
 function detectTopicFromAssistantAnswer(text: string): AnaTurnTopic | null {
@@ -469,7 +589,15 @@ function resolveAnaConversationTurn(input: {
     .slice(-12);
   const lastInboundText = [...recentHistory].reverse().find((row) => row.role === 'user')?.content?.trim() || null;
   const lastOutboundText = [...recentHistory].reverse().find((row) => row.role === 'assistant')?.content?.trim() || null;
-  const requestedTopic = detectRequestedTopicForTurn(input.currentUserText);
+  const pendingRegionTopic = resolvePendingRegionDeepDiveTopic({
+    currentUserText: input.currentUserText,
+    rows: input.rows,
+    lastAssistantQuestionText: input.lastAssistantQuestionText,
+    lastOfferedTopics: input.lastOfferedTopics,
+  });
+  const requestedTopic = pendingRegionTopic.resolved
+    ? 'region_deep_dive'
+    : detectRequestedTopicForTurn(input.currentUserText);
   const offeredTopics = (input.lastOfferedTopics ?? [])
     .map((topic) => normalizeOfferedTopicForTurn(topic))
     .filter((topic): topic is AnaTurnTopic => topic != null);
@@ -501,6 +629,7 @@ function resolveAnaConversationTurn(input: {
   const currentTopic = requestedTopic ?? (topicsAlreadyAnswered[topicsAlreadyAnswered.length - 1] as AnaTurnTopic | undefined) ?? null;
 
   const decisionPath: string[] = [];
+  if (pendingRegionTopic.resolved) decisionPath.push(`pending_region:${pendingRegionTopic.reason ?? 'resolved'}`);
   if (requestedTopic) decisionPath.push(`requested:${requestedTopic}`);
   if (acceptedOfferTopic) decisionPath.push(`accepted_offer:${acceptedOfferTopic}`);
   if (input.requestedAxis) decisionPath.push(`axis:${input.requestedAxis}`);
@@ -508,7 +637,9 @@ function resolveAnaConversationTurn(input: {
 
   const deterministicCandidate =
     requestedTopic != null
-      ? requestedTopic === 'rota'
+      ? requestedTopic === 'region_deep_dive'
+        ? null
+        : requestedTopic === 'rota'
         ? 'location_link_handler'
         : 'topic_handler'
       : acceptedOfferTopic != null
@@ -529,7 +660,7 @@ function resolveAnaConversationTurn(input: {
     currentTopic,
     requestedTopic,
     acceptedOfferTopic,
-    commercialAxis: input.requestedAxis,
+    commercialAxis: requestedTopic === 'region_deep_dive' ? 'localizacao' : input.requestedAxis,
     visitState: {
       active: input.flowState.pendingVisitScheduling === true || input.flowState.visitScheduling?.active === true,
       pendingVisitScheduling: input.flowState.pendingVisitScheduling === true,
@@ -4380,7 +4511,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const localQwenMaxChunks = anaBudgetConfig.ragMaxChunks;
     const promptRagMaxContextChars = Math.max(2_400, Math.min(9_000, anaBudgetConfig.targetInputTokens * 4));
     const shortConversationContext = fullUserUtterances.slice(-2_400);
-    const chunkHint = [userMessageForReasoning, shortConversationContext]
+    const pendingRegionDeepDiveBeforeRag = resolvePendingRegionDeepDiveTopic({
+      currentUserText: trimmed,
+      rows: rows.map((row) => ({ role: row.role, content: String(row.content ?? '') })),
+      lastAssistantQuestionText: shortConfirmationContext.lastAssistantQuestionText ?? null,
+      lastOfferedTopics: shortConfirmationContext.lastOfferedTopics ?? [],
+    });
+    const regionDeepDiveRagHint = pendingRegionDeepDiveBeforeRag.resolved
+      ? [
+          'aprofundamento de regiao Atibaia regiao bragantina gastronomia Avenida Lucas Nogueira Garcez clima',
+          'Pedreira Rio Abaixo Rodovia Dom Pedro I 50 minutos Sao Paulo moradia casa de veraneio',
+          'secao 5 regiao localizacao estilo de vida',
+        ].join('\n')
+      : '';
+    const chunkHint = [userMessageForReasoning, regionDeepDiveRagHint, shortConversationContext]
       .filter(Boolean)
       .join('\n')
       .slice(0, likelyLocalRuntimeForRag ? 3_200 : 12_000);
@@ -4397,6 +4541,18 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const chunkMeta = await loadRankedKnowledgeChunksForPromptWithMeta(eid, `${row.name}\n${chunkHint}`, {
         targetCity: cityPriority,
       });
+      if (pendingRegionDeepDiveBeforeRag.resolved) {
+        console.log('[ANA_REGION_RAG_CONTEXT_REQUESTED]', {
+          conversationId,
+          enterpriseId: eid,
+          enterpriseName: row.name,
+          reason: pendingRegionDeepDiveBeforeRag.reason,
+          hintPreview: regionDeepDiveRagHint.slice(0, 220),
+          selectedChunkCount: chunkMeta.selectedChunkCount,
+          selectedChunkIds: chunkMeta.selectedChunkIds.slice(0, 20),
+          sourceFiles: chunkMeta.sourceFiles.slice(0, 10),
+        });
+      }
       const chunk = (chunkMeta.promptText || '').slice(0, promptRagMaxContextChars);
       if (chunkMeta.retrievalError && !ragRetrievalError) {
         ragRetrievalError = chunkMeta.retrievalError;
@@ -4609,6 +4765,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       lastOfferedTopics: shortConfirmationContext.lastOfferedTopics ?? [],
       requestedAxis: currentAxisForRepetition,
     });
+    const isRegionDeepDiveResolved =
+      anaTurnContextResolved.requestedTopic === 'region_deep_dive' || pendingRegionDeepDiveBeforeRag.resolved;
+    if (isRegionDeepDiveResolved) {
+      console.log('[ANA_PENDING_REGION_TOPIC_RESOLVED]', {
+        conversationId,
+        requestedTopic: anaTurnContextResolved.requestedTopic,
+        commercialAxis: anaTurnContextResolved.commercialAxis,
+        preRagReason: pendingRegionDeepDiveBeforeRag.reason,
+        decisionPath: anaTurnContextResolved.decisionPath,
+        userText: trimmed.slice(0, 160),
+        assistantContextPreview: pendingRegionDeepDiveBeforeRag.assistantContextPreview,
+      });
+    }
     if (
       anaTurnContextResolved.acceptedOfferTopic &&
       shortConfirmationContext.source === 'state' &&
@@ -5955,15 +6124,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
 
     if (isEvoraEnterpriseName(ent?.name ?? null)) {
-    const commercialRule = resolveAnaCommercialRule({
+    const commercialRuleFromMessage = resolveAnaCommercialRule({
       enterpriseName: ent?.name ?? null,
       userMessage: trimmed,
       isFirstAnaReply,
       previousAssistantMessage: lastAssistantPlain,
     });
+    const commercialRule = isRegionDeepDiveResolved ? null : commercialRuleFromMessage;
     const forcedIntentFromTurnContext = (() => {
       if (!isEvoraEnterpriseName(ent?.name ?? null)) return null;
       const topic = anaTurnContextResolved?.requestedTopic ?? null;
+      if (topic === 'region_deep_dive') return null;
       if (topic === 'localizacao' || topic === 'rota') return 'localizacao_endereco' as const;
       if (topic === 'lotes') return 'metragem_faixa' as const;
       if (topic === 'lazer') return 'areas_lazer' as const;
@@ -6017,7 +6188,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       /\b(localizacao|localização|regiao|região|onde fica|bairro|pedreira|rio abaixo)\b/.test(normalizedUserForCanonical);
     const addressLikeIntent = /\b(endereco|endereço)\b/.test(normalizedUserForCanonical);
     const canonicalLocationFallbackRule =
-      !commercialRule && isEvoraEnterpriseName(ent?.name ?? null) && (locationLikeIntent || addressLikeIntent)
+      !isRegionDeepDiveResolved &&
+      !commercialRule &&
+      isEvoraEnterpriseName(ent?.name ?? null) &&
+      (locationLikeIntent || addressLikeIntent)
         ? {
             ruleId: addressLikeIntent ? 'endereco' : 'localizacao_endereco',
             commercialAxis: 'location' as const,
@@ -6029,6 +6203,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             financialIntentType: null,
           }
         : null;
+    if (isRegionDeepDiveResolved && (commercialRuleFromMessage || locationLikeIntent || addressLikeIntent)) {
+      console.log('[ANA_LOCATION_SHORT_CANONICAL_SKIPPED_FOR_REGION_DEEP_DIVE]', {
+        conversationId,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        skippedRule: commercialRuleFromMessage?.ruleId ?? (addressLikeIntent ? 'endereco' : 'localizacao_endereco'),
+        userMessagePreview: trimmed.slice(0, 180),
+      });
+    }
     const effectiveCommercialRule = forcedCommercialRule ?? commercialRule ?? canonicalLocationFallbackRule;
     if (
       !effectiveCommercialRule &&
@@ -9584,7 +9766,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       finalReplyPreview: replyText.slice(0, 260),
     });
     anaTurnAuditGuardsApplied.outboundReason = finalOutboundEval.reason;
-    if (isGenericInterestFollowup(trimmed)) {
+    if (isGenericInterestFollowup(trimmed) && !isRegionDeepDiveResolved) {
       if (lastAxisForRepetition === 'lazer') {
         replyText = buildCanonicalLazerFullReply();
       } else if (lastAxisForRepetition === 'localizacao') {
@@ -9602,6 +9784,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationId,
         requestedFollowup: trimmed.slice(0, 120),
         lastAxis: lastAxisForRepetition,
+      });
+    } else if (isGenericInterestFollowup(trimmed) && isRegionDeepDiveResolved) {
+      console.log('[ANA_LOCATION_SHORT_CANONICAL_SKIPPED_FOR_REGION_DEEP_DIVE]', {
+        conversationId,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        skippedRule: 'generic_followup_location_canonical',
+        userMessagePreview: trimmed.slice(0, 180),
       });
     }
     let blockedGenericFallback = false;

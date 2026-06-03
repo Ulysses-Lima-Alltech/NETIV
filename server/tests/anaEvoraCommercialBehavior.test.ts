@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { ANA_COMMERCIAL_RULES } from '../config/anaCommercialRules.js';
 import { resolveAnaCommercialRule } from '../services/anaCommercialRulesService.js';
+import { classifyMaterialForIngestion } from '../services/knowledgeIngestionPolicy.js';
 import { finalizeAnaReplyText } from '../utils/anaReplyFinalize.js';
 import {
   buildLeadQualificationBridgeReply,
@@ -363,4 +364,64 @@ test('preco nao entra em knowledge gap apenas por eixo', () => {
     requestedAxis: 'preco',
   });
   assert.equal(result.hasKnowledgeGap, false);
+});
+
+test('base unica Ana Evora v1.2 vira canonica ativa e Exemplos nao compete como conhecimento', () => {
+  const canonical = classifyMaterialForIngestion({
+    enterpriseName: 'Residencial Evora',
+    originalName: 'Base_Unica_Ana_Evora_v1_2.txt',
+    mimeType: 'text/plain',
+    storageProvider: 's3',
+    existingSource: null,
+    existingSourcePriority: null,
+    existingCanBeSentByAna: false,
+    existingCanBeUsedAsKnowledge: true,
+    existingIsActive: true,
+  });
+  assert.equal(canonical.isCanonicalForEnterprise, true);
+  assert.equal(canonical.canBeUsedAsKnowledge, true);
+  assert.equal(canonical.sourcePriority, 1200);
+
+  const examples = classifyMaterialForIngestion({
+    enterpriseName: 'Residencial Evora',
+    originalName: 'Exemplos.txt',
+    mimeType: 'text/plain',
+    storageProvider: 's3',
+    existingSource: null,
+    existingSourcePriority: 1000,
+    existingCanBeSentByAna: false,
+    existingCanBeUsedAsKnowledge: true,
+    existingIsActive: true,
+  });
+  assert.equal(examples.isCanonicalForEnterprise, false);
+  assert.equal(examples.canBeUsedAsKnowledge, false);
+  assert.equal(examples.sourcePriority <= 10, true);
+});
+
+test('engine resolve mensagens curtas de regiao como region_deep_dive e solicita RAG rico', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+
+  assert.match(source, /region_deep_dive/);
+  assert.match(source, /fala mais/);
+  assert.match(source, /me explica mais/);
+  assert.match(source, /me fala mais de la/);
+  assert.match(source, /e dai/);
+  assert.match(source, /da regiao/);
+  assert.match(source, /mas \(vc\|voce\) ia falar da regiao/);
+  assert.match(source, /generic_followup_after_region_context/);
+  assert.match(source, /\[ANA_PENDING_REGION_TOPIC_RESOLVED\]/);
+  assert.match(source, /\[ANA_REGION_RAG_CONTEXT_REQUESTED\]/);
+  assert.match(source, /regiao bragantina gastronomia Avenida Lucas Nogueira Garcez clima/);
+  assert.match(source, /Pedreira Rio Abaixo Rodovia Dom Pedro I 50 minutos Sao Paulo/);
+});
+
+test('region_deep_dive nao cai em lotes, lazer, corretor ou localizacao curta canonica', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+
+  assert.match(source, /commercialRule = isRegionDeepDiveResolved \? null : commercialRuleFromMessage/);
+  assert.match(source, /topic === 'region_deep_dive'\) return null/);
+  assert.match(source, /!isRegionDeepDiveResolved[\s\S]*canonicalLocationFallbackRule/);
+  assert.match(source, /requestedTopic === 'region_deep_dive'[\s\S]*\? null[\s\S]*location_link_handler/);
+  assert.match(source, /\[ANA_LOCATION_SHORT_CANONICAL_SKIPPED_FOR_REGION_DEEP_DIVE\]/);
+  assert.match(source, /isGenericInterestFollowup\(trimmed\) && !isRegionDeepDiveResolved/);
 });

@@ -105,16 +105,34 @@ export function classifyMaterialForIngestion(input: IngestionClassificationInput
     enterprise.includes('evora') &&
     fileName.includes('script') &&
     fileName.includes('evora');
+  const isEvoraCanonicalV12Base =
+    enterprise.includes('evora') &&
+    fileName.includes('base unica ana evora v1 2');
+  const isEvoraLegacyExamples =
+    enterprise.includes('evora') &&
+    /^exemplos(?:\s|$)/.test(fileName);
 
-  if (isEvoraCanonicalScript) {
+  if (isEvoraCanonicalScript || isEvoraCanonicalV12Base) {
     return {
       fileKind: 'canonical_sales_script',
       source: 'client_approved_script',
-      sourcePriority: 1000,
+      sourcePriority: isEvoraCanonicalV12Base ? 1200 : 1000,
       canBeSentByAna: input.existingCanBeSentByAna,
       canBeUsedAsKnowledge: true,
       isActive: input.existingIsActive,
       isCanonicalForEnterprise: true,
+    };
+  }
+
+  if (isEvoraLegacyExamples) {
+    return {
+      fileKind,
+      source: input.existingSource?.trim() || defaultSource(input.storageProvider),
+      sourcePriority: Math.min(input.existingSourcePriority ?? defaultPriorityByKind(fileKind), 10),
+      canBeSentByAna: input.existingCanBeSentByAna,
+      canBeUsedAsKnowledge: false,
+      isActive: input.existingIsActive,
+      isCanonicalForEnterprise: false,
     };
   }
 
