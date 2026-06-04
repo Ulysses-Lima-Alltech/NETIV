@@ -6488,6 +6488,77 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
     }
 
+    const buildEvoraSafeNextTopicQuestion = (
+      currentTopic: 'lazer' | 'seguranca' | 'localizacao' | 'lotes' | 'valores'
+    ): string => {
+      console.log('[ANA_EVORA_SAFE_NEXT_TOPIC_QUESTION_HELPER]', {
+        conversationId,
+        currentTopic,
+      });
+
+      const assistantTopicText = normText(
+        rows
+          .filter((message) => message.role === 'assistant')
+          .map((message) => message.content || '')
+          .join('\n')
+      );
+
+      const topicSeen = {
+        lazer:
+          currentTopic === 'lazer' ||
+          /\b(lazer|piscina|beach tennis|academia|salao de festas|playground|coworking|espaco zen|fireplace|campo society|quadra)\b/.test(
+            assistantTopicText
+          ),
+        seguranca:
+          currentTopic === 'seguranca' ||
+          /\b(seguranca|portaria 24|portaria 24 horas|controle de acesso|rotina mais reservada e segura)\b/.test(
+            assistantTopicText
+          ),
+        localizacao:
+          currentTopic === 'localizacao' ||
+          /\b(atibaia|pedreira|rio abaixo|dom pedro|estrada dos pires|50 minutos de sao paulo|mapa|acesso)\b/.test(
+            assistantTopicText
+          ),
+        lotes:
+          currentTopic === 'lotes' ||
+          /\b(145 lotes|lotes no total|360 m|725 m|metragens|tamanhos dos lotes|lotes e tamanhos)\b/.test(
+            assistantTopicText
+          ),
+        valores:
+          currentTopic === 'valores' ||
+          /\b(r\$279|279\.000|metro quadrado|r\$775|entrada padrao|entrada de 20|48x|120x|financiamento direto|formas de pagamento)\b/.test(
+            assistantTopicText
+          ),
+      };
+
+      const availableTopics = [
+        { key: 'lazer', label: 'lazer' },
+        { key: 'seguranca', label: 'segurança' },
+        { key: 'localizacao', label: 'localização/acesso' },
+        { key: 'lotes', label: 'lotes/tamanhos' },
+        { key: 'valores', label: 'valores/formas de pagamento' },
+      ].filter((topic) => !topicSeen[topic.key as keyof typeof topicSeen]);
+
+      if (availableTopics.length === 0) {
+        return 'Já te passei os principais pontos do Évora. Que tal agendarmos uma visita para você conhecer o empreendimento com calma?';
+      }
+
+      if (availableTopics.length === 1) {
+        return `Quer que eu te explique também sobre ${availableTopics[0].label} ou prefere que eu te ajude a agendar uma visita?`;
+      }
+
+      const labels = availableTopics.slice(0, 3).map((topic) => topic.label);
+      const last = labels.pop();
+
+      return `Quer que eu te explique também sobre ${labels.join(', ')} ou ${last}?`;
+    };
+
+    const stripEvoraTrailingQuestion = (text: string): string =>
+      text
+        .replace(/\n\n(?:Quer|Você|Voce|Qual|O que|Posso|Se fizer sentido)[^?]*\?\s*$/i, '')
+        .replace(/\s+(?:Quer|Você|Voce|Qual|O que|Posso|Se fizer sentido)[^?]*\?\s*$/i, '')
+        .trim();
+
     if (isLocationLinkRequest(trimmed) && isEvoraEnterpriseName(ent?.name ?? null)) {
       const resolvedLocationLink = getEvoraCanonicalMapsLink();
       const locationOverview = buildEvoraAddressCanonicalReply();
@@ -6498,11 +6569,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           content: message.content,
         })),
       });
-      const contextualLocationQuestion = pickContextualCommercialFollowupQuestion({
-        userMessage: trimmed,
-        recentQuestions: finalQuestionHistory,
-        topicHint: 'location',
-      });
+      const contextualLocationQuestion = buildEvoraSafeNextTopicQuestion('localizacao');
       const locationLinkMessages: string[] = [locationOverview];
       locationLinkMessages.push(resolvedLocationLink);
       console.log('[ANA_LOCATION_LINK_SENT]', {
@@ -6608,7 +6675,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const lotSizeFollowupMessages = dedupeMessageParts([
         'Claro. O Évora tem 145 lotes no total, com metragens de 360 m² a 725 m².',
         'Na prática, isso atende desde quem busca um projeto mais compacto e funcional até quem quer uma casa com mais área externa, quintal e espaço de convivência.',
-        'As opções específicas mudam conforme disponibilidade, então eu não confirmo lote exato por aqui. Quer que eu te explique agora valores/formas de pagamento ou localização/acesso?'
+        `As opções específicas mudam conforme disponibilidade, então eu não confirmo lote exato por aqui. ${buildEvoraSafeNextTopicQuestion('lotes')}`
       ], {
         conversationId,
         stage: 'evora_lot_size_followup',
@@ -6703,7 +6770,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const locationClarificationMessages = dedupeMessageParts([
         'Sem problema. O Évora fica em Atibaia, na região da Pedreira, bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.',
         'Para ter uma referência simples: é uma região mais tranquila e com bastante contato com a natureza, a cerca de 50 minutos de São Paulo. A proposta é ficar perto do acesso principal, mas com clima mais reservado para morar.',
-        'Quer que eu te explique melhor o acesso pela Dom Pedro I ou prefere que eu te fale sobre lazer, segurança ou tamanhos dos lotes?'
+        buildEvoraSafeNextTopicQuestion('localizacao')
       ], {
         conversationId,
         stage: 'evora_location_clarification',
@@ -6867,9 +6934,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     if (evoraPaymentGeneralIntent && !evoraPaymentPersonalizedIntent) {
       const paymentMessages = dedupeMessageParts([
         'Sim. A entrada padrão do Évora é de 20%.',
-        'Nas condições gerais, existe parcelamento sem juros em até 48x + IGPM, ou planos estendidos em até 120x com juros + IGPM.',
+        'Nas condições gerais, existe parcelamento sem juros em até 48x, ou planos estendidos em até 120x com juros.',
         'O financiamento é direto com a incorporadora/construtora, com menos burocracia e mais facilidade. Eu só não faço simulação de parcela por aqui, porque isso depende do lote e do plano escolhido.',
-        'Quer que eu te explique também sobre os lotes e tamanhos, ou prefere entender melhor a localização e o acesso?'
+        buildEvoraSafeNextTopicQuestion('valores')
       ], {
         conversationId,
         stage: 'evora_payment_general_authorized',
@@ -7602,6 +7669,47 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             conversationId,
             enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
             ruleId: effectiveCommercialRule.ruleId,
+          });
+        }
+      }
+
+      if (isEvoraEnterpriseName(ent?.name ?? null) && commercialMessagesToSend.length > 0) {
+        const currentSafeTopic =
+          effectiveCommercialRule.ruleId === 'areas_lazer'
+            ? 'lazer'
+            : effectiveCommercialRule.ruleId === 'seguranca_portaria'
+              ? 'seguranca'
+              : effectiveCommercialRule.ruleId === 'localizacao_endereco' || effectiveCommercialRule.ruleId === 'endereco'
+                ? 'localizacao'
+                : effectiveCommercialRule.ruleId === 'metragem_faixa' ||
+                    effectiveCommercialRule.ruleId === 'metragem_especifica' ||
+                    effectiveCommercialRule.ruleId === 'quantidade_lotes_info_gap'
+                  ? 'lotes'
+                  : effectiveCommercialRule.ruleId === 'preco_valor_lote' ||
+                      effectiveCommercialRule.ruleId === 'formas_pagamento' ||
+                      effectiveCommercialRule.ruleId === 'entrada' ||
+                      effectiveCommercialRule.ruleId === 'parcela_simulacao'
+                    ? 'valores'
+                    : null;
+
+        if (currentSafeTopic != null) {
+          const safeNextTopicQuestion = buildEvoraSafeNextTopicQuestion(currentSafeTopic);
+          const lastIndex = commercialMessagesToSend.length - 1;
+          const cleanedLastMessage = stripEvoraTrailingQuestion(commercialMessagesToSend[lastIndex] ?? '');
+
+          if (cleanedLastMessage.length > 0) {
+            commercialMessagesToSend[lastIndex] = cleanedLastMessage;
+          } else {
+            commercialMessagesToSend.splice(lastIndex, 1);
+          }
+
+          commercialMessagesToSend.push(safeNextTopicQuestion);
+
+          console.log('[ANA_EVORA_NON_REPEATED_TOPIC_OFFER_APPLIED]', {
+            conversationId,
+            ruleId: effectiveCommercialRule.ruleId,
+            currentSafeTopic,
+            safeNextTopicQuestion,
           });
         }
       }

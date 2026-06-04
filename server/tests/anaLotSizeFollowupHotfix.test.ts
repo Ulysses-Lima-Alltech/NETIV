@@ -12,10 +12,10 @@ test('quero mais sobre lotes e tamanhos tem handler deterministico', () => {
   assert.match(engine, /shouldCallQwen: false/);
 });
 
-test('handler de lotes responde somente o que sabe e mantém avanço seguro', () => {
+test('handler de lotes responde somente o que sabe e usa pergunta segura dinamica', () => {
   assert.match(engine, /O Évora tem 145 lotes no total, com metragens de 360 m² a 725 m²/);
   assert.match(engine, /As opções específicas mudam conforme disponibilidade/);
-  assert.match(engine, /Quer que eu te explique agora valores\/formas de pagamento ou localização\/acesso\?/);
+  assert.match(engine, /buildEvoraSafeNextTopicQuestion\('lotes'\)/);
 });
 
 test('regra de metragem nao oferece tipo de lote que nao sabe responder', () => {

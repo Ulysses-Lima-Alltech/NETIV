@@ -12,11 +12,11 @@ test('nao sei onde fica tem handler deterministico de localizacao', () => {
   assert.match(engine, /shouldCallQwen: false/);
 });
 
-test('handler de localizacao explica sem deixar assunto morrer', () => {
+test('handler de localizacao explica e usa pergunta segura dinamica', () => {
   assert.match(engine, /O Évora fica em Atibaia, na região da Pedreira, bairro Rio Abaixo/);
   assert.match(engine, /acesso pela Rodovia Dom Pedro I/);
   assert.match(engine, /a cerca de 50 minutos de São Paulo/);
-  assert.match(engine, /Quer que eu te explique melhor o acesso pela Dom Pedro I ou prefere que eu te fale sobre lazer, segurança ou tamanhos dos lotes\?/);
+  assert.match(engine, /buildEvoraSafeNextTopicQuestion\('localizacao'\)/);
 });
 
 test('handler de localizacao nao chama LLM nem fallback', () => {

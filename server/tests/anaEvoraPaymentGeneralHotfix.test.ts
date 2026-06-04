@@ -22,8 +22,8 @@ test('pagamento geral do Evora e respondido antes de knowledge gap', () => {
 
 test('pagamento geral autorizado contem entrada, 48x, 120x e financiamento direto', () => {
   assert.match(source, /entrada padrão do Évora é de 20%/);
-  assert.match(source, /sem juros em até 48x \+ IGPM/);
-  assert.match(source, /120x com juros \+ IGPM/);
+  assert.match(source, /sem juros em até 48x/);
+  assert.match(source, /120x com juros/);
   assert.match(source, /financiamento é direto com a incorporadora\/construtora/);
 });
 
