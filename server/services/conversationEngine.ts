@@ -7180,6 +7180,40 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         }
       }
 
+      if (
+        isEvoraEnterpriseName(ent?.name ?? null) &&
+        effectiveCommercialRule.ruleId === 'seguranca_portaria' &&
+        commercialMessagesToSend.length > 0
+      ) {
+        const securityContextText = `${trimmed}\n${lastAssistantPlain ?? ''}`;
+        const securityLifestyleContext =
+          /\b(seguran[cç]a|tranquilidade|tranquilo|calma|calmaria|família|familia|morar|moradia|prote[cç][aã]o|portaria|controle de acesso)\b/i.test(
+            securityContextText
+          );
+
+        if (securityLifestyleContext && !/^Esse ponto é importante/i.test(commercialMessagesToSend[0] ?? '')) {
+          const firstName =
+            toFirstName(
+              trustedCustomerName ||
+                effectiveConv.customer_name ||
+                getLeadQualificationState(flowStateParsed).name ||
+                null
+            );
+
+          const securityLeadIn = firstName
+            ? `Esse ponto é importante, ${firstName}. Para quem pensa em morar, segurança não é só portaria: é previsibilidade na rotina, tranquilidade para a família e controle de acesso no dia a dia.`
+            : 'Esse ponto é importante. Para quem pensa em morar, segurança não é só portaria: é previsibilidade na rotina, tranquilidade para a família e controle de acesso no dia a dia.';
+
+          commercialMessagesToSend[0] = `${securityLeadIn}\n\n${commercialMessagesToSend[0]}`.trim();
+
+          console.log('[ANA_SECURITY_LIFESTYLE_LEAD_IN_APPLIED]', {
+            conversationId,
+            enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+            firstName: firstName ?? null,
+          });
+        }
+      }
+
       console.log('[ANA_CANONICAL_REPLY_USED]', {
         conversationId,
         intent: effectiveCommercialRule.ruleId,
@@ -7979,9 +8013,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? requestedAxisForPolicy === 'lazer'
           ? 'No eixo de lazer, liste todos os itens encontrados na fonte confiavel, sem limitar quantidade, sem truncar, sem resumir e sem usar "entre outros". Mantenha bullets e quebras de linha.'
           : 'Responda em formato estruturado quando fizer sentido (linhas curtas/lista objetiva), entre 5 e 7 itens e sem misturar varios temas.'
-        : 'Responda de forma curta e objetiva, com no maximo 3 linhas e no maximo 1 pergunta.',
+        : isEvoraEnterpriseName(ent?.name ?? null)
+          ? 'Responda de forma natural, consultiva e menos seca. Use 2 a 4 frases quando o assunto pedir contexto. Pode separar em até 2 mensagens curtas. Conecte o interesse do cliente ao Évora, cite 2 ou 3 pontos relevantes e finalize com UMA pergunta objetiva de avanço.'
+          : 'Responda de forma curta e objetiva, com no maximo 3 linhas e no maximo 1 pergunta.',
       anaDecision.shouldSuggestVisit
-        ? 'O cliente demonstrou interesse comercial direto ou oportunidade clara de avanço. Nao responda apenas com localizacao ou uma frase vaga como "Que mais?". Responda com acolhimento curto, no maximo UMA informacao forte do empreendimento e conduza com UMA pergunta util: perfil de busca (morar/investir/construir) ou convite leve para visita quando fizer sentido. Se falar de visita, use tom humano: "O corretor pode te passar tudo certinho. Que tal marcarmos uma visita?".'
+        ? 'O cliente demonstrou interesse comercial direto ou oportunidade clara de avanço. Nao responda apenas com localizacao ou uma frase vaga como "Que mais?". Responda com acolhimento e contexto suficiente, conectando o interesse do cliente ao empreendimento. Traga 2 pontos relevantes quando fizer sentido e conduza com UMA pergunta concreta de avanço: perfil de busca, loteamento fechado, tamanho desejado, tema que quer aprofundar ou visita. Se falar de visita, use tom humano: "O corretor pode te passar tudo certinho. Que tal marcarmos uma visita?". Evite perguntas abstratas como "como voce imagina seu dia começando?".'
         : null,
       !anaDecision.canMentionExactLocation
         ? 'Nao passe endereco/localizacao exata como se estivesse confirmado.'
@@ -7990,7 +8026,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? 'Nao simule pagamento, entrada, parcela, prazo, juros ou desconto.'
         : null,
       ANA_LLM_FIRST_COMMERCIAL_REPLIES && isEvoraEnterpriseName(ent?.name ?? null)
-        ? 'Responda perguntas comerciais com base no RAG/evidencias autorizadas. Nao invente. Se faltar informacao ou depender de disponibilidade/condicao atualizada, ofereca corretor ou visita naturalmente. Seja natural e comercial. Nao mencione NETIV, sistema, RAG, base, regra ou instrucao interna.'
+        ? 'Responda perguntas comerciais com base no RAG/evidencias autorizadas. Nao invente. Se faltar informacao ou depender de disponibilidade/condicao atualizada, ofereca corretor ou visita naturalmente. Seja natural e comercial. Nao mencione NETIV, sistema, RAG, base, regra ou instrucao interna. No Évora, evite ficar preso em um único detalhe por muitas respostas seguidas: conecte o tema atual a uma visão mais ampla de rotina, natureza, lazer, segurança, localização, família e visita. Depois que o cliente disser morar, investir ou conhecer, avance a descoberta com perguntas concretas, como se ele já está decidido por loteamento fechado, qual tamanho/perfil busca ou se quer ver o empreendimento em visita.'
         : null,
       isLocalQwenRuntime
         ? 'Não copie instruções internas. Responda apenas ao cliente com fatos autorizados.'
