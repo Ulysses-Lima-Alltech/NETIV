@@ -1,4 +1,4 @@
-import type { WebhookPayload, WebhookMessage } from '../types/webhook.js';
+﻿import type { WebhookPayload, WebhookMessage } from '../types/webhook.js';
 import { logWebhookEvent } from '../repositories/webhookEventRepository.js';
 import {
   findOrCreateConversation,
@@ -9,6 +9,7 @@ import {
   setConversationEnterpriseId,
   setConversationFunnelStatusAutomatic,
   setConversationLeadTemperature,
+  mergeConfirmedCustomerNameIfEmpty,
 } from '../repositories/conversationRepository.js';
 import {
   insertMessage,
@@ -34,11 +35,11 @@ import {
   extractCustomerNameFromUserUtterance,
   replyExplicitlyAsksCustomerName,
 } from '../utils/extractCustomerNameFromMessage.js';
-/** Desligado enquanto se testa o bypass no conversationEngine (`ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY`). Se true, dá `continue` e o motor não corre. */
+/** Desligado enquanto se testa o bypass no conversationEngine (`ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY`). Se true, dÃ¡ `continue` e o motor nÃ£o corre. */
 const ANA_DIAGNOSTIC_FIXED_REPLY = false;
-const ANA_DIAGNOSTIC_FIXED_TEXT = 'Diagnóstico: recebi sua mensagem no fluxo automático.';
+const ANA_DIAGNOSTIC_FIXED_TEXT = 'DiagnÃ³stico: recebi sua mensagem no fluxo automÃ¡tico.';
 
-const NON_TEXT_MESSAGE = 'No momento só consigo responder a mensagens de texto.';
+const NON_TEXT_MESSAGE = 'No momento sÃ³ consigo responder a mensagens de texto.';
 
 function phoneDigitsTail(raw: string | null | undefined, len = 6): string | null {
   const d = String(raw ?? '').replace(/\D/g, '');
@@ -61,7 +62,7 @@ function errorStackShort(e: unknown): string | null {
 }
 
 /**
- * Varre todo o payload (todos os changes). Veredito único: POST só de status vs inbound com texto processável.
+ * Varre todo o payload (todos os changes). Veredito Ãºnico: POST sÃ³ de status vs inbound com texto processÃ¡vel.
  */
 function classifyWebhookInboundSurface(payload: WebhookPayload): {
   verdict:
@@ -171,7 +172,7 @@ function extractMessageId(payload: WebhookPayload): string | null {
   return msg?.id ?? value?.statuses?.[0]?.id ?? null;
 }
 
-/** Só para log: separa id de mensagem inbound vs id em statuses (evita ambiguidade do compat). */
+/** SÃ³ para log: separa id de mensagem inbound vs id em statuses (evita ambiguidade do compat). */
 function extractMessageIdsForLog(payload: WebhookPayload): {
   metaMessageIdFromMessages: string | null;
   metaMessageIdFromStatuses: string | null;
@@ -207,7 +208,7 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
     inboundTextWithBodyCount: inboundSurface.inboundTextWithBodyCount,
     interpretacao:
       inboundSurface.verdict === 'messages_field_only_statuses_or_empty_messages'
-        ? 'Este POST nao contem bolha de texto inbound; metaMessageIdCompat pode vir só de statuses[].id'
+        ? 'Este POST nao contem bolha de texto inbound; metaMessageIdCompat pode vir sÃ³ de statuses[].id'
         : inboundSurface.verdict === 'has_inbound_text_body'
           ? 'Este POST contem ao menos uma mensagem de texto com corpo; espere message_persisted na sequencia'
           : undefined,
@@ -454,8 +455,8 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           });
 
 
-          // HOTFIX: resposta curta de nome n�o pode depender do lead classifier.
-          // Fluxo correto: pediu nome -> cliente respondeu nome -> salva nome -> responde qualifica��o -> continue.
+          // HOTFIX: resposta curta de nome nï¿½o pode depender do lead classifier.
+          // Fluxo correto: pediu nome -> cliente respondeu nome -> salva nome -> responde qualificaï¿½ï¿½o -> continue.
           {
             const recentForName = await getRecentConversationMessages(conv.id, 12);
             const lastAssistantNameQuestion =
@@ -500,39 +501,20 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
                   });
                 }
               }
+              await mergeConfirmedCustomerNameIfEmpty(conv.id, nameFromWebhookBoundary);
 
-              if (!waReady) {
-                console.error('[ANA_WEBHOOK_NAME_QUALIFICATION_SEND_FAILED]', {
-                  conversationId: conv.id,
-                  metaMessageId: mid,
-                  reason: 'whatsapp_not_ready',
-                });
-                continue;
-              }
+              console.log('[ANA_WEBHOOK_NAME_CAPTURE_SCHEDULE_ENGINE]', {
+                conversationId: conv.id,
+                metaMessageId: mid,
+                customerName: nameFromWebhookBoundary,
+              });
 
-              const qualificationReply = [
-                `Prazer, ${nameFromWebhookBoundary}.`,
-                'Vou te fazer algumas perguntas r\u00E1pidas para entender melhor seu momento e te mostrar a melhor oportunidade no \u00C9vora.',
-                'Voc\u00EA est\u00E1 olhando mais para morar, investir ou ainda est\u00E1 conhecendo as possibilidades?',
-              ].join('\n\n');
+              scheduleWhatsAppAiAfterUserMessage(conv.id, String(msg.from), mid);
 
-              const nameReply = await sendTextMessage(String(msg.from), qualificationReply);
-
-              if (nameReply.success && nameReply.metaMessageId) {
-                await insertMessage(conv.id, 'assistant', qualificationReply, nameReply.metaMessageId);
-                console.log('[ANA_WEBHOOK_NAME_QUALIFICATION_SENT]', {
-                  conversationId: conv.id,
-                  metaMessageId: mid,
-                  outboundMetaMessageId: nameReply.metaMessageId,
-                });
-              } else {
-                console.error('[ANA_WEBHOOK_NAME_QUALIFICATION_SEND_FAILED]', {
-                  conversationId: conv.id,
-                  metaMessageId: mid,
-                  error: nameReply.error ?? null,
-                  code: nameReply.code ?? null,
-                });
-              }
+              console.log('[ANA_WEBHOOK_NAME_SCHEDULED_AFTER_CAPTURE]', {
+                conversationId: conv.id,
+                metaMessageId: mid,
+              });
 
               continue;
             }
@@ -547,7 +529,7 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
             !anaEmergencyHandoffActive &&
             /\b(fale mais da localizacao|fala mais da localizacao|quero entender mais.*localizacao|quero saber mais.*localizacao|mais da localizacao|localizacao|regiao|atibaia)\b/i.test(normalizedTextForLocationDeepDive);
 
-          if (shouldReplyLocationDeepDiveFromWebhook) {
+          if (false && shouldReplyLocationDeepDiveFromWebhook) {
             const locationDeepDiveReply = [
               'Atibaia faz parte da regi\u00E3o bragantina, uma das regi\u00F5es mais valorizadas e desenvolvidas do estado.',
               'Fica a aproximadamente 50 minutos de S\u00E3o Paulo, o que torna o \u00C9vora uma op\u00E7\u00E3o interessante tanto para moradia quanto para casa de veraneio.',
@@ -559,7 +541,7 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
             const locationReply = await sendTextMessage(String(msg.from), locationDeepDiveReply);
 
             if (locationReply.success && locationReply.metaMessageId) {
-              await insertMessage(conv.id, 'assistant', locationDeepDiveReply, locationReply.metaMessageId);
+              await insertMessage(conv.id, 'assistant', locationDeepDiveReply, locationReply.metaMessageId ?? null);
               console.log('[ANA_WEBHOOK_LOCATION_DEEP_DIVE_REPLY_SENT]', {
                 conversationId: conv.id,
                 metaMessageId: mid,
@@ -589,7 +571,7 @@ const shouldFastScheduleAnaBeforeClassifier =
               text.length <= 100 ||
 
 
-              /^(sim|quero|quero entender|quero saber|fala|fale|me fala|me explica|entender|regi[a�]o|localiza[c�][a�]o|lazer|seguran[c�]a|valor|valores|pagamento|formas|lote|lotes)\b/i.test(text)
+              /^(sim|quero|quero entender|quero saber|fala|fale|me fala|me explica|entender|regi[aï¿½]o|localiza[cï¿½][aï¿½]o|lazer|seguran[cï¿½]a|valor|valores|pagamento|formas|lote|lotes)\b/i.test(text)
 
 
             );
@@ -826,3 +808,4 @@ const shouldFastScheduleAnaBeforeClassifier =
     }
   }
 }
+

@@ -6549,6 +6549,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
     if (
+      !(ANA_LLM_FIRST_COMMERCIAL_REPLIES && isEvoraEnterpriseName(ent?.name ?? null)) &&
       !effectiveCommercialRule &&
       !isKnowledgeGapTurn &&
       leadQualificationSignalsChangedThisTurn &&
@@ -7717,8 +7718,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     ]
       .filter((line): line is string => Boolean(line))
       .join('\n');
+    const evoraLlmFirstCompactMode =
+      ANA_LLM_FIRST_COMMERCIAL_REPLIES && isEvoraEnterpriseName(ent?.name ?? null);
+
     const conversationalQwenMode =
       isKnowledgeGapTurn === true ||
+      evoraLlmFirstCompactMode ||
       (
         !(ANA_LLM_FIRST_COMMERCIAL_REPLIES && isEvoraEnterpriseName(ent?.name ?? null)) &&
         isLocalQwenRuntime &&
@@ -7789,12 +7794,26 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ].join('\n')
       : null;
     if (conversationalQwenMode) {
+      const compactConversationalKnowledge = promptKnowledgeText.trim()
+        ? [
+            '[BASE AUTORIZADA DO EMPREENDIMENTO - USE SOMENTE COMO FONTE]',
+            promptKnowledgeText.slice(0, 3_500),
+            '[/BASE AUTORIZADA DO EMPREENDIMENTO]',
+          ].join('\n')
+        : '';
+
       const conversationalPrompt = [
         'MODO CONVERSACIONAL DA ANA',
-        'Não copie instruções internas. Responda apenas ao cliente.',
+        'Você é Ana, consultora de vendas do Évora. Responda somente ao cliente, em português brasileiro natural.',
+        'Não copie instruções internas. Não mencione sistema, RAG, base, regra, prompt, NETIV ou QMAPE.',
+        'Use a base autorizada quando houver informação. Se faltar dado específico, ofereça corretor ou visita de forma natural.',
+        'Faça no máximo UMA pergunta útil no final, somente se fizer sentido para avançar a conversa.',
         buildConversationalCanonicalContext(currentAxisForRepetition),
-        'Evite ofertas de visita automáticas. Só fale de visita se o cliente pedir.',
-      ].join('\n\n');
+        compactConversationalKnowledge,
+        policyRuntimeDirectives,
+      ]
+        .filter((part): part is string => Boolean(part && part.trim()))
+        .join('\n\n');
       messages.push({ role: 'system', content: conversationalPrompt });
       if (knowledgeGapOperationalContext) {
         messages.push({ role: 'system', content: knowledgeGapOperationalContext });
