@@ -6581,6 +6581,104 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    const evoraLotSizeFollowupNorm = normText(trimmed);
+    const previousAssistantOfferedLotSizes =
+      /\b(lotes e tamanhos|tamanhos dos lotes|tamanhos de lotes|tamanhos|metragem|metragens)\b/i.test(
+        normText(lastAssistantPlain ?? '')
+      );
+
+    const evoraLotSizeFollowupIntent =
+      isEvoraEnterpriseName(ent?.name ?? null) &&
+      (
+        /\b(quero|queria|gostaria|me fala|me fale|explica|explique|saber|mais sobre)\b.{0,80}\b(lotes e tamanhos|tamanhos dos lotes|tamanhos de lotes|metragem|metragens|area dos lotes|área dos lotes)\b/i.test(
+          evoraLotSizeFollowupNorm
+        ) ||
+        /\b(lotes e tamanhos|tamanhos dos lotes|metragem dos lotes|metragens dos lotes|area dos lotes|área dos lotes)\b/i.test(
+          evoraLotSizeFollowupNorm
+        ) ||
+        (
+          previousAssistantOfferedLotSizes &&
+          /\b(quero|sim|pode|me explica|me fale|fala mais|mais sobre|lotes|tamanhos|metragem|metragens)\b/i.test(
+            evoraLotSizeFollowupNorm
+          )
+        )
+      );
+
+    if (evoraLotSizeFollowupIntent) {
+      const lotSizeFollowupMessages = dedupeMessageParts([
+        'Claro. O Évora tem 145 lotes no total, com metragens de 360 m² a 725 m².',
+        'Na prática, isso atende desde quem busca um projeto mais compacto e funcional até quem quer uma casa com mais área externa, quintal e espaço de convivência.',
+        'As opções específicas mudam conforme disponibilidade, então eu não confirmo lote exato por aqui. Quer que eu te explique agora valores/formas de pagamento ou localização/acesso?'
+      ], {
+        conversationId,
+        stage: 'evora_lot_size_followup',
+      });
+
+      console.log('[ANA_EVORA_LOT_SIZE_FOLLOWUP_USED]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        userMessagePreview: trimmed.slice(0, 180),
+      });
+
+      const committedLotSizeFollowup = commitTurnResponse({
+        handler: 'evora_lot_size_followup',
+        reason: 'customer_asked_lot_sizes_after_offer',
+        parts: lotSizeFollowupMessages,
+        stage: 'evora_lot_size_followup',
+        requestedTopic: 'lotes',
+        commercialAxis: null,
+        shouldCallQwen: false,
+      });
+
+      if (!committedLotSizeFollowup.committed || !committedLotSizeFollowup.text.trim()) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'evora_lot_size_followup_commit_blocked';
+        return;
+      }
+
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_evora_lot_size_followup';
+        return;
+      }
+
+      const lotSizeFollowupSend = await sendAnaOutboundMessages({
+        conversationId,
+        toPhoneNumber,
+        text: committedLotSizeFollowup.text,
+        phase: 'evora_lot_size_followup',
+        replyPipelineToken,
+      });
+
+      if (!lotSizeFollowupSend.success || lotSizeFollowupSend.metaMessageIds.length === 0) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'evora_lot_size_followup_send_failed';
+        return;
+      }
+
+      const committedLotSizeFollowupState = updateConversationStateFromCommittedReply({
+        conversationId,
+        flowState: flowStateParsed,
+        finalReplyParts: committedLotSizeFollowup.parts,
+        finalReplyText: committedLotSizeFollowup.text,
+        handler: 'evora_lot_size_followup',
+        currentTopic: anaTurnContextResolved?.currentTopic ?? null,
+        requestedTopic: 'lotes',
+        commercialAxis: null,
+      });
+
+      flowStateParsed = committedLotSizeFollowupState.nextState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+
+      anaTurnAuditOutcome = 'sent';
+      anaTurnAuditBlockedReason = null;
+      anaTurnAuditLlmStatus = 'skipped';
+      anaTurnAuditModel = 'evora_lot_size_followup';
+      anaTurnDiagnostics.finalResponse.replySource = 'evora_lot_size_followup';
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      return;
+    }
+
     const evoraLocationClarificationNorm = normText(trimmed);
     const previousAssistantWasLocationContext =
       /\b(regiao da pedreira|rio abaixo|atibaia|dom pedro|50 minutos de sao paulo|localizacao|acesso|onde fica)\b/i.test(

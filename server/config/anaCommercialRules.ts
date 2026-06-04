@@ -29,7 +29,7 @@ export const ANA_COMMERCIAL_RULES = {
       'O Évora tem lotes a partir de R$279.000,00, com metro quadrado a partir de R$775,00. O valor final depende da unidade e das condições escolhidas.\n\nQuer que eu te explique também as formas de pagamento?',
     ],
     metragem_faixa: [
-      'Os lotes do Évora vão de 360 m² a 725 m². As opções específicas variam conforme a unidade disponível.\n\nQuer que eu te explique os tipos de lote que existem no empreendimento?',
+      "Os lotes do Évora vão de 360 m² a 725 m². Para quem pensa em morar, isso permite desde um projeto mais prático até uma casa com mais área externa e espaço de convivência.\n\nAs opções específicas mudam conforme disponibilidade, então eu não confirmo unidade exata por aqui. Mas posso te explicar os dados gerais com segurança.\n\nQuer que eu te fale agora sobre valores/formas de pagamento ou sobre localização/acesso?",
     ],
     metragem_especifica: [
       'Os lotes do Évora ficam na faixa de 360 m² a 725 m². Eu não consigo confirmar disponibilidade de uma metragem específica por aqui, porque isso muda conforme as unidades disponíveis.\n\nPosso te encaminhar para o corretor responsável ou, se preferir, te ajudar a agendar uma visita?',
