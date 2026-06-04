@@ -6929,18 +6929,27 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         normText(lastAssistantPlain ?? '')
       );
 
-    const shortPaymentTermsConfirmation =
-      previousAssistantOfferedPaymentTerms &&
-      /\b(sim|sim pode|pode|pode sim|quero|quero sim|gostaria|me explica|me explique|explica|explique|fala|fale|me fala|me fale|pagamento|formas|entrada|parcelamento|financiamento)\b/i.test(
-        evoraPaymentGeneralNorm
-      );
-
     const evoraPaymentExplicitGeneralIntent =
       /\b(forma de pagamento|formas de pagamento|pagamento|entrada|sinal|financiamento|financiar|construtora|incorporadora|parcelamento|sem juros|48x|120x|comprovacao de renda|comprovação de renda)\b/.test(evoraPaymentGeneralNorm);
 
+    const paymentContextBlockedByOtherTopic =
+      /\b(regiao|região|localizacao|localização|onde fica|endereco|endereço|mapa|acesso|lazer|seguranca|segurança|lote|lotes|tamanho|tamanhos|metragem|metragens|natureza|piscina|quadra|portaria)\b/.test(
+        evoraPaymentGeneralNorm
+      );
+
+    const shortGenericPaymentTermsConfirmation =
+      previousAssistantOfferedPaymentTerms &&
+      !paymentContextBlockedByOtherTopic &&
+      /^(sim|sim pode|pode|pode sim|quero|quero sim|gostaria|me explica|me explique|explica|explique|fala|fale|me fala|me fale)$/.test(
+        evoraPaymentGeneralNorm
+      );
+
+    const shortPaymentTermsConfirmation =
+      evoraPaymentExplicitGeneralIntent || shortGenericPaymentTermsConfirmation;
+
     const evoraPaymentGeneralIntent =
       isEvoraEnterpriseName(ent?.name ?? null) &&
-      (evoraPaymentExplicitGeneralIntent || shortPaymentTermsConfirmation);
+      shortPaymentTermsConfirmation;
 
     const evoraPaymentPersonalizedIntent =
       /\b(simulacao|simulação|simular|quanto fica|quanto ficaria|por mes|por mês|valor da parcela|parcela mensal|desconto|negociar|negociacao|negociação|proposta|tabela|lote especifico|lote específico|disponibilidade)\b/.test(evoraPaymentGeneralNorm);

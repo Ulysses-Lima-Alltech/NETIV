@@ -265,9 +265,30 @@ export function isVisitSchedulingSlotAnswer(input: VisitSchedulingSlotAnswerInpu
   const referenceNow = input.referenceNow ?? new Date();
   if (isExplicitVisitSchedulingAcceptance(userMessage)) return true;
   if (isVisitSchedulingConfirmationMessage(userMessage)) return true;
-  if (parseDateMention(userMessage, referenceNow) != null) return true;
-  if (parseTimeHmFromText(userMessage, { allowStandaloneHour: true }) != null) return true;
-  if (parsePeriodFromText(userMessage) != null) return true;
+  const lastAssistantForSlot = norm(input.lastAssistantMessage || '');
+  const assistantAskedVisitSlotContext =
+    /\b(para qual dia|qual dia|dia e horario|dia e horário|qual horario|qual horário|horario fica melhor|horário fica melhor|posso confirmar sua visita)\b/.test(
+      lastAssistantForSlot
+    ) ||
+    isAssistantVisitOfferContextMessage(input.lastAssistantMessage);
+
+  const hasPendingVisitSlotContext = input.flowState.pendingVisitScheduling === true;
+
+  const dateMentionForSlotAnswer = parseDateMention(userMessage, referenceNow);
+  const timeMentionForSlotAnswer = parseTimeHmFromText(userMessage, { allowStandaloneHour: true });
+  const periodMentionForSlotAnswer = parsePeriodFromText(userMessage);
+
+  if (dateMentionForSlotAnswer != null) {
+    return hasPendingVisitSlotContext || assistantAskedVisitSlotContext;
+  }
+
+  if (timeMentionForSlotAnswer != null) {
+    return hasPendingVisitSlotContext || assistantAskedVisitSlotContext;
+  }
+
+  if (periodMentionForSlotAnswer != null) {
+    return hasPendingVisitSlotContext || assistantAskedVisitSlotContext;
+  }
 
   const askedNameByState = input.flowState.pendingVisitMissingSlot === 'nome';
   const askedNameByAssistant = /\b(como posso te chamar|qual seu nome|qual o seu nome|me passa seu nome)\b/.test(
