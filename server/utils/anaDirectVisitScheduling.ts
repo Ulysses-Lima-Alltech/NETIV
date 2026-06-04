@@ -193,6 +193,27 @@ function parsePeriodFromText(text: string): VisitPeriod | null {
   return null;
 }
 
+function extractVisitLotPreference(text: string): string | null {
+  const n = norm(text);
+  if (!n) return null;
+
+  const hasLocationCue = /\b(perto|proximo|proxima|ao lado|em frente|na frente|colado|proximidade)\b/.test(n);
+  if (!hasLocationCue) return null;
+
+  if (/\b(piscina|area de lazer|lazer)\b/.test(n)) return 'perto da piscina/área de lazer';
+  if (/\b(quadra|beach tennis|campo society|esportes)\b/.test(n)) return 'perto das áreas esportivas';
+  if (/\b(portaria|entrada|acesso)\b/.test(n)) return 'perto da entrada/portaria';
+
+  return 'nessa localização dentro do empreendimento';
+}
+
+function assistantAskedLotPreference(text: string | null | undefined): boolean {
+  const n = norm(text || '');
+  if (!n) return false;
+
+  return /\b(preferencia|preferencia de localizacao|localizacao dentro do empreendimento|localizacao do lote|lote perto|preferencia de lote)\b/.test(n);
+}
+
 function normalizeVisitPeriod(value: string | null | undefined): VisitPeriod | null {
   const n = norm(value || '');
   if (!n) return null;
@@ -218,13 +239,13 @@ function parseDateMention(text: string, referenceNow: Date): { label: string; ym
 
 export function isVisitSchedulingAckOnlyMessage(text: string): boolean {
   const n = norm(text).replace(/[.,;:!?]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return /^(sim|ok|ta|tÃ¡|certo|beleza|perfeito|combinado|aguardo|fico no aguardo|ok aguardo|ok aguardo agendamento|aguardo agendamento|pode ser|pode sim)$/.test(n);
+  return /^(sim|vamos|vamos sim|sim vamos|ok|ta|tá|certo|beleza|perfeito|combinado|aguardo|fico no aguardo|ok aguardo|ok aguardo agendamento|aguardo agendamento|pode ser|pode sim|pode marcar|pode agendar)$/.test(n);
 }
 
 export function isExplicitVisitSchedulingAcceptance(text: string): boolean {
   const n = norm(text);
   if (!n) return false;
-  if (/^(visita|quero visitar|prefiro visita|pode ser a visita)$/.test(n)) return true;
+  if (/^(visita|quero visitar|prefiro visita|pode ser a visita|vamos|vamos sim|sim vamos)$/.test(n)) return true;
   return /\b(quero agendar|quero marcar visita|vamos marcar|pode agendar|quero conhecer o stand|agendar visita|marcar visita)\b/.test(
     n
   );
@@ -233,6 +254,7 @@ export function isExplicitVisitSchedulingAcceptance(text: string): boolean {
 export function isCommercialQuestionThatShouldBypassVisitScheduling(text: string): boolean {
   const n = norm(text);
   if (!n) return false;
+  if (extractVisitLotPreference(text) != null) return false;
   return /\b(lote|lotes|tamanho|metragem|valor|preco|parcela|entrada|financiamento|localizacao|endereco|seguranca|camera|cameras|portaria|lazer|condominio|obra|entrega|disponibilidade|tabela|desconto|simulacao|qual|quais|tem|existe|me fala|me manda|nao entendi|vi que)\b/.test(
     n
   );
@@ -282,6 +304,11 @@ export function isVisitSchedulingTopicSwitchMessage(text: string): boolean {
   const n = norm(text);
   if (!n) return false;
 
+  if (extractVisitLotPreference(text) != null) {
+    console.log('[ANA_VISIT_LOT_PREFERENCE_NOT_TOPIC_SWITCH]');
+    return false;
+  }
+
   if (isVisitSchedulingAckOnlyMessage(text)) return false;
   if (hasVisitSchedulingWords(text)) return false;
   if (parseDateMention(text, new Date())) return false;
@@ -311,7 +338,7 @@ export function isAssistantVisitOfferContextMessage(text: string | null | undefi
     /\b(agendar|agendamento|marcar|visita|conhecer pessoalmente|reservar horario|reservar horÃƒÂ¡rio)\b/.test(n);
   if (!hasVisitWords) return false;
   const asksVisitOffer =
-    /\b(quer que eu te ajude a agendar|posso te ajudar a agendar|prefere agendar|vamos marcar|marcar uma visita|agendar uma visita|conhecer pessoalmente)\b/.test(
+    /\b(quer que eu te ajude a agendar|posso te ajudar a agendar|prefere agendar|vamos marcar|marcar uma visita|agendar uma visita|agendarmos uma visita|agendarmos visita|que tal agendarmos|conhecer pessoalmente)\b/.test(
       n
     );
   const asksVisitSlot =
@@ -323,6 +350,17 @@ export function isAssistantVisitOfferContextMessage(text: string | null | undefi
 
 export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): boolean {
   const explicitVisitAcceptance = isExplicitVisitSchedulingAcceptance(input.userMessage);
+  const lotPreferenceContinuation =
+    extractVisitLotPreference(input.userMessage) != null &&
+    (
+      input.flowState.pendingVisitScheduling === true ||
+      input.flowState.visitScheduling?.active === true ||
+      isAssistantVisitOfferContextMessage(input.lastAssistantMessage) ||
+      assistantAskedLotPreference(input.lastAssistantMessage)
+    );
+
+  if (lotPreferenceContinuation) return true;
+
   const slotAnswer = isVisitSchedulingSlotAnswer({
     userMessage: input.userMessage,
     flowState: input.flowState,
@@ -643,6 +681,17 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
   const userAckOnly = isVisitSchedulingAckOnlyMessage(input.userMessage);
   const userVisitConfirmation = isVisitSchedulingConfirmationMessage(input.userMessage);
   const userConfusion = isEmpatheticConfusionMessage(input.userMessage);
+  const visitLotPreference = extractVisitLotPreference(input.userMessage);
+  const shouldCaptureVisitLotPreference =
+    visitLotPreference != null &&
+    !dateMention &&
+    !timeHm &&
+    !period &&
+    (
+      pending ||
+      isAssistantVisitOfferContextMessage(input.lastAssistantMessage) ||
+      assistantAskedLotPreference(input.lastAssistantMessage)
+    );
 
   const capturedSlots: VisitSlotKey[] = [];
   if (effectiveName) capturedSlots.push('nome');
@@ -681,6 +730,27 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
     appointmentDateYmd,
     appointmentTimeHm,
   });
+
+  if (shouldCaptureVisitLotPreference) {
+    const nextState = buildPendingState(input.flowState, {
+      pending: true,
+      dateLabel: pendingDateLabel,
+      dateYmd: pendingDateYmd,
+      timeHm: pendingTimeHm,
+      period: pendingPeriod,
+      enterpriseId: input.enterpriseId,
+      invalidTime: null,
+      missingSlot: pendingDateYmd ? 'periodo_ou_horario' : 'dia',
+      customerName: effectiveName ?? null,
+      confirmationAsked: false,
+    });
+
+    const reply = pendingDateYmd
+      ? `Anotei sua preferência por ${visitLotPreference}. A disponibilidade de lote específico precisa ser confirmada no atendimento, mas isso ajuda a orientar a visita. Qual horário fica melhor para você? ${VISIT_WINDOW_REPLY}`
+      : `Anotei sua preferência por ${visitLotPreference}. A disponibilidade de lote específico precisa ser confirmada no atendimento, mas isso ajuda a orientar a visita. Para qual dia você prefere agendar a visita?`;
+
+    return finish('visit_lot_preference_captured', reply, nextState, pendingDateYmd ? 'periodo_ou_horario' : 'dia');
+  }
 
   if (pending && pendingInvalidTime && !timeHm) {
     const nextState = buildPendingState(input.flowState, {
