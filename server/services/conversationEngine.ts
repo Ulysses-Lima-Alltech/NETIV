@@ -286,7 +286,7 @@ const ANA_LLM_FIRST_MISSING_INFO_REPLY =
 const ANA_NAME_QUESTION_REPAIR_REPLY =
   'Perfeito. Só para eu seguir certinho, como posso te chamar?';
 function buildAnaNoInfoBrokerVisitOffer(): string {
-  return 'Esse ponto precisa de confirma\\u00E7\\u00E3o atualizada. Posso te encaminhar para um corretor ou te ajudar a agendar uma visita?';
+  return 'Esse ponto precisa de confirma\u00E7\u00E3o atualizada. Posso te encaminhar para um corretor ou te ajudar a agendar uma visita?';
 }
 
 const MAX_ANA_GENERATION_ATTEMPTS = 5;

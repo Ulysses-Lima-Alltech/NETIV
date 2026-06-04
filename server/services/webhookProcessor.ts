@@ -514,7 +514,7 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
                 `Prazer, ${nameFromWebhookBoundary}.`,
                 'Vou te fazer algumas perguntas r\u00E1pidas para entender melhor seu momento e te mostrar a melhor oportunidade no \u00C9vora.',
                 'Voc\u00EA est\u00E1 olhando mais para morar, investir ou ainda est\u00E1 conhecendo as possibilidades?',
-              ].join('\\n\\n');
+              ].join('\n\n');
 
               const nameReply = await sendTextMessage(String(msg.from), qualificationReply);
 
@@ -538,7 +538,46 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
             }
           }
 
-          const shouldFastScheduleAnaBeforeClassifier =
+                    const normalizedTextForLocationDeepDive = text
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase();
+
+          const shouldReplyLocationDeepDiveFromWebhook =
+            !anaEmergencyHandoffActive &&
+            /\b(fale mais da localizacao|fala mais da localizacao|quero entender mais.*localizacao|quero saber mais.*localizacao|mais da localizacao|localizacao|regiao|atibaia)\b/i.test(normalizedTextForLocationDeepDive);
+
+          if (shouldReplyLocationDeepDiveFromWebhook) {
+            const locationDeepDiveReply = [
+              'Atibaia faz parte da regi\u00E3o bragantina, uma das regi\u00F5es mais valorizadas e desenvolvidas do estado.',
+              'Fica a aproximadamente 50 minutos de S\u00E3o Paulo, o que torna o \u00C9vora uma op\u00E7\u00E3o interessante tanto para moradia quanto para casa de veraneio.',
+              'A cidade tamb\u00E9m \u00E9 forte em gastronomia. A Avenida Lucas Nogueira Garc\u00EAs concentra restaurantes, bares e com\u00E9rcios, funcionando como um shopping a c\u00E9u aberto.',
+              'O \u00C9vora fica na regi\u00E3o da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.',
+              'Voc\u00EA quer que eu siga te explicando pela estrutura do loteamento, lazer ou formas de pagamento?'
+            ].join('\n\n');
+
+            const locationReply = await sendTextMessage(String(msg.from), locationDeepDiveReply);
+
+            if (locationReply.success && locationReply.metaMessageId) {
+              await insertMessage(conv.id, 'assistant', locationDeepDiveReply, locationReply.metaMessageId);
+              console.log('[ANA_WEBHOOK_LOCATION_DEEP_DIVE_REPLY_SENT]', {
+                conversationId: conv.id,
+                metaMessageId: mid,
+                outboundMetaMessageId: locationReply.metaMessageId,
+              });
+            } else {
+              console.error('[ANA_WEBHOOK_LOCATION_DEEP_DIVE_REPLY_FAILED]', {
+                conversationId: conv.id,
+                metaMessageId: mid,
+                error: locationReply.error ?? null,
+                code: locationReply.code ?? null,
+              });
+            }
+
+            continue;
+          }
+
+const shouldFastScheduleAnaBeforeClassifier =
 
 
             !anaEmergencyHandoffActive &&
