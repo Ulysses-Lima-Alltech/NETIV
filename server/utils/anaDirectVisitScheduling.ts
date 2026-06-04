@@ -287,7 +287,8 @@ export function isVisitSchedulingSlotAnswer(input: VisitSchedulingSlotAnswerInpu
   }
 
   if (periodMentionForSlotAnswer != null) {
-    return hasPendingVisitSlotContext || assistantAskedVisitSlotContext;
+    if (isLikelyLifestylePeriodAnswer(userMessage, input.lastAssistantMessage)) return false;
+    return assistantAskedVisitSlotContext;
   }
 
   const askedNameByState = input.flowState.pendingVisitMissingSlot === 'nome';
@@ -376,6 +377,41 @@ function assistantAskedVisitConfirmation(text: string | null | undefined): boole
   return /\b(posso confirmar sua visita|confirmar sua visita|sua visita para)\b/.test(n);
 }
 
+function assistantAskedVisitSlotOrOfferContext(text: string | null | undefined): boolean {
+  const n = norm(text || '');
+  if (!n) return false;
+
+  if (isAssistantVisitOfferContextMessage(text)) return true;
+  if (assistantAskedVisitConfirmation(text)) return true;
+
+  return /\b(para qual dia|qual dia|dia e horario|dia e horário|qual periodo|qual período|qual horario|qual horário|horario fica melhor|horário fica melhor|manhã ou tarde|manha ou tarde|tarde ou noite|posso confirmar sua visita)\b/.test(
+    n
+  );
+}
+
+function isLikelyLifestylePeriodAnswer(
+  userMessage: string,
+  lastAssistantMessage: string | null | undefined
+): boolean {
+  const n = norm(userMessage);
+  const last = norm(lastAssistantMessage || '');
+
+  if (!n || !last) return false;
+  if (hasVisitSchedulingWords(userMessage)) return false;
+  if (!parsePeriodFromText(userMessage)) return false;
+
+  const periodOnly =
+    /\b(fim de tarde|fim da tarde|final de tarde|fim de noite|final de noite|a noite|à noite|de noite|tarde|noite)\b/.test(n) &&
+    !parseDateMention(userMessage, new Date()) &&
+    !parseTimeHmFromText(userMessage, { allowStandaloneHour: true });
+
+  if (!periodOnly) return false;
+
+  return /\b(o que mais|o que voce|o que você|chamou atencao|chamou atenção|valorizaria|cenario|cenário|ambiente|dia tranquilo|momento ideal|como seria|imagina|descrever|tipo de ambiente)\b/.test(
+    last
+  );
+}
+
 export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): boolean {
   const explicitVisitAcceptance = isExplicitVisitSchedulingAcceptance(input.userMessage);
   const lotPreferenceContinuation =
@@ -431,6 +467,7 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
   }
   if (input.flowState.pendingVisitScheduling === true) {
     if (slotAnswer) return true;
+    if (isLikelyLifestylePeriodAnswer(input.userMessage, input.lastAssistantMessage)) return false;
     if (isCommercialQuestionThatShouldBypassVisitScheduling(input.userMessage) && !explicitVisitAcceptance) return false;
     return true;
   }
@@ -456,7 +493,13 @@ export function isVisitSchedulingContinuationMessage(input: VisitSchedulingConti
   if (hasVisitSchedulingWords(input.userMessage)) return true;
   if (parseDateMention(input.userMessage, referenceNow)) return true;
   if (parseTimeHmFromText(input.userMessage)) return true;
-  if (parsePeriodFromText(input.userMessage)) return true;
+  if (
+    parsePeriodFromText(input.userMessage) &&
+    assistantAskedVisitSlotOrOfferContext(input.lastAssistantMessage) &&
+    !isLikelyLifestylePeriodAnswer(input.userMessage, input.lastAssistantMessage)
+  ) {
+    return true;
+  }
   if (/\b(dia\s*\d{1,2}|horario|de manha|a tarde|a noite|manha|tarde|noite)\b/.test(n)) {
     return true;
   }
