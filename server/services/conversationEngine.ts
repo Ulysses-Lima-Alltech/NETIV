@@ -4392,6 +4392,102 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    if (
+      evoraLeadQualificationEnabled &&
+      leadQualificationNameCollectedThisTurn &&
+      !objectiveCustomerQuestionThisTurn &&
+      !leadQualificationStateForTurn.purpose &&
+      !leadQualificationStateForTurn.askedQualificationKeys.includes('purpose')
+    ) {
+      const firstName =
+        toFirstName(
+          trustedCustomerName ||
+            leadQualificationStateForTurn.name ||
+            leadQualificationStateForTurn.customerName ||
+            effectiveConv.customer_name ||
+            null
+        ) || 'tudo bem';
+
+      const postNameIntro =
+        firstName === 'tudo bem'
+          ? 'Prazer! Vou te fazer algumas perguntas rápidas para entender melhor seu momento e te orientar melhor sobre o Évora.'
+          : `Prazer, ${firstName}! Vou te fazer algumas perguntas rápidas para entender melhor seu momento e te orientar melhor sobre o Évora.`;
+
+      const postNameDiscoveryQuestion =
+        'Você está pensando mais em morar, investir ou ainda está conhecendo as possibilidades?';
+
+      flowStateParsed = markLeadQualificationQuestionAsked(flowStateParsed, {
+        key: 'purpose' as const,
+        question: postNameDiscoveryQuestion,
+      });
+
+      console.log('[ANA_POST_NAME_DISCOVERY_GATE_BEFORE_LLM]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        customerName: firstName,
+        isFirstAnaReply,
+        leadQualificationNameCollectedThisTurn,
+      });
+
+      const committedPostNameDiscovery = commitTurnResponse({
+        handler: 'lead_qualification_post_name_discovery_gate',
+        reason: 'name_collected_missing_purpose',
+        parts: [postNameIntro, postNameDiscoveryQuestion],
+        stage: 'lead_qualification_post_name_discovery_gate',
+        requestedTopic: null,
+        commercialAxis: null,
+        shouldCallQwen: false,
+      });
+
+      if (!committedPostNameDiscovery.committed || !committedPostNameDiscovery.text.trim()) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'lead_qualification_post_name_discovery_commit_blocked';
+        return;
+      }
+
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_lead_qualification_post_name_discovery';
+        return;
+      }
+
+      const postNameDiscoverySend = await sendAnaOutboundMessages({
+        conversationId,
+        toPhoneNumber,
+        text: committedPostNameDiscovery.text,
+        phase: 'lead_qualification_post_name_discovery_gate',
+        replyPipelineToken,
+      });
+
+      if (!postNameDiscoverySend.success || postNameDiscoverySend.metaMessageIds.length === 0) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'lead_qualification_post_name_discovery_send_failed';
+        return;
+      }
+
+      const committedPostNameDiscoveryState = updateConversationStateFromCommittedReply({
+        conversationId,
+        flowState: flowStateParsed,
+        finalReplyParts: committedPostNameDiscovery.parts,
+        finalReplyText: committedPostNameDiscovery.text,
+        handler: 'lead_qualification_post_name_discovery_gate',
+        currentTopic: null,
+        requestedTopic: null,
+        commercialAxis: null,
+      });
+
+      flowStateParsed = committedPostNameDiscoveryState.nextState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+
+      anaTurnAuditOutcome = 'sent';
+      anaTurnAuditBlockedReason = null;
+      anaTurnAuditLlmStatus = 'skipped';
+      anaTurnAuditModel = 'lead_qualification_post_name_discovery_gate';
+      anaTurnDiagnostics.finalResponse.replySource = 'lead_qualification_post_name_discovery_gate';
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      return;
+    }
+
     const proactiveVideoIntent = isProactiveVideoOfferIntent(trimmed) && !isVideoMaterialRequest(trimmed);
     const visitFlowContextActive =
       appointmentPreflight.active ||
@@ -7049,6 +7145,41 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           reason: 'entrega_empreendimento_without_exact_data',
         });
       }
+      if (
+        isEvoraEnterpriseName(ent?.name ?? null) &&
+        effectiveCommercialRule.ruleId === 'areas_lazer' &&
+        commercialMessagesToSend.length > 0
+      ) {
+        const leisureContextText = `${trimmed}\n${lastAssistantPlain ?? ''}`;
+        const leisureLifestyleContext =
+          /\b(lazer|calmaria|calma|tranquilidade|tranquilo|paz|sossego|natureza|verde|família|familia|qualidade de vida|descanso)\b/i.test(
+            leisureContextText
+          ) ||
+          /chamaria aten[cç][aã]o|lugar como esse|dia a dia|perfil/i.test(leisureContextText);
+
+        if (leisureLifestyleContext && !/^Faz sentido/i.test(commercialMessagesToSend[0] ?? '')) {
+          const firstName =
+            toFirstName(
+              trustedCustomerName ||
+                effectiveConv.customer_name ||
+                getLeadQualificationState(flowStateParsed).name ||
+                null
+            );
+
+          const leisureLeadIn = firstName
+            ? `Faz sentido, ${firstName}. Para quem busca lazer com tranquilidade, o Évora conversa bem com esse perfil.`
+            : 'Faz sentido. Para quem busca lazer com tranquilidade, o Évora conversa bem com esse perfil.';
+
+          commercialMessagesToSend[0] = `${leisureLeadIn}\n\n${commercialMessagesToSend[0]}`.trim();
+
+          console.log('[ANA_LEISURE_LIFESTYLE_LEAD_IN_APPLIED]', {
+            conversationId,
+            enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+            firstName: firstName ?? null,
+          });
+        }
+      }
+
       console.log('[ANA_CANONICAL_REPLY_USED]', {
         conversationId,
         intent: effectiveCommercialRule.ruleId,
