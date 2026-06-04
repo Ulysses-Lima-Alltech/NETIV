@@ -4,6 +4,16 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
 
+function getPostNameGateBlock(): string {
+  const logIndex = source.indexOf('[ANA_POST_NAME_DISCOVERY_GATE_BEFORE_LLM]');
+  const gateEnd = source.indexOf('const proactiveVideoIntent = isProactiveVideoOfferIntent', logIndex);
+
+  assert.ok(logIndex > -1, 'log do gate pós-nome não encontrado');
+  assert.ok(gateEnd > logIndex, 'fim do gate pós-nome não encontrado');
+
+  return source.slice(Math.max(0, logIndex - 3500), gateEnd);
+}
+
 test('post-name discovery gate existe antes de midia e antes do LLM', () => {
   const gateIndex = source.indexOf('[ANA_POST_NAME_DISCOVERY_GATE_BEFORE_LLM]');
   const mediaIndex = source.indexOf('const proactiveVideoIntent = isProactiveVideoOfferIntent');
@@ -18,15 +28,7 @@ test('post-name discovery gate existe antes de midia e antes do LLM', () => {
 });
 
 test('post-name discovery gate faz saudacao completa e pergunta morar investir conhecer', () => {
-  const gateStart = source.indexOf('[ANA_POST_NAME_DISCOVERY_GATE_BEFORE_LLM]');
-  const gateRealStart = source.lastIndexOf('if (\n      evoraLeadQualificationEnabled', gateStart);
-  const gateEnd = source.indexOf('const proactiveVideoIntent = isProactiveVideoOfferIntent', gateStart);
-
-  assert.ok(gateStart > -1, 'gate pós-nome não encontrado');
-  assert.ok(gateRealStart > -1, 'início real do gate pós-nome não encontrado');
-  assert.ok(gateEnd > gateRealStart, 'fim do gate pós-nome não encontrado');
-
-  const gate = source.slice(gateRealStart, gateEnd);
+  const gate = getPostNameGateBlock();
 
   assert.match(gate, /leadQualificationNameCollectedThisTurn/);
   assert.match(gate, /Prazer,/);

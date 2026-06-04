@@ -3789,8 +3789,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       .map((m) => String(m.content ?? '').trim())
       .filter(Boolean);
     const assistantNameQuestionRegex =
-      /(?:me\s+conta|me\s+fala|me\s+diz|me\s+informa)\s+(?:o\s+)?seu\s+nome|qual(?:\s+[e�])?\s+seu\s+nome|como\s+(?:posso\s+)?(?:te\s+)?chamar|seu\s+nome\s*\??\s*$/i;
-    const nameQuestionContextPlain =
+      /(?:me\s+conta|me\s+fala|me\s+diz|me\s+informa)\s+(?:o\s+)?seu\s+nome|qual(?:\s+é)?\s+seu\s+nome|como\s+(?:posso\s+)?(?:te\s+)?chamar|seu\s+nome\s*\??\s*$/i;    const nameQuestionContextPlain =
       [...recentAssistantPlainTexts]
         .reverse()
         .find((text) => replyExplicitlyAsksCustomerName(text) || assistantNameQuestionRegex.test(text)) ?? null;
@@ -6578,6 +6577,90 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       anaTurnAuditLlmStatus = 'skipped';
       anaTurnAuditModel = 'commercial_rules';
       anaTurnDiagnostics.finalResponse.replySource = 'commercial_rules_intent';
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      return;
+    }
+
+    const evoraPaymentGeneralNorm = normText(trimmed);
+    const evoraPaymentGeneralIntent =
+      isEvoraEnterpriseName(ent?.name ?? null) &&
+      /\b(forma de pagamento|formas de pagamento|pagamento|entrada|sinal|financiamento|financiar|construtora|incorporadora|parcelamento|sem juros|48x|120x|comprovacao de renda|comprovação de renda)\b/.test(evoraPaymentGeneralNorm);
+
+    const evoraPaymentPersonalizedIntent =
+      /\b(simulacao|simulação|simular|quanto fica|quanto ficaria|por mes|por mês|valor da parcela|parcela mensal|desconto|negociar|negociacao|negociação|proposta|tabela|lote especifico|lote específico|disponibilidade)\b/.test(evoraPaymentGeneralNorm);
+
+    if (evoraPaymentGeneralIntent && !evoraPaymentPersonalizedIntent) {
+      const paymentMessages = dedupeMessageParts([
+        'Sim. A entrada padrão do Évora é de 20%.',
+        'Nas condições gerais, existe parcelamento sem juros em até 48x + IGPM, ou planos estendidos em até 120x com juros + IGPM.',
+        'O financiamento é direto com a incorporadora/construtora, com menos burocracia e mais facilidade. Eu só não faço simulação de parcela por aqui, porque isso depende do lote e do plano escolhido.',
+        'Quer que eu te explique também sobre os lotes e tamanhos, ou prefere entender melhor a localização e o acesso?'
+      ], {
+        conversationId,
+        stage: 'evora_payment_general_authorized',
+      });
+
+      console.log('[ANA_EVORA_PAYMENT_GENERAL_AUTHORIZED_USED]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        userMessagePreview: trimmed.slice(0, 180),
+      });
+
+      const committedPaymentGeneral = commitTurnResponse({
+        handler: 'evora_payment_general_authorized',
+        reason: 'authorized_general_payment_terms',
+        parts: paymentMessages,
+        stage: 'evora_payment_general_authorized',
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: 'financiamento',
+        shouldCallQwen: false,
+      });
+
+      if (!committedPaymentGeneral.committed || !committedPaymentGeneral.text.trim()) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'evora_payment_general_commit_blocked';
+        return;
+      }
+
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_evora_payment_general';
+        return;
+      }
+
+      const paymentGeneralSend = await sendAnaOutboundMessages({
+        conversationId,
+        toPhoneNumber,
+        text: committedPaymentGeneral.text,
+        phase: 'evora_payment_general_authorized',
+        replyPipelineToken,
+      });
+
+      if (!paymentGeneralSend.success || paymentGeneralSend.metaMessageIds.length === 0) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'evora_payment_general_send_failed';
+        return;
+      }
+
+      const committedPaymentGeneralState = updateConversationStateFromCommittedReply({
+        conversationId,
+        flowState: flowStateParsed,
+        finalReplyParts: committedPaymentGeneral.parts,
+        finalReplyText: committedPaymentGeneral.text,
+        handler: 'evora_payment_general_authorized',
+        currentTopic: anaTurnContextResolved?.currentTopic ?? null,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: 'financiamento',
+      });
+
+      flowStateParsed = committedPaymentGeneralState.nextState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+
+      anaTurnAuditOutcome = 'sent';
+      anaTurnAuditBlockedReason = null;
+      anaTurnAuditLlmStatus = 'skipped';
+      anaTurnAuditModel = 'evora_payment_general_authorized';
+      anaTurnDiagnostics.finalResponse.replySource = 'evora_payment_general_authorized';
       anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
       return;
     }

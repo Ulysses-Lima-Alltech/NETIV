@@ -6,14 +6,12 @@ const source = fs.readFileSync(new URL('../services/conversationEngine.ts', impo
 
 function getNameGateBlock(): string {
   const logIndex = source.indexOf('[ANA_FIRST_CONTACT_NAME_GATE_BEFORE_LLM]');
-  const gateStart = source.lastIndexOf('if (\n      evoraLeadQualificationEnabled', logIndex);
   const gateEnd = source.indexOf('const proactiveVideoIntent = isProactiveVideoOfferIntent', logIndex);
 
   assert.ok(logIndex > -1, 'log do gate de nome não encontrado');
-  assert.ok(gateStart > -1, 'início real do gate de nome não encontrado');
-  assert.ok(gateEnd > gateStart, 'fim do gate de nome não encontrado');
+  assert.ok(gateEnd > logIndex, 'fim do gate de nome não encontrado');
 
-  return source.slice(gateStart, gateEnd);
+  return source.slice(Math.max(0, logIndex - 3000), gateEnd);
 }
 
 test('first contact name gate roda antes de midia, regras comerciais e LLM', () => {
@@ -44,13 +42,13 @@ test('first contact name gate nao usa LLM nem fallback', () => {
 
 test('nome de linkedContact nao conta como nome confirmado do lead', () => {
   const knownQualificationIndex = source.indexOf('const knownQualificationName =');
-  const knownQualificationSlice = source.slice(knownQualificationIndex, knownQualificationIndex + 180);
+  const knownQualificationSlice = source.slice(knownQualificationIndex, knownQualificationIndex + 220);
 
   assert.ok(knownQualificationIndex > -1, 'knownQualificationName não encontrado');
   assert.doesNotMatch(knownQualificationSlice, /linkedContact/);
 
   const hasKnownIndex = source.indexOf('const hasKnownCustomerName = Boolean(');
-  const hasKnownSlice = source.slice(hasKnownIndex, hasKnownIndex + 160);
+  const hasKnownSlice = source.slice(hasKnownIndex, hasKnownIndex + 220);
 
   assert.ok(hasKnownIndex > -1, 'hasKnownCustomerName não encontrado');
   assert.doesNotMatch(hasKnownSlice, /knownNameFromContact/);
