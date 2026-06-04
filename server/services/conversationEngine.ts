@@ -1211,6 +1211,11 @@ function buildInitialDiscoveryGuidanceContext(params: {
   const hasPurpose = state.purpose != null;
   const hasProductFit = state.productFit != null;
   const currentUserHasObjectiveQuestion = isObjectiveCustomerQuestion(params.userMessage);
+  const nameJustCapturedWithoutPurpose = params.nameCapturedThisTurn && !hasPurpose;
+  const lifestyleSignal =
+    /\b(calmaria|calma|tranquilidade|tranquilo|paz|sossego|natureza|verde|lazer|família|familia|qualidade de vida|descanso|segurança|seguranca)\b/i.test(
+      params.userMessage
+    );
 
   const nextDiscovery =
     !hasPurpose
@@ -1225,15 +1230,33 @@ function buildInitialDiscoveryGuidanceContext(params: {
     'Use apenas como ponto de partida conversacional depois da captura do nome.',
     knownName ? `Nome conhecido do cliente: ${knownName}.` : 'Nome do cliente já foi capturado.',
     nextDiscovery,
+    nameJustCapturedWithoutPurpose
+      ? 'Quando o nome acabou de ser capturado e a intenção ainda não está clara, comece com uma saudação completa e natural, por exemplo: "Prazer, [Nome]!" ou "Prazer, [Nome], tudo bem?". Não responda apenas o nome isolado.'
+      : null,
+    nameJustCapturedWithoutPurpose
+      ? 'Depois da saudação, explique em uma frase curta que vai fazer algumas perguntas rápidas para entender melhor o momento do cliente.'
+      : null,
+    nameJustCapturedWithoutPurpose
+      ? 'A primeira pergunta de descoberta deve ser sobre intenção: morar, investir ou ainda conhecer as possibilidades. Não substitua essa primeira pergunta por "você já visitou algum loteamento?" ou pergunta parecida.'
+      : null,
     'Tópicos sugeridos para descoberta: intenção de compra/moradia/investimento; decisão por loteamento fechado; tamanho ou perfil de lote desejado.',
+    lifestyleSignal
+      ? 'O cliente trouxe sinal de estilo de vida/desejo emocional. Antes de listar itens, acolha com uma frase consultiva e humana, conectando o desejo dele ao Évora. Exemplo de tom: "Faz sentido, [Nome]. Para quem busca calmaria sem abrir mão de lazer, o Évora conversa bem com esse perfil." Depois traga os fatos autorizados.'
+      : null,
+    lifestyleSignal
+      ? 'Evite resposta seca em formato apenas informativo. Não comece direto com "Tem uma estrutura..." quando o cliente falar desejos como calmaria, lazer, tranquilidade, natureza ou família.'
+      : null,
     currentUserHasObjectiveQuestion
       ? 'A mensagem atual do cliente contém pergunta objetiva. Responda primeiro a pergunta dele com base nas evidências e, se natural, avance com apenas UMA pergunta de descoberta.'
       : 'Se a mensagem atual não traz pergunta objetiva, conduza com UMA pergunta inicial de descoberta, em tom natural.',
+    'Se o cliente responder apenas "sim" a uma pergunta com duas opções, não troque as opções. Retome as opções exatas ou escolha a continuidade mais natural pelo histórico.',
     'Não pergunte todos os tópicos de uma vez.',
     'Não copie literalmente um roteiro fixo. Varie a formulação conforme o histórico.',
     'Não invente informação comercial. Se faltar dado confirmado, ofereça corretor ou visita de forma natural.',
     '[/ORIENTAÇÃO DE DESCOBERTA INICIAL]',
-  ].join('\n');
+  ]
+    .filter((line): line is string => Boolean(line && line.trim()))
+    .join('\n');
 }
 
 function isInitialQualificationClarificationMessage(text: string | null | undefined): boolean {
