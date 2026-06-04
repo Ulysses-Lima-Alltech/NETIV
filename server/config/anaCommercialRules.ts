@@ -66,7 +66,7 @@ export const ANA_COMMERCIAL_RULES = {
       "Lá tem uma estrutura de lazer bem completa, com piscinas, academia, salão de festas, playground, quadras e espaços de convivência. A ideia é atender tanto momentos em família quanto atividades do dia a dia.\n\nQuer que eu te conte mais sobre os espaços para família, esportes ou convivência?",
     ],
     seguranca_portaria: [
-      'O Évora conta com portaria 24 horas e controle de acesso, o que ajuda a trazer mais tranquilidade para moradores e visitantes.\n\nNa prática, a proposta é unir loteamento fechado, controle de entrada e uma região mais tranquila de Atibaia.\n\nEsse ponto pesa bastante na sua decisão?',
+      "Esse é um ponto importante. O Évora conta com portaria 24 horas e controle de acesso, reforçando a proposta de um loteamento fechado com mais tranquilidade para moradores e visitantes.\n\nNa prática, a ideia é você ter uma rotina mais reservada e segura, sem abrir mão do acesso pela Rodovia Dom Pedro I e da estrutura de Atibaia por perto.\n\nQuer que eu te explique também sobre localização/acesso, lazer ou os tamanhos dos lotes?",
     ],
     quantidade_lotes_info_gap: [
       "O Évora tem 145 lotes no total, com opções a partir de 360 m².\n\nQuer que eu te explique os tamanhos dos lotes, a localização/acesso ou as formas de pagamento?",

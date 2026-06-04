@@ -6874,6 +6874,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         isEvoraEnterpriseName(ent?.name ?? null) &&
         (
           effectiveCommercialRule?.ruleId === 'areas_lazer' ||
+          effectiveCommercialRule?.ruleId === 'seguranca_portaria' ||
           effectiveCommercialRule?.ruleId === 'quantidade_lotes_info_gap'
         )
       );
