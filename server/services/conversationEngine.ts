@@ -7214,6 +7214,32 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         }
       }
 
+      if (
+        isEvoraEnterpriseName(ent?.name ?? null) &&
+        (effectiveCommercialRule.ruleId === 'areas_lazer' || effectiveCommercialRule.ruleId === 'seguranca_portaria') &&
+        commercialMessagesToSend.length > 0
+      ) {
+        const joinedCommercialReply = commercialMessagesToSend.join('\n').toLowerCase();
+        const alreadyRescuesTopics =
+          /seguran[cç]a/.test(joinedCommercialReply) &&
+          /(regi[aã]o|localiza[cç][aã]o|acesso)/.test(joinedCommercialReply);
+
+        const userAskedSpecificSubtopic =
+          /\b(beach\s*tennis|tenis|tênis|piscina|academia|society|campo|quadra|playground|portaria|controle de acesso)\b/i.test(trimmed);
+
+        if (!alreadyRescuesTopics && userAskedSpecificSubtopic) {
+          commercialMessagesToSend.push(
+            'Além desse ponto, quer que eu te explique também sobre segurança, região/acesso ou os lotes?'
+          );
+
+          console.log('[ANA_TOPIC_RESCUE_QUESTION_APPENDED]', {
+            conversationId,
+            enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+            ruleId: effectiveCommercialRule.ruleId,
+          });
+        }
+      }
+
       console.log('[ANA_CANONICAL_REPLY_USED]', {
         conversationId,
         intent: effectiveCommercialRule.ruleId,
@@ -8014,10 +8040,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           ? 'No eixo de lazer, liste todos os itens encontrados na fonte confiavel, sem limitar quantidade, sem truncar, sem resumir e sem usar "entre outros". Mantenha bullets e quebras de linha.'
           : 'Responda em formato estruturado quando fizer sentido (linhas curtas/lista objetiva), entre 5 e 7 itens e sem misturar varios temas.'
         : isEvoraEnterpriseName(ent?.name ?? null)
-          ? 'Responda de forma natural, consultiva e menos seca. Use 2 a 4 frases quando o assunto pedir contexto. Pode separar em até 2 mensagens curtas. Conecte o interesse do cliente ao Évora, cite 2 ou 3 pontos relevantes e finalize com UMA pergunta objetiva de avanço.'
+          ? 'Responda de forma natural, consultiva e menos seca. Use 2 a 4 frases quando o assunto pedir contexto. Pode separar em até 2 mensagens curtas. Conecte o interesse do cliente ao Évora, cite 2 ou 3 pontos relevantes e finalize com UMA pergunta objetiva de avanço. Nao antecipe visita logo apos o cliente dizer que ainda nao visitou; nesse caso, pergunte qual tema ele quer entender primeiro: lazer, segurança, região/acesso, lotes ou valores. Ao aprofundar um assunto especifico, como beach tennis, piscina ou seguranca, finalize resgatando outros temas importantes em vez de ficar apenas no mesmo assunto.'
           : 'Responda de forma curta e objetiva, com no maximo 3 linhas e no maximo 1 pergunta.',
       anaDecision.shouldSuggestVisit
-        ? 'O cliente demonstrou interesse comercial direto ou oportunidade clara de avanço. Nao responda apenas com localizacao ou uma frase vaga como "Que mais?". Responda com acolhimento e contexto suficiente, conectando o interesse do cliente ao empreendimento. Traga 2 pontos relevantes quando fizer sentido e conduza com UMA pergunta concreta de avanço: perfil de busca, loteamento fechado, tamanho desejado, tema que quer aprofundar ou visita. Se falar de visita, use tom humano: "O corretor pode te passar tudo certinho. Que tal marcarmos uma visita?". Evite perguntas abstratas como "como voce imagina seu dia começando?".'
+        ? 'O cliente demonstrou interesse comercial direto ou oportunidade clara de avanço. Nao responda apenas com localizacao ou uma frase vaga como "Que mais?". Responda com acolhimento e contexto suficiente, conectando o interesse do cliente ao empreendimento. Traga 2 pontos relevantes quando fizer sentido e conduza com UMA pergunta concreta de avanço. Regra importante: nao ofereca agendamento de visita cedo demais, especialmente quando o cliente apenas respondeu "ainda nao" sobre ja ter visitado. Antes de pedir dia/horario de visita, responda as duvidas do cliente e resgate temas relevantes como lazer, seguranca, regiao/acesso, lotes/tamanho e formas de pagamento. Ofereca visita apenas quando o cliente pedir, demonstrar clara prontidao, ou depois de pelo menos alguns temas principais terem sido esclarecidos. Se falar de visita, use tom humano: "O corretor pode te passar tudo certinho. Que tal marcarmos uma visita?". Evite perguntas abstratas como "como voce imagina seu dia começando?".'
         : null,
       !anaDecision.canMentionExactLocation
         ? 'Nao passe endereco/localizacao exata como se estivesse confirmado.'
@@ -8026,7 +8052,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         ? 'Nao simule pagamento, entrada, parcela, prazo, juros ou desconto.'
         : null,
       ANA_LLM_FIRST_COMMERCIAL_REPLIES && isEvoraEnterpriseName(ent?.name ?? null)
-        ? 'Responda perguntas comerciais com base no RAG/evidencias autorizadas. Nao invente. Se faltar informacao ou depender de disponibilidade/condicao atualizada, ofereca corretor ou visita naturalmente. Seja natural e comercial. Nao mencione NETIV, sistema, RAG, base, regra ou instrucao interna. No Évora, evite ficar preso em um único detalhe por muitas respostas seguidas: conecte o tema atual a uma visão mais ampla de rotina, natureza, lazer, segurança, localização, família e visita. Depois que o cliente disser morar, investir ou conhecer, avance a descoberta com perguntas concretas, como se ele já está decidido por loteamento fechado, qual tamanho/perfil busca ou se quer ver o empreendimento em visita.'
+        ? 'Responda perguntas comerciais com base no RAG/evidencias autorizadas. Nao invente. Se faltar informacao ou depender de disponibilidade/condicao atualizada, ofereca corretor ou visita naturalmente, mas nao antes de tirar as duvidas principais. Seja natural e comercial. Nao mencione NETIV, sistema, RAG, base, regra ou instrucao interna. No Évora, evite ficar preso em um único detalhe por muitas respostas seguidas: conecte o tema atual a uma visão mais ampla de rotina, natureza, lazer, segurança, localização, família e visita. Depois que o cliente disser morar, investir ou conhecer, avance a descoberta com perguntas concretas. Quando concluir ou aprofundar um tema, resgate outros temas úteis em forma de escolha simples, por exemplo: "Quer que eu te explique também sobre segurança, região/acesso ou os lotes?". Nao conduza tudo para visita antes de responder lazer, seguranca, regiao/localizacao ou tamanho dos lotes, salvo se o cliente pedir visita diretamente.'
         : null,
       isLocalQwenRuntime
         ? 'Não copie instruções internas. Responda apenas ao cliente com fatos autorizados.'
