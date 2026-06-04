@@ -6581,6 +6581,101 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    const evoraLocationClarificationNorm = normText(trimmed);
+    const previousAssistantWasLocationContext =
+      /\b(regiao da pedreira|rio abaixo|atibaia|dom pedro|50 minutos de sao paulo|localizacao|acesso|onde fica)\b/i.test(
+        normText(lastAssistantPlain ?? '')
+      );
+
+    const evoraLocationClarificationIntent =
+      isEvoraEnterpriseName(ent?.name ?? null) &&
+      (
+        /\b(nao sei onde fica|nao sei aonde fica|nao conheco|nao conheço|onde fica isso|onde e isso|onde é isso|me explica melhor onde fica|como chega|como eu chego|fica onde|que regiao e essa|que região é essa)\b/i.test(
+          evoraLocationClarificationNorm
+        ) ||
+        (
+          previousAssistantWasLocationContext &&
+          /\b(nao sei|nao conheco|nao conheço|nunca fui|me explica melhor|como assim|onde exatamente)\b/i.test(
+            evoraLocationClarificationNorm
+          )
+        )
+      );
+
+    if (evoraLocationClarificationIntent) {
+      const locationClarificationMessages = dedupeMessageParts([
+        'Sem problema. O Évora fica em Atibaia, na região da Pedreira, bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.',
+        'Para ter uma referência simples: é uma região mais tranquila e com bastante contato com a natureza, a cerca de 50 minutos de São Paulo. A proposta é ficar perto do acesso principal, mas com clima mais reservado para morar.',
+        'Quer que eu te explique melhor o acesso pela Dom Pedro I ou prefere que eu te fale sobre lazer, segurança ou tamanhos dos lotes?'
+      ], {
+        conversationId,
+        stage: 'evora_location_clarification',
+      });
+
+      console.log('[ANA_EVORA_LOCATION_CLARIFICATION_USED]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        userMessagePreview: trimmed.slice(0, 180),
+      });
+
+      const committedLocationClarification = commitTurnResponse({
+        handler: 'evora_location_clarification',
+        reason: 'customer_does_not_know_location',
+        parts: locationClarificationMessages,
+        stage: 'evora_location_clarification',
+        requestedTopic: 'localizacao',
+        commercialAxis: 'localizacao',
+        shouldCallQwen: false,
+      });
+
+      if (!committedLocationClarification.committed || !committedLocationClarification.text.trim()) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'evora_location_clarification_commit_blocked';
+        return;
+      }
+
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_evora_location_clarification';
+        return;
+      }
+
+      const locationClarificationSend = await sendAnaOutboundMessages({
+        conversationId,
+        toPhoneNumber,
+        text: committedLocationClarification.text,
+        phase: 'evora_location_clarification',
+        replyPipelineToken,
+      });
+
+      if (!locationClarificationSend.success || locationClarificationSend.metaMessageIds.length === 0) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'evora_location_clarification_send_failed';
+        return;
+      }
+
+      const committedLocationClarificationState = updateConversationStateFromCommittedReply({
+        conversationId,
+        flowState: flowStateParsed,
+        finalReplyParts: committedLocationClarification.parts,
+        finalReplyText: committedLocationClarification.text,
+        handler: 'evora_location_clarification',
+        currentTopic: anaTurnContextResolved?.currentTopic ?? null,
+        requestedTopic: 'localizacao',
+        commercialAxis: 'localizacao',
+      });
+
+      flowStateParsed = committedLocationClarificationState.nextState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+
+      anaTurnAuditOutcome = 'sent';
+      anaTurnAuditBlockedReason = null;
+      anaTurnAuditLlmStatus = 'skipped';
+      anaTurnAuditModel = 'evora_location_clarification';
+      anaTurnDiagnostics.finalResponse.replySource = 'evora_location_clarification';
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      return;
+    }
+
     const evoraBrokerRequestNorm = normText(trimmed);
     const evoraBrokerRequestIntent =
       isEvoraEnterpriseName(ent?.name ?? null) &&
