@@ -8050,6 +8050,46 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           recentAssistantForNoRepeat.push(commercialRuleMessage.trim());
         }
       }
+      if (
+        isEvoraEnterpriseName(ent?.name ?? null) &&
+        effectiveCommercialRule.ruleId !== 'visita_agendamento' &&
+        processedCommercialRuleMessages.length > 0
+      ) {
+        const safeGuardCurrentTopic: 'lazer' | 'seguranca' | 'localizacao' | 'lotes' | 'valores' | null = (() => {
+          if (effectiveCommercialRule.ruleId === 'areas_lazer') return 'lazer';
+          if (effectiveCommercialRule.ruleId === 'seguranca_portaria') return 'seguranca';
+          if (effectiveCommercialRule.ruleId === 'localizacao_endereco' || effectiveCommercialRule.ruleId === 'endereco') return 'localizacao';
+          if (
+            effectiveCommercialRule.ruleId === 'metragem_faixa' ||
+            effectiveCommercialRule.ruleId === 'metragem_especifica' ||
+            effectiveCommercialRule.ruleId === 'quantidade_lotes_info_gap'
+          ) return 'lotes';
+          if (
+            effectiveCommercialRule.ruleId === 'preco_valor_lote' ||
+            effectiveCommercialRule.ruleId === 'formas_pagamento' ||
+            effectiveCommercialRule.ruleId === 'entrada' ||
+            effectiveCommercialRule.ruleId === 'parcela_simulacao'
+          ) return 'valores';
+          return null;
+        })();
+
+        const commercialReplyAlreadyHasQuestion = processedCommercialRuleMessages.some((message) =>
+          /\?\s*$/.test((message || '').trim()) || /\?/.test(message || '')
+        );
+
+        if (safeGuardCurrentTopic != null && !commercialReplyAlreadyHasQuestion) {
+          const safeFinalQuestion = buildEvoraSafeNextTopicQuestion(safeGuardCurrentTopic);
+          processedCommercialRuleMessages.push(safeFinalQuestion);
+
+          console.log('[ANA_EVORA_COMMERCIAL_FINAL_QUESTION_GUARD]', {
+            conversationId,
+            ruleId: effectiveCommercialRule.ruleId,
+            safeGuardCurrentTopic,
+            safeFinalQuestion,
+          });
+        }
+      }
+
       if (effectiveCommercialRule.ruleId === 'first_contact' && isFirstAnaReply) {
         const finalQuestionHistoryForCommercialRule = collectRecentAssistantQuestionsForFinalCheck({
           flowState: flowStateParsed,

@@ -369,6 +369,13 @@ export function isAssistantVisitOfferContextMessage(text: string | null | undefi
   return asksVisitOffer || asksVisitSlot;
 }
 
+function assistantAskedVisitConfirmation(text: string | null | undefined): boolean {
+  const n = norm(text || '');
+  if (!n) return false;
+
+  return /\b(posso confirmar sua visita|confirmar sua visita|sua visita para)\b/.test(n);
+}
+
 export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): boolean {
   const explicitVisitAcceptance = isExplicitVisitSchedulingAcceptance(input.userMessage);
   const lotPreferenceContinuation =
@@ -402,6 +409,8 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
   const ackOnlyMessage = isVisitSchedulingAckOnlyMessage(input.userMessage);
   const visitConfirmationMessage = isVisitSchedulingConfirmationMessage(input.userMessage);
   const hasVisitOfferContext = isAssistantVisitOfferContextMessage(input.lastAssistantMessage);
+  const assistantAskedConfirmation = assistantAskedVisitConfirmation(input.lastAssistantMessage);
+  if (ackOnlyMessage && assistantAskedConfirmation) return true;
   const confirmationContextKind = input.confirmationContextKind ?? null;
   const shortConfirmationSuppressesVisit =
     ackOnlyMessage &&
@@ -771,6 +780,38 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
       : `Anotei sua preferência por ${visitLotPreference}. A disponibilidade de lote específico precisa ser confirmada no atendimento, mas isso ajuda a orientar a visita. Para qual dia você prefere agendar a visita?`;
 
     return finish('visit_lot_preference_captured', reply, nextState, pendingDateYmd ? 'periodo_ou_horario' : 'dia');
+  }
+
+  if (!pending && userVisitConfirmation && assistantAskedVisitConfirmation(input.lastAssistantMessage)) {
+    const assistantConfirmationDate = parseDateMention(input.lastAssistantMessage || '', referenceNow);
+    const assistantConfirmationTime = parseTimeHmFromText(input.lastAssistantMessage || '', {
+      allowStandaloneHour: true,
+    });
+
+    if (assistantConfirmationDate?.ymd && assistantConfirmationTime) {
+      const confirmationAckState = buildPendingState(input.flowState, {
+        pending: false,
+        dateLabel: null,
+        dateYmd: null,
+        timeHm: null,
+        period: null,
+        enterpriseId: null,
+        invalidTime: null,
+        missingSlot: null,
+        customerName: effectiveName ?? null,
+        confirmationAsked: false,
+      });
+
+      return finish(
+        'assistant_confirmation_ack_reconstructed',
+        confirmReply(assistantConfirmationDate.label, assistantConfirmationTime),
+        confirmationAckState,
+        null,
+        true,
+        assistantConfirmationDate.ymd,
+        assistantConfirmationTime
+      );
+    }
   }
 
   if (pending && pendingInvalidTime && !timeHm) {
