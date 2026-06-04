@@ -6,7 +6,7 @@ const source = fs.readFileSync(new URL('../services/conversationEngine.ts', impo
 
 test('initial discovery guidance existe apenas como contexto de prompt do LLM', () => {
   assert.match(source, /function buildInitialDiscoveryGuidanceContext/);
-  assert.match(source, /Isto nao e fallback, nao e resposta pronta e nao deve interceptar o LLM/);
+  assert.match(source, /Isto não é fallback, não é resposta pronta e não deve interceptar o LLM/);
   assert.match(source, /Use apenas como ponto de partida conversacional depois da captura do nome/);
   assert.match(source, /compactConversationalKnowledge,\s*initialDiscoveryGuidanceContext,/);
   assert.match(source, /messages\.push\(\{ role: 'system', content: initialDiscoveryGuidanceContext \}\)/);
@@ -39,5 +39,5 @@ test('initial discovery guidance preserva LLM-first e orienta a responder pergun
   assert.match(helper, /isObjectiveCustomerQuestion\(params\.userMessage\)/);
   assert.match(helper, /Responda primeiro a pergunta dele/);
   assert.match(helper, /apenas UMA pergunta de descoberta/);
-  assert.match(helper, /Nao pergunte todos os topicos de uma vez/);
+  assert.match(helper, /Não pergunte todos os tópicos de uma vez/);
 });
