@@ -4261,7 +4261,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     if (evoraLeadQualificationEnabled) {
       const extractedQualificationSignals = extractLeadQualificationSignals(trimmed, leadQualificationStateBeforeTurn);
       const knownQualificationName =
-        trustedCustomerName || effectiveConv.customer_name || linkedContact?.first_name || linkedContact?.full_name || null;
+        trustedCustomerName || effectiveConv.customer_name || null;
       if (knownQualificationName && !leadQualificationStateBeforeTurn.nameCollected) {
         extractedQualificationSignals.name = knownQualificationName;
         extractedQualificationSignals.customerName = knownQualificationName;
@@ -4284,6 +4284,89 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           });
         }
       }
+    }
+
+    if (
+      evoraLeadQualificationEnabled &&
+      isFirstAnaReply &&
+      !objectiveCustomerQuestionThisTurn &&
+      !leadQualificationStateForTurn.nameAsked &&
+      !trustedCustomerName &&
+      !String(effectiveConv.customer_name ?? '').trim() &&
+      !String(leadQualificationStateForTurn.name ?? leadQualificationStateForTurn.customerName ?? '').trim()
+    ) {
+      const nameQuestion = buildLeadQualificationNameQuestion();
+
+      flowStateParsed = markLeadQualificationQuestionAsked(flowStateParsed, {
+        key: 'name',
+        question: nameQuestion,
+      });
+
+      console.log('[ANA_FIRST_CONTACT_NAME_GATE_BEFORE_LLM]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        isFirstAnaReply,
+        objectiveCustomerQuestionThisTurn,
+      });
+
+      const committedNameGate = commitTurnResponse({
+        handler: 'lead_qualification_name_gate',
+        reason: 'first_contact_missing_confirmed_name',
+        parts: [nameQuestion],
+        stage: 'lead_qualification_name_gate',
+        requestedTopic: null,
+        commercialAxis: null,
+        shouldCallQwen: false,
+      });
+
+      if (!committedNameGate.committed || !committedNameGate.text.trim()) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'lead_qualification_name_gate_commit_blocked';
+        return;
+      }
+
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_lead_qualification_name_gate';
+        return;
+      }
+
+      const nameGateSend = await sendAnaOutboundMessages({
+        conversationId,
+        toPhoneNumber,
+        text: committedNameGate.text,
+        phase: 'lead_qualification_name_gate',
+        replyPipelineToken,
+      });
+
+      if (!nameGateSend.success || nameGateSend.metaMessageIds.length === 0) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'lead_qualification_name_gate_send_failed';
+        return;
+      }
+
+      const committedNameGateState = updateConversationStateFromCommittedReply({
+        conversationId,
+        flowState: flowStateParsed,
+        finalReplyParts: committedNameGate.parts,
+        finalReplyText: committedNameGate.text,
+        handler: 'lead_qualification_name_gate',
+        currentTopic: null,
+        requestedTopic: null,
+        commercialAxis: null,
+      });
+
+      flowStateParsed = committedNameGateState.nextState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+      await markAnaAskedForCustomerName(conversationId);
+
+      anaTurnAuditOutcome = 'sent';
+      anaTurnAuditBlockedReason = null;
+      anaTurnAuditLlmStatus = 'skipped';
+      anaTurnAuditModel = 'lead_qualification_name_gate';
+      anaTurnDiagnostics.finalResponse.replySource = 'lead_qualification_name_gate';
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      return;
     }
 
     const proactiveVideoIntent = isProactiveVideoOfferIntent(trimmed) && !isVideoMaterialRequest(trimmed);
@@ -6903,11 +6986,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
 
       const knownNameFromConversation = toFirstName(effectiveConv.customer_name || null);
-      const knownNameFromContact =
-        toFirstName(linkedContact?.first_name || null) || toFirstName(linkedContact?.full_name || null);
       const knownNameFromCurrentTurn = toFirstName(trustedCustomerName || null);
       const hasKnownCustomerName = Boolean(
-        knownNameFromConversation || knownNameFromContact || knownNameFromCurrentTurn
+        knownNameFromConversation || knownNameFromCurrentTurn
       );
 
       const recentAssistantForCtaPolicy = [...rows]
