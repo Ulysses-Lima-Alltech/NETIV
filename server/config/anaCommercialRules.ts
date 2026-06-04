@@ -63,13 +63,13 @@ export const ANA_COMMERCIAL_RULES = {
       'O valor de condomínio vai depender das definições feitas pelos próprios moradores e associação do condomínio, mas temos uma estimativa entre R$400,00 e R$700,00.\n\nQuer que eu te explique também os custos gerais de compra?',
     ],
     areas_lazer: [
-      'O lazer do Évora é bem completo para o dia a dia da família.\n\nTem piscina adulto, piscina infantil, academia, salão de festas, playground, coworking, espaço zen, fireplace, quadra de beach tennis, campo society, praça interna e áreas verdes.\n\nTambém há estação para carros elétricos e portaria 24h com controle de acesso.\n\nVocê imagina usar mais essa estrutura para rotina da família ou está pensando mais em valorização do imóvel?',
+      "Lá tem uma estrutura de lazer bem completa, com piscinas, academia, salão de festas, playground, quadras e espaços de convivência. A ideia é atender tanto momentos em família quanto atividades do dia a dia.\n\nQuer que eu te conte mais sobre os espaços para família, esportes ou convivência?",
     ],
     seguranca_portaria: [
       'O Évora conta com portaria 24 horas e controle de acesso, o que ajuda a trazer mais tranquilidade para moradores e visitantes.\n\nNa prática, a proposta é unir loteamento fechado, controle de entrada e uma região mais tranquila de Atibaia.\n\nEsse ponto pesa bastante na sua decisão?',
     ],
     quantidade_lotes_info_gap: [
-      'O Évora tem 145 lotes no total, com opções a partir de 360 m².\n\nQuer que eu te explique as opções de tamanho?',
+      "O Évora tem 145 lotes no total, com opções a partir de 360 m².\n\nQuer que eu te explique os tamanhos dos lotes, a localização/acesso ou as formas de pagamento?",
     ],
     disponibilidade_simulacao_desconto: [
       'Para disponibilidade atualizada, tabela comercial, desconto ou condição individual, essa parte depende de confirmação no atendimento.\n\nEu posso te explicar os tamanhos gerais dos lotes, a faixa de metragem e a proposta do loteamento.\n\nVocê prefere ver os tamanhos gerais primeiro ou falar com o corretor?',

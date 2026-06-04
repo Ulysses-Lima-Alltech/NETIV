@@ -6581,6 +6581,88 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    const evoraBrokerRequestNorm = normText(trimmed);
+    const evoraBrokerRequestIntent =
+      isEvoraEnterpriseName(ent?.name ?? null) &&
+      (
+        /\b(falar|conversar|chamar|encaminhar|passar|acionar)\b.{0,60}\b(corretor|consultor|vendedor|atendente)\b/.test(evoraBrokerRequestNorm) ||
+        /\b(corretor|consultor|vendedor|atendente)\b.{0,60}\b(falar|conversar|contato|me chama|me chamar|me liga|ligar)\b/.test(evoraBrokerRequestNorm)
+      );
+
+    if (evoraBrokerRequestIntent) {
+      const brokerMessages = dedupeMessageParts([
+        'Perfeito, vou encaminhar você para o corretor responsável continuar o atendimento.',
+        'Pode aguardar o contato dele por aqui. Ele vai te passar os detalhes certinhos e te ajudar com os próximos passos.'
+      ], {
+        conversationId,
+        stage: 'evora_broker_request',
+      });
+
+      console.log('[ANA_EVORA_BROKER_REQUEST_REPLY_USED]', {
+        conversationId,
+        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
+        userMessagePreview: trimmed.slice(0, 180),
+      });
+
+      const committedBrokerRequest = commitTurnResponse({
+        handler: 'evora_broker_request',
+        reason: 'customer_requested_broker',
+        parts: brokerMessages,
+        stage: 'evora_broker_request',
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: null,
+        shouldCallQwen: false,
+      });
+
+      if (!committedBrokerRequest.committed || !committedBrokerRequest.text.trim()) {
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = 'evora_broker_request_commit_blocked';
+        return;
+      }
+
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = 'pipeline_stale_before_evora_broker_request';
+        return;
+      }
+
+      const brokerRequestSend = await sendAnaOutboundMessages({
+        conversationId,
+        toPhoneNumber,
+        text: committedBrokerRequest.text,
+        phase: 'evora_broker_request',
+        replyPipelineToken,
+      });
+
+      if (!brokerRequestSend.success || brokerRequestSend.metaMessageIds.length === 0) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'evora_broker_request_send_failed';
+        return;
+      }
+
+      const committedBrokerRequestState = updateConversationStateFromCommittedReply({
+        conversationId,
+        flowState: flowStateParsed,
+        finalReplyParts: committedBrokerRequest.parts,
+        finalReplyText: committedBrokerRequest.text,
+        handler: 'evora_broker_request',
+        currentTopic: anaTurnContextResolved?.currentTopic ?? null,
+        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+        commercialAxis: null,
+      });
+
+      flowStateParsed = committedBrokerRequestState.nextState;
+      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+
+      anaTurnAuditOutcome = 'sent';
+      anaTurnAuditBlockedReason = null;
+      anaTurnAuditLlmStatus = 'skipped';
+      anaTurnAuditModel = 'evora_broker_request';
+      anaTurnDiagnostics.finalResponse.replySource = 'evora_broker_request';
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      return;
+    }
+
     const evoraPaymentGeneralNorm = normText(trimmed);
     const evoraPaymentGeneralIntent =
       isEvoraEnterpriseName(ent?.name ?? null) &&
@@ -6787,7 +6869,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     const effectiveCommercialRule = forcedCommercialRule ?? commercialRule ?? canonicalLocationFallbackRule;
     const commercialRuleAllowedAsOperationalDeterministic =
-      effectiveCommercialRule?.ruleId === 'visita_agendamento';
+      effectiveCommercialRule?.ruleId === 'visita_agendamento' ||
+      (
+        isEvoraEnterpriseName(ent?.name ?? null) &&
+        (
+          effectiveCommercialRule?.ruleId === 'areas_lazer' ||
+          effectiveCommercialRule?.ruleId === 'quantidade_lotes_info_gap'
+        )
+      );
     if (
       ANA_LLM_FIRST_COMMERCIAL_REPLIES &&
       effectiveCommercialRule &&
