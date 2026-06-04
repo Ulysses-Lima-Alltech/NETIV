@@ -278,13 +278,17 @@ import {
 const ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY = false;
 const ANA_ENGINE_DIAGNOSTIC_TEXT = 'Diagnóstico: cheguei no conversation engine.';
 const ANA_PROVIDER_FAILURE_HANDOFF_REPLY =
-  '';
+  buildAnaNoInfoBrokerVisitOffer();
 const ANA_LLM_FIRST_TECHNICAL_FALLBACK_REPLY =
-  '';
+  buildAnaNoInfoBrokerVisitOffer();
 const ANA_LLM_FIRST_MISSING_INFO_REPLY =
-  '';
+  buildAnaNoInfoBrokerVisitOffer();
 const ANA_NAME_QUESTION_REPAIR_REPLY =
   'Perfeito. Só para eu seguir certinho, como posso te chamar?';
+function buildAnaNoInfoBrokerVisitOffer(): string {
+  return 'Esse ponto precisa de confirma\\u00E7\\u00E3o atualizada. Posso te encaminhar para um corretor ou te ajudar a agendar uma visita?';
+}
+
 const MAX_ANA_GENERATION_ATTEMPTS = 5;
 const ANA_DEBUG_QWEN_RAW = String(process.env.ANA_DEBUG_QWEN_RAW || '').trim().toLowerCase() === 'true';
 const ANA_LLM_FIRST_COMMERCIAL_REPLIES =

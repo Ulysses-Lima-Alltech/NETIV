@@ -512,9 +512,9 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
 
               const qualificationReply = [
                 `Prazer, ${nameFromWebhookBoundary}.`,
-                'Vou te fazer algumas perguntas r�pidas para entender melhor seu momento e te mostrar a melhor oportunidade no �vora.',
-                'Voc� est� olhando mais para morar, investir ou ainda est� conhecendo as possibilidades?',
-              ].join('\n\n');
+                'Vou te fazer algumas perguntas r\u00E1pidas para entender melhor seu momento e te mostrar a melhor oportunidade no \u00C9vora.',
+                'Voc\u00EA est\u00E1 olhando mais para morar, investir ou ainda est\u00E1 conhecendo as possibilidades?',
+              ].join('\\n\\n');
 
               const nameReply = await sendTextMessage(String(msg.from), qualificationReply);
 
@@ -537,6 +537,70 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
               continue;
             }
           }
+
+          const shouldFastScheduleAnaBeforeClassifier =
+
+
+            !anaEmergencyHandoffActive &&
+
+
+            (
+
+
+              text.length <= 100 ||
+
+
+              /^(sim|quero|quero entender|quero saber|fala|fale|me fala|me explica|entender|regi[a�]o|localiza[c�][a�]o|lazer|seguran[c�]a|valor|valores|pagamento|formas|lote|lotes)\b/i.test(text)
+
+
+            );
+
+
+
+          if (shouldFastScheduleAnaBeforeClassifier) {
+
+
+            console.log('[ANA_WEBHOOK_FAST_SCHEDULE_BEFORE_CLASSIFIER]', {
+
+
+              conversationId: conv.id,
+
+
+              metaMessageId: mid,
+
+
+              textPreview: text.slice(0, 120),
+
+
+              reason: 'short_or_contextual_customer_reply',
+
+
+            });
+
+
+
+            scheduleWhatsAppAiAfterUserMessage(conv.id, String(msg.from), mid);
+
+
+
+            console.log('[ANA_WEBHOOK_FAST_SCHEDULE_CONTINUE]', {
+
+
+              conversationId: conv.id,
+
+
+              metaMessageId: mid,
+
+
+            });
+
+
+
+            continue;
+
+
+          }
+
 
           try {
             const liveConv = (await getConversationById(conv.id)) ?? conv;
