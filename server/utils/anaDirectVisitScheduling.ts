@@ -600,6 +600,13 @@ const LOOSE_VISIT_NAME_BLOCKLIST = new Set(
     'noite',
     'horario',
     'visita',
+    'vou',
+    'quero',
+    'visitar',
+    'entao',
+    'então',
+    'la',
+    'lá',
     'agendar',
     'mestre',
     'chefe',
@@ -622,6 +629,13 @@ function extractLooseVisitNameCandidate(text: string): string | null {
   if (!/^[A-Za-zÀ-ÿ]+(?:\s+[A-Za-zÀ-ÿ]+){0,2}$/.test(raw)) return null;
   const normalized = norm(raw);
   if (!normalized) return null;
+
+  if (isExplicitVisitSchedulingAcceptance(raw) || hasVisitSchedulingWords(raw)) {
+    console.log('[ANA_VISIT_LOOSE_NAME_IGNORED_VISIT_ACCEPTANCE]', {
+      raw: raw.slice(0, 80),
+    });
+    return null;
+  }
   if (LOOSE_VISIT_NAME_BLOCKLIST.has(normalized)) return null;
   const words = normalized.split(' ');
   if (words.some((word) => LOOSE_VISIT_NAME_BLOCKLIST.has(word))) return null;

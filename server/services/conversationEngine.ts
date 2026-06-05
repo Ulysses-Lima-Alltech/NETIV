@@ -6185,49 +6185,61 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           flowStateParsed.pendingVisitScheduling === true ||
           flowStateParsed.visitScheduling?.active === true
         );
-      const visitPolicyResult = applyAnaConversationPolicy({
-        conversationId,
-        userMessage: trimmed,
-        replyText: deterministicVisitReply,
-        isFirstAnaReply,
-        flowState: flowStateParsed,
-        recentMessages: rows.map((m) => ({
-          role: m.role === 'assistant' ? 'assistant' : 'user',
-          content: m.content,
-        })),
-        knownCustomerName: trustedCustomerName || effectiveConv.customer_name || null,
-        probableCustomerName:
-          !(trustedCustomerName || effectiveConv.customer_name || '').trim()
-            ? linkedContact?.first_name ?? linkedContact?.full_name ?? null
-            : null,
-        now: lastUserMessageAt,
-        disableFollowupQuestion: true,
-        visitFlowActive: visitStillActiveForPolicy,
-        shortConfirmationContext: shortConfirmationContext.isShortConfirmation
-          ? {
-              kind: shortConfirmationContext.kind,
-              lastAssistantQuestionType: shortConfirmationContext.lastAssistantQuestionType,
-              lastAssistantQuestionText: shortConfirmationContext.lastAssistantQuestionText,
-              lastOfferedTopics: shortConfirmationContext.lastOfferedTopics,
-            }
-          : undefined,
-        safeTopicAvailability: safeTopicAvailabilityForPolicy,
-      });
-      deterministicVisitReply = visitPolicyResult.text;
-      if (visitPolicyResult.changed) {
-        flowStateParsed = visitPolicyResult.flowState;
-        await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
-        console.log('[ANA_VISIT_STATE_SAVED]', {
+      if (directVisitSchedulingDecision.appointmentConfirmed !== true) {
+        const visitPolicyResult = applyAnaConversationPolicy({
           conversationId,
-          source: 'visit_policy_adjustment',
-          pendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
-          pendingVisitDay: flowStateParsed.pendingVisitDay ?? flowStateParsed.pendingVisitDateLabel ?? null,
-          pendingVisitTime: flowStateParsed.pendingVisitTime ?? null,
-          pendingVisitInvalidTime: flowStateParsed.pendingVisitInvalidTime ?? null,
-          pendingVisitMissingSlot: flowStateParsed.pendingVisitMissingSlot ?? null,
-          pendingVisitCustomerName: flowStateParsed.pendingVisitCustomerName ?? null,
+          userMessage: trimmed,
+          replyText: deterministicVisitReply,
+          isFirstAnaReply,
+          flowState: flowStateParsed,
+          recentMessages: rows.map((m) => ({
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content: m.content,
+          })),
+          knownCustomerName: trustedCustomerName || effectiveConv.customer_name || null,
+          probableCustomerName:
+            !(trustedCustomerName || effectiveConv.customer_name || '').trim()
+              ? linkedContact?.first_name ?? linkedContact?.full_name ?? null
+              : null,
+          now: lastUserMessageAt,
+          disableFollowupQuestion: true,
+          visitFlowActive: visitStillActiveForPolicy,
+          shortConfirmationContext: shortConfirmationContext.isShortConfirmation
+            ? {
+                kind: shortConfirmationContext.kind,
+                lastAssistantQuestionType: shortConfirmationContext.lastAssistantQuestionType,
+                lastAssistantQuestionText: shortConfirmationContext.lastAssistantQuestionText,
+                lastOfferedTopics: shortConfirmationContext.lastOfferedTopics,
+              }
+            : undefined,
+          safeTopicAvailability: safeTopicAvailabilityForPolicy,
+        });
+        deterministicVisitReply = visitPolicyResult.text;
+        if (visitPolicyResult.changed) {
+          flowStateParsed = visitPolicyResult.flowState;
+          await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+          console.log('[ANA_VISIT_STATE_SAVED]', {
+            conversationId,
+            source: 'visit_policy_adjustment',
+            pendingVisitScheduling: flowStateParsed.pendingVisitScheduling === true,
+            pendingVisitDay: flowStateParsed.pendingVisitDay ?? flowStateParsed.pendingVisitDateLabel ?? null,
+            pendingVisitTime: flowStateParsed.pendingVisitTime ?? null,
+            pendingVisitInvalidTime: flowStateParsed.pendingVisitInvalidTime ?? null,
+            pendingVisitMissingSlot: flowStateParsed.pendingVisitMissingSlot ?? null,
+            pendingVisitCustomerName: flowStateParsed.pendingVisitCustomerName ?? null,
+          });
+        }
+
+      } else {
+        console.log('[ANA_VISIT_POLICY_SKIPPED_FOR_CONFIRMED_APPOINTMENT]', {
+          conversationId,
+          reason: directVisitSchedulingDecision.reason,
+          appointmentConfirmed: true,
+          appointmentDateYmd: directVisitSchedulingDecision.appointmentDateYmd ?? null,
+          appointmentTimeHm: directVisitSchedulingDecision.appointmentTimeHm ?? null,
         });
       }
+
       const committedVisitReply = commitTurnResponse({
         handler: 'deterministic_visit_scheduling',
         reason: directVisitSchedulingDecision.reason,
