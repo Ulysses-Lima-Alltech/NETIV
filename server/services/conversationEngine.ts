@@ -11491,6 +11491,62 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
       }
     }
 
+    if (isEvoraEnterpriseName(ent?.name ?? null)) {
+      const evoraShortChoiceUserNorm = normText(trimmed);
+      const evoraLastAssistantChoiceNorm = normText(lastAssistantPlain ?? '');
+
+      const evoraShortAmbiguousChoice =
+        /^(quero|quero sim|sim|sim quero|pode|pode sim|claro|isso|isso sim|ok|pode ser)$/.test(
+          evoraShortChoiceUserNorm
+        );
+
+      const evoraLastOfferedSecurityAndLocation =
+        evoraShortAmbiguousChoice &&
+        /\b(seguranca|segurança)\b/.test(evoraLastAssistantChoiceNorm) &&
+        /\b(localizacao|localização|endereco|endereço|acesso)\b/.test(evoraLastAssistantChoiceNorm) &&
+        /\bou\b/.test(evoraLastAssistantChoiceNorm);
+
+      const evoraLastOfferedPaymentOrVisit =
+        evoraShortAmbiguousChoice &&
+        /\b(valor|valores|pagamento|formas de pagamento|parcelamento|entrada)\b/.test(evoraLastAssistantChoiceNorm) &&
+        /\b(visita|agendar|agenda)\b/.test(evoraLastAssistantChoiceNorm) &&
+        /\bou\b/.test(evoraLastAssistantChoiceNorm);
+
+      const evoraLastOfferedLeisureSubtopics =
+        evoraShortAmbiguousChoice &&
+        /\b(familia|família|esporte|esportes|convivencia|convivência)\b/.test(evoraLastAssistantChoiceNorm) &&
+        /\bou\b/.test(evoraLastAssistantChoiceNorm);
+
+      if (evoraLastOfferedSecurityAndLocation) {
+        replyText = 'Claro. Você prefere que eu te explique sobre segurança ou sobre localização?';
+
+        console.log('[ANA_EVORA_SHORT_CHOICE_DISAMBIGUATION_GUARD]', {
+          conversationId,
+          reason: 'security_or_location_ambiguous_short_confirmation',
+          userMessagePreview: trimmed.slice(0, 120),
+          lastAssistantPreview: (lastAssistantPlain ?? '').slice(0, 220),
+        });
+      } else if (evoraLastOfferedPaymentOrVisit) {
+        replyText = 'Claro. Você prefere que eu te explique as formas de pagamento ou quer agendar uma visita?';
+
+        console.log('[ANA_EVORA_SHORT_CHOICE_DISAMBIGUATION_GUARD]', {
+          conversationId,
+          reason: 'payment_or_visit_ambiguous_short_confirmation',
+          userMessagePreview: trimmed.slice(0, 120),
+          lastAssistantPreview: (lastAssistantPlain ?? '').slice(0, 220),
+        });
+      } else if (evoraLastOfferedLeisureSubtopics) {
+        replyText = 'Claro. Você prefere que eu fale dos espaços para família, esportes ou convivência?';
+
+        console.log('[ANA_EVORA_SHORT_CHOICE_DISAMBIGUATION_GUARD]', {
+          conversationId,
+          reason: 'leisure_subtopic_ambiguous_short_confirmation',
+          userMessagePreview: trimmed.slice(0, 120),
+          lastAssistantPreview: (lastAssistantPlain ?? '').slice(0, 220),
+        });
+      }
+    }
+
     const greetingStyled = applyFirstUsefulGreetingStyle({
       text: replyText,
       isFirstAnaReply,
