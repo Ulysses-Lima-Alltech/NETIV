@@ -187,9 +187,9 @@ function parseTimeHmFromText(
 function parsePeriodFromText(text: string): VisitPeriod | null {
   const n = norm(text);
   if (!n) return null;
-  if (/\b(de manha|de manhÃ£|manha|manhÃ£)\b/.test(n)) return 'manha';
-  if (/\b(a tarde|Ã  tarde|de tarde|tarde)\b/.test(n)) return 'tarde';
-  if (/\b(a noite|Ã  noite|de noite|noite)\b/.test(n)) return 'noite';
+  if (/\b(de manha|de manhã|manha|manhã)\b/.test(n)) return 'manha';
+  if (/\b(a tarde|à tarde|de tarde|tarde)\b/.test(n)) return 'tarde';
+  if (/\b(a noite|à noite|de noite|noite)\b/.test(n)) return 'noite';
   return null;
 }
 
@@ -226,8 +226,8 @@ function normalizeVisitPeriod(value: string | null | undefined): VisitPeriod | n
 function parseDateMention(text: string, referenceNow: Date): { label: string; ymd: string } | null {
   const n = norm(text);
   const today = formatYmdInSaoPaulo(referenceNow);
-  if (/\bdepois de amanha\b/.test(n)) return { label: 'depois de amanhÃ£', ymd: addDaysYmd(today, 2) };
-  if (/\bamanha\b/.test(n)) return { label: 'amanhÃ£', ymd: addDaysYmd(today, 1) };
+  if (/\bdepois de amanha\b/.test(n)) return { label: 'depois de amanhã', ymd: addDaysYmd(today, 2) };
+  if (/\bamanha\b/.test(n)) return { label: 'amanhã', ymd: addDaysYmd(today, 1) };
   if (/\bhoje\b/.test(n)) return { label: 'hoje', ymd: today };
   const wd = n.match(/\b(domingo|segunda(?: feira)?|terca(?: feira)?|quarta(?: feira)?|quinta(?: feira)?|sexta(?: feira)?|sabado)\b/);
   if (wd) {
@@ -245,8 +245,14 @@ export function isVisitSchedulingAckOnlyMessage(text: string): boolean {
 export function isExplicitVisitSchedulingAcceptance(text: string): boolean {
   const n = norm(text);
   if (!n) return false;
-  if (/^(visita|quero visitar|prefiro visita|pode ser a visita|vamos|vamos sim|sim vamos)$/.test(n)) return true;
-  return /\b(quero agendar|quero marcar visita|vamos marcar|pode agendar|quero conhecer o stand|agendar visita|marcar visita)\b/.test(
+
+  if (
+    /^(visita|quero visitar|quero visitar la|quero visitar lá|vou visitar|vou visitar entao|vou visitar então|prefiro visita|pode ser a visita|vamos|vamos sim|sim vamos)$/.test(n)
+  ) {
+    return true;
+  }
+
+  return /\b(quero agendar|quero marcar visita|vamos marcar|vamos agendar|pode agendar|pode marcar|quero conhecer o stand|conhecer o stand|visitar o stand|visitar o empreendimento|quero visitar o stand|quero visitar o empreendimento|quero ir visitar|agendar visita|marcar visita)\b/.test(
     n
   );
 }
@@ -319,7 +325,7 @@ export function isVisitSchedulingConfirmationMessage(text: string): boolean {
 
 function hasVisitSchedulingWords(text: string): boolean {
   const n = norm(text);
-  return /\b(agendar|agendamento|agenda|marcar|visita|visitar|conhecer pessoalmente)\b/.test(n);
+  return /\b(agendar|agendamento|agenda|marcar|visita|visitar|conhecer pessoalmente|conhecer o stand|visitar o stand|visitar o empreendimento|quero visitar|vou visitar)\b/.test(n);
 }
 
 export function isVisitSchedulingTopicSwitchMessage(text: string): boolean {
@@ -357,14 +363,14 @@ export function isAssistantVisitOfferContextMessage(text: string | null | undefi
   const n = norm(raw);
   if (!n || !/\?/.test(raw)) return false;
   const hasVisitWords =
-    /\b(agendar|agendamento|marcar|visita|conhecer pessoalmente|reservar horario|reservar horÃƒÂ¡rio)\b/.test(n);
+    /\b(agendar|agendamento|marcar|visita|conhecer pessoalmente|reservar horario|reservar horário)\b/.test(n);
   if (!hasVisitWords) return false;
   const asksVisitOffer =
     /\b(quer que eu te ajude a agendar|posso te ajudar a agendar|prefere agendar|vamos marcar|marcar uma visita|agendar uma visita|agendarmos uma visita|agendarmos visita|que tal agendarmos|conhecer pessoalmente)\b/.test(
       n
     );
   const asksVisitSlot =
-    /\b(qual dia|para qual dia|dia e horario|dia e horÃƒÂ¡rio|qual horario|qual horÃƒÂ¡rio|horario fica melhor|horÃƒÂ¡rio fica melhor)\b/.test(
+    /\b(qual dia|para qual dia|dia e horario|dia e horário|qual horario|qual horário|horario fica melhor|horário fica melhor)\b/.test(
       n
     );
   return asksVisitOffer || asksVisitSlot;
@@ -500,7 +506,11 @@ export function isVisitSchedulingContinuationMessage(input: VisitSchedulingConti
   ) {
     return true;
   }
-  if (/\b(dia\s*\d{1,2}|horario|de manha|a tarde|a noite|manha|tarde|noite)\b/.test(n)) {
+  if (
+    /\b(dia\s*\d{1,2}|horario|horário|de manha|de manhã|a tarde|à tarde|a noite|à noite|manha|manhã|tarde|noite)\b/.test(n) &&
+    assistantAskedVisitSlotOrOfferContext(input.lastAssistantMessage) &&
+    !isLikelyLifestylePeriodAnswer(input.userMessage, input.lastAssistantMessage)
+  ) {
     return true;
   }
   if (
@@ -566,7 +576,7 @@ function displayTimeHm(timeHm: string | null | undefined): string | null {
 function isEmpatheticConfusionMessage(text: string): boolean {
   const n = norm(text);
   if (!n) return false;
-  return /^(ue|ueh|u[eÃ©]|como assim|nao entendi|n[aÃ£]o entendi|que|oxi|o que)$/i.test(n);
+  return /^(ue|ueh|u[eé]|como assim|nao entendi|n[aã]o entendi|que|oxi|o que)$/i.test(n);
 }
 
 const LOOSE_VISIT_NAME_BLOCKLIST = new Set(
@@ -622,9 +632,9 @@ function extractLooseVisitNameCandidate(text: string): string | null {
 }
 
 function periodHumanLabel(period: VisitPeriod | null): string | null {
-  if (period === 'manha') return 'de manhÃ£';
-  if (period === 'tarde') return 'Ã  tarde';
-  if (period === 'noite') return 'Ã  noite';
+  if (period === 'manha') return 'de manhã';
+  if (period === 'tarde') return 'à tarde';
+  if (period === 'noite') return 'à noite';
   return null;
 }
 
@@ -637,33 +647,33 @@ function combineDateAndPeriodLabel(dateLabel: string | null, period: VisitPeriod
 }
 
 function askTimeReply(label: string | null): string {
-  if (label) return `Perfeito, ${label}. Qual horÃ¡rio fica melhor para vocÃª? ${VISIT_WINDOW_REPLY}`;
-  return `Perfeito. Qual horÃ¡rio vocÃª prefere para a visita? ${VISIT_WINDOW_REPLY}`;
+  if (label) return `Perfeito, ${label}. Qual horário fica melhor para você? ${VISIT_WINDOW_REPLY}`;
+  return `Perfeito. Qual horário você prefere para a visita? ${VISIT_WINDOW_REPLY}`;
 }
 
 function askDayReply(): string {
-  return 'Perfeito. Para qual dia vocÃª prefere agendar a visita?';
+  return 'Perfeito. Para qual dia você prefere agendar a visita?';
 }
 
 function askNameReply(dateLabel: string | null, timeHm: string): string {
   const hh = parseInt(timeHm.slice(0, 2), 10);
   const mm = timeHm.slice(3, 5);
   const displayTime = mm === '00' ? `${hh}h` : `${hh}h${mm}`;
-  return `Perfeito, ${dateLabel ?? 'o dia escolhido'} Ã s ${displayTime}. Como posso te chamar para confirmar o agendamento?`;
+  return `Perfeito, ${dateLabel ?? 'o dia escolhido'} às ${displayTime}. Como posso te chamar para confirmar o agendamento?`;
 }
 
 function confirmReply(label: string | null, timeHm: string): string {
   const hh = parseInt(timeHm.slice(0, 2), 10);
   const mm = timeHm.slice(3, 5);
   const displayTime = mm === '00' ? `${hh}h` : `${hh}h${mm}`;
-  return `Perfeito, sua visita ficou agendada para ${label ?? 'o dia escolhido'} Ã s ${displayTime}.`;
+  return `Perfeito, sua visita ficou agendada para ${label ?? 'o dia escolhido'} às ${displayTime}.`;
 }
 
 function askVisitConfirmationReply(label: string | null, timeHm: string): string {
   const hh = parseInt(timeHm.slice(0, 2), 10);
   const mm = timeHm.slice(3, 5);
   const displayTime = mm === '00' ? `${hh}h` : `${hh}h${mm}`;
-  return `Perfeito. Posso confirmar sua visita para ${label ?? 'o dia escolhido'} Ã s ${displayTime}?`;
+  return `Perfeito. Posso confirmar sua visita para ${label ?? 'o dia escolhido'} às ${displayTime}?`;
 }
 
 function buildPendingState(
@@ -749,7 +759,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
   const effectiveDateLabel = dateMention?.label ?? pendingDateLabel;
   const effectiveDateYmd = dateMention?.ymd ?? pendingDateYmd;
   const effectiveTimeHm = timeHm ?? pendingTimeHm;
-  const effectivePeriod = period ?? pendingPeriod;
+  const shouldClearStalePendingPeriod = Boolean(dateMention && timeHm && !period);
+  const effectivePeriod = period ?? (shouldClearStalePendingPeriod ? null : pendingPeriod);
   const effectiveName = explicitNameFromMessage || pendingCustomerName || knownNameFromContext(input);
   const userAckOnly = isVisitSchedulingAckOnlyMessage(input.userMessage);
   const userVisitConfirmation = isVisitSchedulingConfirmationMessage(input.userMessage);
@@ -825,7 +836,7 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
     return finish('visit_lot_preference_captured', reply, nextState, pendingDateYmd ? 'periodo_ou_horario' : 'dia');
   }
 
-  if (!pending && userVisitConfirmation && assistantAskedVisitConfirmation(input.lastAssistantMessage)) {
+  if (userVisitConfirmation && assistantAskedVisitConfirmation(input.lastAssistantMessage)) {
     const assistantConfirmationDate = parseDateMention(input.lastAssistantMessage || '', referenceNow);
     const assistantConfirmationTime = parseTimeHmFromText(input.lastAssistantMessage || '', {
       allowStandaloneHour: true,
