@@ -11351,6 +11351,146 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
       }
     }
 
+    if (isEvoraEnterpriseName(ent?.name ?? null)) {
+      const evoraUserNormForConversion = normText(trimmed);
+      const evoraReplyNormForConversion = normText(replyText);
+
+      const evoraHistoryForTopic = normText([...recentAssistantPlainTexts, replyText].join('\n'));
+
+      const evoraTopicAnsweredForConversion = (topic: string): boolean => {
+        if (topic === 'valores') {
+          return /\b(279\.?000|r\$\s*279|775|metro quadrado|m2|m²|entrada|parcelamento|48x|120x|financiamento|pagamento)\b/.test(evoraHistoryForTopic);
+        }
+
+        if (topic === 'seguranca') {
+          return /\b(seguranca|segurança|portaria|controle de acesso|24h|loteamento fechado)\b/.test(evoraHistoryForTopic);
+        }
+
+        if (topic === 'lazer') {
+          return /\b(lazer|piscina|academia|playground|beach tennis|campo society|quadra|salao de festas|salão de festas|coworking|espaco zen|espaço zen|fireplace)\b/.test(evoraHistoryForTopic);
+        }
+
+        if (topic === 'localizacao') {
+          return /\b(atibaia|pedreira|rio abaixo|dom pedro|estrada dos pires|endereco|endereço|maps|localizacao|localização)\b/.test(evoraHistoryForTopic);
+        }
+
+        if (topic === 'lotes') {
+          return /\b(lotes|lote|360|725|metragem|m²|m2|400m|400 m)\b/.test(evoraHistoryForTopic);
+        }
+
+        return false;
+      };
+
+      const evoraPickConcreteNextQuestion = (): string => {
+        const options = [
+          { key: 'lotes', question: 'Quer que eu te explique melhor os tamanhos dos lotes ou prefere falar com o corretor sobre disponibilidade?' },
+          { key: 'valores', question: 'Quer que eu te explique as formas de pagamento ou prefere que eu te encaminhe para o corretor?' },
+          { key: 'localizacao', question: 'Quer que eu te explique melhor o acesso até o Évora ou prefere agendar uma visita?' },
+          { key: 'seguranca', question: 'Quer que eu te explique a segurança com mais detalhes ou prefere conhecer isso em uma visita?' },
+          { key: 'lazer', question: 'Quer que eu te fale dos espaços de lazer ou prefere agendar uma visita para conhecer de perto?' },
+        ];
+
+        const next = options.find((option) => !evoraTopicAnsweredForConversion(option.key));
+        return next?.question ?? 'Posso te encaminhar para o corretor responsável ou te ajudar a agendar uma visita?';
+      };
+
+      const evoraReplaceOrAppendFinalQuestion = (text: string, question: string): string => {
+        const clean = String(text || '').trim();
+
+        if (!clean) return question;
+
+        if (/\?\s*$/.test(clean)) {
+          return clean.replace(/(?:\n\n)?[^.!?\n]*\?\s*$/s, `\n\n${question}`).trim();
+        }
+
+        return `${clean}\n\n${question}`;
+      };
+
+      const evoraStrongPurchaseIntent =
+        /\b(quero comprar|ja quero comprar|já quero comprar|quero fechar|vou comprar|comprar esse lote|comprar um lote|como faz para comprar|como faco para comprar|como faço para comprar|como faz pra comprar|como faco pra comprar|como faço pra comprar)\b/.test(
+          evoraUserNormForConversion
+        );
+
+      const evoraNextStepIntent =
+        /\b(proximo passo|próximo passo|e agora|agora o que|qual o proximo|qual o próximo|o que eu faco agora|o que eu faço agora|gostei|curti|faz sentido|quero avancar|quero avançar|ja quero|já quero)\b/.test(
+          evoraUserNormForConversion
+        );
+
+      const evoraDoubtIntent =
+        /\b(tenho duvida|tenho dúvida|tenho duvidas|tenho dúvidas|estou com duvida|estou com dúvida|tenho uma pergunta|queria tirar uma duvida|queria tirar uma dúvida)\b/.test(
+          evoraUserNormForConversion
+        );
+
+      const evoraRepeatsPurposeQuestion =
+        /\b(morar,? investir|morar ou investir|morar, investir ou|propósito agora|proposito agora|qual dessas opcoes|qual dessas opções|tipo de espaço quer chamar de lar|tipo de espaco quer chamar de lar)\b/.test(
+          evoraReplyNormForConversion
+        );
+
+      const evoraLifestyleClosingQuestion =
+        /\b(voce ja imaginou|você já imaginou|e se esse|e se esse espaço|e se esse espaco|como seria seu dia|como esse ambiente|silencio e a luz natural|silêncio e a luz natural|muda seu ritmo|rotina da sua familia|rotina de sua familia|estilo de vida que busca|o que mais te chama atencao|o que mais te chama atenção)\b[^?]*\?\s*$/i.test(
+          replyText
+        );
+
+      const evoraFinalQuestionMatch = replyText.match(/([^?\n]*\?)\s*$/);
+      const evoraFinalQuestionNorm = normText(evoraFinalQuestionMatch?.[1] ?? '');
+
+      const evoraFinalQuestionRepeatsAnsweredTopic =
+        (evoraFinalQuestionNorm.includes('segur') && evoraTopicAnsweredForConversion('seguranca')) ||
+        (evoraFinalQuestionNorm.includes('lazer') && evoraTopicAnsweredForConversion('lazer')) ||
+        ((evoraFinalQuestionNorm.includes('localizacao') || evoraFinalQuestionNorm.includes('localização') || evoraFinalQuestionNorm.includes('acesso')) &&
+          evoraTopicAnsweredForConversion('localizacao')) ||
+        ((evoraFinalQuestionNorm.includes('valor') || evoraFinalQuestionNorm.includes('pagamento') || evoraFinalQuestionNorm.includes('parcelamento')) &&
+          evoraTopicAnsweredForConversion('valores')) ||
+        ((evoraFinalQuestionNorm.includes('lote') || evoraFinalQuestionNorm.includes('metragem') || evoraFinalQuestionNorm.includes('tamanho')) &&
+          evoraTopicAnsweredForConversion('lotes'));
+
+      if (/\b(120x\s+sem\s+juros|ate\s+120x\s+sem\s+juros|até\s+120x\s+sem\s+juros)\b/i.test(replyText)) {
+        replyText = replyText
+          .replace(/\bate\s+120x\s+sem\s+juros\b/gi, 'planos estendidos em até 120x com juros')
+          .replace(/\baté\s+120x\s+sem\s+juros\b/gi, 'planos estendidos em até 120x com juros')
+          .replace(/\b120x\s+sem\s+juros\b/gi, '120x com juros');
+
+        console.log('[ANA_EVORA_PAYMENT_TERMS_OUTPUT_CORRECTED]', {
+          conversationId,
+          reason: '120x_sem_juros_not_allowed',
+          userMessagePreview: trimmed.slice(0, 180),
+          replyPreview: replyText.slice(0, 240),
+        });
+      }
+
+      if (evoraStrongPurchaseIntent || evoraNextStepIntent) {
+        replyText =
+          'Perfeito. O próximo passo é falar com o corretor responsável para confirmar disponibilidade, unidade e condição atual, ou agendar uma visita para você conhecer o Évora de perto.\n\nVocê prefere que eu te encaminhe para o corretor ou quer agendar uma visita?';
+
+        console.log('[ANA_EVORA_CONVERSION_NEXT_STEP_GUARD]', {
+          conversationId,
+          reason: evoraStrongPurchaseIntent ? 'strong_purchase_intent' : 'next_step_intent',
+          userMessagePreview: trimmed.slice(0, 180),
+        });
+      } else if (evoraDoubtIntent) {
+        replyText =
+          'Claro. Pode me mandar sua dúvida por aqui. Se for algo de disponibilidade, unidade, simulação ou condição específica, o corretor responsável te passa tudo certinho.\n\nVocê quer me dizer sua dúvida agora ou prefere que eu te encaminhe para o corretor?';
+
+        console.log('[ANA_EVORA_DOUBT_TO_BROKER_OR_VISIT_GUARD]', {
+          conversationId,
+          userMessagePreview: trimmed.slice(0, 180),
+        });
+      } else if (evoraRepeatsPurposeQuestion || evoraLifestyleClosingQuestion || evoraFinalQuestionRepeatsAnsweredTopic) {
+        const nextQuestion = evoraPickConcreteNextQuestion();
+        replyText = evoraReplaceOrAppendFinalQuestion(replyText, nextQuestion);
+
+        console.log('[ANA_EVORA_CONCRETE_NEXT_TOPIC_GUARD]', {
+          conversationId,
+          repeatsPurposeQuestion: evoraRepeatsPurposeQuestion,
+          lifestyleClosingQuestion: evoraLifestyleClosingQuestion,
+          repeatsAnsweredTopic: evoraFinalQuestionRepeatsAnsweredTopic,
+          nextQuestion,
+          userMessagePreview: trimmed.slice(0, 180),
+          replyPreview: replyText.slice(0, 240),
+        });
+      }
+    }
+
     const greetingStyled = applyFirstUsefulGreetingStyle({
       text: replyText,
       isFirstAnaReply,
