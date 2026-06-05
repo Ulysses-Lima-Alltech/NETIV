@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg';
+import { notifyAndPersistBrokerPendingAttendance } from './brokerNotificationService.js';
 import { getPool } from '../db/pg.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
 
@@ -432,6 +433,16 @@ export async function assignConversationToNextBroker(args: {
     }
 
     await client.query('COMMIT');
+    if (assignedBrokerId != null) {
+      void notifyAndPersistBrokerPendingAttendance({
+        conversationId,
+        brokerId: assignedBrokerId,
+        brokerPhone: assignedBrokerPhone ?? '',
+        brokerName: assignedBrokerName ?? 'Corretor',
+        clientName: customerNameOrPhone,
+        enterpriseName: conversation.enterprise_name ?? 'Empreendimento',
+      });
+    }
 
     return {
       conversationId,
