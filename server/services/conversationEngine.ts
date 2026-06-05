@@ -7589,12 +7589,51 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         conversationId,
         stage: 'commercial_rule_messages_initial',
       });
-      if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessagesToSend.length === 0) {
+            let evoraCommercialRegionOverrideApplied = false;
+
+if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessagesToSend.length === 0) {
         commercialMessagesToSend.push(buildEvoraLocationOverview({
           addressComplete: authorizedLocationAddress.addressComplete,
           addressNumber: authorizedLocationAddress.addressNumber,
         }));
       }
+      if (isEvoraEnterpriseName(ent?.name ?? null) && commercialMessagesToSend.length > 0) {
+        const evoraCommercialCurrentUserNorm = normText(trimmed);
+        const evoraCommercialExplicitRegionRequest =
+          /\b(regiao|região|bairro|pedreira|rio abaixo|atibaia|entorno|cidade|redondeza|redondezas)\b/i.test(evoraCommercialCurrentUserNorm) &&
+          /\b(me fala|me fale|fala|fale|conte|conta|explica|explique|mais|como e|como eh|como é|detalhe|detalhes)\b/i.test(
+            evoraCommercialCurrentUserNorm
+          );
+
+        const evoraCommercialRuleConflictsWithExplicitRegion =
+          effectiveCommercialRule.ruleId === 'quantidade_lotes_info_gap' ||
+          effectiveCommercialRule.ruleId === 'metragem_faixa' ||
+          effectiveCommercialRule.ruleId === 'metragem_especifica' ||
+          effectiveCommercialRule.ruleId === 'preco_valor_lote' ||
+          effectiveCommercialRule.ruleId === 'parcela_simulacao' ||
+          effectiveCommercialRule.ruleId === 'formas_pagamento' ||
+          effectiveCommercialRule.ruleId === 'areas_lazer' ||
+          effectiveCommercialRule.ruleId === 'seguranca_portaria';
+
+        if (evoraCommercialExplicitRegionRequest && evoraCommercialRuleConflictsWithExplicitRegion) {
+          commercialMessagesToSend.length = 0;
+          commercialMessagesToSend.push(
+            'Claro. A região da Pedreira/Rio Abaixo, em Atibaia, tem um perfil mais tranquilo, com bastante verde e contato com a natureza. O acesso é pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, então a proposta é ter um clima mais reservado sem ficar isolado.'
+          );
+          commercialMessagesToSend.push(
+            'Quer que eu te explique melhor o acesso pela Dom Pedro I ou prefere falar de valores/formas de pagamento?'
+          );
+          evoraCommercialRegionOverrideApplied = true;
+
+          console.log('[ANA_EVORA_EXPLICIT_REGION_OVERRIDE_COMMERCIAL_RULE]', {
+            conversationId,
+            previousRuleId: effectiveCommercialRule.ruleId,
+            userMessagePreview: trimmed.slice(0, 180),
+            lastAssistantPreview: (lastAssistantPlain ?? '').slice(0, 220),
+          });
+        }
+      }
+
       if (effectiveCommercialRule.ruleId === 'entrega_empreendimento') {
         const operational = resolveOperationalFactAnswer(trimmed, knowledgeText, vars, {
           enterpriseName: ent?.name ?? null,
@@ -7708,7 +7747,11 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         }
       }
 
-      if (isEvoraEnterpriseName(ent?.name ?? null) && commercialMessagesToSend.length > 0) {
+      if (
+        isEvoraEnterpriseName(ent?.name ?? null) &&
+        commercialMessagesToSend.length > 0 &&
+        !evoraCommercialRegionOverrideApplied
+      ) {
         const currentSafeTopic =
           effectiveCommercialRule.ruleId === 'areas_lazer'
             ? 'lazer'

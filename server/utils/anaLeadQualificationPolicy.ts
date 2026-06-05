@@ -123,7 +123,7 @@ function inferPurpose(n: string): LeadQualificationPurpose | null {
   if (/\b(morar|moradia|minha casa|familia|familia|filhos?)\b/.test(n)) return /\bfamilia|filhos?\b/.test(n) ? 'familia' : 'moradia';
   if (/\b(investir|investimento|valoriza|renda)\b/.test(n)) return 'investimento';
   if (/\b(construir|construcao|obra|fazer uma casa)\b/.test(n)) return 'construcao';
-  if (/\b(pesquisando|conhecendo|olhando|comparando|ainda nao sei|ainda n sei)\b/.test(n)) return 'pesquisa';
+  if (/\b(pesquisando|conhecendo|olhando|comparando|ainda nao sei|ainda n sei|to pensando|tô pensando|estou pensando|pensando ainda|avaliando ainda|em duvida|em dúvida)\b/.test(n)) return 'pesquisa';
   return null;
 }
 
@@ -472,7 +472,7 @@ export function buildEvoraLeadQualificationProgressReply(args: {
     if (current.purpose === 'construcao') {
       return 'Perfeito. Para construir, o Évora conversa bem com quem quer mais espaço, segurança e liberdade para planejar uma casa em loteamento fechado.';
     }
-    return 'Perfeito. Então vou te orientar de um jeito simples para você entender se o Évora combina com o seu momento.';
+    return 'Sem problema. Você pode conhecer com calma. Para entender se o Évora combina com seu momento, faz sentido olhar localização, lazer, segurança, tamanhos dos lotes e formas de pagamento.';
   }
 
   if (!previous.productFit && current.productFit === 'loteamento') {
