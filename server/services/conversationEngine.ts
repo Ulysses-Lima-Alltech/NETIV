@@ -11096,7 +11096,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       // EMERGENCIAL: bypass do bloqueio final para não travar resposta da Ana em produção.
     }
     replyText = finalOutboundEval.text;
-    console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
+    
+    const evoraExplicitRegionDeepDiveThisTurn =
+      isEvoraEnterpriseName(ent?.name ?? null) &&
+      /\b(regiao|regi\u00e3o|bairro|pedreira|rio abaixo|atibaia|entorno|cidade)\b/i.test(normText(trimmed)) &&
+      /\b(fala|fale|conte|conta|explica|explique|mais|como e|como eh|detalhe|detalhes)\b/i.test(normText(trimmed));
+
+console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
       conversationId,
       accepted: true,
       rejectedReason: null,
@@ -11105,7 +11111,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       finalReplyPreview: replyText.slice(0, 260),
     });
     anaTurnAuditGuardsApplied.outboundReason = finalOutboundEval.reason;
-    if (isGenericInterestFollowup(trimmed) && !isRegionDeepDiveResolved) {
+    if (isGenericInterestFollowup(trimmed) && !isRegionDeepDiveResolved && !evoraExplicitRegionDeepDiveThisTurn) {
       if (lastAxisForRepetition === 'lazer') {
         replyText = buildCanonicalLazerFullReply();
       } else if (lastAxisForRepetition === 'localizacao') {
@@ -11124,7 +11130,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         requestedFollowup: trimmed.slice(0, 120),
         lastAxis: lastAxisForRepetition,
       });
-    } else if (isGenericInterestFollowup(trimmed) && isRegionDeepDiveResolved) {
+    } else if (isGenericInterestFollowup(trimmed) && (isRegionDeepDiveResolved || evoraExplicitRegionDeepDiveThisTurn)) {
       console.log('[ANA_LOCATION_CANONICAL_BLOCKED_BY_REGION_DEEP_DIVE]', {
         conversationId,
         requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
@@ -11272,6 +11278,64 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (postPolicyEval.valid) {
         replyText = postPolicyEval.text;
         anaTurnAuditGuardsApplied.outboundReason = postPolicyEval.reason;
+      }
+    }
+
+    if (evoraExplicitRegionDeepDiveThisTurn) {
+      const evoraRegionTextHasLocationSignal = (text: string): boolean =>
+        /\b(regiao|regi\u00e3o|pedreira|rio abaixo|atibaia|dom pedro|natureza|gastronomia|bragantina|lucas nogueira|cidade|bairro|acesso|tranquila|verde)\b/i.test(
+          normText(text || '')
+        );
+
+      const evoraReplyLooksLikeLeisureAxis = (text: string): boolean =>
+        /^\s*(sobre\s+lazer|o\s+lazer|lazer\b)/i.test(normText(text || '')) ||
+        /\b(piscina|playground|beach tennis|academia|campo society|quadra|salao de festas|sal\u00e3o de festas|coworking|fireplace)\b/i.test(
+          normText(text || '')
+        );
+
+      const currentReplyWrongForRegion =
+        evoraReplyLooksLikeLeisureAxis(replyText) ||
+        !evoraRegionTextHasLocationSignal(replyText);
+
+      if (currentReplyWrongForRegion) {
+        const preservedRegionCandidate = [
+          finalAxisGuardText,
+          finalEvidenceGuard.text,
+          finalTextGuard,
+          replyBody,
+          structured?.reply ?? '',
+        ]
+          .map((candidate) => String(candidate || '').trim())
+          .find((candidate) =>
+            candidate.length > 0 &&
+            evoraRegionTextHasLocationSignal(candidate) &&
+            !evoraReplyLooksLikeLeisureAxis(candidate)
+          );
+
+        if (preservedRegionCandidate) {
+          replyText = preservedRegionCandidate;
+        } else {
+          replyText = buildEvoraRegionCanonicalReply();
+        }
+
+        console.log('[ANA_EVORA_REGION_DEEP_DIVE_FINAL_REPLY_PRESERVED]', {
+          conversationId,
+          requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+          commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition ?? requestedAxisForPolicy ?? null,
+          userMessagePreview: trimmed.slice(0, 180),
+          finalReplyPreview: replyText.slice(0, 240),
+        });
+      }
+
+      if (!/\?\s*$/.test(replyText.trim())) {
+        replyText = `${replyText.trim()}\n\nQuer que eu te explique também sobre segurança ou os tamanhos dos lotes?`;
+
+        console.log('[ANA_EVORA_FINAL_QUESTION_APPENDED_ONLY]', {
+          conversationId,
+          requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
+          commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition ?? requestedAxisForPolicy ?? null,
+          mode: 'append_only_no_rewrite',
+        });
       }
     }
 
