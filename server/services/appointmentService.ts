@@ -262,7 +262,11 @@ export async function assignAppointment(data: {
   }
   if (data.conversationId != null && brokerId != null && brokerId > 0) {
     await query(
-      `UPDATE conversations SET assigned_broker_id = COALESCE(assigned_broker_id, $1), updated_at = NOW() WHERE id = $2`,
+      `UPDATE conversations
+       SET assigned_broker_id = COALESCE(assigned_broker_id, $1),
+           assigned_broker_at = CASE WHEN assigned_broker_id IS NULL THEN NOW() ELSE assigned_broker_at END,
+           updated_at = NOW()
+       WHERE id = $2`,
       [brokerId, data.conversationId]
     );
   }

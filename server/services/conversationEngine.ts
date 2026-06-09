@@ -21,7 +21,10 @@ import {
 } from '../repositories/conversationRepository.js';
 import { publishConversationUpdated } from '../realtime/realtimePublisher.js';
 import { assignConversationToNextBroker } from './brokerAssignmentService.js';
-import { sendBrokerPendingAttendanceTemplate } from './brokerWhatsappNotificationService.js';
+import {
+  sendBrokerAppointmentConfirmedTemplate,
+  sendBrokerPendingAttendanceTemplate,
+} from './brokerWhatsappNotificationService.js';
 import { sendBrokerPendingAttendancePush } from './brokerPushNotificationService.js';
 import {
   sendAnaLocalMediaToWhatsAppWithQuota as sendLocalMediaToWhatsApp,
@@ -58,6 +61,7 @@ import {
   type FileCategory,
   type EnterpriseRow,
 } from '../repositories/enterpriseRepository.js';
+import { getCorretorById } from '../repositories/corretorRepository.js';
 import { loadRankedKnowledgeChunksForPromptWithMeta } from '../repositories/enterpriseKnowledgeChunkRepository.js';
 import { isPipelineStale } from './conversationPipelineToken.js';
 import {
@@ -3481,6 +3485,93 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     }
     await publishConversationUpdated(conversationId);
   };
+  const resolveCustomerNameOrPhoneForBrokerTemplate = (
+    conversation: Awaited<ReturnType<typeof getConversationById>> | null
+  ): string => {
+    const customerName = String(conversation?.customer_name ?? '').trim();
+    if (customerName) return customerName;
+    const phone = String(conversation?.contact_phone ?? conversation?.external_contact_id ?? '').trim();
+    return phone || 'Cliente';
+  };
+  const notifyBrokerAppointmentConfirmedAfterAnaSend = async (
+    appointmentRegistration: Awaited<ReturnType<typeof registerAnaAppointmentIfConfirmed>> | null,
+    enterpriseNameFallback: string | null
+  ): Promise<void> => {
+    if (
+      !appointmentRegistration?.persisted ||
+      appointmentRegistration.appointmentId == null
+    ) {
+      return;
+    }
+
+    try {
+      const appointmentId = appointmentRegistration.appointmentId;
+      let convForNotification = await getConversationById(conversationId);
+      let assignedBrokerId =
+        convForNotification?.assigned_broker_id ?? appointmentRegistration.brokerId ?? null;
+      let brokerName: string | null = null;
+      let brokerPhone: string | null = null;
+      let customerNameOrPhone = resolveCustomerNameOrPhoneForBrokerTemplate(convForNotification);
+      let enterpriseNameForNotification =
+        String(enterpriseNameFallback ?? '').trim() || 'empreendimento';
+
+      if (assignedBrokerId == null) {
+        const appointmentAssignment = await assignConversationToNextBroker({
+          conversationId,
+          reason: 'appointment_confirmed',
+        });
+        if (appointmentAssignment) {
+          assignedBrokerId = appointmentAssignment.assignedBrokerId;
+          brokerName = appointmentAssignment.assignedBrokerName;
+          brokerPhone = appointmentAssignment.assignedBrokerPhone;
+          customerNameOrPhone = appointmentAssignment.customerNameOrPhone;
+          enterpriseNameForNotification =
+            appointmentAssignment.enterpriseName ?? enterpriseNameForNotification;
+          if (assignedBrokerId != null) {
+            await query(
+              `UPDATE appointments
+               SET broker_id = COALESCE(broker_id, $2),
+                   status = CASE
+                     WHEN broker_id IS NULL AND status = 'PENDENTE_DISTRIBUICAO' THEN 'CONFIRMADO'
+                     ELSE status
+                   END,
+                   updated_at = NOW()
+               WHERE id = $1`,
+              [appointmentId, assignedBrokerId]
+            );
+          }
+          convForNotification = await getConversationById(conversationId);
+        }
+      }
+
+      if (assignedBrokerId != null && brokerPhone == null) {
+        const broker = await getCorretorById(assignedBrokerId);
+        brokerName = broker?.full_name ?? brokerName;
+        brokerPhone = broker?.phone ?? brokerPhone;
+      }
+
+      await sendBrokerAppointmentConfirmedTemplate({
+        brokerPhone,
+        brokerName,
+        customerNameOrPhone,
+        enterpriseName: enterpriseNameForNotification,
+        appointmentDateTimeText:
+          appointmentRegistration.appointmentDateTimeText ?? 'data/hora da visita',
+        conversationId,
+        appointmentId,
+      });
+
+      if (convForNotification?.assigned_broker_id !== assignedBrokerId) {
+        await publishConversationUpdated(conversationId);
+      }
+    } catch (error) {
+      console.error('[BROKER_APPOINTMENT_CONFIRMED_TEMPLATE_FAILED]', {
+        conversationId,
+        appointmentId: appointmentRegistration.appointmentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
   try {
     console.log('[ANA_PIPELINE] engine_start', {
       conversationId,
@@ -6028,11 +6119,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         });
       }
 
+      let directVisitAppointmentRegistration: Awaited<ReturnType<typeof registerAnaAppointmentIfConfirmed>> | null = null;
       if (directVisitSchedulingDecision.appointmentConfirmed) {
         if (ent) {
           try {
             const convForApptRegister = await getConversationById(conversationId);
-            await registerAnaAppointmentIfConfirmed({
+            directVisitAppointmentRegistration = await registerAnaAppointmentIfConfirmed({
               conversationId,
               customerName: (convForApptRegister?.customer_name || trustedCustomerName || '').trim(),
               customerPhone: (convForApptRegister?.contact_phone || convForApptRegister?.external_contact_id || '').replace(/\D/g, ''),
@@ -6366,6 +6458,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         outboundMetaMessageId:
           sendVisitResult.metaMessageIds[sendVisitResult.metaMessageIds.length - 1] ?? null,
       });
+      await notifyBrokerAppointmentConfirmedAfterAnaSend(
+        directVisitAppointmentRegistration,
+        ent?.name ?? null
+      );
       return;
     }
 
@@ -10277,6 +10373,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
 
     let replyBody = structured.reply;
     const convForApptRegister = await getConversationById(conversationId);
+    let structuredAppointmentRegistration: Awaited<ReturnType<typeof registerAnaAppointmentIfConfirmed>> | null = null;
     if (ent && structured.appointment_confirmed) {
       try {
         const apptRes = await registerAnaAppointmentIfConfirmed({
@@ -10293,6 +10390,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
           userUtteranceText: fullUserUtterances.trim() || trimmed,
           referenceNow: lastUserMessageAt,
         });
+        structuredAppointmentRegistration = apptRes;
         if (apptRes.persisted && apptRes.canonicalLine) {
           replyBody = appendCanonicalToReply(structured.reply, apptRes.canonicalLine);
         }
@@ -12770,6 +12868,10 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
         outboundStatus: anaTurnAuditOutcome,
         fallbackUsed: anaTurnDiagnostics.fallbackUsed,
       });
+      await notifyBrokerAppointmentConfirmedAfterAnaSend(
+        structuredAppointmentRegistration,
+        ent?.name ?? null
+      );
     } else {
       if (isKnowledgeGapTurn) {
         console.error('[ANA_KNOWLEDGE_GAP_SEND_FAILED]', {

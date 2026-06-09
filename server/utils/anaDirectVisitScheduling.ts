@@ -271,6 +271,9 @@ export function isVisitSchedulingSlotAnswer(input: VisitSchedulingSlotAnswerInpu
   const referenceNow = input.referenceNow ?? new Date();
   if (isExplicitVisitSchedulingAcceptance(userMessage)) return true;
   if (isVisitSchedulingConfirmationMessage(userMessage)) return true;
+  if (assistantAskedVisitConfirmation(input.lastAssistantMessage) && isVisitConfirmationShortAckInContext(userMessage)) {
+    return true;
+  }
   const lastAssistantForSlot = norm(input.lastAssistantMessage || '');
   const assistantAskedVisitSlotContext =
     /\b(para qual dia|qual dia|dia e horario|dia e horário|qual horario|qual horário|horario fica melhor|horário fica melhor|posso confirmar sua visita)\b/.test(
@@ -305,6 +308,23 @@ export function isVisitSchedulingSlotAnswer(input: VisitSchedulingSlotAnswerInpu
     return extractVisitNameFromUserMessage(userMessage) != null;
   }
   return false;
+}
+
+function isVisitConfirmationCorrectionMessage(text: string): boolean {
+  const n = norm(text).replace(/[.,;:!?]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!n) return false;
+
+  return /^(ja falei que pode|já falei que pode|ja falei pode|já falei pode|ja disse que pode|já disse que pode|ja confirmei|já confirmei|ja falei que sim|já falei que sim|eu ja falei que pode|eu já falei que pode)$/.test(n);
+}
+
+function isVisitConfirmationShortAckInContext(text: string): boolean {
+  const n = norm(text).replace(/[.,;:!?]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!n) return false;
+
+  return (
+    /^(pode|pode sim|sim pode|sim pode sim|claro que pode|pode confirmar|pode confirmar sim)$/.test(n) ||
+    isVisitConfirmationCorrectionMessage(text)
+  );
 }
 
 export function isVisitSchedulingConfirmationMessage(text: string): boolean {
@@ -350,6 +370,8 @@ export function isVisitSchedulingTopicSwitchMessage(text: string): boolean {
 
 export function isVisitSchedulingRefusalMessage(text: string): boolean {
   const n = norm(text);
+  if (isVisitConfirmationCorrectionMessage(text)) return false;
+
   return /\b(nao quero agendar|nao quero visita|nao quero marcar|nao quero horario|nao quero isso|so quero detalhes|quero detalhes|me passa os detalhes|quero saber dos lotes|quero lote plano|lotes planos|ja falei)\b/.test(n);
 }
 
@@ -452,7 +474,7 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
   const visitConfirmationMessage = isVisitSchedulingConfirmationMessage(input.userMessage);
   const hasVisitOfferContext = isAssistantVisitOfferContextMessage(input.lastAssistantMessage);
   const assistantAskedConfirmation = assistantAskedVisitConfirmation(input.lastAssistantMessage);
-  if (ackOnlyMessage && assistantAskedConfirmation) return true;
+  if ((ackOnlyMessage || isVisitConfirmationShortAckInContext(input.userMessage)) && assistantAskedConfirmation) return true;
   const confirmationContextKind = input.confirmationContextKind ?? null;
   const shortConfirmationSuppressesVisit =
     ackOnlyMessage &&
@@ -777,7 +799,9 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
   const effectivePeriod = period ?? (shouldClearStalePendingPeriod ? null : pendingPeriod);
   const effectiveName = explicitNameFromMessage || pendingCustomerName || knownNameFromContext(input);
   const userAckOnly = isVisitSchedulingAckOnlyMessage(input.userMessage);
-  const userVisitConfirmation = isVisitSchedulingConfirmationMessage(input.userMessage);
+  const userVisitConfirmation =
+    isVisitSchedulingConfirmationMessage(input.userMessage) ||
+    (assistantAskedVisitConfirmation(input.lastAssistantMessage) && isVisitConfirmationShortAckInContext(input.userMessage));
   const userConfusion = isEmpatheticConfusionMessage(input.userMessage);
   const visitLotPreference = extractVisitLotPreference(input.userMessage);
   const shouldCaptureVisitLotPreference =

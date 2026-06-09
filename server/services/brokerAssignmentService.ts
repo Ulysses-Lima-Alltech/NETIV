@@ -43,6 +43,13 @@ const ALLOWED_ASSIGNMENT_REASONS = new Set([
   'explicit_broker_request',
   'pending_resolution_broker_choice',
   'manual_classification_handoff',
+  'appointment_confirmed',
+]);
+
+const PENDING_ATTENDANCE_TEMPLATE_SENT_BY_CALLER_REASONS = new Set([
+  'explicit_broker_request',
+  'pending_resolution_broker_choice',
+  'appointment_confirmed',
 ]);
 
 function normalizeReason(input: string | null | undefined): string {
@@ -433,7 +440,10 @@ export async function assignConversationToNextBroker(args: {
     }
 
     await client.query('COMMIT');
-    if (assignedBrokerId != null) {
+    if (
+      assignedBrokerId != null &&
+      !PENDING_ATTENDANCE_TEMPLATE_SENT_BY_CALLER_REASONS.has(requestedReason)
+    ) {
       void notifyAndPersistBrokerPendingAttendance({
         conversationId,
         brokerId: assignedBrokerId,

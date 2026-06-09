@@ -7,14 +7,22 @@ import {
 import { getConversationById, scheduleDeferredHandoffAfterAppointment } from '../repositories/conversationRepository.js';
 import { findContactById } from '../repositories/contactsRepository.js';
 import { assignAppointment } from './appointmentService.js';
-import { formatAppointmentCanonicalPtBr, parseAppointmentStartEndInSaoPaulo } from '../utils/appointmentDateNormalize.js';
+import {
+  APPOINTMENT_BUSINESS_TZ,
+  formatAppointmentCanonicalPtBr,
+  parseAppointmentStartEndInSaoPaulo,
+} from '../utils/appointmentDateNormalize.js';
 import { resolveAppointmentDateTimeFromContext } from '../utils/appointmentRelativeDateResolve.js';
 import { hasHumanResolvedName, resolveOperationalCustomerNameParts } from '../utils/customerNameResolver.js';
 
 async function persistBrokerOnConversationIfUnset(conversationId: number, brokerId: number | null | undefined): Promise<void> {
   if (brokerId == null || brokerId <= 0) return;
   await query(
-    `UPDATE conversations SET assigned_broker_id = COALESCE(assigned_broker_id, $1), updated_at = NOW() WHERE id = $2`,
+    `UPDATE conversations
+     SET assigned_broker_id = COALESCE(assigned_broker_id, $1),
+         assigned_broker_at = CASE WHEN assigned_broker_id IS NULL THEN NOW() ELSE assigned_broker_at END,
+         updated_at = NOW()
+     WHERE id = $2`,
     [brokerId, conversationId]
   );
 }
@@ -36,6 +44,52 @@ export interface RegisterAnaAppointmentResult {
   persisted: boolean;
   /** Linha alinhada ao horário salvo no banco (America/Sao_Paulo). */
   canonicalLine?: string;
+  appointmentId?: number;
+  brokerId?: number | null;
+  appointmentDateTimeText?: string;
+}
+
+function formatBrokerVisitTimeLabel(hour: string, minute: string): string {
+  const h = Number.parseInt(hour, 10);
+  const mm = String(minute ?? '').padStart(2, '0').slice(0, 2);
+  if (!Number.isFinite(h)) return `${hour}:${mm}`;
+  return mm === '00' ? `${h}h` : `${h}h${mm}`;
+}
+
+function weekdayForBrokerTemplate(startAt: Date): string {
+  const weekday = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: APPOINTMENT_BUSINESS_TZ,
+    weekday: 'long',
+  }).format(startAt);
+  return weekday.replace(/-feira$/i, '').toLowerCase();
+}
+
+export function formatAppointmentDateTimeForBrokerNotification(
+  startAt: Date | null | undefined,
+  fallbackDateYmd?: string | null,
+  fallbackTimeHm?: string | null
+): string {
+  if (startAt instanceof Date && !Number.isNaN(startAt.getTime())) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: APPOINTMENT_BUSINESS_TZ,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(startAt);
+    const hour = parts.find((part) => part.type === 'hour')?.value ?? '00';
+    const minute = parts.find((part) => part.type === 'minute')?.value ?? '00';
+    return `${weekdayForBrokerTemplate(startAt)} às ${formatBrokerVisitTimeLabel(hour, minute)}`;
+  }
+
+  const date = String(fallbackDateYmd ?? '').trim();
+  const time = String(fallbackTimeHm ?? '').trim();
+  if (date && /^\d{1,2}:\d{2}$/.test(time)) {
+    const [hour, minute] = time.split(':');
+    return `${date} às ${formatBrokerVisitTimeLabel(hour, minute)}`;
+  }
+  if (date) return date;
+  if (time) return time;
+  return 'data/hora da visita';
 }
 
 /**
@@ -83,6 +137,11 @@ export async function registerAnaAppointmentIfConfirmed(args: {
   if (!parsed) return { persisted: false };
 
   const canonicalLine = `Registrado no sistema: ${formatAppointmentCanonicalPtBr(parsed.startAt)}.`;
+  const appointmentDateTimeText = formatAppointmentDateTimeForBrokerNotification(
+    parsed.startAt,
+    resolved.dateYmd,
+    resolved.timeHm
+  );
   const conv = await getConversationById(args.conversationId);
   const contact = conv?.contact_id != null ? await findContactById(conv.contact_id) : null;
   const resolvedCustomerName = resolveOperationalCustomerNameParts({
@@ -127,7 +186,13 @@ export async function registerAnaAppointmentIfConfirmed(args: {
       await persistBrokerOnConversationIfUnset(args.conversationId, conversationBroker);
       const finalBroker = conversationBroker ?? existing.broker_id ?? null;
       await scheduleDeferredHandoffAfterAppointment(args.conversationId, finalBroker);
-      return { persisted: true, canonicalLine };
+      return {
+        persisted: true,
+        canonicalLine,
+        appointmentId: updated.id,
+        brokerId: finalBroker,
+        appointmentDateTimeText,
+      };
     }
     return { persisted: false };
   }
@@ -165,7 +230,13 @@ export async function registerAnaAppointmentIfConfirmed(args: {
     });
     const finalBroker = conversationBroker ?? result.appointment.brokerId ?? null;
     await scheduleDeferredHandoffAfterAppointment(args.conversationId, finalBroker);
-    return { persisted: true, canonicalLine };
+    return {
+      persisted: true,
+      canonicalLine,
+      appointmentId: result.appointment.id,
+      brokerId: finalBroker,
+      appointmentDateTimeText,
+    };
   } catch (e) {
     console.error('[ANA APPT] falha ao registrar', e instanceof Error ? e.message : e);
     return { persisted: false };

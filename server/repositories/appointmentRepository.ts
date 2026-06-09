@@ -16,6 +16,10 @@ export interface AppointmentRow {
   source: string;
   notes: string;
   conversation_id?: number | null;
+  appointment_broker_notified_at?: Date | null;
+  appointment_broker_notification_status?: string | null;
+  appointment_broker_notification_error?: string | null;
+  appointment_broker_notification_template?: string | null;
   created_at: Date;
   updated_at: Date;
 }
