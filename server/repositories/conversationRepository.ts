@@ -9,6 +9,10 @@ import { resolveEnterpriseFromLeadSource } from '../services/leadOriginResolver.
 import { parseCommercialFlowState, type CommercialFlowState } from '../utils/commercialFlowState.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
 import {
+  cancelActiveAnaVisitFollowupJobs,
+  withAnaVisitFollowupConversationLock,
+} from './anaVisitFollowupJobRepository.js';
+import {
   assignContactToConversation,
   findContactById,
   findOrCreateContactByPhone,
@@ -380,6 +384,8 @@ async function hardResetConversationForDelete(
 
   deletedRows.information_gap_tickets =
     (await client.query(`DELETE FROM information_gap_tickets WHERE conversation_id = $1`, [conversationId])).rowCount ?? 0;
+  deletedRows.ana_visit_followup_jobs =
+    (await client.query(`DELETE FROM ana_visit_followup_jobs WHERE conversation_id = $1`, [conversationId])).rowCount ?? 0;
   deletedRows.ana_turn_audit =
     (await client.query(`DELETE FROM ana_turn_audit WHERE conversation_id = $1`, [conversationId])).rowCount ?? 0;
   deletedRows.conversation_state =
@@ -1040,6 +1046,10 @@ export async function updateClassification(
         enterprise: manualEnterpriseOverrideRequested,
       });
       if (handoff) {
+        await cancelActiveAnaVisitFollowupJobs({
+          conversationId,
+          reason: 'handoff',
+        });
         const contact = row.contact_id != null ? await findContactById(row.contact_id) : null;
         notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row, {
           whatsappDisplayName: row.whatsapp_display_name ?? null,
@@ -1134,6 +1144,10 @@ export async function updateClassification(
       enterprise: manualEnterpriseOverrideRequested,
     });
     if (handoff) {
+      await cancelActiveAnaVisitFollowupJobs({
+        conversationId,
+        reason: 'handoff',
+      });
       const contact = row.contact_id != null ? await findContactById(row.contact_id) : null;
       notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row, {
         whatsappDisplayName: row.whatsapp_display_name ?? null,
@@ -1288,10 +1302,18 @@ export async function updateConversationType(
   conversationId: number,
   type: 'CLIENT' | 'CORRETOR' | 'ADMIN' | string
 ): Promise<void> {
-  await query(
-    `UPDATE conversations SET conversation_type = $1, updated_at = NOW() WHERE id = $2`,
-    [type, conversationId]
-  );
+  await withAnaVisitFollowupConversationLock(conversationId, async () => {
+    await query(
+      `UPDATE conversations SET conversation_type = $1, updated_at = NOW() WHERE id = $2`,
+      [type, conversationId]
+    );
+    if (String(type ?? 'CLIENT').toUpperCase() !== 'CLIENT') {
+      await cancelActiveAnaVisitFollowupJobs({
+        conversationId,
+        reason: 'non_client_conversation',
+      });
+    }
+  });
 }
 
 export async function applyAnaConversationUpdate(
@@ -1486,6 +1508,10 @@ export async function applyInboundUserMessageResets(conversationId: number): Pro
      WHERE id = $1`,
     [conversationId]
   );
+  await cancelActiveAnaVisitFollowupJobs({
+    conversationId,
+    reason: 'customer_replied',
+  });
 }
 
 export async function setConversationPendingResolutionState(
@@ -1529,17 +1555,26 @@ export async function closeConversationManual(
   reason: string | null
 ): Promise<ConversationRow | null> {
   const reasonTrim = reason != null && reason.trim() ? reason.trim().slice(0, 500) : null;
-  const { rows } = await query<ConversationRow>(
-    `UPDATE conversations SET
-       manual_closed_at = NOW(),
-       manual_closed_by_user_id = $1,
-       manual_closed_reason = $2,
-       updated_at = NOW()
-     WHERE id = $3 AND manual_closed_at IS NULL
-     RETURNING *`,
-    [byUserId, reasonTrim, conversationId]
-  );
-  return rows[0] ?? null;
+  return withAnaVisitFollowupConversationLock(conversationId, async () => {
+    const { rows } = await query<ConversationRow>(
+      `UPDATE conversations SET
+         manual_closed_at = NOW(),
+         manual_closed_by_user_id = $1,
+         manual_closed_reason = $2,
+         updated_at = NOW()
+       WHERE id = $3 AND manual_closed_at IS NULL
+       RETURNING *`,
+      [byUserId, reasonTrim, conversationId]
+    );
+    const row = rows[0] ?? null;
+    if (row) {
+      await cancelActiveAnaVisitFollowupJobs({
+        conversationId,
+        reason: 'manual_closed',
+      });
+    }
+    return row;
+  });
 }
 
 export async function reopenConversationManual(conversationId: number): Promise<ConversationRow | null> {

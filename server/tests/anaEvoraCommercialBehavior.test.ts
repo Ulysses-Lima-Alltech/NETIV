@@ -152,7 +152,7 @@ test('seguranca responde com portaria 24 horas e controle de acesso', () => {
   assert.match(text, /portaria 24 horas/i);
   assert.match(text, /controle de acesso/i);
   assert.match(text, /moradores e visitantes/i);
-  assert.match(text, /pesa bastante na sua decis/i);
+  assert.match(text, /tranquilidade/i);
 });
 
 test('tem seguranca responde dado concreto antes de perguntar prioridade', () => {
@@ -186,6 +186,40 @@ test('tem camera nao confirma camera e oferece corretor', () => {
   assert.match(reply, /nao tenho essa confirmacao liberada com seguranca/i);
   assert.match(reply, /corretor responsavel confirmar esse ponto/i);
   assert.equal(/\b(?:tem|conta com|possui)\s+cameras?\b/i.test(reply), false);
+});
+
+test('pergunta sobre mobiliario apos lazer herda area de lazer e nao inventa', () => {
+  const gap = detectAnaKnowledgeGap({
+    userMessage: 'Vai ser entregue mobiliado?',
+    recentMessages: [
+      { role: 'user', content: 'E o lazer?' },
+      { role: 'assistant', content: 'O lazer tem piscina adulto, academia, salao de festas e playground.' },
+    ],
+  });
+  assert.equal(gap.hasKnowledgeGap, true);
+  assert.equal(gap.matchedIntent, 'leisure_furnishing_equipment');
+  assert.deepEqual(gap.allowedNextActions, ['offer_broker_handoff']);
+
+  const reply = buildLeadQualificationBridgeReply({
+    matchedIntent: gap.matchedIntent,
+  });
+  assert.match(reply, /area de lazer/i);
+  assert.match(reply, /mobiliada ou equipada/i);
+  assert.match(reply, /nao tenho essa informacao confirmada/i);
+  assert.match(reply, /corretor/i);
+  assert.doesNotMatch(reply, /lote sem construcao|lote sem constru/i);
+});
+
+test('correcao me refiro a area de lazer reaproveita detalhe de mobiliario anterior', () => {
+  const gap = detectAnaKnowledgeGap({
+    userMessage: 'Me refiro à área de lazer',
+    recentMessages: [
+      { role: 'user', content: 'Vai ser entregue mobiliado?' },
+      { role: 'assistant', content: 'Os lotes sao terrenos para construir conforme seu projeto.' },
+    ],
+  });
+  assert.equal(gap.hasKnowledgeGap, true);
+  assert.equal(gap.matchedIntent, 'leisure_furnishing_equipment');
 });
 
 test('respostas canonicas nao prometem ponto de referencia ou referencia pela Dom Pedro I', () => {

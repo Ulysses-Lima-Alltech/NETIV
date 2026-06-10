@@ -4,6 +4,10 @@ import { insertMessage } from '../repositories/messageRepository.js';
 import { getConversationById } from '../repositories/conversationRepository.js';
 import { getConversationWhatsAppWindowStatus } from './whatsappWindowService.js';
 import { isMetaWindowClosedError, sendTextMessage } from './whatsappMetaService.js';
+import {
+  cancelActiveAnaVisitFollowupJobs,
+  withAnaVisitFollowupConversationLock,
+} from '../repositories/anaVisitFollowupJobRepository.js';
 
 type MobileConversationStatus = 'ANA' | 'HUMAN';
 type MobileConversationFilterType = 'CLIENT' | 'INTERNO';
@@ -415,24 +419,33 @@ export async function setMobileConversationHandoff(
   const scopedConversation = await findScopedConversationAccess(user, conversationId);
   if (!scopedConversation) return null;
 
-  const updateResult = await query<{ id: number; handoff: boolean; assigned_broker_name: string | null }>(
-    `UPDATE conversations c
-     SET handoff = $1,
-         classification = CASE
-           WHEN $1 = true THEN 'Handoff'
-           WHEN c.classification = 'Handoff' THEN 'Novo'
-           ELSE c.classification
-         END,
-         updated_at = NOW()
-     FROM conversations c2
-     LEFT JOIN corretores br ON br.id = c2.assigned_broker_id
-     WHERE c.id = c2.id
-       AND c.id = $2
-     RETURNING c.id, c.handoff, br.full_name AS assigned_broker_name`,
-    [handoff, conversationId]
-  );
+  const row = await withAnaVisitFollowupConversationLock(conversationId, async () => {
+    const updateResult = await query<{ id: number; handoff: boolean; assigned_broker_name: string | null }>(
+      `UPDATE conversations c
+       SET handoff = $1,
+           classification = CASE
+             WHEN $1 = true THEN 'Handoff'
+             WHEN c.classification = 'Handoff' THEN 'Novo'
+             ELSE c.classification
+           END,
+           updated_at = NOW()
+       FROM conversations c2
+       LEFT JOIN corretores br ON br.id = c2.assigned_broker_id
+       WHERE c.id = c2.id
+         AND c.id = $2
+       RETURNING c.id, c.handoff, br.full_name AS assigned_broker_name`,
+      [handoff, conversationId]
+    );
 
-  const row = updateResult.rows[0];
+    const updated = updateResult.rows[0] ?? null;
+    if (updated?.handoff === true) {
+      await cancelActiveAnaVisitFollowupJobs({
+        conversationId,
+        reason: 'handoff',
+      });
+    }
+    return updated;
+  });
   if (!row) return null;
 
   return {

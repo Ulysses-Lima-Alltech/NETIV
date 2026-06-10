@@ -222,6 +222,10 @@ import {
 } from '../utils/llmRetry.js';
 import { scheduleAnaRetry } from './anaRetrySchedulerService.js';
 import {
+  cancelAnaVisitFollowupForConversation,
+  startAnaVisitFollowupIfEligible,
+} from './anaVisitFollowupService.js';
+import {
   createAnaTurnDiagnostics,
   markAnaTurnStage,
   type AnaTurnDiagnostics,
@@ -1843,21 +1847,24 @@ async function sendAnaOutboundMessages(params: {
 }): Promise<{
   success: boolean;
   metaMessageIds: string[];
+  messageIds: number[];
   sentParts: string[];
   error?: string;
   code?: string | number | null;
 }> {
   const messageParts = splitAnaOutboundMessages(params.text);
   if (messageParts.length === 0) {
-    return { success: false, metaMessageIds: [], sentParts: [], error: 'empty_outbound_parts' };
+    return { success: false, metaMessageIds: [], messageIds: [], sentParts: [], error: 'empty_outbound_parts' };
   }
   const metaMessageIds: string[] = [];
+  const messageIds: number[] = [];
   const sentParts: string[] = [];
   for (const part of messageParts) {
     if (isPipelineStale(params.conversationId, params.replyPipelineToken)) {
       return {
         success: false,
         metaMessageIds,
+        messageIds,
         sentParts,
         error: 'pipeline_stale_before_split_outbound_part',
         code: 'PIPELINE_STALE',
@@ -1873,6 +1880,7 @@ async function sendAnaOutboundMessages(params: {
       return {
         success: false,
         metaMessageIds,
+        messageIds,
         sentParts,
         error: sendResult.error ?? 'send_failed',
         code: sendResult.code ?? null,
@@ -1880,9 +1888,10 @@ async function sendAnaOutboundMessages(params: {
     }
     metaMessageIds.push(sendResult.metaMessageId);
     sentParts.push(part);
-    await insertMessage(params.conversationId, 'assistant', part, sendResult.metaMessageId);
+    const inserted = await insertMessage(params.conversationId, 'assistant', part, sendResult.metaMessageId);
+    messageIds.push(inserted.id);
   }
-  return { success: true, metaMessageIds, sentParts };
+  return { success: true, metaMessageIds, messageIds, sentParts };
 }
 
 function userAskedDirectOperationalAxis(
@@ -3686,6 +3695,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         handoff: effectiveConv.handoff,
         classification: effectiveConv.classification,
       });
+      await cancelAnaVisitFollowupForConversation({
+        conversationId,
+        reason: 'handoff',
+      });
       return;
     }
     console.log('[ANA DEBUG] handoff check passed');
@@ -3702,7 +3715,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           userMessage: trimmed.slice(0, 220),
         });
       } else {
-        const pendingChoice = isExplicitResolutionChoice(trimmed) ?? classifyPendingResolutionChoice(trimmed);
+        const pendingAllowedActions = (() => {
+          const payload = effectiveConv.pending_resolution_payload;
+          if (payload == null || typeof payload !== 'object' || Array.isArray(payload)) return [];
+          const raw = (payload as Record<string, unknown>).allowedNextActions;
+          return Array.isArray(raw) ? raw.map((item) => String(item)) : [];
+        })();
+        const pendingAllowsBroker = pendingAllowedActions.includes('offer_broker_handoff');
+        const pendingAllowsVisit = pendingAllowedActions.includes('offer_visit_scheduling');
+        let pendingChoice = isExplicitResolutionChoice(trimmed) ?? classifyPendingResolutionChoice(trimmed);
+        if (pendingChoice === 'ambiguous') {
+          if (pendingAllowsBroker && !pendingAllowsVisit) pendingChoice = 'broker';
+          else if (pendingAllowsVisit && !pendingAllowsBroker) pendingChoice = 'visit';
+        }
         pendingResolutionChoiceIntent = pendingChoice;
         if (pendingChoice === 'visit') {
           await clearConversationPendingResolutionState(conversationId);
@@ -3790,6 +3815,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
       if (assignment) {
         await verifyAndRepairHandoffAfterBrokerAssignment(assignment);
+        await cancelAnaVisitFollowupForConversation({
+          conversationId,
+          reason: 'handoff',
+        });
         if (assignment.assignedBrokerId != null) {
           const enterpriseNameForNotification = assignment.enterpriseName ?? 'empreendimento';
           await sendBrokerPendingAttendanceTemplate({
@@ -5688,6 +5717,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               });
             } else {
               await verifyAndRepairHandoffAfterBrokerAssignment(assignment);
+              await cancelAnaVisitFollowupForConversation({
+                conversationId,
+                reason: 'handoff',
+              });
 
               if (assignment.assignedBrokerId != null) {
                 const enterpriseNameForNotification =
@@ -6197,6 +6230,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           scheduledVisitStateSnapshot = scheduledState;
           await mergeConversationCommercialFlowState(conversationId, scheduledState);
           flowStateParsed = scheduledState;
+          await cancelAnaVisitFollowupForConversation({
+            conversationId,
+            reason: 'visit_scheduled',
+          });
           console.log('[ANA_VISIT_STATE_SAVED]', {
             conversationId,
             source: 'direct_visit_confirmed',
@@ -6423,6 +6460,20 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         flowStateParsed = committedVisitState.nextState;
       }
       await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+      if (directVisitSchedulingDecision.appointmentConfirmed) {
+        await cancelAnaVisitFollowupForConversation({
+          conversationId,
+          reason: 'visit_scheduled',
+        });
+      } else {
+        await startAnaVisitFollowupIfEligible({
+          conversationId,
+          flowState: flowStateParsed,
+          replyText: deterministicVisitReply,
+          anchorAssistantMessageId: sendVisitResult.messageIds[sendVisitResult.messageIds.length - 1] ?? null,
+          missingSlot: directVisitSchedulingDecision.missingSlot ?? null,
+        });
+      }
       console.log('[ANA_COMMITTED_REPLY_STATE_SAVED]', {
         conversationId,
         savedFields: [
@@ -7141,6 +7192,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const knowledgeGapMeta = detectAnaKnowledgeGap({
       userMessage: trimmed,
       requestedAxis: requestedAxisForPolicy,
+      recentMessages: rows.map((m) => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: m.content,
+      })),
     });
     const isKnowledgeGapTurn = knowledgeGapMeta.hasKnowledgeGap === true;
     const deterministicKnowledgeGapBridgeReply = isKnowledgeGapTurn
@@ -8814,6 +8869,8 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
       systemPromptLen: systemPrompt.length,
     });
     const messages: ChatMessage[] = [];
+    const knowledgeGapRequiresBrokerForPrompt = knowledgeGapMeta.allowedNextActions.includes('offer_broker_handoff');
+    const knowledgeGapRequiresVisitForPrompt = knowledgeGapMeta.allowedNextActions.includes('offer_visit_scheduling');
     const knowledgeGapOperationalContext =
       isKnowledgeGapTurn
         ? [
@@ -8826,13 +8883,15 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
             'Nao pergunte "qual ponto voce quer entender primeiro".',
             'Nao diga valores, quantidades, disponibilidade, tabela, simulacao ou condicoes especificas.',
             'Responda naturalmente como Ana.',
-            'Ofereca explicitamente duas opcoes para o cliente escolher:',
-            '1. encaminhar para o corretor responsavel;',
-            '2. agendar uma visita.',
+            knowledgeGapRequiresBrokerForPrompt && knowledgeGapRequiresVisitForPrompt
+              ? 'Ofereca explicitamente duas opcoes para o cliente escolher:'
+              : 'Ofereca explicitamente a proxima acao segura para o cliente:',
+            knowledgeGapRequiresBrokerForPrompt ? '1. encaminhar para o corretor responsavel;' : null,
+            knowledgeGapRequiresVisitForPrompt ? '2. agendar uma visita.' : null,
             'A resposta deve soar humana, curta e consultiva.',
             `Instrucao adicional: ${knowledgeGapMeta.instructionForModel}`,
             '[/CONTEXTO OPERACIONAL]',
-          ].join('\n')
+          ].filter(Boolean).join('\n')
         : null;
     const pendingResolutionDisambiguationContext = pendingResolutionNeedsDisambiguation
       ? [
@@ -10393,6 +10452,12 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
         structuredAppointmentRegistration = apptRes;
         if (apptRes.persisted && apptRes.canonicalLine) {
           replyBody = appendCanonicalToReply(structured.reply, apptRes.canonicalLine);
+        }
+        if (apptRes.persisted) {
+          await cancelAnaVisitFollowupForConversation({
+            conversationId,
+            reason: 'visit_scheduled',
+          });
         }
       } catch (e) {
         console.error('[ANA APPT]', e);
@@ -12403,7 +12468,10 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
     }
 
     if (isKnowledgeGapTurn) {
-      const knowledgeGapOfferValidation = validateKnowledgeGapResolutionOffer(replyText);
+      const knowledgeGapOfferValidation = validateKnowledgeGapResolutionOffer(
+        replyText,
+        knowledgeGapMeta.allowedNextActions
+      );
       knowledgeGapOfferValidationResult = knowledgeGapOfferValidation;
       if (!knowledgeGapOfferValidation.ok) {
         console.log('[ANA_KNOWLEDGE_GAP_RESPONSE_MISSING_REQUIRED_OPTIONS]', {
@@ -12416,18 +12484,25 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
           conversationId,
           missing: knowledgeGapOfferValidation.missing,
         });
+        const knowledgeGapRequiresBroker = knowledgeGapMeta.allowedNextActions.includes('offer_broker_handoff');
+        const knowledgeGapRequiresVisit = knowledgeGapMeta.allowedNextActions.includes('offer_visit_scheduling');
+        const knowledgeGapRequiredOptionLines = [
+          knowledgeGapRequiresBroker ? '1. encaminhar para o corretor responsavel;' : null,
+          knowledgeGapRequiresVisit ? '2. agendar uma visita;' : null,
+        ].filter(Boolean) as string[];
         const knowledgeGapRetryInstruction = [
           '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
           'A resposta anterior nao cumpriu a regra obrigatoria.',
-          'Ela precisa oferecer explicitamente as DUAS opcoes ao cliente:',
-          '1. encaminhar para o corretor responsavel;',
-          '2. agendar uma visita.',
-          'Nao escolha apenas uma.',
+          knowledgeGapRequiresBroker && knowledgeGapRequiresVisit
+            ? 'Ela precisa oferecer explicitamente as DUAS opcoes ao cliente:'
+            : 'Ela precisa oferecer explicitamente a proxima acao obrigatoria ao cliente:',
+          ...knowledgeGapRequiredOptionLines,
+          knowledgeGapRequiresBroker && knowledgeGapRequiresVisit ? 'Nao escolha apenas uma.' : null,
           'Nao invente dados.',
           'Nao diga valores, quantidades, disponibilidade, tabela, simulacao ou condicoes especificas.',
           'Reescreva a resposta de forma natural, curta e consultiva como Ana.',
           '[/CONTEXTO OPERACIONAL]',
-        ].join('\n');
+        ].filter(Boolean).join('\n');
         const knowledgeGapRetryMessages: ChatMessage[] = [
           { role: 'system', content: knowledgeGapRetryInstruction },
           { role: 'user', content: `Mensagem original do cliente: "${trimmed}"` },
@@ -12435,7 +12510,9 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
           {
             role: 'user',
             content:
-              'Reescreva a resposta mantendo tom humano e consultivo, cumprindo exatamente a regra de oferecer as duas opcoes.',
+              knowledgeGapRequiresBroker && knowledgeGapRequiresVisit
+                ? 'Reescreva a resposta mantendo tom humano e consultivo, cumprindo exatamente a regra de oferecer as duas opcoes.'
+                : 'Reescreva a resposta mantendo tom humano e consultivo, cumprindo exatamente a regra de oferecer o corretor para confirmar.',
           },
         ];
         const knowledgeGapRetryResult = await generateChatCompletion({
@@ -12469,7 +12546,7 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
             enterpriseName: ent?.name ?? null,
             isKnowledgeGapTurn: true,
           }).slice(0, 4000);
-          const retryValidation = validateKnowledgeGapResolutionOffer(replyText);
+          const retryValidation = validateKnowledgeGapResolutionOffer(replyText, knowledgeGapMeta.allowedNextActions);
           knowledgeGapOfferValidationResult = retryValidation;
           if (retryValidation.ok) {
             console.log('[ANA_KNOWLEDGE_GAP_RETRY_ACCEPTED]', {
@@ -12527,7 +12604,10 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
           addressComplete: authorizedLocationAddress.addressComplete,
           addressNumber: authorizedLocationAddress.addressNumber,
         });
-        const safeFallbackValidation = validateKnowledgeGapResolutionOffer(safeKnowledgeGapFallback);
+        const safeFallbackValidation = validateKnowledgeGapResolutionOffer(
+          safeKnowledgeGapFallback,
+          knowledgeGapMeta.allowedNextActions
+        );
         if (safeFallbackValidation.ok) {
           replyText = safeKnowledgeGapFallback;
           knowledgeGapOfferValidationResult = safeFallbackValidation;
@@ -12633,7 +12713,7 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
           recentQuestions: finalQuestionHistory,
         });
         const retryKnowledgeGapValidation = isKnowledgeGapTurn
-          ? validateKnowledgeGapResolutionOffer(retryCandidate)
+          ? validateKnowledgeGapResolutionOffer(retryCandidate, knowledgeGapMeta.allowedNextActions)
           : null;
         const retryHasValidKnowledgeGapOffer = retryKnowledgeGapValidation?.ok ?? true;
         if (
@@ -12823,6 +12903,20 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
         enterpriseId: effectiveConv.enterprise_id,
         flowState: nextFlow,
       };
+      if (structuredAppointmentRegistration?.persisted) {
+        await cancelAnaVisitFollowupForConversation({
+          conversationId,
+          reason: 'visit_scheduled',
+        });
+      } else {
+        await startAnaVisitFollowupIfEligible({
+          conversationId,
+          flowState: nextFlow,
+          replyText,
+          anchorAssistantMessageId: sendResult.messageIds[sendResult.messageIds.length - 1] ?? null,
+          missingSlot: nextFlow.pendingVisitMissingSlot ?? null,
+        });
+      }
       console.log('[ANA_CHAT_AUDIT]', {
         conversationId,
         messageId: inboundMetaMessageId,

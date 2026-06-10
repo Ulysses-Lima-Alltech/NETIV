@@ -12,15 +12,24 @@ export type AnaKnowledgeGapIntent =
   | 'lot_eligibility'
   | 'surveillance_cameras'
   | 'exact_location_link'
+  | 'leisure_furnishing_equipment'
+  | 'specific_furnishing_equipment'
   | 'disponibilidade'
   | 'preco'
   | 'financiamento';
+
+export type AnaKnowledgeGapNextAction = 'offer_broker_handoff' | 'offer_visit_scheduling';
+
+export interface AnaKnowledgeGapRecentMessage {
+  role: 'user' | 'assistant';
+  content: string | null;
+}
 
 export interface AnaKnowledgeGapResult {
   hasKnowledgeGap: boolean;
   reason: string;
   matchedIntent?: AnaKnowledgeGapIntent | string;
-  allowedNextActions: ['offer_broker_handoff', 'offer_visit_scheduling'];
+  allowedNextActions: AnaKnowledgeGapNextAction[];
   instructionForModel: string;
 }
 
@@ -33,8 +42,12 @@ export interface KnowledgeGapResolutionOfferValidation {
 
 const DEFAULT_MODEL_INSTRUCTION =
   'A informacao solicitada pelo cliente nao esta disponivel com seguranca na base autorizada ou depende de validacao humana. Nao invente dados. Responda de forma natural, curta e consultiva. Conduza oferecendo duas possibilidades: encaminhar para o corretor responsavel ou agendar uma visita.';
+const SPECIFIC_DETAIL_MODEL_INSTRUCTION =
+  'A pergunta do cliente e um detalhe especifico que nao esta confirmado na base autorizada. Use o contexto recente para nomear exatamente o detalhe, nao responda com informacao generica de outro tema e nao invente. Responda de forma humana e curta, dizendo que nao tem essa informacao confirmada por aqui e oferecendo corretor para confirmar.';
 const DEFAULT_LOCATION_OVERVIEW =
   'O Evora fica em Atibaia, na regiao da Pedreira, proximo ao bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.';
+const DEFAULT_NEXT_ACTIONS: AnaKnowledgeGapNextAction[] = ['offer_broker_handoff', 'offer_visit_scheduling'];
+const BROKER_ONLY_NEXT_ACTIONS: AnaKnowledgeGapNextAction[] = ['offer_broker_handoff'];
 
 function n(text: string | null | undefined): string {
   return String(text || '')
@@ -46,7 +59,7 @@ function n(text: string | null | undefined): string {
 }
 
 const GAP_PATTERNS: Array<{ pattern: RegExp; intent: AnaKnowledgeGapIntent; reason: string }> = [
-  { pattern: /\b(lote menor|menor lote|quais lotes|lote na quadra|lotes disponiveis|disponibilidade de lote)\b/, intent: 'lot_availability', reason: 'lot_availability_requires_human_validation' },
+  { pattern: /\b(lote menor|menor lote|quais lotes|lote na quadra|quadra\s+[a-z0-9]+|lote\s+\d+|unidade\s+\d+|lote especifico|unidade especifica|lotes disponiveis|disponibilidade de lote)\b/, intent: 'lot_availability', reason: 'lot_availability_requires_human_validation' },
   { pattern: /\b(preco exato|valor exato|quanto custa exatamente|valor final)\b/, intent: 'exact_price', reason: 'exact_price_not_authorized' },
   { pattern: /\b(me manda a tabela|manda a tabela|tabela comercial)\b/, intent: 'commercial_table', reason: 'commercial_table_blocked' },
   { pattern: /\b(simulacao|simular|faz uma simulacao)\b/, intent: 'simulation', reason: 'simulation_requires_human_validation' },
@@ -57,12 +70,126 @@ const GAP_PATTERNS: Array<{ pattern: RegExp; intent: AnaKnowledgeGapIntent; reas
   { pattern: /\b(manda\s+a?\s*localizacao|link\s+da\s+localizacao|link\s+com\s+a\s+localizacao|me\s+envia\s+a\s+localizacao|como\s+chegar|localizacao\s+exata|endereco\s+com\s+numero|tem\s+numero|numero\s+do\s+endereco)\b/, intent: 'exact_location_link', reason: 'exact_location_link_requires_authorized_source' },
 ];
 
+type InferredTopic = 'lazer' | 'lote' | 'pagamento' | 'visita' | 'localizacao' | null;
+type SpecificUnconfirmedDetail = 'furnishing_or_equipment' | null;
+
+function inferTopicFromText(text: string | null | undefined): InferredTopic {
+  const textNorm = n(text);
+  if (!textNorm) return null;
+  if (/\b(lazer|area de lazer|areas de lazer|piscina|academia|playground|quadra|coworking|fireplace|salao de festas)\b/.test(textNorm)) {
+    return 'lazer';
+  }
+  if (/\b(lote|lotes|quadra|unidade|metragem|terreno)\b/.test(textNorm)) return 'lote';
+  if (/\b(preco|valor|entrada|parcela|pagamento|financiamento|desconto|simulacao|tabela)\b/.test(textNorm)) return 'pagamento';
+  if (/\b(visita|agendar|agendamento|horario|dia)\b/.test(textNorm)) return 'visita';
+  if (/\b(localizacao|endereco|onde fica|rota|mapa)\b/.test(textNorm)) return 'localizacao';
+  return null;
+}
+
+function inferTopicFromAxis(axis: CommercialAxis | null): InferredTopic {
+  if (axis === 'lazer') return 'lazer';
+  if (axis === 'metragem_tipologia' || axis === 'disponibilidade') return 'lote';
+  if (axis === 'financiamento' || axis === 'preco') return 'pagamento';
+  if (axis === 'visita_agendamento') return 'visita';
+  if (axis === 'localizacao') return 'localizacao';
+  return null;
+}
+
+function inferRecentTopic(args: {
+  userMessage: string;
+  requestedAxis?: CommercialAxis | null;
+  recentMessages?: AnaKnowledgeGapRecentMessage[] | null;
+}): InferredTopic {
+  const direct = inferTopicFromText(args.userMessage);
+  if (direct) return direct;
+  const axisTopic = inferTopicFromAxis(args.requestedAxis ?? null);
+  if (axisTopic) return axisTopic;
+  const recent = (args.recentMessages ?? [])
+    .map((message) => ({
+      role: message.role,
+      content: String(message.content ?? '').trim(),
+    }))
+    .filter((message) => message.content.length > 0)
+    .slice(-6)
+    .reverse();
+  for (const message of recent) {
+    const topic = inferTopicFromText(message.content);
+    if (topic) return topic;
+  }
+  return null;
+}
+
+function detectSpecificUnconfirmedDetail(text: string | null | undefined): SpecificUnconfirmedDetail {
+  const textNorm = n(text);
+  if (!textNorm) return null;
+  if (
+    /\b(mobiliad[oa]s?|mobilia|moveis|moveis planejados|equipad[oa]s?|equipamentos?|decorad[oa]s?)\b/.test(textNorm) ||
+    /\b(vem|vai vir|vai ser entregue|sera entregue|ser entregue|entrega)\b.{0,80}\b(mobiliad[oa]|equipad[oa]|com moveis|com equipamentos)\b/.test(textNorm)
+  ) {
+    return 'furnishing_or_equipment';
+  }
+  return null;
+}
+
+function previousUserMessageWithSpecificDetail(messages: AnaKnowledgeGapRecentMessage[] | null | undefined): string | null {
+  const recent = (messages ?? [])
+    .map((message) => ({
+      role: message.role,
+      content: String(message.content ?? '').trim(),
+    }))
+    .filter((message) => message.content.length > 0)
+    .slice(-8);
+  for (let i = recent.length - 1; i >= 0; i -= 1) {
+    const message = recent[i];
+    if (!message || message.role !== 'user') continue;
+    if (detectSpecificUnconfirmedDetail(message.content)) return message.content;
+  }
+  return null;
+}
+
+function detectContextualSpecificKnowledgeGap(args: {
+  userMessage: string;
+  requestedAxis?: CommercialAxis | null;
+  recentMessages?: AnaKnowledgeGapRecentMessage[] | null;
+}): AnaKnowledgeGapResult | null {
+  const currentDetail = detectSpecificUnconfirmedDetail(args.userMessage);
+  const currentTopic = inferTopicFromText(args.userMessage);
+  const recentTopic = inferRecentTopic(args);
+  const previousSpecific = previousUserMessageWithSpecificDetail(args.recentMessages ?? null);
+  const correctionToLeisure = /\b(me refiro|falo|estou falando|quis dizer).{0,40}\b(area de lazer|lazer)\b/.test(n(args.userMessage));
+  const inheritedDetail = currentDetail ?? (correctionToLeisure ? detectSpecificUnconfirmedDetail(previousSpecific) : null);
+
+  if (!inheritedDetail) return null;
+
+  const topic = currentTopic ?? recentTopic;
+  const matchedIntent: AnaKnowledgeGapIntent =
+    topic === 'lazer' || correctionToLeisure ? 'leisure_furnishing_equipment' : 'specific_furnishing_equipment';
+  return {
+    hasKnowledgeGap: true,
+    reason:
+      matchedIntent === 'leisure_furnishing_equipment'
+        ? 'leisure_furnishing_or_equipment_not_confirmed'
+        : 'specific_furnishing_or_equipment_not_confirmed',
+    matchedIntent,
+    allowedNextActions: [...BROKER_ONLY_NEXT_ACTIONS],
+    instructionForModel: SPECIFIC_DETAIL_MODEL_INSTRUCTION,
+  };
+}
+
 export function detectAnaKnowledgeGap(args: {
   userMessage: string;
   requestedAxis?: CommercialAxis | null;
+  recentMessages?: AnaKnowledgeGapRecentMessage[] | null;
 }): AnaKnowledgeGapResult {
   const text = n(args.userMessage);
   const axis = args.requestedAxis ?? null;
+
+  const contextualSpecificGap = detectContextualSpecificKnowledgeGap({
+    userMessage: args.userMessage,
+    requestedAxis: axis,
+    recentMessages: args.recentMessages ?? null,
+  });
+  if (contextualSpecificGap) return contextualSpecificGap;
 
   for (const item of GAP_PATTERNS) {
     if (item.pattern.test(text)) {
@@ -70,7 +197,7 @@ export function detectAnaKnowledgeGap(args: {
         hasKnowledgeGap: true,
         reason: item.reason,
         matchedIntent: item.intent,
-        allowedNextActions: ['offer_broker_handoff', 'offer_visit_scheduling'],
+        allowedNextActions: [...DEFAULT_NEXT_ACTIONS],
         instructionForModel: DEFAULT_MODEL_INSTRUCTION,
       };
     }
@@ -81,7 +208,7 @@ export function detectAnaKnowledgeGap(args: {
       hasKnowledgeGap: true,
       reason: `axis_${axis}_requires_authorized_or_human_validation`,
       matchedIntent: axis,
-      allowedNextActions: ['offer_broker_handoff', 'offer_visit_scheduling'],
+      allowedNextActions: [...DEFAULT_NEXT_ACTIONS],
       instructionForModel: DEFAULT_MODEL_INSTRUCTION,
     };
   }
@@ -89,7 +216,7 @@ export function detectAnaKnowledgeGap(args: {
   return {
     hasKnowledgeGap: false,
     reason: 'no_gap',
-    allowedNextActions: ['offer_broker_handoff', 'offer_visit_scheduling'],
+    allowedNextActions: [...DEFAULT_NEXT_ACTIONS],
     instructionForModel: DEFAULT_MODEL_INSTRUCTION,
   };
 }
@@ -140,6 +267,20 @@ export function buildLeadQualificationBridgeReply(args: BuildLeadQualificationBr
     ].join(' ');
   }
 
+  if (intent === 'leisure_furnishing_equipment') {
+    return [
+      'Sobre a area de lazer ser entregue mobiliada ou equipada, eu nao tenho essa informacao confirmada por aqui.',
+      'Posso te colocar com um corretor para confirmar esse detalhe certinho?',
+    ].join(' ');
+  }
+
+  if (intent === 'specific_furnishing_equipment') {
+    return [
+      'Sobre esse ponto de entrega mobiliada ou equipada, eu nao tenho essa informacao confirmada por aqui.',
+      'Posso te colocar com um corretor para confirmar esse detalhe certinho?',
+    ].join(' ');
+  }
+
   if (intent === 'exact_location_link') {
     const summary = pickBestLocationSummary({
       locationOverview: args.locationOverview,
@@ -180,7 +321,10 @@ export function buildLeadQualificationBridgeReply(args: BuildLeadQualificationBr
   ].join(' ');
 }
 
-export function validateKnowledgeGapResolutionOffer(replyText: string): KnowledgeGapResolutionOfferValidation {
+export function validateKnowledgeGapResolutionOffer(
+  replyText: string,
+  requiredActions: AnaKnowledgeGapNextAction[] = DEFAULT_NEXT_ACTIONS
+): KnowledgeGapResolutionOfferValidation {
   const text = n(replyText);
   const hasBrokerOption =
     /\b(corretor|consultor responsavel|responsavel pelo atendimento|especialista|atendimento humano)\b/.test(text);
@@ -189,11 +333,11 @@ export function validateKnowledgeGapResolutionOffer(replyText: string): Knowledg
       text
     );
   const missing: Array<'broker' | 'visit'> = [];
-  if (!hasBrokerOption) missing.push('broker');
-  if (!hasVisitOption) missing.push('visit');
+  if (requiredActions.includes('offer_broker_handoff') && !hasBrokerOption) missing.push('broker');
+  if (requiredActions.includes('offer_visit_scheduling') && !hasVisitOption) missing.push('visit');
 
   return {
-    ok: hasBrokerOption && hasVisitOption,
+    ok: missing.length === 0,
     hasBrokerOption,
     hasVisitOption,
     missing,

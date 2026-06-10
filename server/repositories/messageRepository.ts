@@ -1,4 +1,5 @@
 import { query } from '../db/pg.js';
+import { withAnaVisitFollowupConversationLock } from './anaVisitFollowupJobRepository.js';
 import { touchContactInteractionByConversation } from './contactsRepository.js';
 import {
   publishConversationUpdated,
@@ -73,6 +74,24 @@ export async function insertMessage(
     attachment?: MessageAttachmentPayload | null;
   }
 ): Promise<MessageRow> {
+  if (role === 'user') {
+    return withAnaVisitFollowupConversationLock(conversationId, () =>
+      insertMessageUnlocked(conversationId, role, content, metaMessageId, opts)
+    );
+  }
+  return insertMessageUnlocked(conversationId, role, content, metaMessageId, opts);
+}
+
+async function insertMessageUnlocked(
+  conversationId: number,
+  role: 'user' | 'assistant',
+  content: string | null,
+  metaMessageId: string | null,
+  opts?: {
+    messageKind?: MessageKindDb;
+    attachment?: MessageAttachmentPayload | null;
+  }
+): Promise<MessageRow> {
   const messageKind: MessageKindDb =
     opts?.messageKind ?? (opts?.attachment != null ? 'document' : 'text');
   const attachmentJson = opts?.attachment != null ? JSON.stringify(opts.attachment) : null;
@@ -108,6 +127,14 @@ export async function insertMessage(
     void publishConversationUpdated(inserted.conversation_id);
   }
   return inserted;
+}
+
+export async function getMessageCreatedAtById(messageId: number): Promise<Date | null> {
+  const { rows } = await query<{ created_at: Date }>(
+    `SELECT created_at FROM messages WHERE id = $1 LIMIT 1`,
+    [messageId]
+  );
+  return rows[0]?.created_at ?? null;
 }
 
 export async function findMessageByMetaId(metaMessageId: string): Promise<MessageRow | null> {
