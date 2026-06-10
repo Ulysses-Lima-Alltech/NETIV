@@ -214,8 +214,8 @@ function emitSocketEvent<T>(event: string, payload: T, conversationId?: number):
         if (!socket) continue;
 
         const scope = socket.data.sessionScope;
-        if (scope && scope.kind === 'broker_portfolio' && scope.convIds.length > 0) {
-          // Só envia se a conversa estiver na whitelist
+        if (scope && scope.kind === 'broker_portfolio') {
+          // Lista vazia → nunca recebe push de conversa nova
           if (!scope.convIds.includes(conversationId)) continue;
         }
         socket.emit(event, payload);

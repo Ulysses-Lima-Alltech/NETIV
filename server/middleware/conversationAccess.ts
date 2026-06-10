@@ -25,8 +25,10 @@ export async function assertCanAccessConversation(
   }
 
   // ── Scope check (broker_portfolio) ──
+  // Se há escopo broker_portfolio, conversationId TEM que estar na lista —
+  // inclusive quando a lista está vazia (operador sem carteira não acessa nada).
   const scope = user.sessionScope;
-  if (scope && scope.kind === 'broker_portfolio' && scope.convIds.length > 0) {
+  if (scope && scope.kind === 'broker_portfolio') {
     if (!scope.convIds.includes(conversationId)) {
       console.warn('[conversationAccess] out_of_scope', {
         userId: user.id,

@@ -857,7 +857,12 @@ export async function listConversationsWithPreview(
   }
 
   // ── Scope filtering (broker portfolio) ──
-  if (filters?.scopeConvIds && filters.scopeConvIds.length > 0) {
+  // IMPORTANTE: array vazio NÃO é "sem escopo" — é "operador sem carteira → vê NADA".
+  // Quem decide ausência de escopo é o caller (passa undefined / não setar a chave).
+  if (filters?.scopeConvIds !== undefined) {
+    if (filters.scopeConvIds.length === 0) {
+      return []; // operador com escopo broker_portfolio mas carteira vazia
+    }
     conditions.push(`c.id = ANY($${paramIndex})`);
     params.push(filters.scopeConvIds);
     paramIndex += 1;
