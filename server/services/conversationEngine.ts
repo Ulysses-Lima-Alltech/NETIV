@@ -176,6 +176,7 @@ import {
   hasProhibitedVisitSchedulingPhrase,
   isAssistantVisitOfferContextMessage,
   isVisitSchedulingAckOnlyMessage,
+  isVisitSchedulingConfirmationMessage,
   isVisitSchedulingIntent,
   isVisitSchedulingLoopFallbackReply,
   isVisitSchedulingRefusalMessage,
@@ -225,6 +226,18 @@ import {
   cancelAnaVisitFollowupForConversation,
   startAnaVisitFollowupIfEligible,
 } from './anaVisitFollowupService.js';
+import {
+  extractAnaVisitSlotPreferenceFromText,
+  findNextAvailableVisitSlot,
+  formatAnaVisitSlotLabel,
+  validateVisitSlotStillAvailable,
+  type AnaVisitAvailabilitySlot,
+  type AnaVisitSlotAvailabilityResult,
+} from './anaVisitAvailabilityService.js';
+import {
+  APPOINTMENT_BUSINESS_TZ,
+  parseAppointmentStartEndInSaoPaulo,
+} from '../utils/appointmentDateNormalize.js';
 import {
   createAnaTurnDiagnostics,
   markAnaTurnStage,
@@ -2302,6 +2315,23 @@ const HANDOFF_INTENT_REGEX_PATTERNS: RegExp[] = [
 
 function normText(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim();
+}
+
+function formatYmdForAnaVisitAvailability(value: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: APPOINTMENT_BUSINESS_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(value);
+}
+
+function addDaysYmdForAnaVisitAvailability(ymd: string, days: number): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+  const base = new Date(`${ymd}T12:00:00-03:00`);
+  if (Number.isNaN(base.getTime())) return null;
+  base.setTime(base.getTime() + days * 86_400_000);
+  return formatYmdForAnaVisitAvailability(base);
 }
 
 function containsForbiddenMissingDetailFallbackText(text: string): boolean {
@@ -6021,6 +6051,194 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         reason: 'visit_flow_turn_locked_before_prompt_build',
       });
     }
+    const visitAvailabilityEnterpriseId = ent?.id ?? effectiveConv.enterprise_id ?? null;
+    let visitAvailabilitySuggestion: AnaVisitAvailabilitySlot | null = null;
+    let visitAvailabilitySearchCompleted = false;
+    let suggestedSlotValidation: AnaVisitSlotAvailabilityResult | null = null;
+    let suggestedSlotReplacement: AnaVisitAvailabilitySlot | null = null;
+    let suggestedSlotUnavailable = false;
+    let exactSlotAvailability: AnaVisitSlotAvailabilityResult | null = null;
+    let exactSlotUnavailableReplacement: AnaVisitAvailabilitySlot | null = null;
+    let exactSlotUnavailable = false;
+
+    if (visitSchedulingFlowActiveForTurn && !userRefusedScheduling && visitAvailabilityEnterpriseId != null) {
+      const preferenceFromMessage = extractAnaVisitSlotPreferenceFromText(trimmed, lastUserMessageAt);
+      const pendingSuggestedStartAt = flowStateParsed.suggestedVisitStartAt
+        ? new Date(flowStateParsed.suggestedVisitStartAt)
+        : null;
+      const pendingSuggestedEndAt = flowStateParsed.suggestedVisitEndAt
+        ? new Date(flowStateParsed.suggestedVisitEndAt)
+        : null;
+      const hasValidPendingSuggestedDates =
+        pendingSuggestedStartAt instanceof Date &&
+        !Number.isNaN(pendingSuggestedStartAt.getTime()) &&
+        pendingSuggestedEndAt instanceof Date &&
+        !Number.isNaN(pendingSuggestedEndAt.getTime());
+      const awaitingSuggestedVisitSlot =
+        flowStateParsed.pendingVisitScheduling === true &&
+        flowStateParsed.suggestedVisitStatus === 'awaiting_confirmation' &&
+        hasValidPendingSuggestedDates &&
+        Boolean((flowStateParsed.suggestedVisitSlotLabel ?? '').trim());
+      const suggestedSlotAccepted =
+        awaitingSuggestedVisitSlot &&
+        (
+          isVisitSchedulingConfirmationMessage(trimmed) ||
+          isVisitSchedulingAckOnlyMessage(trimmed) ||
+          shortConfirmationContext.kind === 'visit_confirmation'
+        );
+      const normalizedForAvailability = normText(trimmed);
+      const suggestedSlotChangeRequested =
+        awaitingSuggestedVisitSlot &&
+        !suggestedSlotAccepted &&
+        (
+          Boolean(preferenceFromMessage.dateYmd || preferenceFromMessage.timeHm || preferenceFromMessage.period) ||
+          /\b(nao posso|nao consigo|nao da|outro|outra|tem outro|tem outra|melhor|prefiro|manha|tarde|noite)\b/.test(
+            normalizedForAvailability
+          )
+        );
+      const messageHasExplicitTime = Boolean(preferenceFromMessage.timeHm);
+      const suggestedSlotAlternativeDayRequested =
+        awaitingSuggestedVisitSlot &&
+        !suggestedSlotAccepted &&
+        /\b(outro dia|outra data|outro diazinho|em outro dia|para outro dia|pra outro dia)\b/.test(
+          normalizedForAvailability
+        );
+
+      if (suggestedSlotAccepted && pendingSuggestedStartAt && pendingSuggestedEndAt) {
+        suggestedSlotValidation = await validateVisitSlotStillAvailable({
+          enterpriseId: visitAvailabilityEnterpriseId,
+          startAt: pendingSuggestedStartAt,
+          endAt: pendingSuggestedEndAt,
+          preferredBrokerId: flowStateParsed.suggestedVisitBrokerId ?? null,
+        });
+        suggestedSlotUnavailable = !suggestedSlotValidation.available;
+        if (suggestedSlotUnavailable) {
+          suggestedSlotReplacement = await findNextAvailableVisitSlot({
+            enterpriseId: visitAvailabilityEnterpriseId,
+            referenceNow: lastUserMessageAt,
+            preference: null,
+          });
+          visitAvailabilitySearchCompleted = true;
+        }
+      } else {
+        const exactDateYmd =
+          preferenceFromMessage.dateYmd ??
+          (flowStateParsed.pendingVisitScheduling === true
+            ? flowStateParsed.pendingVisitDate ?? flowStateParsed.visitScheduling?.normalizedDate ?? null
+            : null);
+        const exactTimeHm =
+          preferenceFromMessage.timeHm ??
+          (flowStateParsed.pendingVisitScheduling === true
+            ? flowStateParsed.pendingVisitTime ?? flowStateParsed.visitScheduling?.normalizedTime ?? null
+            : null);
+        const hasExactSlotCandidate = Boolean(exactDateYmd && exactTimeHm);
+        const explicitExactSlotAfterSuggestion =
+          awaitingSuggestedVisitSlot &&
+          suggestedSlotChangeRequested &&
+          messageHasExplicitTime &&
+          Boolean(exactDateYmd);
+        const shouldValidateExactSlot =
+          hasExactSlotCandidate &&
+          (
+            explicitExactSlotAfterSuggestion ||
+            (
+              !awaitingSuggestedVisitSlot &&
+              (
+            Boolean(preferenceFromMessage.dateYmd && preferenceFromMessage.timeHm) ||
+            flowStateParsed.pendingVisitConfirmationAsked === true ||
+            flowStateParsed.pendingVisitScheduling === true
+              )
+            )
+          );
+
+        if (shouldValidateExactSlot && exactDateYmd && exactTimeHm) {
+          const parsedExact = parseAppointmentStartEndInSaoPaulo(exactDateYmd, exactTimeHm);
+          if (parsedExact) {
+            exactSlotAvailability = await validateVisitSlotStillAvailable({
+              enterpriseId: visitAvailabilityEnterpriseId,
+              startAt: parsedExact.startAt,
+              endAt: parsedExact.endAt,
+              preferredBrokerId: flowStateParsed.suggestedVisitBrokerId ?? null,
+            });
+            exactSlotUnavailable = !exactSlotAvailability.available;
+            visitAvailabilitySearchCompleted = true;
+            if (!exactSlotUnavailable && exactSlotAvailability.brokerId != null) {
+              visitAvailabilitySuggestion = {
+                enterpriseId: visitAvailabilityEnterpriseId,
+                startAt: parsedExact.startAt,
+                endAt: parsedExact.endAt,
+                startYmd: exactDateYmd,
+                timeHm: exactTimeHm,
+                brokerId: exactSlotAvailability.brokerId,
+                eligibleBrokerCount: exactSlotAvailability.eligibleBrokerCount,
+                timezone: APPOINTMENT_BUSINESS_TZ,
+                label: formatAnaVisitSlotLabel({ startYmd: exactDateYmd, timeHm: exactTimeHm }, lastUserMessageAt),
+              };
+            } else {
+              exactSlotUnavailableReplacement = await findNextAvailableVisitSlot({
+                enterpriseId: visitAvailabilityEnterpriseId,
+                referenceNow: lastUserMessageAt,
+                minimumStartAt: parsedExact.startAt,
+                excludeStartAt: parsedExact.startAt,
+                preference: {
+                  dateYmd: exactDateYmd,
+                  period: preferenceFromMessage.period ?? null,
+                  weekday: preferenceFromMessage.weekday ?? null,
+                  timeHm: null,
+                },
+              });
+            }
+          } else {
+            exactSlotUnavailable = true;
+          }
+        }
+
+        const shouldFindSuggestedSlot =
+          visitAvailabilitySuggestion == null &&
+          !exactSlotUnavailable &&
+          !shouldValidateExactSlot &&
+          (
+            !awaitingSuggestedVisitSlot ||
+            suggestedSlotChangeRequested ||
+            Boolean(preferenceFromMessage.dateYmd || preferenceFromMessage.period || preferenceFromMessage.weekday)
+          );
+
+        if (shouldFindSuggestedSlot) {
+          const fallbackPendingDate =
+            awaitingSuggestedVisitSlot && suggestedSlotChangeRequested
+              ? (
+                  suggestedSlotAlternativeDayRequested
+                    ? (
+                        (flowStateParsed.pendingVisitDate
+                          ? addDaysYmdForAnaVisitAvailability(flowStateParsed.pendingVisitDate, 1)
+                          : null) ?? null
+                      )
+                    : (preferenceFromMessage.period ? flowStateParsed.pendingVisitDate ?? null : null)
+                )
+              : flowStateParsed.pendingVisitDate ?? null;
+          visitAvailabilitySuggestion = await findNextAvailableVisitSlot({
+            enterpriseId: visitAvailabilityEnterpriseId,
+            referenceNow: lastUserMessageAt,
+            minimumStartAt:
+              awaitingSuggestedVisitSlot &&
+              suggestedSlotChangeRequested &&
+              !suggestedSlotAlternativeDayRequested &&
+              !preferenceFromMessage.period
+                ? pendingSuggestedStartAt
+                : null,
+            excludeStartAt: awaitingSuggestedVisitSlot && suggestedSlotChangeRequested ? pendingSuggestedStartAt : null,
+            preference: {
+              dateYmd: preferenceFromMessage.dateYmd ?? fallbackPendingDate,
+              weekday: preferenceFromMessage.weekday ?? null,
+              period: preferenceFromMessage.period ?? null,
+              timeHm: null,
+            },
+          });
+          visitAvailabilitySearchCompleted = true;
+        }
+      }
+    }
+
     const directVisitSchedulingDecision = visitSchedulingFlowActiveForTurn && !userRefusedScheduling
       ? handleVisitSchedulingDeterministically({
           userMessage: trimmed,
@@ -6034,6 +6252,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           customerName: trustedCustomerName || effectiveConv.customer_name || null,
           customerPhone: (effectiveConv.contact_phone || effectiveConv.external_contact_id || '').replace(/\D/g, ''),
           referenceNow: lastUserMessageAt,
+          availabilitySuggestion: visitAvailabilitySuggestion,
+          availabilitySearchCompleted: visitAvailabilitySearchCompleted,
+          suggestedSlotValidation,
+          suggestedSlotReplacement,
+          suggestedSlotUnavailable,
+          exactSlotAvailability,
+          exactSlotUnavailableReplacement,
+          exactSlotUnavailable,
         })
       : null;
     const directVisitSchedulingAudit = {
@@ -6167,7 +6393,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
               appointmentDateYmd: directVisitSchedulingDecision.appointmentDateYmd,
               appointmentTimeHm: directVisitSchedulingDecision.appointmentTimeHm,
               notes: 'Agendamento confirmado no fluxo deterministico da Ana.',
-              brokerId: convForApptRegister?.assigned_broker_id ?? null,
+              brokerId:
+                directVisitSchedulingDecision.appointmentBrokerId ??
+                convForApptRegister?.assigned_broker_id ??
+                null,
               userUtteranceText: fullUserUtterances.trim() || trimmed,
               referenceNow: lastUserMessageAt,
             });

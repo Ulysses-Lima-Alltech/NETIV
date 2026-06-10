@@ -15,6 +15,7 @@ test('applyAnaVisitSchedulingGuard existe com estado estruturado e logs', () => 
 
 test('guard cobre domingo e horario fora da janela', () => {
   const source = readFileSync(new URL('../utils/anaVisitSchedulingGuard.ts', import.meta.url), 'utf8');
-  assert.match(source, /segunda a sábado/);
+  assert.match(source, /conforme disponibilidade da agenda/);
   assert.match(source, /09h às 18h/);
+  assert.doesNotMatch(source, /sunday_not_allowed/);
 });

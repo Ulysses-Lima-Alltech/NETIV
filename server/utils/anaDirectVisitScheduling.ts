@@ -5,11 +5,15 @@
 } from './appointmentDateNormalize.js';
 import type { CommercialFlowState } from './commercialFlowState.js';
 import { extractCustomerNameFromUserUtterance } from './extractCustomerNameFromMessage.js';
+import type {
+  AnaVisitAvailabilitySlot,
+  AnaVisitSlotAvailabilityResult,
+} from '../services/anaVisitAvailabilityService.js';
 
 const SP_OFFSET = '-03:00';
 export const VISIT_WINDOW_START_MINUTES = 9 * 60;
 export const VISIT_WINDOW_END_MINUTES = 18 * 60;
-export const VISIT_WINDOW_REPLY = 'Temos disponibilidade de segunda a sábado, das 09h às 18h.';
+export const VISIT_WINDOW_REPLY = 'Os horários de visita são das 09h às 18h, conforme disponibilidade da agenda.';
 
 const PROHIBITED_VISIT_SCHEDULING_PHRASES = [
   'assim que o corretor confirmar',
@@ -44,6 +48,7 @@ export interface DirectVisitSchedulingDecision {
   appointmentConfirmed: boolean;
   appointmentDateYmd: string | null;
   appointmentTimeHm: string | null;
+  appointmentBrokerId?: number | null;
 }
 
 export interface DirectVisitSchedulingInput {
@@ -66,6 +71,14 @@ export interface DirectVisitSchedulingInput {
   customerName?: string | null;
   customerPhone?: string | null;
   referenceNow?: Date;
+  availabilitySuggestion?: AnaVisitAvailabilitySlot | null;
+  availabilitySearchCompleted?: boolean;
+  suggestedSlotValidation?: AnaVisitSlotAvailabilityResult | null;
+  suggestedSlotReplacement?: AnaVisitAvailabilitySlot | null;
+  suggestedSlotUnavailable?: boolean;
+  exactSlotAvailability?: AnaVisitSlotAvailabilityResult | null;
+  exactSlotUnavailableReplacement?: AnaVisitAvailabilitySlot | null;
+  exactSlotUnavailable?: boolean;
 }
 
 export interface VisitSchedulingContinuationInput {
@@ -392,7 +405,7 @@ export function isAssistantVisitOfferContextMessage(text: string | null | undefi
       n
     );
   const asksVisitSlot =
-    /\b(qual dia|para qual dia|dia e horario|dia e horário|qual horario|qual horário|horario fica melhor|horário fica melhor)\b/.test(
+    /\b(qual dia|para qual dia|dia e horario|dia e horário|qual horario|qual horário|horario fica melhor|horário fica melhor|tenho uma sugestao|tenho uma sugestão|consigo te sugerir|encontrei uma opcao|encontrei uma opção|esse horario funciona|esse horário funciona|fica bom para voce|fica bom para você)\b/.test(
       n
     );
   return asksVisitOffer || asksVisitSlot;
@@ -402,7 +415,7 @@ function assistantAskedVisitConfirmation(text: string | null | undefined): boole
   const n = norm(text || '');
   if (!n) return false;
 
-  return /\b(posso confirmar sua visita|confirmar sua visita|sua visita para)\b/.test(n);
+  return /\b(posso confirmar sua visita|confirmar sua visita|sua visita para|posso deixar sua visita encaminhada|posso seguir com esse horario|posso seguir com esse horário|esse horario funciona|esse horário funciona|funciona para voce|funciona para você|fica bom para voce|fica bom para você)\b/.test(n);
 }
 
 function assistantAskedVisitSlotOrOfferContext(text: string | null | undefined): boolean {
@@ -474,7 +487,13 @@ export function isVisitSchedulingIntent(input: DirectVisitSchedulingInput): bool
   const visitConfirmationMessage = isVisitSchedulingConfirmationMessage(input.userMessage);
   const hasVisitOfferContext = isAssistantVisitOfferContextMessage(input.lastAssistantMessage);
   const assistantAskedConfirmation = assistantAskedVisitConfirmation(input.lastAssistantMessage);
-  if ((ackOnlyMessage || isVisitConfirmationShortAckInContext(input.userMessage)) && assistantAskedConfirmation) return true;
+  const ackOnlyMessageAndAssistantAskedConfirmation = ackOnlyMessage && assistantAskedConfirmation;
+  if (
+    ackOnlyMessageAndAssistantAskedConfirmation ||
+    (isVisitConfirmationShortAckInContext(input.userMessage) && assistantAskedConfirmation)
+  ) {
+    return true;
+  }
   const confirmationContextKind = input.confirmationContextKind ?? null;
   const shortConfirmationSuppressesVisit =
     ackOnlyMessage &&
@@ -555,29 +574,26 @@ export function isDirectVisitSchedulingWindow(now: Date = new Date()): boolean {
   const weekday = parts.find((p) => p.type === 'weekday')?.value ?? '';
   const hour = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '', 10);
   const minute = parseInt(parts.find((p) => p.type === 'minute')?.value ?? '', 10);
-  const isSunday = weekday.toLowerCase().startsWith('sun');
   const minutes = hour * 60 + minute;
-  return !isSunday && Number.isFinite(minutes) && minutes >= VISIT_WINDOW_START_MINUTES && minutes <= VISIT_WINDOW_END_MINUTES;
+  void weekday;
+  return Number.isFinite(minutes) && minutes >= VISIT_WINDOW_START_MINUTES && minutes <= VISIT_WINDOW_END_MINUTES;
 }
 
 export function isAllowedVisitSlot(dateYmd: string, timeHm: string): boolean {
   const parsed = parseAppointmentStartEndInSaoPaulo(dateYmd, timeHm);
   if (!parsed) return false;
-  const weekday = getJsWeekdayForYmdInSaoPaulo(dateYmd);
-  if (weekday === 0) return false;
   const minutes = timeHmToMinutes(timeHm);
   return minutes != null && minutes >= VISIT_WINDOW_START_MINUTES && minutes <= VISIT_WINDOW_END_MINUTES;
 }
 
 export type VisitDateTimeSlotValidation =
   | { valid: true; reason: 'ok'; weekday: number; minutes: number }
-  | { valid: false; reason: 'invalid_datetime' | 'sunday_not_allowed' | 'outside_visit_window'; weekday: number | null; minutes: number | null };
+  | { valid: false; reason: 'invalid_datetime' | 'outside_visit_window'; weekday: number | null; minutes: number | null };
 
 export function validateVisitDateTimeSlot(dateYmd: string, timeHm: string): VisitDateTimeSlotValidation {
   const parsed = parseAppointmentStartEndInSaoPaulo(dateYmd, timeHm);
   if (!parsed) return { valid: false, reason: 'invalid_datetime', weekday: null, minutes: null };
   const weekday = getJsWeekdayForYmdInSaoPaulo(dateYmd);
-  if (weekday === 0) return { valid: false, reason: 'sunday_not_allowed', weekday, minutes: null };
   const minutes = timeHmToMinutes(timeHm);
   if (minutes == null) return { valid: false, reason: 'invalid_datetime', weekday, minutes: null };
   if (minutes < VISIT_WINDOW_START_MINUTES || minutes > VISIT_WINDOW_END_MINUTES) {
@@ -764,6 +780,142 @@ function buildPendingState(
   };
 }
 
+function suggestedSlotDateLabel(slot: AnaVisitAvailabilitySlot): string {
+  return slot.label.split(/\s+às\s+/i)[0]?.trim() || slot.label;
+}
+
+function buildSuggestedSlotState(
+  prev: CommercialFlowState,
+  slot: AnaVisitAvailabilitySlot,
+  enterpriseId: number | null,
+  customerName: string | null
+): CommercialFlowState {
+  const dateLabel = suggestedSlotDateLabel(slot);
+  return {
+    ...prev,
+    pendingVisitScheduling: true,
+    pendingVisitDateLabel: dateLabel,
+    pendingVisitDate: slot.startYmd,
+    pendingVisitDay: dateLabel,
+    pendingVisitTime: slot.timeHm,
+    pendingVisitPeriod: null,
+    pendingVisitEnterpriseId: enterpriseId,
+    pendingVisitInvalidTime: null,
+    pendingVisitMissingSlot: null,
+    pendingVisitCustomerName: customerName,
+    pendingVisitConfirmationAsked: true,
+    suggestedVisitStartAt: slot.startAt.toISOString(),
+    suggestedVisitEndAt: slot.endAt.toISOString(),
+    suggestedVisitBrokerId: slot.brokerId,
+    suggestedVisitSlotLabel: slot.label,
+    suggestedVisitTimezone: slot.timezone,
+    suggestedVisitStatus: 'awaiting_confirmation',
+    visitScheduling: {
+      active: true,
+      offered: true,
+      accepted: false,
+      requestedDateText: dateLabel,
+      requestedTimeText: displayTimeHm(slot.timeHm),
+      requestedPeriodText: null,
+      normalizedDate: slot.startYmd,
+      normalizedTime: slot.timeHm,
+      nameCollected: Boolean((customerName ?? '').trim()),
+      customerName,
+      status: 'awaiting_slot_confirmation',
+    },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function clearSuggestedSlotStateAfterAcceptance(
+  prev: CommercialFlowState,
+  customerName: string | null
+): CommercialFlowState {
+  return {
+    ...prev,
+    pendingVisitScheduling: false,
+    pendingVisitDateLabel: null,
+    pendingVisitDate: null,
+    pendingVisitDay: null,
+    pendingVisitTime: null,
+    pendingVisitPeriod: null,
+    pendingVisitEnterpriseId: null,
+    pendingVisitInvalidTime: null,
+    pendingVisitMissingSlot: null,
+    pendingVisitCustomerName: null,
+    pendingVisitConfirmationAsked: false,
+    suggestedVisitStatus: 'accepted',
+    visitScheduling: prev.visitScheduling
+      ? {
+          ...prev.visitScheduling,
+          active: false,
+          accepted: true,
+          nameCollected: Boolean((customerName ?? '').trim()) || prev.visitScheduling.nameCollected,
+          customerName: customerName ?? prev.visitScheduling.customerName ?? null,
+          status: 'scheduled',
+        }
+      : prev.visitScheduling,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function pendingSuggestedSlotFromState(state: CommercialFlowState): {
+  label: string;
+  dateYmd: string;
+  timeHm: string;
+  startAt: Date;
+  endAt: Date;
+  brokerId: number | null;
+} | null {
+  const label = String(state.suggestedVisitSlotLabel ?? '').trim();
+  const dateYmd = String(state.pendingVisitDate ?? state.visitScheduling?.normalizedDate ?? '').trim();
+  const timeHm = String(state.pendingVisitTime ?? state.visitScheduling?.normalizedTime ?? '').trim();
+  const startAtRaw = String(state.suggestedVisitStartAt ?? '').trim();
+  const endAtRaw = String(state.suggestedVisitEndAt ?? '').trim();
+  if (!label || !dateYmd || !timeHm || !startAtRaw || !endAtRaw) return null;
+  const startAt = new Date(startAtRaw);
+  const endAt = new Date(endAtRaw);
+  if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) return null;
+  return {
+    label,
+    dateYmd,
+    timeHm,
+    startAt,
+    endAt,
+    brokerId: state.suggestedVisitBrokerId ?? null,
+  };
+}
+
+function buildInitialSuggestedSlotReply(slot: AnaVisitAvailabilitySlot): string {
+  return `Perfeito! Tenho uma sugestão para você: ${slot.label}. Posso deixar sua visita encaminhada nesse horário?`;
+}
+
+function buildAlternativeSuggestedSlotReply(slot: AnaVisitAvailabilitySlot): string {
+  return `Sem problema. Tenho outra opção para ${slot.label}. Funciona melhor para você?`;
+}
+
+function buildUnavailableReplacementReply(slot: AnaVisitAvailabilitySlot): string {
+  return `Esse horário acabou ficando indisponível agora. Encontrei outra opção para ${slot.label}. Funciona para você?`;
+}
+
+function buildNoImmediateAvailabilityReply(): string {
+  return 'Não encontrei um horário disponível imediato por aqui. Posso te colocar com um corretor para verificar uma opção certinha para você?';
+}
+
+function isSuggestedSlotChangeRequest(text: string): boolean {
+  const n = norm(text);
+  if (!n) return false;
+  if (isVisitSchedulingConfirmationMessage(text) || isVisitConfirmationShortAckInContext(text)) return false;
+  return (
+    /\b(nao posso|nao consigo|nao da|n consigo|n da|outro|outra|tem outro|tem outra|melhor|prefiro|pode ser de|so de|s[oó] de|manha|tarde|noite|sabado|domingo|segunda|terca|quarta|quinta|sexta)\b/.test(
+      n
+    ) ||
+    parseDateMention(text, new Date()) != null ||
+    parseTimeHmFromText(text, { allowStandaloneHour: true }) != null ||
+    parsePeriodFromText(text) != null
+  );
+}
+
 function knownNameFromContext(input: DirectVisitSchedulingInput): string | null {
   const fromContext = (input.customerName || '').trim();
   if (fromContext.length >= 2) return fromContext;
@@ -814,6 +966,14 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
       isAssistantVisitOfferContextMessage(input.lastAssistantMessage) ||
       assistantAskedLotPreference(input.lastAssistantMessage)
     );
+  const pendingSuggestedSlot = pendingSuggestedSlotFromState(input.flowState);
+  const awaitingSuggestedSlot =
+    pending &&
+    pendingSuggestedSlot != null &&
+    input.flowState.suggestedVisitStatus === 'awaiting_confirmation';
+  const userAcceptedSuggestedSlot = awaitingSuggestedSlot && userVisitConfirmation;
+  const userRequestedSuggestedSlotChange =
+    awaitingSuggestedSlot && !userAcceptedSuggestedSlot && isSuggestedSlotChangeRequest(input.userMessage);
 
   const capturedSlots: VisitSlotKey[] = [];
   if (effectiveName) capturedSlots.push('nome');
@@ -834,24 +994,178 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
     missingSlot: 'nome' | 'dia' | 'periodo_ou_horario' | 'valid_time' | null,
     appointmentConfirmed = false,
     appointmentDateYmd: string | null = null,
-    appointmentTimeHm: string | null = null
+    appointmentTimeHm: string | null = null,
+    appointmentBrokerId: number | null = null
   ): DirectVisitSchedulingDecision => ({
     handled: true,
     reply,
     reason,
     nextState,
     pendingVisitScheduling: nextState.pendingVisitScheduling === true,
-    extractedDateLabel: dateMention?.label ?? pendingDateLabel,
-    extractedDateYmd: dateMention?.ymd ?? pendingDateYmd,
-    extractedPeriod: period ?? pendingPeriod,
-    extractedTime: timeHm,
+    extractedDateLabel: dateMention?.label ?? nextState.pendingVisitDateLabel ?? pendingDateLabel,
+    extractedDateYmd: dateMention?.ymd ?? nextState.pendingVisitDate ?? pendingDateYmd,
+    extractedPeriod: period ?? normalizeVisitPeriod(nextState.pendingVisitPeriod ?? null) ?? pendingPeriod,
+    extractedTime: timeHm ?? nextState.pendingVisitTime ?? null,
     capturedSlots,
     missingSlot,
     invalidVisitTime: nextState.pendingVisitInvalidTime ?? null,
     appointmentConfirmed,
     appointmentDateYmd,
     appointmentTimeHm,
+    appointmentBrokerId,
   });
+
+  if (userAcceptedSuggestedSlot && pendingSuggestedSlot) {
+    const validatedSuggestedBrokerId = input.suggestedSlotValidation?.brokerId ?? null;
+    const hasExplicitSuggestedSlotValidation =
+      input.suggestedSlotValidation != null &&
+      input.suggestedSlotValidation.available === true &&
+      validatedSuggestedBrokerId != null;
+    if (!hasExplicitSuggestedSlotValidation || input.suggestedSlotUnavailable === true) {
+      if (input.suggestedSlotReplacement) {
+        const nextState = buildSuggestedSlotState(
+          input.flowState,
+          input.suggestedSlotReplacement,
+          input.enterpriseId,
+          effectiveName ?? null
+        );
+        return finish(
+          'suggested_slot_unavailable_replaced',
+          buildUnavailableReplacementReply(input.suggestedSlotReplacement),
+          nextState,
+          null
+        );
+      }
+      const nextState: CommercialFlowState = {
+        ...input.flowState,
+        suggestedVisitStatus: input.suggestedSlotValidation == null ? 'awaiting_confirmation' : 'expired',
+        updatedAt: new Date().toISOString(),
+      };
+      return finish(
+        input.suggestedSlotValidation == null
+          ? 'suggested_slot_acceptance_missing_validation'
+          : 'suggested_slot_unavailable_no_replacement',
+        buildNoImmediateAvailabilityReply(),
+        nextState,
+        null
+      );
+    }
+
+    const nextState = clearSuggestedSlotStateAfterAcceptance(input.flowState, effectiveName ?? null);
+    return finish(
+      'suggested_slot_accepted',
+      confirmReply(pendingSuggestedSlot.label.replace(/\s+às\s+.+$/i, ''), pendingSuggestedSlot.timeHm),
+      nextState,
+      null,
+      true,
+      pendingSuggestedSlot.dateYmd,
+      pendingSuggestedSlot.timeHm,
+      validatedSuggestedBrokerId
+    );
+  }
+
+  if (userRequestedSuggestedSlotChange) {
+    if (input.availabilitySuggestion) {
+      const nextState = buildSuggestedSlotState(
+        input.flowState,
+        input.availabilitySuggestion,
+        input.enterpriseId,
+        effectiveName ?? null
+      );
+      return finish(
+        'suggested_slot_replaced_by_customer_preference',
+        buildAlternativeSuggestedSlotReply(input.availabilitySuggestion),
+        nextState,
+        null
+      );
+    }
+    if (input.exactSlotUnavailableReplacement) {
+      const nextState = buildSuggestedSlotState(
+        input.flowState,
+        input.exactSlotUnavailableReplacement,
+        input.enterpriseId,
+        effectiveName ?? null
+      );
+      return finish(
+        'requested_slot_unavailable_replaced_after_suggestion',
+        buildUnavailableReplacementReply(input.exactSlotUnavailableReplacement),
+        nextState,
+        null
+      );
+    }
+    if (input.availabilitySearchCompleted === true) {
+      const nextState: CommercialFlowState = {
+        ...input.flowState,
+        suggestedVisitStatus: 'declined',
+        updatedAt: new Date().toISOString(),
+      };
+      return finish(
+        'suggested_slot_rejected_no_availability',
+        buildNoImmediateAvailabilityReply(),
+        nextState,
+        null
+      );
+    }
+    const nextState: CommercialFlowState = {
+      ...input.flowState,
+      suggestedVisitStatus: 'declined',
+      updatedAt: new Date().toISOString(),
+    };
+    return finish(
+      'suggested_slot_change_requires_revalidation',
+      buildNoImmediateAvailabilityReply(),
+      nextState,
+      null
+    );
+  }
+
+  if (!pending && !dateMention && !timeHm && !period) {
+    if (input.availabilitySuggestion) {
+      const nextState = buildSuggestedSlotState(
+        input.flowState,
+        input.availabilitySuggestion,
+        input.enterpriseId,
+        effectiveName ?? null
+      );
+      return finish(
+        'suggested_slot_offered',
+        buildInitialSuggestedSlotReply(input.availabilitySuggestion),
+        nextState,
+        null
+      );
+    }
+    if (input.availabilitySearchCompleted === true) {
+      const nextState = buildPendingState(input.flowState, {
+        pending: true,
+        dateLabel: null,
+        dateYmd: null,
+        enterpriseId: input.enterpriseId,
+        invalidTime: null,
+        missingSlot: null,
+        customerName: effectiveName ?? null,
+        confirmationAsked: false,
+      });
+      return finish('no_immediate_availability', buildNoImmediateAvailabilityReply(), nextState, null);
+    }
+  }
+
+  if (
+    input.availabilitySuggestion &&
+    (effectivePeriod || (effectiveDateYmd && !effectiveTimeHm) || (!effectiveDateYmd && (effectiveTimeHm || effectivePeriod)))
+  ) {
+    const nextState = buildSuggestedSlotState(
+      input.flowState,
+      input.availabilitySuggestion,
+      input.enterpriseId,
+      effectiveName ?? null
+    );
+    return finish(
+      pending ? 'available_slot_suggested_for_customer_preference' : 'suggested_slot_offered_with_preference',
+      buildAlternativeSuggestedSlotReply(input.availabilitySuggestion),
+      nextState,
+      null
+    );
+  }
 
   if (shouldCaptureVisitLotPreference) {
     const nextState = buildPendingState(input.flowState, {
@@ -874,13 +1188,44 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
     return finish('visit_lot_preference_captured', reply, nextState, pendingDateYmd ? 'periodo_ou_horario' : 'dia');
   }
 
-  if (userVisitConfirmation && assistantAskedVisitConfirmation(input.lastAssistantMessage)) {
+  if (
+    userVisitConfirmation &&
+    assistantAskedVisitConfirmation(input.lastAssistantMessage) &&
+    !(pendingDateYmd && pendingTimeHm && pendingConfirmationAsked)
+  ) {
     const assistantConfirmationDate = parseDateMention(input.lastAssistantMessage || '', referenceNow);
     const assistantConfirmationTime = parseTimeHmFromText(input.lastAssistantMessage || '', {
       allowStandaloneHour: true,
     });
 
     if (assistantConfirmationDate?.ymd && assistantConfirmationTime) {
+      if (input.exactSlotUnavailable === true || input.exactSlotAvailability?.available === false) {
+        if (input.exactSlotUnavailableReplacement) {
+          const nextState = buildSuggestedSlotState(
+            input.flowState,
+            input.exactSlotUnavailableReplacement,
+            input.enterpriseId,
+            effectiveName ?? null
+          );
+          return finish(
+            'reconstructed_confirmation_slot_unavailable_replaced',
+            buildUnavailableReplacementReply(input.exactSlotUnavailableReplacement),
+            nextState,
+            null
+          );
+        }
+        const unavailableState: CommercialFlowState = {
+          ...input.flowState,
+          suggestedVisitStatus: 'expired',
+          updatedAt: new Date().toISOString(),
+        };
+        return finish(
+          'reconstructed_confirmation_slot_unavailable_no_replacement',
+          buildNoImmediateAvailabilityReply(),
+          unavailableState,
+          null
+        );
+      }
       const confirmationAckState = buildPendingState(input.flowState, {
         pending: false,
         dateLabel: null,
@@ -901,7 +1246,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
         null,
         true,
         assistantConfirmationDate.ymd,
-        assistantConfirmationTime
+        assistantConfirmationTime,
+        input.exactSlotAvailability?.brokerId ?? null
       );
     }
   }
@@ -999,7 +1345,6 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
   }
 
   if (effectiveDateYmd && !effectiveTimeHm) {
-    const weekday = getJsWeekdayForYmdInSaoPaulo(effectiveDateYmd);
     const nextState = buildPendingState(input.flowState, {
       pending: true,
       dateLabel: effectiveDateLabel,
@@ -1008,18 +1353,10 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
       period: effectivePeriod,
       enterpriseId: input.enterpriseId,
       invalidTime: null,
-      missingSlot: weekday === 0 ? 'dia' : 'periodo_ou_horario',
+      missingSlot: 'periodo_ou_horario',
       customerName: effectiveName ?? null,
       confirmationAsked: false,
     });
-    if (weekday === 0) {
-      return finish(
-        'date_only_sunday_not_allowed',
-        'Para visitas, trabalhamos de segunda a sábado. Pode ser em algum dia da semana ou no sábado?',
-        nextState,
-        'dia'
-      );
-    }
     return finish(
       'date_without_time',
       askTimeReply(combineDateAndPeriodLabel(effectiveDateLabel, effectivePeriod)),
@@ -1031,26 +1368,6 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
   if (effectiveDateYmd && effectiveTimeHm) {
     const slotValidation = validateVisitDateTimeSlot(effectiveDateYmd, effectiveTimeHm);
     if (!slotValidation.valid) {
-      if (slotValidation.reason === 'sunday_not_allowed') {
-        const nextState = buildPendingState(input.flowState, {
-          pending: true,
-          dateLabel: null,
-          dateYmd: null,
-          timeHm: null,
-          period: null,
-          enterpriseId: input.enterpriseId,
-          invalidTime: null,
-          missingSlot: 'dia',
-          customerName: effectiveName ?? null,
-          confirmationAsked: false,
-        });
-        return finish(
-          'sunday_not_allowed',
-          'Para visitas, trabalhamos de segunda a sábado. Pode ser em algum dia da semana ou no sábado?',
-          nextState,
-          'dia'
-        );
-      }
       const invalidDisplay = displayTimeHm(effectiveTimeHm) ?? 'esse horário';
       const nextState = buildPendingState(input.flowState, {
         pending: true,
@@ -1080,6 +1397,35 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
         nextState,
         'valid_time'
       );
+    }
+    if (input.exactSlotUnavailable === true || input.exactSlotAvailability?.available === false) {
+      if (input.exactSlotUnavailableReplacement) {
+        const nextState = buildSuggestedSlotState(
+          input.flowState,
+          input.exactSlotUnavailableReplacement,
+          input.enterpriseId,
+          effectiveName ?? null
+        );
+        return finish(
+          'requested_slot_unavailable_replaced',
+          buildUnavailableReplacementReply(input.exactSlotUnavailableReplacement),
+          nextState,
+          null
+        );
+      }
+      const nextState = buildPendingState(input.flowState, {
+        pending: true,
+        dateLabel: effectiveDateLabel,
+        dateYmd: effectiveDateYmd,
+        timeHm: null,
+        period: effectivePeriod,
+        enterpriseId: input.enterpriseId,
+        invalidTime: null,
+        missingSlot: null,
+        customerName: effectiveName ?? null,
+        confirmationAsked: false,
+      });
+      return finish('requested_slot_unavailable_no_replacement', buildNoImmediateAvailabilityReply(), nextState, null);
     }
     if (!effectiveName) {
       const nextState = buildPendingState(input.flowState, {
@@ -1141,7 +1487,8 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
       null,
       true,
       effectiveDateYmd,
-      effectiveTimeHm
+      effectiveTimeHm,
+      input.exactSlotAvailability?.brokerId ?? null
     );
   }
 

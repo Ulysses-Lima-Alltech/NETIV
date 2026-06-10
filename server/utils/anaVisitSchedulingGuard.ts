@@ -1,6 +1,13 @@
 ﻿import type { CommercialFlowState } from './commercialFlowState.js';
 
-type VisitStatus = 'none' | 'collecting_date' | 'collecting_time' | 'collecting_name' | 'ready_to_confirm' | 'scheduled';
+type VisitStatus =
+  | 'none'
+  | 'collecting_date'
+  | 'collecting_time'
+  | 'collecting_name'
+  | 'ready_to_confirm'
+  | 'awaiting_slot_confirmation'
+  | 'scheduled';
 
 type VisitState = {
   active: boolean;
@@ -315,23 +322,12 @@ export function applyAnaVisitSchedulingGuard(params: {
     };
   }
 
-  if (v.normalizedDate && isSunday(v.normalizedDate)) {
-    const next = persist(params.flowState, v, params.enterpriseId);
-    return {
-      handled: true,
-      finalAnswer: 'Para visitas, trabalhamos de segunda a sábado. Pode ser em algum dia da semana ou no sábado?',
-      nextState: next,
-      reason: 'sunday_not_allowed',
-      nextMissingField: 'date',
-    };
-  }
-
   if (v.normalizedTime && !isInsideVisitWindow(v.normalizedTime)) {
     const next = persist(params.flowState, v, params.enterpriseId);
     return {
       handled: true,
       finalAnswer:
-        'Esse horário fica fora do período de visitas. Temos disponibilidade de segunda a sábado, das 09h às 18h. Pode ser em algum horário dentro desse período?',
+        'Esse horário fica fora do período de visitas. Os horários de visita são das 09h às 18h, conforme disponibilidade da agenda. Pode ser em algum horário dentro desse período?',
       nextState: next,
       reason: 'time_outside_window',
       nextMissingField: 'time',

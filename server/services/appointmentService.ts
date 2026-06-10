@@ -47,6 +47,11 @@ export interface CheckAvailabilityResult {
   suggestedBrokerId?: number;
 }
 
+export interface BrokerAvailabilityLookupOptions {
+  preferredBrokerId?: number | null;
+  excludeAppointmentId?: number | null;
+}
+
 export interface AssignAppointmentResult {
   appointment: {
     id: number;
@@ -118,7 +123,8 @@ async function brokerHasAvailabilityForSlot(
 export async function findEligibleBroker(
   enterpriseId: number,
   startAt: Date,
-  endAt: Date
+  endAt: Date,
+  options: BrokerAvailabilityLookupOptions = {}
 ): Promise<number | null> {
   const dow = getDayOfWeekInTz(startAt);
   const startTimeStr = getTimeStringInTz(startAt);
@@ -143,7 +149,12 @@ export async function findEligibleBroker(
   const available: { id: number; last_assigned_at: Date | null }[] = [];
   for (const b of brokers) {
     const hasAvail = await brokerHasAvailabilityForSlot(b.id, startAt, endAt);
-    const conflict = await hasBrokerConflict(b.id, startAt, endAt);
+    const conflict = await hasBrokerConflict(
+      b.id,
+      startAt,
+      endAt,
+      options.excludeAppointmentId ?? undefined
+    );
     const linkedToEnterprise = true; // já filtrado pela query
     const eligible = hasAvail && !conflict;
 
@@ -168,6 +179,14 @@ export async function findEligibleBroker(
 
   if (available.length === 0) return null;
 
+  const preferredBrokerId =
+    options.preferredBrokerId != null && options.preferredBrokerId > 0
+      ? options.preferredBrokerId
+      : null;
+  if (preferredBrokerId != null && available.some((broker) => broker.id === preferredBrokerId)) {
+    return preferredBrokerId;
+  }
+
   const withCount = await Promise.all(
     available.map(async (b) => ({
       ...b,
@@ -191,9 +210,10 @@ export async function findEligibleBroker(
 export async function checkAvailability(
   enterpriseId: number,
   startAt: Date,
-  endAt: Date
+  endAt: Date,
+  options: BrokerAvailabilityLookupOptions = {}
 ): Promise<CheckAvailabilityResult> {
-  const brokerId = await findEligibleBroker(enterpriseId, startAt, endAt);
+  const brokerId = await findEligibleBroker(enterpriseId, startAt, endAt, options);
   const { rows: brokers } = await query<{ id: number; receiving_enabled: boolean | null }>(
     `SELECT c.id, c.receiving_enabled
      FROM corretores c
@@ -207,7 +227,12 @@ export async function checkAvailability(
   for (const b of brokers) {
     const hasAvail = await brokerHasAvailabilityForSlot(b.id, startAt, endAt);
     if (!hasAvail) continue;
-    const conflict = await hasBrokerConflict(b.id, startAt, endAt);
+    const conflict = await hasBrokerConflict(
+      b.id,
+      startAt,
+      endAt,
+      options.excludeAppointmentId ?? undefined
+    );
     if (!conflict) eligibleCount++;
   }
   return {

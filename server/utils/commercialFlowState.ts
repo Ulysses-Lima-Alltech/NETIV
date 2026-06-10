@@ -94,6 +94,12 @@ export interface CommercialFlowState {
   pendingVisitCustomerName?: string | null;
   /** Marca quando a Ana já perguntou confirmacao final da visita e aguarda resposta curta. */
   pendingVisitConfirmationAsked?: boolean;
+  suggestedVisitStartAt?: string | null;
+  suggestedVisitEndAt?: string | null;
+  suggestedVisitBrokerId?: number | null;
+  suggestedVisitSlotLabel?: string | null;
+  suggestedVisitTimezone?: string | null;
+  suggestedVisitStatus?: 'awaiting_confirmation' | 'accepted' | 'declined' | 'expired' | null;
   /** Estado estruturado do fluxo de agendamento de visita. */
   visitScheduling?: {
     active: boolean;
@@ -106,7 +112,14 @@ export interface CommercialFlowState {
     requestedPeriodText?: string | null;
     nameCollected: boolean;
     customerName: string | null;
-    status: 'none' | 'collecting_date' | 'collecting_time' | 'collecting_name' | 'ready_to_confirm' | 'scheduled';
+    status:
+      | 'none'
+      | 'collecting_date'
+      | 'collecting_time'
+      | 'collecting_name'
+      | 'ready_to_confirm'
+      | 'awaiting_slot_confirmation'
+      | 'scheduled';
   };
   /** Memória leve de orquestração comportamental global da Ana (reaproveitável entre empreendimentos). */
   dialoguePolicy?: {
@@ -156,6 +169,12 @@ export function resetCommercialScopeHints(prev: CommercialFlowState | null): Com
   delete next.pendingVisitMissingSlot;
   delete next.pendingVisitCustomerName;
   delete next.pendingVisitConfirmationAsked;
+  delete next.suggestedVisitStartAt;
+  delete next.suggestedVisitEndAt;
+  delete next.suggestedVisitBrokerId;
+  delete next.suggestedVisitSlotLabel;
+  delete next.suggestedVisitTimezone;
+  delete next.suggestedVisitStatus;
   delete next.visitScheduling;
   delete next.dialoguePolicy;
   next.clearedAt = new Date().toISOString();

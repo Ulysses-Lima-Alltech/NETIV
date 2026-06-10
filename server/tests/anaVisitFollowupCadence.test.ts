@@ -8,7 +8,7 @@ import {
   shouldStartAnaVisitFollowup,
 } from '../utils/anaVisitFollowupCadence.js';
 
-test('regua de visita tem 10 tentativas ancoradas na pergunta de dia e horario', () => {
+test('regua de visita tem 10 tentativas ancoradas na sugestao de horario', () => {
   assert.equal(ANA_VISIT_FOLLOWUP_MAX_ATTEMPT, 10);
   assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(1), 60_000);
   assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(2), 120_000);
@@ -22,8 +22,9 @@ test('regua de visita tem 10 tentativas ancoradas na pergunta de dia e horario',
   assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(10), 305 * 60_000);
   assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(11), null);
 
-  assert.match(getAnaVisitFollowupMessage(1) ?? '', /qual dia e hor[aá]rio/i);
-  assert.match(getAnaVisitFollowupMessage(10) ?? '', /Vou deixar por aqui/i);
+  assert.match(getAnaVisitFollowupMessage(1, 'amanhã às 14h') ?? '', /amanhã às 14h/);
+  assert.doesNotMatch(getAnaVisitFollowupMessage(1, 'amanhã às 14h') ?? '', /qual dia e hor[aá]rio/i);
+  assert.match(getAnaVisitFollowupMessage(10, 'amanhã às 14h') ?? '', /amanhã às 14h/);
 });
 
 test('calculo de next_run_at usa anchor e notBefore para evitar rajada apos atraso', () => {
@@ -46,14 +47,15 @@ test('calculo de next_run_at usa anchor e notBefore para evitar rajada apos atra
   );
 });
 
-test('follow-up de visita inicia apenas quando Ana esta aguardando dia ou horario', () => {
+test('follow-up de visita inicia quando Ana aguarda resposta sobre horario sugerido', () => {
   assert.equal(
     shouldStartAnaVisitFollowup({
       flowState: {
         pendingVisitScheduling: true,
-        pendingVisitMissingSlot: 'dia',
+        suggestedVisitStatus: 'awaiting_confirmation',
+        suggestedVisitSlotLabel: 'amanhã às 14h',
       },
-      replyText: 'Para qual dia você prefere agendar a visita?',
+      replyText: 'Tenho uma sugestão para você: amanhã às 14h. Funciona?',
     }),
     true
   );

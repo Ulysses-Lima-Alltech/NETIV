@@ -52,6 +52,13 @@ function visitStateAllowsFollowup(flowState: CommercialFlowState | null): boolea
   return flowState.pendingVisitScheduling === true || flowState.visitScheduling?.active === true;
 }
 
+function parseOptionalDate(value: string | null | undefined): Date | null {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 export async function startAnaVisitFollowupIfEligible(params: {
   conversationId: number;
   flowState: CommercialFlowState | null | undefined;
@@ -85,6 +92,12 @@ export async function startAnaVisitFollowupIfEligible(params: {
     startedAt,
     nextRunAt,
     anchorAssistantMessageId: params.anchorAssistantMessageId,
+    suggestedVisitStartAt: parseOptionalDate(params.flowState?.suggestedVisitStartAt ?? null),
+    suggestedVisitEndAt: parseOptionalDate(params.flowState?.suggestedVisitEndAt ?? null),
+    suggestedBrokerId: params.flowState?.suggestedVisitBrokerId ?? null,
+    suggestedSlotLabel: params.flowState?.suggestedVisitSlotLabel ?? null,
+    timezone: params.flowState?.suggestedVisitTimezone ?? null,
+    suggestionStatus: params.flowState?.suggestedVisitStatus ?? null,
   });
   console.log('[ANA_VISIT_FOLLOWUP] started_or_kept_active', {
     conversationId: params.conversationId,
@@ -202,7 +215,8 @@ async function processOneAnaVisitFollowupJob(job: AnaVisitFollowupJobRow): Promi
   }
 
   const attemptIndex = job.next_attempt_index;
-  const messageText = getAnaVisitFollowupMessage(attemptIndex);
+  const suggestedSlotLabel = job.suggested_slot_label ?? flowState?.suggestedVisitSlotLabel ?? null;
+  const messageText = getAnaVisitFollowupMessage(attemptIndex, suggestedSlotLabel);
   if (!messageText) {
     await advanceAnaVisitFollowupJob({
       jobId: job.id,

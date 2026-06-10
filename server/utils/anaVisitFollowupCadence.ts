@@ -4,16 +4,16 @@ export const ANA_VISIT_FOLLOWUP_MAX_ATTEMPT = 10;
 export const ANA_VISIT_FOLLOWUP_MIN_GAP_AFTER_SEND_MS = 60_000;
 
 export const ANA_VISIT_FOLLOWUP_MESSAGES: ReadonlyArray<string> = [
-  'Só para eu conseguir avançar com sua visita: qual dia e horário fica melhor para você?',
-  'Posso te sugerir uma opção? Amanhã ou depois costuma funcionar melhor para você?',
-  'Me manda só uma opção de dia e período, tipo manhã, tarde ou fim do dia, que eu já tento organizar por aqui.',
-  'Para facilitar: você prefere visitar durante a semana ou no sábado?',
-  'Sem problema se ainda estiver vendo. Quando puder, me manda um dia e horário que eu sigo com o agendamento da sua visita.',
-  'Oi, passando só para retomar sua visita ao Évora. Quer que eu veja uma opção de horário para você?',
-  'Você prefere conhecer o empreendimento em dia de semana ou no sábado?',
-  'Posso deixar o corretor responsável aguardando você. Me confirma apenas o melhor dia e horário?',
-  'Para facilitar o agendamento, me manda um período que funcione melhor: manhã, tarde ou fim do dia?',
-  'Vou deixar por aqui para não te incomodar. Quando quiser, me envie o melhor dia e horário que eu te ajudo com a visita.',
+  'Só para eu conseguir avançar com sua visita: o horário de {slot} funciona para você?',
+  'Esse horário que te sugeri fica bom ou prefere que eu veja outra opção?',
+  'Posso tentar outro horário também. Mas consigo seguir com {slot} se funcionar para você.',
+  'Para facilitar: quer manter essa sugestão ou prefere outro período, como manhã ou tarde?',
+  'Sem problema se ainda estiver vendo. Quando puder, me confirma se esse horário funciona ou se prefere outra opção.',
+  'Oi, passando só para retomar sua visita ao Évora. A sugestão de {slot} funciona ou prefere que eu veja outra opção?',
+  'Ainda consigo seguir com {slot} se ficar bom para você. Se preferir, também posso buscar outro período.',
+  'Quer manter a sugestão de {slot} ou prefere que eu tente outro horário?',
+  'Para facilitar o agendamento, posso seguir com {slot} se funcionar. Caso não, vejo outra opção para você.',
+  'Vou deixar por aqui para não te incomodar. Quando puder, me confirma se {slot} funciona ou se prefere outra opção.',
 ];
 
 const MINUTE_MS = 60_000;
@@ -28,10 +28,20 @@ function norm(value: string | null | undefined): string {
     .trim();
 }
 
-export function getAnaVisitFollowupMessage(attemptIndex: number): string | null {
+function renderSuggestedSlotMessage(template: string, suggestedSlotLabel: string | null | undefined): string {
+  const slot = String(suggestedSlotLabel ?? '').trim();
+  if (slot) return template.replace(/\{slot\}/g, slot);
+  return template.replace(/\s*de\s+\{slot\}/g, '').replace(/\{slot\}/g, 'esse horário');
+}
+
+export function getAnaVisitFollowupMessage(
+  attemptIndex: number,
+  suggestedSlotLabel?: string | null
+): string | null {
   if (!Number.isInteger(attemptIndex)) return null;
   if (attemptIndex < 1 || attemptIndex > ANA_VISIT_FOLLOWUP_MAX_ATTEMPT) return null;
-  return ANA_VISIT_FOLLOWUP_MESSAGES[attemptIndex - 1] ?? null;
+  const template = ANA_VISIT_FOLLOWUP_MESSAGES[attemptIndex - 1] ?? null;
+  return template ? renderSuggestedSlotMessage(template, suggestedSlotLabel) : null;
 }
 
 export function getAnaVisitFollowupDelayBeforeAttemptMs(attemptIndex: number): number | null {
@@ -68,6 +78,15 @@ export function replyAsksForVisitDateOrTime(replyText: string): boolean {
   );
 }
 
+export function replyOffersSuggestedVisitSlot(replyText: string): boolean {
+  const text = norm(replyText);
+  if (!text) return false;
+  return (
+    /\b(tenho uma sugestao|consigo te sugerir|encontrei uma opcao|encontrei um horario disponivel)\b/.test(text) &&
+    /\b(funciona|fica bom|posso seguir|posso deixar|visita)\b/.test(text)
+  );
+}
+
 export function shouldStartAnaVisitFollowup(input: {
   flowState: CommercialFlowState | null | undefined;
   replyText: string;
@@ -79,9 +98,16 @@ export function shouldStartAnaVisitFollowup(input: {
   if (state.visitScheduling?.status === 'scheduled') return false;
   if (state.visitScheduling?.active === false && state.pendingVisitScheduling !== true) return false;
 
+  if (
+    state.suggestedVisitStatus === 'awaiting_confirmation' &&
+    Boolean((state.suggestedVisitSlotLabel ?? '').trim())
+  ) {
+    return true;
+  }
+
   const missingSlot = input.missingSlot ?? state.pendingVisitMissingSlot ?? null;
   if (missingSlot === 'dia' || missingSlot === 'periodo_ou_horario' || missingSlot === 'valid_time') {
     return true;
   }
-  return replyAsksForVisitDateOrTime(input.replyText);
+  return replyAsksForVisitDateOrTime(input.replyText) || replyOffersSuggestedVisitSlot(input.replyText);
 }

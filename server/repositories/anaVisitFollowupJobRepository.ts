@@ -13,6 +13,12 @@ export interface AnaVisitFollowupJobRow {
   last_attempt_index: number;
   anchor_assistant_message_id: number | null;
   last_sent_message_id: number | null;
+  suggested_visit_start_at: Date | null;
+  suggested_visit_end_at: Date | null;
+  suggested_broker_id: number | null;
+  suggested_slot_label: string | null;
+  timezone: string | null;
+  suggestion_status: string | null;
   cancel_reason: string | null;
   completed_at: Date | null;
   locked_at: Date | null;
@@ -90,6 +96,12 @@ export async function upsertActiveAnaVisitFollowupJob(params: {
   startedAt: Date;
   nextRunAt: Date;
   anchorAssistantMessageId: number | null;
+  suggestedVisitStartAt?: Date | null;
+  suggestedVisitEndAt?: Date | null;
+  suggestedBrokerId?: number | null;
+  suggestedSlotLabel?: string | null;
+  timezone?: string | null;
+  suggestionStatus?: string | null;
 }): Promise<AnaVisitFollowupJobRow> {
   const { rows } = await query<AnaVisitFollowupJobRow>(
     `INSERT INTO ana_visit_followup_jobs (
@@ -100,15 +112,50 @@ export async function upsertActiveAnaVisitFollowupJob(params: {
        next_attempt_index,
        last_attempt_index,
        anchor_assistant_message_id,
+       suggested_visit_start_at,
+       suggested_visit_end_at,
+       suggested_broker_id,
+       suggested_slot_label,
+       timezone,
+       suggestion_status,
        updated_at
      )
-     VALUES ($1, 'active', $2, $3, 1, 0, $4, NOW())
+     VALUES ($1, 'active', $2, $3, 1, 0, $4, $5, $6, $7, $8, $9, $10, NOW())
      ON CONFLICT (conversation_id)
        WHERE status IN ('active', 'processing')
      DO UPDATE SET
+       status = 'active',
+       started_at = EXCLUDED.started_at,
+       next_run_at = EXCLUDED.next_run_at,
+       next_attempt_index = 1,
+       last_attempt_index = 0,
+       anchor_assistant_message_id = EXCLUDED.anchor_assistant_message_id,
+       last_sent_message_id = NULL,
+       suggested_visit_start_at = EXCLUDED.suggested_visit_start_at,
+       suggested_visit_end_at = EXCLUDED.suggested_visit_end_at,
+       suggested_broker_id = EXCLUDED.suggested_broker_id,
+       suggested_slot_label = EXCLUDED.suggested_slot_label,
+       timezone = EXCLUDED.timezone,
+       suggestion_status = EXCLUDED.suggestion_status,
+       cancel_reason = NULL,
+       completed_at = NULL,
+       locked_at = NULL,
+       locked_by = NULL,
+       last_error = NULL,
        updated_at = NOW()
      RETURNING *`,
-    [params.conversationId, params.startedAt, params.nextRunAt, params.anchorAssistantMessageId]
+    [
+      params.conversationId,
+      params.startedAt,
+      params.nextRunAt,
+      params.anchorAssistantMessageId,
+      params.suggestedVisitStartAt ?? null,
+      params.suggestedVisitEndAt ?? null,
+      params.suggestedBrokerId ?? null,
+      params.suggestedSlotLabel ?? null,
+      params.timezone ?? null,
+      params.suggestionStatus ?? null,
+    ]
   );
   return rows[0]!;
 }
