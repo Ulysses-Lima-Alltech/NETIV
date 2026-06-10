@@ -120,6 +120,11 @@ function isPositiveVisitAck(text: string): boolean {
   return /^(sim|pode sim|pode ser|ok|fechado|combinado|confirmo|confirmado)$/.test(norm(text));
 }
 
+function isNegativeVisitAck(text: string): boolean {
+  const n = norm(text).replace(/[.,;:!?]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return /^(nao|n|nao obrigado|nao obrigada|nao quero|nao pode|nao da|esse nao|nao funciona|prefiro nao|agora nao)$/.test(n);
+}
+
 function isGratitudeOnlyMessage(text: string): boolean {
   return /^(obrigad[oa]|muito obrigad[oa]|ok obrigad[oa]|valeu|vlw|agradeco|agradeço)[.! ]*$/.test(norm(text));
 }
@@ -371,6 +376,20 @@ export function applyAnaVisitSchedulingGuard(params: {
       nextState: next,
       reason: 'collect_name',
       nextMissingField: 'name',
+    };
+  }
+
+  if (isNegativeVisitAck(userMessage)) {
+    v.status = 'none';
+    v.active = false;
+    v.accepted = false;
+    const next = persist(params.flowState, v, params.enterpriseId);
+    return {
+      handled: true,
+      finalAnswer: 'Sem problema! Quer que eu veja outro horário disponível para sua visita?',
+      nextState: next,
+      reason: 'visit_slot_declined',
+      nextMissingField: null,
     };
   }
 

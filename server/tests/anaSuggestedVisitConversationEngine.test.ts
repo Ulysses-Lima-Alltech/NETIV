@@ -16,3 +16,11 @@ test('engine nao reutiliza slot recusado em pedido de alternativa', () => {
   assert.match(engine, /addDaysYmdForAnaVisitAvailability\(flowStateParsed\.pendingVisitDate, 1\)/);
   assert.match(engine, /excludeStartAt:\s*awaitingSuggestedVisitSlot && suggestedSlotChangeRequested \? pendingSuggestedStartAt : null/);
 });
+
+test('engine da prioridade para negativa explicita de horario sugerido', () => {
+  assert.match(engine, /isExplicitVisitSchedulingNegativeMessage\(trimmed\)/);
+  assert.match(engine, /!explicitVisitSchedulingNegativeThisTurn/);
+  assert.match(engine, /!userRefusedScheduling \|\| explicitVisitSchedulingNegativeThisTurn/);
+  assert.match(engine, /directVisitDeclinedSuggestedSlot/);
+  assert.match(engine, /cancelAnaVisitFollowupForConversation\(\{\s*conversationId,\s*reason: directVisitSchedulingDecision\.reason/);
+});

@@ -82,7 +82,7 @@ export function replyOffersSuggestedVisitSlot(replyText: string): boolean {
   const text = norm(replyText);
   if (!text) return false;
   return (
-    /\b(tenho uma sugestao|consigo te sugerir|encontrei uma opcao|encontrei um horario disponivel)\b/.test(text) &&
+    /\b(que tal|tenho uma sugestao|consigo te sugerir|encontrei uma opcao|encontrei um horario disponivel)\b/.test(text) &&
     /\b(funciona|fica bom|posso seguir|posso deixar|visita)\b/.test(text)
   );
 }

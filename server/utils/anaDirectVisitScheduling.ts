@@ -252,12 +252,27 @@ function parseDateMention(text: string, referenceNow: Date): { label: string; ym
 
 export function isVisitSchedulingAckOnlyMessage(text: string): boolean {
   const n = norm(text).replace(/[.,;:!?]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (isExplicitVisitSchedulingNegativeMessage(text)) return false;
   return /^(sim|vamos|vamos sim|sim vamos|ok|ta|tá|certo|beleza|perfeito|combinado|aguardo|fico no aguardo|ok aguardo|ok aguardo agendamento|aguardo agendamento|pode ser|pode sim|pode marcar|pode agendar)$/.test(n);
+}
+
+export function isExplicitVisitSchedulingNegativeMessage(text: string): boolean {
+  const n = norm(text)
+    .replace(/[.,;:!?]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!n) return false;
+  return (
+    /^(nao|n|nao obrigado|nao obrigada|nao quero|nao pode|nao da|esse nao|nao funciona|prefiro nao|agora nao|nao quero agendar)$/.test(n) ||
+    /^nao\s+(amanha|hoje|depois|tem|outro|outra|segunda|terca|quarta|quinta|sexta|sabado|domingo|as|\d|de manha|a tarde|de tarde|noite)\b/.test(n) ||
+    /\b(nao quero|nao pode|nao da|esse nao|nao funciona|prefiro nao|agora nao|nao quero agendar|nao quero visita|nao quero marcar|nao quero horario)\b/.test(n)
+  );
 }
 
 export function isExplicitVisitSchedulingAcceptance(text: string): boolean {
   const n = norm(text);
   if (!n) return false;
+  if (isExplicitVisitSchedulingNegativeMessage(text)) return false;
 
   if (
     /^(visita|quero visitar|quero visitar la|quero visitar lá|vou visitar|vou visitar entao|vou visitar então|prefiro visita|pode ser a visita|vamos|vamos sim|sim vamos)$/.test(n)
@@ -282,6 +297,9 @@ export function isCommercialQuestionThatShouldBypassVisitScheduling(text: string
 export function isVisitSchedulingSlotAnswer(input: VisitSchedulingSlotAnswerInput): boolean {
   const userMessage = input.userMessage;
   const referenceNow = input.referenceNow ?? new Date();
+  if (isExplicitVisitSchedulingNegativeMessage(userMessage)) {
+    return input.flowState.pendingVisitScheduling === true || input.flowState.suggestedVisitStatus === 'declined';
+  }
   if (isExplicitVisitSchedulingAcceptance(userMessage)) return true;
   if (isVisitSchedulingConfirmationMessage(userMessage)) return true;
   if (assistantAskedVisitConfirmation(input.lastAssistantMessage) && isVisitConfirmationShortAckInContext(userMessage)) {
@@ -333,6 +351,7 @@ function isVisitConfirmationCorrectionMessage(text: string): boolean {
 function isVisitConfirmationShortAckInContext(text: string): boolean {
   const n = norm(text).replace(/[.,;:!?]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!n) return false;
+  if (isExplicitVisitSchedulingNegativeMessage(text)) return false;
 
   return (
     /^(pode|pode sim|sim pode|sim pode sim|claro que pode|pode confirmar|pode confirmar sim)$/.test(n) ||
@@ -343,6 +362,7 @@ function isVisitConfirmationShortAckInContext(text: string): boolean {
 export function isVisitSchedulingConfirmationMessage(text: string): boolean {
   const n = norm(text).replace(/[.,;:!?]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!n) return false;
+  if (isExplicitVisitSchedulingNegativeMessage(text)) return false;
 
   return (
     isVisitSchedulingAckOnlyMessage(text) ||
@@ -405,7 +425,7 @@ export function isAssistantVisitOfferContextMessage(text: string | null | undefi
       n
     );
   const asksVisitSlot =
-    /\b(qual dia|para qual dia|dia e horario|dia e horário|qual horario|qual horário|horario fica melhor|horário fica melhor|tenho uma sugestao|tenho uma sugestão|consigo te sugerir|encontrei uma opcao|encontrei uma opção|esse horario funciona|esse horário funciona|fica bom para voce|fica bom para você)\b/.test(
+    /\b(qual dia|para qual dia|dia e horario|dia e horário|qual horario|qual horário|horario fica melhor|horário fica melhor|tenho uma sugestao|tenho uma sugestão|consigo te sugerir|encontrei uma opcao|encontrei uma opção|que tal|esse horario funciona|esse horário funciona|fica bom para voce|fica bom para você)\b/.test(
       n
     );
   return asksVisitOffer || asksVisitSlot;
@@ -859,6 +879,60 @@ function clearSuggestedSlotStateAfterAcceptance(
   };
 }
 
+function clearSuggestedSlotStateAfterDecline(
+  prev: CommercialFlowState,
+  customerName: string | null
+): CommercialFlowState {
+  return {
+    ...prev,
+    pendingVisitScheduling: false,
+    pendingVisitDateLabel: null,
+    pendingVisitDate: null,
+    pendingVisitDay: null,
+    pendingVisitTime: null,
+    pendingVisitPeriod: null,
+    pendingVisitEnterpriseId: null,
+    pendingVisitInvalidTime: null,
+    pendingVisitMissingSlot: null,
+    pendingVisitCustomerName: null,
+    pendingVisitConfirmationAsked: false,
+    suggestedVisitStartAt: null,
+    suggestedVisitEndAt: null,
+    suggestedVisitBrokerId: null,
+    suggestedVisitSlotLabel: null,
+    suggestedVisitTimezone: null,
+    suggestedVisitStatus: 'declined',
+    visitScheduling: prev.visitScheduling
+      ? {
+          ...prev.visitScheduling,
+          active: false,
+          accepted: false,
+          requestedDateText: null,
+          requestedTimeText: null,
+          requestedPeriodText: null,
+          normalizedDate: null,
+          normalizedTime: null,
+          nameCollected: Boolean((customerName ?? prev.visitScheduling.customerName ?? '').trim()),
+          customerName: customerName ?? prev.visitScheduling.customerName ?? null,
+          status: 'none',
+        }
+      : {
+          active: false,
+          offered: true,
+          accepted: false,
+          requestedDateText: null,
+          requestedTimeText: null,
+          requestedPeriodText: null,
+          normalizedDate: null,
+          normalizedTime: null,
+          nameCollected: Boolean((customerName ?? '').trim()),
+          customerName,
+          status: 'none',
+        },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 function pendingSuggestedSlotFromState(state: CommercialFlowState): {
   label: string;
   dateYmd: string;
@@ -887,15 +961,23 @@ function pendingSuggestedSlotFromState(state: CommercialFlowState): {
 }
 
 function buildInitialSuggestedSlotReply(slot: AnaVisitAvailabilitySlot): string {
-  return `Perfeito! Tenho uma sugestão para você: ${slot.label}. Posso deixar sua visita encaminhada nesse horário?`;
+  return `Perfeito! Que tal ${slot.label}? Posso deixar sua visita encaminhada nesse horário?`;
 }
 
 function buildAlternativeSuggestedSlotReply(slot: AnaVisitAvailabilitySlot): string {
-  return `Sem problema. Tenho outra opção para ${slot.label}. Funciona melhor para você?`;
+  return `Claro! Que tal ${slot.label}? Posso seguir com esse horário para sua visita?`;
 }
 
 function buildUnavailableReplacementReply(slot: AnaVisitAvailabilitySlot): string {
-  return `Esse horário acabou ficando indisponível agora. Encontrei outra opção para ${slot.label}. Funciona para você?`;
+  return `Esse horário não encontrei disponível agora. Que tal ${slot.label}? Posso seguir com esse horário para sua visita?`;
+}
+
+function buildSuggestedSlotDeclinedReply(): string {
+  return 'Sem problema! Quer que eu veja outro horário disponível para sua visita?';
+}
+
+function buildSuggestedSlotDeclinedAgainReply(): string {
+  return 'Tudo bem, fico à disposição se quiser ver outro horário depois.';
 }
 
 function buildNoImmediateAvailabilityReply(): string {
@@ -950,10 +1032,15 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
   const shouldClearStalePendingPeriod = Boolean(dateMention && timeHm && !period);
   const effectivePeriod = period ?? (shouldClearStalePendingPeriod ? null : pendingPeriod);
   const effectiveName = explicitNameFromMessage || pendingCustomerName || knownNameFromContext(input);
+  const userExplicitNegative = isExplicitVisitSchedulingNegativeMessage(input.userMessage);
+  const userNegativeWithNewPreference = userExplicitNegative && Boolean(dateMention || timeHm || period);
   const userAckOnly = isVisitSchedulingAckOnlyMessage(input.userMessage);
   const userVisitConfirmation =
-    isVisitSchedulingConfirmationMessage(input.userMessage) ||
-    (assistantAskedVisitConfirmation(input.lastAssistantMessage) && isVisitConfirmationShortAckInContext(input.userMessage));
+    !userExplicitNegative &&
+    (
+      isVisitSchedulingConfirmationMessage(input.userMessage) ||
+      (assistantAskedVisitConfirmation(input.lastAssistantMessage) && isVisitConfirmationShortAckInContext(input.userMessage))
+    );
   const userConfusion = isEmpatheticConfusionMessage(input.userMessage);
   const visitLotPreference = extractVisitLotPreference(input.userMessage);
   const shouldCaptureVisitLotPreference =
@@ -973,7 +1060,9 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
     input.flowState.suggestedVisitStatus === 'awaiting_confirmation';
   const userAcceptedSuggestedSlot = awaitingSuggestedSlot && userVisitConfirmation;
   const userRequestedSuggestedSlotChange =
-    awaitingSuggestedSlot && !userAcceptedSuggestedSlot && isSuggestedSlotChangeRequest(input.userMessage);
+    awaitingSuggestedSlot &&
+    !userAcceptedSuggestedSlot &&
+    (isSuggestedSlotChangeRequest(input.userMessage) || userNegativeWithNewPreference);
 
   const capturedSlots: VisitSlotKey[] = [];
   if (effectiveName) capturedSlots.push('nome');
@@ -1014,6 +1103,26 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
     appointmentTimeHm,
     appointmentBrokerId,
   });
+
+  if (userExplicitNegative && input.flowState.suggestedVisitStatus === 'declined' && !userNegativeWithNewPreference) {
+    const nextState = clearSuggestedSlotStateAfterDecline(input.flowState, effectiveName ?? null);
+    return finish(
+      'suggested_slot_declined_again',
+      buildSuggestedSlotDeclinedAgainReply(),
+      nextState,
+      null
+    );
+  }
+
+  if (awaitingSuggestedSlot && userExplicitNegative && !userRequestedSuggestedSlotChange) {
+    const nextState = clearSuggestedSlotStateAfterDecline(input.flowState, effectiveName ?? null);
+    return finish(
+      'suggested_slot_declined',
+      buildSuggestedSlotDeclinedReply(),
+      nextState,
+      null
+    );
+  }
 
   if (userAcceptedSuggestedSlot && pendingSuggestedSlot) {
     const validatedSuggestedBrokerId = input.suggestedSlotValidation?.brokerId ?? null;

@@ -174,6 +174,7 @@ import {
   isExplicitVisitSchedulingAcceptance,
   isVisitSchedulingSlotAnswer,
   hasProhibitedVisitSchedulingPhrase,
+  isExplicitVisitSchedulingNegativeMessage,
   isAssistantVisitOfferContextMessage,
   isVisitSchedulingAckOnlyMessage,
   isVisitSchedulingConfirmationMessage,
@@ -5791,8 +5792,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
 
     const userRefusedScheduling =
       isVisitSchedulingRefusal(trimmed) || isVisitSchedulingRefusalMessage(trimmed);
+    const explicitVisitSchedulingNegativeThisTurn = isExplicitVisitSchedulingNegativeMessage(trimmed);
     const userIrritatedNow = isUserIrritated(trimmed);
-    if (userRefusedScheduling && flowStateParsed.pendingVisitScheduling === true) {
+    if (
+      userRefusedScheduling &&
+      !explicitVisitSchedulingNegativeThisTurn &&
+      flowStateParsed.pendingVisitScheduling === true
+    ) {
       const cancelledSchedulingState = {
         ...flowStateParsed,
         pendingVisitScheduling: false,
@@ -5825,6 +5831,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
         reason: 'user_refused_scheduling',
         userMessagePreview: trimmed.slice(0, 220),
+      });
+      await cancelAnaVisitFollowupForConversation({
+        conversationId,
+        reason: 'visit_refused',
       });
       anaTurnAuditGuardsApplied.appointmentFlowCancelledByUser = true;
     }
@@ -6081,6 +6091,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         Boolean((flowStateParsed.suggestedVisitSlotLabel ?? '').trim());
       const suggestedSlotAccepted =
         awaitingSuggestedVisitSlot &&
+        !explicitVisitSchedulingNegativeThisTurn &&
         (
           isVisitSchedulingConfirmationMessage(trimmed) ||
           isVisitSchedulingAckOnlyMessage(trimmed) ||
@@ -6239,7 +6250,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
-    const directVisitSchedulingDecision = visitSchedulingFlowActiveForTurn && !userRefusedScheduling
+    const directVisitSchedulingDecision = visitSchedulingFlowActiveForTurn && (!userRefusedScheduling || explicitVisitSchedulingNegativeThisTurn)
       ? handleVisitSchedulingDeterministically({
           userMessage: trimmed,
           flowState: flowStateParsed,
@@ -6517,16 +6528,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           repliesSemanticallySimilar(prev, deterministicVisitReply) ||
           (isVisitSchedulingLoopFallbackReply(prev) && isVisitSchedulingLoopFallbackReply(deterministicVisitReply))
       );
-      if (userRefusedScheduling || repeatedVisitLoopReply) {
+      if ((userRefusedScheduling && !explicitVisitSchedulingNegativeThisTurn) || repeatedVisitLoopReply) {
         const schedulingAlreadyScheduled =
           directVisitSchedulingDecision.nextState.visitScheduling?.status === 'scheduled' ||
           flowStateParsed.visitScheduling?.status === 'scheduled';
         console.warn('[ANA_REPEATED_RESPONSE_BLOCKED]', {
           conversationId,
-          reason: userRefusedScheduling ? 'user_refused_scheduling' : 'repeated_visit_scheduling_reply',
+          reason: userRefusedScheduling && !explicitVisitSchedulingNegativeThisTurn ? 'user_refused_scheduling' : 'repeated_visit_scheduling_reply',
           reply: deterministicVisitReply,
         });
-        if (userRefusedScheduling) {
+        if (userRefusedScheduling && !explicitVisitSchedulingNegativeThisTurn) {
           deterministicVisitReply = userIrritatedNow
             ? 'Desculpa, você tem razão. Sem agendar visita agora. Vou te passar os detalhes por aqui.'
             : 'Claro, sem problema. Te passo os detalhes por aqui.';
@@ -6689,10 +6700,19 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         flowStateParsed = committedVisitState.nextState;
       }
       await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
+      const directVisitDeclinedSuggestedSlot =
+        directVisitSchedulingDecision.reason === 'suggested_slot_declined' ||
+        directVisitSchedulingDecision.reason === 'suggested_slot_declined_again' ||
+        directVisitSchedulingDecision.nextState.suggestedVisitStatus === 'declined';
       if (directVisitSchedulingDecision.appointmentConfirmed) {
         await cancelAnaVisitFollowupForConversation({
           conversationId,
           reason: 'visit_scheduled',
+        });
+      } else if (directVisitDeclinedSuggestedSlot) {
+        await cancelAnaVisitFollowupForConversation({
+          conversationId,
+          reason: directVisitSchedulingDecision.reason,
         });
       } else {
         await startAnaVisitFollowupIfEligible({

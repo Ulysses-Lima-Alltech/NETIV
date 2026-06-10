@@ -64,6 +64,18 @@ test('follow-up de visita inicia quando Ana aguarda resposta sobre horario suger
     shouldStartAnaVisitFollowup({
       flowState: {
         pendingVisitScheduling: true,
+        suggestedVisitStatus: 'awaiting_confirmation',
+        suggestedVisitSlotLabel: 'amanha as 14h',
+      },
+      replyText: 'Perfeito! Que tal amanha as 14h? Posso deixar sua visita encaminhada nesse horario?',
+    }),
+    true
+  );
+
+  assert.equal(
+    shouldStartAnaVisitFollowup({
+      flowState: {
+        pendingVisitScheduling: true,
         pendingVisitMissingSlot: 'nome',
       },
       replyText: 'Como posso te chamar para confirmar o agendamento?',
