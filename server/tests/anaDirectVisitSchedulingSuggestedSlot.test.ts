@@ -356,6 +356,8 @@ test('suggested slot pendente mais cliente nao limpa slot e nao confirma', () =>
   assert.equal(declined.nextState.pendingVisitScheduling, false);
   assert.equal(declined.nextState.suggestedVisitStatus, 'declined');
   assert.equal(declined.nextState.suggestedVisitStartAt, null);
+  assert.equal(declined.nextState.awaitingAlternativeSlotInterest, true);
+  assert.equal(declined.nextState.suggestedVisitDeclinedStartAt, first.nextState.suggestedVisitStartAt);
   assert.equal(declined.nextState.visitScheduling?.status, 'none');
 });
 
@@ -415,7 +417,169 @@ test('cliente responde nao duas vezes nao reoferece nem confirma mesmo slot', ()
   assert.equal(declinedAgain.reason, 'suggested_slot_declined_again');
   assert.equal(declinedAgain.appointmentConfirmed, false);
   assert.match(declinedAgain.reply ?? '', /Tudo bem/i);
+  assert.match(declinedAgain.reply ?? '', /dia|per[ií]odo/i);
   assert.doesNotMatch(declinedAgain.reply ?? '', /Posso confirmar|Posso deixar|amanh/i);
+});
+
+test('sim apos pergunta de outro horario busca novo slot e nao confirma recusado', () => {
+  const first = handleVisitSchedulingDeterministically({
+    userMessage: 'Quero visitar',
+    flowState: {},
+    enterpriseId: 10,
+    customerName: 'Ulysses',
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-06-09T13:00:00-03:00'),
+    availabilitySuggestion: slot('2026-06-10', '09:00', 'amanha as 9h', 7),
+    availabilitySearchCompleted: true,
+  });
+  const declined = handleVisitSchedulingDeterministically({
+    userMessage: 'nao',
+    flowState: first.nextState,
+    enterpriseId: 10,
+    customerName: 'Ulysses',
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-06-09T13:01:00-03:00'),
+  });
+  const alternativeSlot = slot('2026-06-10', '10:00', 'amanha as 10h', 10);
+  const alternative = handleVisitSchedulingDeterministically({
+    userMessage: 'sim',
+    flowState: declined.nextState,
+    enterpriseId: 10,
+    customerName: 'Ulysses',
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-06-09T13:02:00-03:00'),
+    availabilitySuggestion: alternativeSlot,
+    availabilitySearchCompleted: true,
+  });
+
+  assert.equal(alternative.reason, 'suggested_slot_alternative_offered');
+  assert.equal(alternative.appointmentConfirmed, false);
+  assert.match(alternative.reply ?? '', /Claro! Que tal/i);
+  assert.match(alternative.reply ?? '', /10h/);
+  assert.doesNotMatch(alternative.reply ?? '', /Posso confirmar sua visita para amanha as 9h/i);
+  assert.equal(alternative.nextState.suggestedVisitStartAt, alternativeSlot.startAt.toISOString());
+  assert.equal(alternative.nextState.suggestedVisitDeclinedStartAt, first.nextState.suggestedVisitStartAt);
+  assert.equal(alternative.nextState.awaitingAlternativeSlotInterest, false);
+  assert.equal(alternative.nextState.visitScheduling?.status, 'awaiting_slot_confirmation');
+});
+
+test('sim apos pergunta de outro horario nao aceita sugestao igual ao slot recusado', () => {
+  const refusedSlot = slot('2026-06-10', '09:00', 'amanha as 9h', 7);
+  const first = handleVisitSchedulingDeterministically({
+    userMessage: 'Quero visitar',
+    flowState: {},
+    enterpriseId: 10,
+    customerName: 'Ulysses',
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-06-09T13:00:00-03:00'),
+    availabilitySuggestion: refusedSlot,
+    availabilitySearchCompleted: true,
+  });
+  const declined = handleVisitSchedulingDeterministically({
+    userMessage: 'nao',
+    flowState: first.nextState,
+    enterpriseId: 10,
+    customerName: 'Ulysses',
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-06-09T13:01:00-03:00'),
+  });
+  const alternative = handleVisitSchedulingDeterministically({
+    userMessage: 'sim',
+    flowState: declined.nextState,
+    enterpriseId: 10,
+    customerName: 'Ulysses',
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-06-09T13:02:00-03:00'),
+    availabilitySuggestion: refusedSlot,
+    availabilitySearchCompleted: true,
+  });
+
+  assert.equal(alternative.reason, 'suggested_slot_alternative_no_availability');
+  assert.equal(alternative.appointmentConfirmed, false);
+  assert.notEqual(alternative.nextState.suggestedVisitStartAt, refusedSlot.startAt.toISOString());
+  assert.doesNotMatch(alternative.reply ?? '', /Que tal amanha as 9h/i);
+});
+
+test('sim apos outro horario mais pode ser confirma somente o novo slot revalidado', () => {
+  const first = handleVisitSchedulingDeterministically({
+    userMessage: 'Quero visitar',
+    flowState: {},
+    enterpriseId: 10,
+    customerName: 'Ulysses',
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-06-09T13:00:00-03:00'),
+    availabilitySuggestion: slot('2026-06-10', '09:00', 'amanha as 9h', 7),
+    availabilitySearchCompleted: true,
+  });
+  const declined = handleVisitSchedulingDeterministically({
+    userMessage: 'nao',
+    flowState: first.nextState,
+    enterpriseId: 10,
+    customerName: 'Ulysses',
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-06-09T13:01:00-03:00'),
+  });
+  const alternativeSlot = slot('2026-06-10', '10:00', 'amanha as 10h', 10);
+  const alternative = handleVisitSchedulingDeterministically({
+    userMessage: 'sim',
+    flowState: declined.nextState,
+    enterpriseId: 10,
+    customerName: 'Ulysses',
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-06-09T13:02:00-03:00'),
+    availabilitySuggestion: alternativeSlot,
+    availabilitySearchCompleted: true,
+  });
+  const accepted = handleVisitSchedulingDeterministically({
+    userMessage: 'pode ser',
+    flowState: alternative.nextState,
+    enterpriseId: 10,
+    customerName: 'Ulysses',
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-06-09T13:03:00-03:00'),
+    suggestedSlotValidation: {
+      available: true,
+      brokerId: 10,
+      eligibleBrokerCount: 1,
+    },
+  });
+
+  assert.equal(accepted.reason, 'suggested_slot_accepted');
+  assert.equal(accepted.appointmentConfirmed, true);
+  assert.equal(accepted.appointmentDateYmd, '2026-06-10');
+  assert.equal(accepted.appointmentTimeHm, '10:00');
+  assert.equal(accepted.appointmentBrokerId, 10);
+  assert.notEqual(accepted.appointmentTimeHm, '09:00');
+});
+
+test('sim apos pergunta normal de confirmacao aceita slot atual se nao recusado', () => {
+  const first = handleVisitSchedulingDeterministically({
+    userMessage: 'Quero visitar',
+    flowState: {},
+    enterpriseId: 10,
+    customerName: 'Ulysses',
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-06-09T13:00:00-03:00'),
+    availabilitySuggestion: slot('2026-06-10', '09:00', 'amanha as 9h', 7),
+    availabilitySearchCompleted: true,
+  });
+  const accepted = handleVisitSchedulingDeterministically({
+    userMessage: 'sim',
+    flowState: first.nextState,
+    enterpriseId: 10,
+    customerName: 'Ulysses',
+    customerPhone: '11999990000',
+    referenceNow: new Date('2026-06-09T13:01:00-03:00'),
+    suggestedSlotValidation: {
+      available: true,
+      brokerId: 7,
+      eligibleBrokerCount: 1,
+    },
+  });
+
+  assert.equal(accepted.reason, 'suggested_slot_accepted');
+  assert.equal(accepted.appointmentConfirmed, true);
+  assert.equal(accepted.appointmentTimeHm, '09:00');
 });
 
 test('negativa com novo horario oferece horario validado sem confirmar', () => {

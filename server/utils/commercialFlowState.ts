@@ -100,6 +100,12 @@ export interface CommercialFlowState {
   suggestedVisitSlotLabel?: string | null;
   suggestedVisitTimezone?: string | null;
   suggestedVisitStatus?: 'awaiting_confirmation' | 'accepted' | 'declined' | 'expired' | null;
+  awaitingAlternativeSlotInterest?: boolean | null;
+  suggestedVisitDeclinedStartAt?: string | null;
+  suggestedVisitDeclinedEndAt?: string | null;
+  suggestedVisitDeclinedBrokerId?: number | null;
+  suggestedVisitDeclinedSlotLabel?: string | null;
+  suggestedVisitDeclinedTimezone?: string | null;
   /** Estado estruturado do fluxo de agendamento de visita. */
   visitScheduling?: {
     active: boolean;
@@ -175,6 +181,12 @@ export function resetCommercialScopeHints(prev: CommercialFlowState | null): Com
   delete next.suggestedVisitSlotLabel;
   delete next.suggestedVisitTimezone;
   delete next.suggestedVisitStatus;
+  delete next.awaitingAlternativeSlotInterest;
+  delete next.suggestedVisitDeclinedStartAt;
+  delete next.suggestedVisitDeclinedEndAt;
+  delete next.suggestedVisitDeclinedBrokerId;
+  delete next.suggestedVisitDeclinedSlotLabel;
+  delete next.suggestedVisitDeclinedTimezone;
   delete next.visitScheduling;
   delete next.dialoguePolicy;
   next.clearedAt = new Date().toISOString();

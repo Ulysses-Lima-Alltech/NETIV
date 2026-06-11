@@ -830,6 +830,7 @@ function buildSuggestedSlotState(
     suggestedVisitSlotLabel: slot.label,
     suggestedVisitTimezone: slot.timezone,
     suggestedVisitStatus: 'awaiting_confirmation',
+    awaitingAlternativeSlotInterest: false,
     visitScheduling: {
       active: true,
       offered: true,
@@ -865,6 +866,12 @@ function clearSuggestedSlotStateAfterAcceptance(
     pendingVisitCustomerName: null,
     pendingVisitConfirmationAsked: false,
     suggestedVisitStatus: 'accepted',
+    awaitingAlternativeSlotInterest: false,
+    suggestedVisitDeclinedStartAt: null,
+    suggestedVisitDeclinedEndAt: null,
+    suggestedVisitDeclinedBrokerId: null,
+    suggestedVisitDeclinedSlotLabel: null,
+    suggestedVisitDeclinedTimezone: null,
     visitScheduling: prev.visitScheduling
       ? {
           ...prev.visitScheduling,
@@ -883,6 +890,12 @@ function clearSuggestedSlotStateAfterDecline(
   prev: CommercialFlowState,
   customerName: string | null
 ): CommercialFlowState {
+  const declinedStartAt = prev.suggestedVisitStartAt ?? prev.suggestedVisitDeclinedStartAt ?? null;
+  const declinedEndAt = prev.suggestedVisitEndAt ?? prev.suggestedVisitDeclinedEndAt ?? null;
+  const declinedBrokerId = prev.suggestedVisitBrokerId ?? prev.suggestedVisitDeclinedBrokerId ?? null;
+  const declinedSlotLabel = prev.suggestedVisitSlotLabel ?? prev.suggestedVisitDeclinedSlotLabel ?? null;
+  const declinedTimezone = prev.suggestedVisitTimezone ?? prev.suggestedVisitDeclinedTimezone ?? null;
+
   return {
     ...prev,
     pendingVisitScheduling: false,
@@ -902,6 +915,12 @@ function clearSuggestedSlotStateAfterDecline(
     suggestedVisitSlotLabel: null,
     suggestedVisitTimezone: null,
     suggestedVisitStatus: 'declined',
+    awaitingAlternativeSlotInterest: true,
+    suggestedVisitDeclinedStartAt: declinedStartAt,
+    suggestedVisitDeclinedEndAt: declinedEndAt,
+    suggestedVisitDeclinedBrokerId: declinedBrokerId,
+    suggestedVisitDeclinedSlotLabel: declinedSlotLabel,
+    suggestedVisitDeclinedTimezone: declinedTimezone,
     visitScheduling: prev.visitScheduling
       ? {
           ...prev.visitScheduling,
@@ -977,7 +996,7 @@ function buildSuggestedSlotDeclinedReply(): string {
 }
 
 function buildSuggestedSlotDeclinedAgainReply(): string {
-  return 'Tudo bem, fico à disposição se quiser ver outro horário depois.';
+  return 'Tudo bem! Se quiser, me diga qual dia ou período fica melhor para você que eu verifico a disponibilidade.';
 }
 
 function buildNoImmediateAvailabilityReply(): string {
@@ -996,6 +1015,13 @@ function isSuggestedSlotChangeRequest(text: string): boolean {
     parseTimeHmFromText(text, { allowStandaloneHour: true }) != null ||
     parsePeriodFromText(text) != null
   );
+}
+
+export function isSuggestedSlotAlternativeInterestMessage(text: string): boolean {
+  const n = norm(text).replace(/[.,;:!?]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!n) return false;
+  if (isExplicitVisitSchedulingNegativeMessage(text)) return false;
+  return /^(sim|pode|pode sim|quero|quero sim|veja|ve sim|manda|me fala outro)$/.test(n);
 }
 
 function knownNameFromContext(input: DirectVisitSchedulingInput): string | null {
@@ -1058,6 +1084,11 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
     pending &&
     pendingSuggestedSlot != null &&
     input.flowState.suggestedVisitStatus === 'awaiting_confirmation';
+  const awaitingAlternativeSlotInterest =
+    input.flowState.suggestedVisitStatus === 'declined' &&
+    input.flowState.awaitingAlternativeSlotInterest === true;
+  const userAcceptedAlternativeSlotSearch =
+    awaitingAlternativeSlotInterest && isSuggestedSlotAlternativeInterestMessage(input.userMessage);
   const userAcceptedSuggestedSlot = awaitingSuggestedSlot && userVisitConfirmation;
   const userRequestedSuggestedSlotChange =
     awaitingSuggestedSlot &&
@@ -1103,6 +1134,59 @@ export function handleVisitSchedulingDeterministically(input: DirectVisitSchedul
     appointmentTimeHm,
     appointmentBrokerId,
   });
+
+  if (userAcceptedAlternativeSlotSearch) {
+    const declinedStartAt = input.flowState.suggestedVisitDeclinedStartAt
+      ? new Date(input.flowState.suggestedVisitDeclinedStartAt)
+      : null;
+    const suggestionReusesDeclinedSlot =
+      input.availabilitySuggestion != null &&
+      declinedStartAt instanceof Date &&
+      !Number.isNaN(declinedStartAt.getTime()) &&
+      input.availabilitySuggestion.startAt.getTime() === declinedStartAt.getTime();
+    if (input.availabilitySuggestion && !suggestionReusesDeclinedSlot) {
+      const nextState = buildSuggestedSlotState(
+        input.flowState,
+        input.availabilitySuggestion,
+        input.enterpriseId,
+        effectiveName ?? null
+      );
+      return finish(
+        'suggested_slot_alternative_offered',
+        buildAlternativeSuggestedSlotReply(input.availabilitySuggestion),
+        nextState,
+        null
+      );
+    }
+    if (input.availabilitySearchCompleted === true) {
+      const nextState: CommercialFlowState = {
+        ...input.flowState,
+        awaitingAlternativeSlotInterest: false,
+        updatedAt: new Date().toISOString(),
+      };
+      return finish('suggested_slot_alternative_no_availability', buildNoImmediateAvailabilityReply(), nextState, null);
+    }
+    const nextState: CommercialFlowState = {
+      ...input.flowState,
+      awaitingAlternativeSlotInterest: false,
+      updatedAt: new Date().toISOString(),
+    };
+    return finish('suggested_slot_alternative_requires_availability', buildNoImmediateAvailabilityReply(), nextState, null);
+  }
+
+  if (userExplicitNegative && awaitingAlternativeSlotInterest && !userNegativeWithNewPreference) {
+    const nextState: CommercialFlowState = {
+      ...input.flowState,
+      awaitingAlternativeSlotInterest: false,
+      updatedAt: new Date().toISOString(),
+    };
+    return finish(
+      'suggested_slot_declined_again',
+      buildSuggestedSlotDeclinedAgainReply(),
+      nextState,
+      null
+    );
+  }
 
   if (userExplicitNegative && input.flowState.suggestedVisitStatus === 'declined' && !userNegativeWithNewPreference) {
     const nextState = clearSuggestedSlotStateAfterDecline(input.flowState, effectiveName ?? null);

@@ -182,6 +182,7 @@ import {
   isVisitSchedulingLoopFallbackReply,
   isVisitSchedulingRefusalMessage,
   isVisitSchedulingTopicSwitchMessage,
+  isSuggestedSlotAlternativeInterestMessage,
   reconstructVisitStateFromRecentMessages,
 } from '../utils/anaDirectVisitScheduling.js';
 import {
@@ -5856,6 +5857,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       flowStateParsed.visitScheduling?.accepted === true &&
       (flowStateParsed.pendingVisitScheduling === true || flowStateParsed.visitScheduling?.active === true);
     const commercialQuestionThisTurn = isCommercialQuestionThatShouldBypassVisitScheduling(trimmed);
+    const awaitingAlternativeSlotInterestForTurn =
+      flowStateParsed.suggestedVisitStatus === 'declined' &&
+      flowStateParsed.awaitingAlternativeSlotInterest === true;
+    const alternativeSlotInterestAnswerThisTurn =
+      awaitingAlternativeSlotInterestForTurn &&
+      (
+        isSuggestedSlotAlternativeInterestMessage(trimmed) ||
+        explicitVisitSchedulingNegativeThisTurn
+      );
     const visitSchedulingSlotAnswerThisTurn = isVisitSchedulingSlotAnswer({
       userMessage: trimmed,
       flowState: flowStateParsed,
@@ -5865,6 +5875,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const shouldBypassVisitSchedulingForCommercialQuestion =
       commercialQuestionThisTurn &&
       !explicitVisitSchedulingAcceptanceThisTurn &&
+      !alternativeSlotInterestAnswerThisTurn &&
       !visitSchedulingSlotAnswerThisTurn;
     console.log('[ANA_VISIT_SCHEDULING_BYPASS_EVALUATED]', {
       conversationId,
@@ -5987,6 +5998,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       !visitTopicSwitchRequested &&
       !visitFlowSuppressedByConfirmationContext &&
       (explicitVisitSchedulingAcceptanceThisTurn ||
+        alternativeSlotInterestAnswerThisTurn ||
         visitSchedulingSlotAnswerThisTurn ||
         directVisitSchedulingIntent ||
         (flowStateParsed.pendingVisitScheduling === true && !commercialQuestionThisTurn) ||
@@ -6079,16 +6091,26 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       const pendingSuggestedEndAt = flowStateParsed.suggestedVisitEndAt
         ? new Date(flowStateParsed.suggestedVisitEndAt)
         : null;
+      const declinedSuggestedStartAt = flowStateParsed.suggestedVisitDeclinedStartAt
+        ? new Date(flowStateParsed.suggestedVisitDeclinedStartAt)
+        : null;
       const hasValidPendingSuggestedDates =
         pendingSuggestedStartAt instanceof Date &&
         !Number.isNaN(pendingSuggestedStartAt.getTime()) &&
         pendingSuggestedEndAt instanceof Date &&
         !Number.isNaN(pendingSuggestedEndAt.getTime());
+      const hasValidDeclinedSuggestedStart =
+        declinedSuggestedStartAt instanceof Date &&
+        !Number.isNaN(declinedSuggestedStartAt.getTime());
       const awaitingSuggestedVisitSlot =
         flowStateParsed.pendingVisitScheduling === true &&
         flowStateParsed.suggestedVisitStatus === 'awaiting_confirmation' &&
         hasValidPendingSuggestedDates &&
         Boolean((flowStateParsed.suggestedVisitSlotLabel ?? '').trim());
+      const alternativeSlotSearchAccepted =
+        awaitingAlternativeSlotInterestForTurn &&
+        hasValidDeclinedSuggestedStart &&
+        isSuggestedSlotAlternativeInterestMessage(trimmed);
       const suggestedSlotAccepted =
         awaitingSuggestedVisitSlot &&
         !explicitVisitSchedulingNegativeThisTurn &&
@@ -6150,6 +6172,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           Boolean(exactDateYmd);
         const shouldValidateExactSlot =
           hasExactSlotCandidate &&
+          !alternativeSlotSearchAccepted &&
           (
             explicitExactSlotAfterSuggestion ||
             (
@@ -6209,6 +6232,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           !exactSlotUnavailable &&
           !shouldValidateExactSlot &&
           (
+            alternativeSlotSearchAccepted ||
             !awaitingSuggestedVisitSlot ||
             suggestedSlotChangeRequested ||
             Boolean(preferenceFromMessage.dateYmd || preferenceFromMessage.period || preferenceFromMessage.weekday)
@@ -6231,13 +6255,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             enterpriseId: visitAvailabilityEnterpriseId,
             referenceNow: lastUserMessageAt,
             minimumStartAt:
-              awaitingSuggestedVisitSlot &&
+              alternativeSlotSearchAccepted
+                ? declinedSuggestedStartAt
+                : awaitingSuggestedVisitSlot &&
               suggestedSlotChangeRequested &&
               !suggestedSlotAlternativeDayRequested &&
               !preferenceFromMessage.period
                 ? pendingSuggestedStartAt
                 : null,
-            excludeStartAt: awaitingSuggestedVisitSlot && suggestedSlotChangeRequested ? pendingSuggestedStartAt : null,
+            excludeStartAt: alternativeSlotSearchAccepted
+              ? declinedSuggestedStartAt
+              : awaitingSuggestedVisitSlot && suggestedSlotChangeRequested ? pendingSuggestedStartAt : null,
             preference: {
               dateYmd: preferenceFromMessage.dateYmd ?? fallbackPendingDate,
               weekday: preferenceFromMessage.weekday ?? null,
