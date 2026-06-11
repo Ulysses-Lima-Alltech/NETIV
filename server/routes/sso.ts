@@ -137,10 +137,18 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     // ── PASSO 4: Upsert do corretor (apenas para COLLABORATOR com broker_info) ──
     let effectiveBrokerId: number | null = brokerId;
     if (safeRole === 'COLLABORATOR' && brokerInfo && typeof brokerInfo.enterprise_id === 'number') {
+      // Se o Django não mandou broker_id, tentar achar pelo app_user existente (email)
+      if (effectiveBrokerId == null) {
+        const existingAppUser = await findByEmail(email);
+        if (existingAppUser?.broker_id != null) {
+          effectiveBrokerId = existingAppUser.broker_id;
+        }
+      }
+
       console.log('[SSO][broker-upsert] Iniciando upsert de corretor para email:', email);
       try {
         effectiveBrokerId = await upsertCorretorAndEnterprise({
-          existingBrokerId: brokerId,
+          existingBrokerId: effectiveBrokerId,
           fullName: String(brokerInfo.full_name ?? name ?? email),
           phone: typeof brokerInfo.phone === 'string' ? brokerInfo.phone : null,
           email: typeof brokerInfo.email === 'string' ? brokerInfo.email : email || null,
@@ -232,8 +240,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     // ── Commit da transação ──
     await client.query('COMMIT');
 
-    // ── PASSO 8: Retornar o session token para o Django ──
-    res.json({ sessionToken });
+    // ── PASSO 8: Retornar o session token (e o broker_id resolvido) para o Django ──
+    res.json({ sessionToken, brokerId: effectiveBrokerId });
 
   } catch (e) {
     console.error('[SSO] Erro:', e);
