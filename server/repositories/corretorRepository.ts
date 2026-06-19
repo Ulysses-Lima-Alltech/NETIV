@@ -205,6 +205,7 @@ export async function upsertCorretorAndEnterprise(args: {
           city: '',
           phone: phone ?? '',
           realEstateAgency,
+          email: email ?? null,
         });
         corretorId = newCorretor.id;
       }
@@ -225,6 +226,7 @@ export async function upsertCorretorAndEnterprise(args: {
         city: '',
         phone: phone ?? '',
         realEstateAgency,
+        email: email ?? null,
       });
       corretorId = newCorretor.id;
     }
