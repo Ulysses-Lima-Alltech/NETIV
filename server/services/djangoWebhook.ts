@@ -127,3 +127,29 @@ export function buildLeadPayload(
   };
 }
 
+/** Só conversas CLIENT viram lead no Django. CORRETOR/ADMIN (aba INTERNO) são bloqueados. */
+function isClientConversation(conv: ConversationRow): boolean {
+  return String(conv.conversation_type ?? 'CLIENT').toUpperCase() === 'CLIENT';
+}
+
+/**
+ * Ponto ÚNICO de envio de lead ao Django. Garante que contatos internos
+ * (corretores/admin) NUNCA sejam enviados como lead, independente do call site.
+ */
+export async function notifyDjangoLead(
+  conv: ConversationRow,
+  fallbacks?: {
+    whatsappDisplayName?: string | null;
+    contactFullName?: string | null;
+    contactFirstName?: string | null;
+  }
+): Promise<DjangoNotifyResult> {
+  if (!isClientConversation(conv)) {
+    console.log('[Django Webhook] lead_skip_internal', {
+      conversationId: conv.id,
+      conversationType: conv.conversation_type ?? 'CLIENT',
+    });
+    return { ok: false };
+  }
+  return notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(conv, fallbacks));
+}

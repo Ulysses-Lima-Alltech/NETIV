@@ -8,7 +8,7 @@
 // reenviar — mas o carimbo evita reenvio desnecessário.
 
 import { query } from '../db/pg.js';
-import { notifyDjango, buildLeadPayload } from './djangoWebhook.js';
+import { notifyDjangoLead } from './djangoWebhook.js';
 import type { ConversationRow } from '../repositories/conversationRepository.js';
 
 /** Quantas conversas processar por tick. Limite duro pra não sobrecarregar. */
@@ -77,13 +77,11 @@ async function markSynced(conversationId: number, enterpriseId: number): Promise
  * no próximo tick. Comportamento: "tenta pra sempre" (decisão B).
  */
 async function processOne(row: PendingRow): Promise<{ ok: boolean; status?: number }> {
-  const payload = buildLeadPayload(row, {
+  const result = await notifyDjangoLead(row, {
     whatsappDisplayName: row.whatsapp_display_name ?? null,
     contactFullName: row.contact_full_name ?? null,
     contactFirstName: row.contact_first_name ?? null,
   });
-
-  const result = await notifyDjango('api/webhook/netiv-lead/', payload);
 
   if (result.ok && row.enterprise_id != null) {
     await markSynced(row.id, row.enterprise_id);

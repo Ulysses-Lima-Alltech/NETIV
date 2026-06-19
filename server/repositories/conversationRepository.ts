@@ -2,7 +2,7 @@
 import { getActiveEnterpriseById } from './enterpriseRepository.js';
 import { getCorretorById } from './corretorRepository.js';
 import { assignConversationToNextBroker } from '../services/brokerAssignmentService.js';
-import { notifyDjango, buildLeadPayload } from '../services/djangoWebhook.js';
+import { notifyDjangoLead } from '../services/djangoWebhook.js';
 import { logAutoHandoffBlocked } from '../utils/autoHandoffPolicy.js';
 import type { LeadOriginInput } from '../services/leadOriginResolver.js';
 import { resolveEnterpriseFromLeadSource } from '../services/leadOriginResolver.js';
@@ -1056,11 +1056,11 @@ export async function updateClassification(
           reason: 'handoff',
         });
         const contact = row.contact_id != null ? await findContactById(row.contact_id) : null;
-        notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row, {
+        notifyDjangoLead(row, {
           whatsappDisplayName: row.whatsapp_display_name ?? null,
           contactFullName: contact?.full_name ?? null,
           contactFirstName: contact?.first_name ?? null,
-        }));
+        });
         await assignConversationToNextBroker({
           conversationId,
           reason: 'manual_classification_handoff',
@@ -1154,11 +1154,11 @@ export async function updateClassification(
         reason: 'handoff',
       });
       const contact = row.contact_id != null ? await findContactById(row.contact_id) : null;
-      notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(row, {
+      notifyDjangoLead(row, {
         whatsappDisplayName: row.whatsapp_display_name ?? null,
         contactFullName: contact?.full_name ?? null,
         contactFirstName: contact?.first_name ?? null,
-      }));
+      });
       await assignConversationToNextBroker({
         conversationId,
         reason: 'manual_classification_handoff',
