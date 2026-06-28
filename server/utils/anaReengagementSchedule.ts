@@ -1,3 +1,5 @@
+import { computeAnaFollowupAtUtc } from './anaFollowupCadence.js';
+
 /**
  * Agenda o instante de envio do reengajamento (fuso America/Sao_Paulo).
  *
@@ -80,7 +82,10 @@ export function isReengagementDueNow(lastUserMessageAt: Date, now: Date, eligibl
   return true;
 }
 
-export function computeCommercialFollowupEligibleAtUtc(lastUserMessageAt: Date, cycleCount: number): Date | null {
-  if (cycleCount < 0 || cycleCount > 4) return null;
-  return new Date(lastUserMessageAt.getTime() + (cycleCount + 1) * MINUTE_MS);
+export function computeCommercialFollowupEligibleAtUtc(lastAnaMessageAt: Date, cycleCount: number): Date | null {
+  if (!Number.isInteger(cycleCount) || cycleCount < 0) return null;
+  return computeAnaFollowupAtUtc({
+    anchor: lastAnaMessageAt,
+    attemptIndex: cycleCount + 1,
+  });
 }

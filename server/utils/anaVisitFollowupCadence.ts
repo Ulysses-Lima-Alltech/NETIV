@@ -1,6 +1,6 @@
 import type { CommercialFlowState } from './commercialFlowState.js';
+import { computeAnaFollowupAtUtc, getAnaFollowupDelayMs } from './anaFollowupCadence.js';
 
-export const ANA_VISIT_FOLLOWUP_MAX_ATTEMPT = 10;
 export const ANA_VISIT_FOLLOWUP_MIN_GAP_AFTER_SEND_MS = 60_000;
 
 export const ANA_VISIT_FOLLOWUP_MESSAGES: ReadonlyArray<string> = [
@@ -15,9 +15,6 @@ export const ANA_VISIT_FOLLOWUP_MESSAGES: ReadonlyArray<string> = [
   'Para facilitar o agendamento, posso seguir com {slot} se funcionar. Caso não, vejo outra opção para você.',
   'Vou deixar por aqui para não te incomodar. Quando puder, me confirma se {slot} funciona ou se prefere outra opção.',
 ];
-
-const MINUTE_MS = 60_000;
-const HOUR_MS = 60 * MINUTE_MS;
 
 function norm(value: string | null | undefined): string {
   return String(value ?? '')
@@ -39,8 +36,9 @@ export function getAnaVisitFollowupMessage(
   suggestedSlotLabel?: string | null
 ): string | null {
   if (!Number.isInteger(attemptIndex)) return null;
-  if (attemptIndex < 1 || attemptIndex > ANA_VISIT_FOLLOWUP_MAX_ATTEMPT) return null;
-  const template = ANA_VISIT_FOLLOWUP_MESSAGES[attemptIndex - 1] ?? null;
+  if (attemptIndex < 1) return null;
+  const template =
+    ANA_VISIT_FOLLOWUP_MESSAGES[Math.min(attemptIndex - 1, ANA_VISIT_FOLLOWUP_MESSAGES.length - 1)] ?? null;
   return template ? renderSuggestedSlotMessage(template, suggestedSlotLabel) : null;
 }
 
@@ -50,9 +48,8 @@ export function getAnaVisitFollowupDelayBeforeAttemptMs(attemptIndex: number): n
 
 export function getAnaVisitFollowupOffsetFromAnchorMs(attemptIndex: number): number | null {
   if (!Number.isInteger(attemptIndex)) return null;
-  if (attemptIndex < 1 || attemptIndex > ANA_VISIT_FOLLOWUP_MAX_ATTEMPT) return null;
-  if (attemptIndex <= 5) return attemptIndex * MINUTE_MS;
-  return 5 * MINUTE_MS + (attemptIndex - 5) * HOUR_MS;
+  if (attemptIndex < 1) return null;
+  return getAnaFollowupDelayMs(attemptIndex);
 }
 
 export function computeAnaVisitFollowupNextRunAt(params: {
@@ -60,12 +57,12 @@ export function computeAnaVisitFollowupNextRunAt(params: {
   nextAttemptIndex: number;
   notBefore?: Date | null;
 }): Date | null {
-  const offsetMs = getAnaVisitFollowupOffsetFromAnchorMs(params.nextAttemptIndex);
-  if (offsetMs == null) return null;
-  const anchored = new Date(params.anchor.getTime() + offsetMs);
-  const notBefore = params.notBefore ?? null;
-  if (notBefore && anchored.getTime() < notBefore.getTime()) return notBefore;
-  return anchored;
+  if (!Number.isInteger(params.nextAttemptIndex) || params.nextAttemptIndex < 1) return null;
+  return computeAnaFollowupAtUtc({
+    anchor: params.anchor,
+    attemptIndex: params.nextAttemptIndex,
+    notBefore: params.notBefore ?? null,
+  });
 }
 
 export function replyAsksForVisitDateOrTime(replyText: string): boolean {

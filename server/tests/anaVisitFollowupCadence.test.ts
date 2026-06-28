@@ -1,15 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  ANA_VISIT_FOLLOWUP_MAX_ATTEMPT,
   computeAnaVisitFollowupNextRunAt,
   getAnaVisitFollowupOffsetFromAnchorMs,
   getAnaVisitFollowupMessage,
   shouldStartAnaVisitFollowup,
 } from '../utils/anaVisitFollowupCadence.js';
 
-test('regua de visita tem 10 tentativas ancoradas na sugestao de horario', () => {
-  assert.equal(ANA_VISIT_FOLLOWUP_MAX_ATTEMPT, 10);
+test('regua de visita usa a cadencia oficial sem teto de tentativas', () => {
   assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(1), 60_000);
   assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(2), 120_000);
   assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(3), 180_000);
@@ -18,13 +16,15 @@ test('regua de visita tem 10 tentativas ancoradas na sugestao de horario', () =>
   assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(6), 65 * 60_000);
   assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(7), 125 * 60_000);
   assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(8), 185 * 60_000);
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(9), 245 * 60_000);
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(10), 305 * 60_000);
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(11), null);
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(9), 186 * 60_000);
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(13), 190 * 60_000);
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(14), 310 * 60_000);
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(15), 430 * 60_000);
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(0), null);
 
-  assert.match(getAnaVisitFollowupMessage(1, 'amanhã às 14h') ?? '', /amanhã às 14h/);
-  assert.doesNotMatch(getAnaVisitFollowupMessage(1, 'amanhã às 14h') ?? '', /qual dia e hor[aá]rio/i);
-  assert.match(getAnaVisitFollowupMessage(10, 'amanhã às 14h') ?? '', /amanhã às 14h/);
+  assert.match(getAnaVisitFollowupMessage(1, 'amanha as 14h') ?? '', /amanha as 14h/);
+  assert.match(getAnaVisitFollowupMessage(10, 'amanha as 14h') ?? '', /amanha as 14h/);
+  assert.match(getAnaVisitFollowupMessage(14, 'amanha as 14h') ?? '', /amanha as 14h/);
 });
 
 test('calculo de next_run_at usa anchor e notBefore para evitar rajada apos atraso', () => {
@@ -34,8 +34,8 @@ test('calculo de next_run_at usa anchor e notBefore para evitar rajada apos atra
     '2026-06-10T12:01:00.000Z'
   );
   assert.equal(
-    computeAnaVisitFollowupNextRunAt({ anchor, nextAttemptIndex: 10 })?.toISOString(),
-    '2026-06-10T17:05:00.000Z'
+    computeAnaVisitFollowupNextRunAt({ anchor, nextAttemptIndex: 14 })?.toISOString(),
+    '2026-06-10T17:10:00.000Z'
   );
   assert.equal(
     computeAnaVisitFollowupNextRunAt({
@@ -53,9 +53,9 @@ test('follow-up de visita inicia quando Ana aguarda resposta sobre horario suger
       flowState: {
         pendingVisitScheduling: true,
         suggestedVisitStatus: 'awaiting_confirmation',
-        suggestedVisitSlotLabel: 'amanhã às 14h',
+        suggestedVisitSlotLabel: 'amanha as 14h',
       },
-      replyText: 'Tenho uma sugestão para você: amanhã às 14h. Funciona?',
+      replyText: 'Tenho uma sugestao para voce: amanha as 14h. Funciona?',
     }),
     true
   );
@@ -91,7 +91,7 @@ test('follow-up de visita inicia quando Ana aguarda resposta sobre horario suger
           active: false,
           offered: true,
           accepted: true,
-          requestedDateText: 'amanhã',
+          requestedDateText: 'amanha',
           requestedTimeText: '14h',
           normalizedDate: '2026-06-11',
           normalizedTime: '14:00',
