@@ -306,7 +306,7 @@ export async function advanceAnaVisitFollowupJob(params: {
       `UPDATE ana_visit_followup_jobs
           SET status = 'completed',
               last_attempt_index = GREATEST(last_attempt_index, $2),
-              next_attempt_index = 11,
+              next_attempt_index = $2 + 1,
               last_sent_message_id = COALESCE($3, last_sent_message_id),
               completed_at = NOW(),
               locked_at = NULL,

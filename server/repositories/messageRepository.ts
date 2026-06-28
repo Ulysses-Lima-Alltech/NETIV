@@ -212,9 +212,9 @@ export async function getLastInboundUserMessageAt(conversationId: number): Promi
 /** Última mensagem visível (não apagada internamente) da conversa — papel e id. */
 export async function getLastVisibleMessageRoleAndId(
   conversationId: number
-): Promise<{ role: 'user' | 'assistant'; id: number } | null> {
-  const { rows } = await query<{ role: string; id: number }>(
-    `SELECT role, id
+): Promise<{ role: 'user' | 'assistant'; id: number; created_at: Date } | null> {
+  const { rows } = await query<{ role: string; id: number; created_at: Date }>(
+    `SELECT role, id, created_at
      FROM messages
      WHERE conversation_id = $1 AND deleted_at IS NULL
      ORDER BY created_at DESC, id DESC
@@ -224,7 +224,7 @@ export async function getLastVisibleMessageRoleAndId(
   const r = rows[0];
   if (!r) return null;
   const role = r.role === 'user' ? 'user' : 'assistant';
-  return { role, id: r.id };
+  return { role, id: r.id, created_at: r.created_at };
 }
 
 /** Última mensagem inbound do cliente (não apagada). */

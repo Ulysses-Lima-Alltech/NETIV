@@ -21,7 +21,6 @@ import {
 import { getMessageCreatedAtById } from '../repositories/messageRepository.js';
 import { parseCommercialFlowState, type CommercialFlowState } from '../utils/commercialFlowState.js';
 import {
-  ANA_VISIT_FOLLOWUP_MAX_ATTEMPT,
   ANA_VISIT_FOLLOWUP_MIN_GAP_AFTER_SEND_MS,
   computeAnaVisitFollowupNextRunAt,
   getAnaVisitFollowupMessage,
@@ -160,14 +159,11 @@ async function advanceAfterClaimedDuplicate(
 
   const nextAttemptIndex = job.next_attempt_index + 1;
   const notBefore = new Date(Date.now() + ANA_VISIT_FOLLOWUP_MIN_GAP_AFTER_SEND_MS);
-  const nextRunAt =
-    nextAttemptIndex > ANA_VISIT_FOLLOWUP_MAX_ATTEMPT
-      ? null
-      : computeAnaVisitFollowupNextRunAt({
-          anchor: job.started_at,
-          nextAttemptIndex,
-          notBefore,
-        });
+  const nextRunAt = computeAnaVisitFollowupNextRunAt({
+    anchor: job.started_at,
+    nextAttemptIndex,
+    notBefore,
+  });
   const advanced = await advanceAnaVisitFollowupJob({
     jobId: job.id,
     workerId: WORKER_ID,
@@ -218,12 +214,10 @@ async function processOneAnaVisitFollowupJob(job: AnaVisitFollowupJobRow): Promi
   const suggestedSlotLabel = job.suggested_slot_label ?? flowState?.suggestedVisitSlotLabel ?? null;
   const messageText = getAnaVisitFollowupMessage(attemptIndex, suggestedSlotLabel);
   if (!messageText) {
-    await advanceAnaVisitFollowupJob({
+    await markAnaVisitFollowupJobFailed({
       jobId: job.id,
+      error: `invalid_attempt_index_${attemptIndex}`,
       workerId: WORKER_ID,
-      sentAttemptIndex: Math.max(job.last_attempt_index, ANA_VISIT_FOLLOWUP_MAX_ATTEMPT),
-      lastSentMessageId: job.last_sent_message_id ?? null,
-      nextRunAt: null,
     });
     return;
   }
@@ -308,14 +302,11 @@ async function processOneAnaVisitFollowupJob(job: AnaVisitFollowupJobRow): Promi
 
       const nextAttemptIndex = attemptIndex + 1;
       const notBefore = new Date(Date.now() + ANA_VISIT_FOLLOWUP_MIN_GAP_AFTER_SEND_MS);
-      const nextRunAt =
-        nextAttemptIndex > ANA_VISIT_FOLLOWUP_MAX_ATTEMPT
-          ? null
-          : computeAnaVisitFollowupNextRunAt({
-              anchor: readiness.job.started_at,
-              nextAttemptIndex,
-              notBefore,
-            });
+      const nextRunAt = computeAnaVisitFollowupNextRunAt({
+        anchor: readiness.job.started_at,
+        nextAttemptIndex,
+        notBefore,
+      });
       const advanced = await advanceAnaVisitFollowupJob({
         jobId: job.id,
         workerId: WORKER_ID,

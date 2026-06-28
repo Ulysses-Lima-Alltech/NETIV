@@ -79,7 +79,6 @@ export const ANA_COMMERCIAL_RULES = {
     ],
   } satisfies Record<Exclude<AnaCommercialIntent, 'first_contact'>, string[]>,
   followupWhileNoResponseMessages: [
-    '',
     'Se quiser, eu te explico opções de tamanho de lote, localização e condições de pagamento.',
     'Também posso te mostrar os diferenciais de lazer e infraestrutura para você comparar com calma.',
     'Se preferir, já te explico as condições gerais de pagamento para facilitar sua análise.',

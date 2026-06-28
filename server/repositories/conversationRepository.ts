@@ -84,6 +84,15 @@ export interface ConversationRow {
   reengagement_sent_at?: Date | null;
   reengagement_for_user_message_id?: number | null;
   reengagement_count?: number;
+  ana_followup_anchor_assistant_message_id?: number | null;
+  ana_followup_anchor_assistant_created_at?: Date | null;
+  ana_followup_for_user_message_id?: number | null;
+  ana_followup_attempt_count?: number;
+  ana_followup_last_attempt_at?: Date | null;
+  ana_followup_last_sent_message_id?: number | null;
+  ana_followup_next_at?: Date | null;
+  ana_followup_status?: 'idle' | 'active' | 'cancelled' | string | null;
+  ana_followup_cancel_reason?: string | null;
   pending_resolution_choice?: boolean;
   pending_resolution_reason?: string | null;
   pending_resolution_intent?: string | null;
@@ -447,6 +456,15 @@ async function resetConversationCommercialStateForDelete(
        reengagement_sent_at = NULL,
        reengagement_for_user_message_id = NULL,
        reengagement_count = 0,
+       ana_followup_anchor_assistant_message_id = NULL,
+       ana_followup_anchor_assistant_created_at = NULL,
+       ana_followup_for_user_message_id = NULL,
+       ana_followup_attempt_count = 0,
+       ana_followup_last_attempt_at = NULL,
+       ana_followup_last_sent_message_id = NULL,
+       ana_followup_next_at = NULL,
+       ana_followup_status = 'idle',
+       ana_followup_cancel_reason = NULL,
        updated_at = NOW()
      WHERE id = $1`,
     [conversationId]
@@ -631,6 +649,15 @@ export async function resetConversationState(id: number): Promise<boolean> {
        reengagement_sent_at = NULL,
        reengagement_for_user_message_id = NULL,
        reengagement_count = 0,
+       ana_followup_anchor_assistant_message_id = NULL,
+       ana_followup_anchor_assistant_created_at = NULL,
+       ana_followup_for_user_message_id = NULL,
+       ana_followup_attempt_count = 0,
+       ana_followup_last_attempt_at = NULL,
+       ana_followup_last_sent_message_id = NULL,
+       ana_followup_next_at = NULL,
+       ana_followup_status = 'idle',
+       ana_followup_cancel_reason = NULL,
        updated_at = NOW()
      WHERE id = $1`,
     [id]
@@ -1509,10 +1536,24 @@ export async function applyInboundUserMessageResets(conversationId: number): Pro
        manual_closed_reason = NULL,
        reengagement_sent_at = NULL,
        reengagement_for_user_message_id = NULL,
+       reengagement_count = 0,
+       ana_followup_anchor_assistant_message_id = NULL,
+       ana_followup_anchor_assistant_created_at = NULL,
+       ana_followup_for_user_message_id = NULL,
+       ana_followup_attempt_count = 0,
+       ana_followup_last_attempt_at = NULL,
+       ana_followup_last_sent_message_id = NULL,
+       ana_followup_next_at = NULL,
+       ana_followup_status = 'idle',
+       ana_followup_cancel_reason = NULL,
        updated_at = NOW()
      WHERE id = $1`,
     [conversationId]
   );
+  console.log('[ANA_FOLLOWUP_RESET]', {
+    conversationId,
+    reason: 'customer_replied',
+  });
   await cancelActiveAnaVisitFollowupJobs({
     conversationId,
     reason: 'customer_replied',
