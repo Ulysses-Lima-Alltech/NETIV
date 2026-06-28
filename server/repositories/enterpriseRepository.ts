@@ -1773,7 +1773,7 @@ export async function resolveSendableEnterpriseImageFilesCurrentVersion(
   );
   const out: ResolvedSendableEnterpriseFile[] = [];
   for (const f of rows) {
-    if (out.length >= Math.max(1, Math.min(limit, 10))) break;
+    if (out.length >= Math.max(1, Math.min(limit, 50))) break;
     if (!isImageMime(f.mime_type)) continue;
     if (!f.storage_key || !f.bucket_name || !f.storage_path || !f.original_name) continue;
     const path = join(enterpriseDir(enterpriseId), f.storage_path);

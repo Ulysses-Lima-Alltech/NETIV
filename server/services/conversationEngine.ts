@@ -167,6 +167,9 @@ import {
   userAskedAboutMaterialTopic,
   inferPreferredCategoryFromUserText,
   buildDocCategoryTryOrder,
+  extractAnaImageFilenameTopic,
+  filterAnaImageFilesByFilenameTopic,
+  userAskedForSpecificImageFilenameTopic,
 } from '../utils/anaDocSendIntent.js';
 import {
   handleVisitSchedulingDeterministically,
@@ -1533,7 +1536,10 @@ function isLocationLinkRequest(text: string): boolean {
 function isImageMaterialRequest(text: string): boolean {
   const n = normText(text || '');
   if (!n) return false;
-  return /\b(foto|fotos|imagem|imagens|manda foto|tem foto|quero ver|galeria)\b/.test(n);
+  return (
+    /\b(foto|fotos|imagem|imagens|manda foto|tem foto|quero ver|galeria)\b/.test(n) ||
+    userAskedForSpecificImageFilenameTopic(text)
+  );
 }
 
 function isVideoMaterialRequest(text: string): boolean {
@@ -4852,12 +4858,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         anaTurnAuditBlockedReason = 'image_not_available_send_failed';
         return;
       }
-      const imageFiles = await resolveSendableEnterpriseImageFilesCurrentVersion(ent.id, 3);
+      const requestedImageTopic = extractAnaImageFilenameTopic(trimmed);
+      const imageFiles = await resolveSendableEnterpriseImageFilesCurrentVersion(ent.id, requestedImageTopic ? 20 : 3);
+      const selectedImageFiles = requestedImageTopic
+        ? filterAnaImageFilesByFilenameTopic(imageFiles, requestedImageTopic).slice(0, 6)
+        : imageFiles;
       if (imageFiles.length === 0) {
         console.log('[ANA_IMAGE_MATERIAL_NOT_AVAILABLE]', {
           conversationId,
           enterpriseId: ent.id,
           reason: 'no_authorized_images',
+          requestedImageTopic,
         });
         const notAvailableText =
           'Não tenho fotos liberadas para envio por aqui no momento. Quer que eu te explique algum ponto específico do empreendimento?';
@@ -4877,14 +4888,43 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         anaTurnAuditBlockedReason = 'image_not_available_send_failed';
         return;
       }
+      if (requestedImageTopic && selectedImageFiles.length === 0) {
+        console.log('[ANA_IMAGE_MATERIAL_NOT_AVAILABLE]', {
+          conversationId,
+          enterpriseId: ent.id,
+          reason: 'no_matching_image_filename_topic',
+          requestedImageTopic,
+          authorizedImageCount: imageFiles.length,
+          authorizedImageNames: imageFiles.map((file) => file.originalName).slice(0, 20),
+        });
+        const notAvailableText =
+          'Nao encontrei foto especifica desse ambiente entre os arquivos liberados. Posso te enviar as fotos disponiveis do empreendimento ou te encaminhar para um corretor.';
+        const sendNotAvailable = await sendTextMessage({
+          conversationId,
+          to: toPhoneNumber,
+          text: notAvailableText,
+          phase: 'ana_image_topic_not_available',
+        });
+        if (sendNotAvailable.success && sendNotAvailable.metaMessageId) {
+          await insertMessage(conversationId, 'assistant', notAvailableText, sendNotAvailable.metaMessageId);
+          anaTurnAuditOutcome = 'sent';
+          anaTurnAuditBlockedReason = null;
+          return;
+        }
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'image_topic_not_available_send_failed';
+        return;
+      }
       console.log('[ANA_IMAGE_MATERIAL_FOUND]', {
         conversationId,
         enterpriseId: ent.id,
-        count: imageFiles.length,
+        count: selectedImageFiles.length,
+        requestedImageTopic,
+        selectedImageNames: selectedImageFiles.map((file) => file.originalName),
       });
       let sentCount = 0;
-      let lastSentImage: (typeof imageFiles)[number] | null = null;
-      for (const [idx, img] of imageFiles.entries()) {
+      let lastSentImage: (typeof selectedImageFiles)[number] | null = null;
+      for (const [idx, img] of selectedImageFiles.entries()) {
         if (idx > 0) await sleepMs(900);
         const mediaOutcome = await sendAnaEnterpriseMediaFirst({
           conversationId,
