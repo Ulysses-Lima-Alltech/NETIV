@@ -95,6 +95,84 @@ export function inferPreferredCategoryFromUserText(userText: string): FileCatego
   return null;
 }
 
+export type AnaImageFilenameTopic =
+  | 'piscina'
+  | 'academia'
+  | 'playground'
+  | 'portaria'
+  | 'fire_place'
+  | 'salao_festas'
+  | 'pet_place'
+  | 'quadra_beach_tennis';
+
+const IMAGE_FILENAME_TOPIC_KEYWORDS: Record<AnaImageFilenameTopic, readonly string[]> = {
+  piscina: ['piscina', 'pool', 'solarium'],
+  academia: ['academia', 'fitness', 'gym'],
+  playground: ['playground', 'parquinho', 'infantil', 'crianca', 'criancas'],
+  portaria: ['portaria', 'entrada', 'seguranca'],
+  fire_place: ['fire place', 'fireplace', 'lareira', 'fogo'],
+  salao_festas: ['salao', 'festas', 'espaco gourmet'],
+  pet_place: ['pet', 'pet place'],
+  quadra_beach_tennis: ['quadra', 'beach', 'tennis', 'beach tennis'],
+};
+
+export function normalizeAnaImageFilenameSearchText(value: string | null | undefined): string {
+  return String(value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizedKeywordPattern(keyword: string): RegExp {
+  const normalized = normalizeAnaImageFilenameSearchText(keyword);
+  const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+  return new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`);
+}
+
+export function extractAnaImageFilenameTopic(text: string | null | undefined): AnaImageFilenameTopic | null {
+  const normalized = normalizeAnaImageFilenameSearchText(text);
+  if (!normalized) return null;
+  for (const [topic, keywords] of Object.entries(IMAGE_FILENAME_TOPIC_KEYWORDS)) {
+    if (keywords.some((keyword) => normalizedKeywordPattern(keyword).test(normalized))) {
+      return topic as AnaImageFilenameTopic;
+    }
+  }
+  return null;
+}
+
+export function anaImageFilenameMatchesTopic(
+  fileName: string | null | undefined,
+  topic: AnaImageFilenameTopic | null
+): boolean {
+  if (!topic) return true;
+  const normalized = normalizeAnaImageFilenameSearchText(fileName);
+  if (!normalized) return false;
+  return IMAGE_FILENAME_TOPIC_KEYWORDS[topic].some((keyword) => normalizedKeywordPattern(keyword).test(normalized));
+}
+
+export function filterAnaImageFilesByFilenameTopic<T extends { originalName?: string | null; relativeStoragePath?: string | null }>(
+  files: readonly T[],
+  topic: AnaImageFilenameTopic | null
+): T[] {
+  if (!topic) return [...files];
+  return files.filter((file) =>
+    anaImageFilenameMatchesTopic(`${file.originalName ?? ''} ${file.relativeStoragePath ?? ''}`, topic)
+  );
+}
+
+export function userAskedForSpecificImageFilenameTopic(userText: string): boolean {
+  const topic = extractAnaImageFilenameTopic(userText);
+  if (!topic) return false;
+  const normalized = normalizeAnaImageFilenameSearchText(userText);
+  return /\b(foto|fotos|imagem|imagens|galeria|ver|mostrar|mostra|manda|mandar|mande|envia|enviar|envie)\b/.test(
+    normalized
+  );
+}
+
 export const DOC_CATEGORY_TRY_ORDER: readonly FileCategory[] = ['book', 'unidades', 'tabela_comercial', 'outro'] as const;
 
 export function buildDocCategoryTryOrder(
