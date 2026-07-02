@@ -846,9 +846,19 @@ export async function listConversationsWithPreview(
     conditions.push('c.handoff = true');
   }
 
-  if (filters?.status && filters.status !== 'all' && filters.status !== '') {
+  const explicitStatus = filters?.status && filters.status !== 'all' && filters.status !== ''
+    ? filters.status
+    : null;
+  const explicitWalletStatus = explicitStatus === 'Carteira';
+
+  if (!explicitWalletStatus) {
+    conditions.push(`COALESCE(c.classification, '') <> 'Carteira'`);
+    conditions.push(`c.manual_closed_at IS NULL`);
+  }
+
+  if (explicitStatus) {
     conditions.push(`c.classification = $${paramIndex}`);
-    params.push(filters.status);
+    params.push(explicitStatus);
     paramIndex += 1;
   }
 
@@ -862,7 +872,7 @@ export async function listConversationsWithPreview(
     const searchTerm = `%${filters.search.trim().replace(/%/g, '\\%').replace(/_/g, '\\_')}%`;
     conditions.push(
       `(c.customer_name ILIKE $${paramIndex} OR c.whatsapp_display_name ILIKE $${paramIndex} OR c.contact_phone ILIKE $${paramIndex} OR EXISTS (
-        SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content ILIKE $${paramIndex}
+        SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL AND m.content ILIKE $${paramIndex}
       ))`
     );
     params.push(searchTerm);
@@ -1447,11 +1457,6 @@ export async function scheduleDeferredHandoffAfterAppointment(
 
 /** Processa conversas com handoff diferido vencido (chamado periodicamente no servidor). */
 export async function processDueDeferredHandoffs(): Promise<number> {
-  logAutoHandoffBlocked({
-    origin: 'processDueDeferredHandoffs',
-    reason: 'deferred_handoff_worker_disabled',
-    requestedHandoff: true,
-  });
   return 0;
 }
 
@@ -1531,9 +1536,9 @@ export async function markAnaAskedForCustomerName(conversationId: number): Promi
 export async function applyInboundUserMessageResets(conversationId: number): Promise<void> {
   await query(
     `UPDATE conversations SET
-       manual_closed_at = NULL,
-       manual_closed_by_user_id = NULL,
-       manual_closed_reason = NULL,
+       manual_closed_at = CASE WHEN classification = 'Carteira' THEN manual_closed_at ELSE NULL END,
+       manual_closed_by_user_id = CASE WHEN classification = 'Carteira' THEN manual_closed_by_user_id ELSE NULL END,
+       manual_closed_reason = CASE WHEN classification = 'Carteira' THEN manual_closed_reason ELSE NULL END,
        reengagement_sent_at = NULL,
        reengagement_for_user_message_id = NULL,
        reengagement_count = 0,
@@ -1544,8 +1549,11 @@ export async function applyInboundUserMessageResets(conversationId: number): Pro
        ana_followup_last_attempt_at = NULL,
        ana_followup_last_sent_message_id = NULL,
        ana_followup_next_at = NULL,
-       ana_followup_status = 'idle',
-       ana_followup_cancel_reason = NULL,
+       ana_followup_status = CASE WHEN classification = 'Carteira' THEN 'cancelled' ELSE 'idle' END,
+       ana_followup_cancel_reason = CASE
+         WHEN classification = 'Carteira' THEN COALESCE(ana_followup_cancel_reason, 'auto_wallet_after_5_days_inactive')
+         ELSE NULL
+       END,
        updated_at = NOW()
      WHERE id = $1`,
     [conversationId]

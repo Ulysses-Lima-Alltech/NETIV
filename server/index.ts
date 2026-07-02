@@ -18,10 +18,17 @@ import { processDueScheduledBatchSends } from './services/whatsappBatchTemplateS
 import { initSocketServer, setRealtimeEnabled } from './realtime/socketServer.js';
 import { processAnaRetryJobsTick } from './services/anaRetryWorkerService.js';
 import { processAnaVisitFollowupTick } from './services/anaVisitFollowupService.js';
+import {
+  AUTO_WALLET_MIN_INTERVAL_MS,
+  DEFAULT_AUTO_WALLET_BATCH_LIMIT,
+  DEFAULT_AUTO_WALLET_INACTIVE_DAYS,
+  processInactiveConversationsToWalletOnce,
+} from './services/inactiveConversationWalletService.js';
 
 const app = express();
 const httpServer = createServer(app);
 const realtimeEnabled = String(process.env.REALTIME_ENABLED ?? '').trim().toLowerCase() === 'true';
+const autoWalletInactiveEnabled = process.env.AUTO_WALLET_INACTIVE_ENABLED === 'true';
 setRealtimeEnabled(realtimeEnabled);
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '10mb' }));
@@ -90,9 +97,36 @@ initPostgres()
     httpServer.listen(config.port, () => {
       console.log(`Server http://localhost:${config.port}`);
     });
+    if (autoWalletInactiveEnabled) {
+      const inactiveWalletIntervalMs = Math.max(
+        AUTO_WALLET_MIN_INTERVAL_MS,
+        parseInt(String(process.env.AUTO_WALLET_INACTIVE_INTERVAL_MS ?? ''), 10) || AUTO_WALLET_MIN_INTERVAL_MS
+      );
+      const inactiveWalletBatchLimit =
+        parseInt(String(process.env.AUTO_WALLET_INACTIVE_BATCH_LIMIT ?? ''), 10) || DEFAULT_AUTO_WALLET_BATCH_LIMIT;
+      const inactiveWalletDays =
+        parseInt(String(process.env.AUTO_WALLET_INACTIVE_DAYS ?? ''), 10) || DEFAULT_AUTO_WALLET_INACTIVE_DAYS;
+      console.log('[AUTO_WALLET_INACTIVE] enabled', {
+        inactiveDays: inactiveWalletDays,
+        batchLimit: inactiveWalletBatchLimit,
+        intervalMs: inactiveWalletIntervalMs,
+      });
+      const runInactiveWalletJob = () => {
+        void processInactiveConversationsToWalletOnce({
+          inactiveDays: inactiveWalletDays,
+          batchLimit: inactiveWalletBatchLimit,
+        }).catch((err) => console.error('[auto wallet inactive]', err));
+      };
+      setTimeout(runInactiveWalletJob, 60_000);
+      setInterval(runInactiveWalletJob, inactiveWalletIntervalMs);
+    } else {
+      console.log('[AUTO_WALLET_INACTIVE] disabled', {
+        AUTO_WALLET_INACTIVE_ENABLED: process.env.AUTO_WALLET_INACTIVE_ENABLED ?? '(unset)',
+      });
+    }
     setInterval(() => {
       void processDueDeferredHandoffs().catch((err) => console.error('[handoff defer]', err));
-    }, 15_000);
+    }, 60 * 60 * 1000);
     setInterval(() => {
       void processAnaReengagementScan().catch((err) => console.error('[ana reengage]', err));
     }, 30_000);

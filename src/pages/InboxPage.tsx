@@ -287,8 +287,40 @@ export function InboxPage() {
     });
   }, [scrollToBottom]);
 
+  const shouldShowConversationInCurrentList = useCallback((conversation: Conversation) => {
+    const classification = conversation.classificationStatus ?? conversation.status ?? 'Novo';
+    const wantsWallet = filters.status === 'Carteira';
+    if (!wantsWallet && (classification === 'Carteira' || conversation.manualClosedAt != null)) return false;
+    if (filters.status !== 'all' && classification !== filters.status) return false;
+    if (filters.mode === 'ANA' && conversation.handoff === true) return false;
+    if (filters.mode === 'handoff' && conversation.handoff !== true) return false;
+    if (filters.enterpriseId !== '' && conversation.projectId !== filters.enterpriseId) return false;
+
+    const conversationType = String(conversation.conversationType ?? 'CLIENT').toUpperCase();
+    if (activeTab === 'CLIENT' && conversationType !== 'CLIENT') return false;
+    if (activeTab === 'INTERNO' && conversationType !== 'ADMIN' && conversationType !== 'CORRETOR') return false;
+
+    const search = searchDebounced.trim().toLowerCase();
+    if (search) {
+      const haystack = [
+        conversation.leadName,
+        conversation.leadPhone,
+        conversation.lastMessage,
+        conversation.projectName ?? '',
+        conversation.empreendimento ?? '',
+      ].join(' ').toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    return true;
+  }, [activeTab, filters.enterpriseId, filters.mode, filters.status, searchDebounced]);
+
   const mergeConversation = useCallback((incoming: Conversation) => {
     setConversations((prev) => {
+      if (!shouldShowConversationInCurrentList(incoming)) {
+        setHasPendingRealtimeUpdates(false);
+        pendingRealtimeConversationsRef.current.delete(incoming.id);
+        return prev.filter((c) => c.id !== incoming.id);
+      }
       const idx = prev.findIndex((c) => c.id === incoming.id);
       const nextRow = idx >= 0 ? { ...prev[idx]!, ...incoming } : incoming;
       const next = idx >= 0
@@ -298,11 +330,12 @@ export function InboxPage() {
       pendingRealtimeConversationsRef.current.delete(incoming.id);
       return next.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     });
-  }, []);
+  }, [shouldShowConversationInCurrentList]);
 
   const applyPendingRealtimeUpdates = useCallback(() => {
     setConversations((prev) => {
-      const pending = Array.from(pendingRealtimeConversationsRef.current.values());
+      const pending = Array.from(pendingRealtimeConversationsRef.current.values())
+        .filter((row) => shouldShowConversationInCurrentList(row));
       pendingRealtimeConversationsRef.current.clear();
       setHasPendingRealtimeUpdates(false);
       return [...prev, ...pending]
@@ -313,7 +346,7 @@ export function InboxPage() {
         }, [])
         .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     });
-  }, []);
+  }, [shouldShowConversationInCurrentList]);
 
   const fetchAndMergeConversationById = useCallback((conversationId: string) => {
     if (inflightRealtimeConversationFetchRef.current.has(conversationId)) return;
@@ -325,6 +358,11 @@ export function InboxPage() {
       .then((item) => {
         const mapped = mapApiConversationToConversation(item);
         setConversations((prev) => {
+          if (!shouldShowConversationInCurrentList(mapped)) {
+            setHasPendingRealtimeUpdates(false);
+            pendingRealtimeConversationsRef.current.delete(mapped.id);
+            return prev.filter((c) => c.id !== mapped.id);
+          }
           const idx = prev.findIndex((c) => c.id === mapped.id);
           const next = idx >= 0
             ? prev.map((c) => (c.id === mapped.id ? { ...c, ...mapped } : c))
@@ -340,7 +378,7 @@ export function InboxPage() {
       .finally(() => {
         inflightRealtimeConversationFetchRef.current.delete(conversationId);
       });
-  }, []);
+  }, [shouldShowConversationInCurrentList]);
 
   const scheduleFetchAndMergeConversationById = useCallback((conversationId: string, delayMs = 250) => {
     const existingTimer = realtimeFetchDebounceTimersRef.current.get(conversationId);

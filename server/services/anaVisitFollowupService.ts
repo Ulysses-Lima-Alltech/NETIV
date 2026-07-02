@@ -40,6 +40,7 @@ function phoneForConversation(conv: Awaited<ReturnType<typeof getConversationByI
 function automationBlockedReason(conv: Awaited<ReturnType<typeof getConversationById>>): string | null {
   if (!conv) return 'conversation_not_found';
   if (conv.handoff === true || conv.classification === 'Handoff') return 'handoff';
+  if (conv.classification === 'Carteira') return 'carteira';
   if (conv.manual_closed_at != null) return 'manual_closed';
   if ((conv.conversation_type ?? 'CLIENT') !== 'CLIENT') return 'non_client_conversation';
   return null;
