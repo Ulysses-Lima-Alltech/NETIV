@@ -3579,6 +3579,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   let pendingResolutionNeedsDisambiguation = false;
   let pendingResolutionChoiceIntent: 'broker' | 'visit' | 'ambiguous' | null = null;
   let anaGlobalNoEnterpriseModeForTurn = false;
+  let anaLatestConversationForSilentExit:
+    | {
+        id: number;
+        channel?: string | null;
+        enterprise_id?: number | null;
+        classification?: string | null;
+        handoff?: boolean | null;
+        manual_closed_at?: Date | string | null;
+      }
+    | null = null;
   const isHardBlockedSilentExitReason = (reason: string | null): boolean => {
     const normalized = String(reason ?? '').trim();
     if (!normalized) return false;
@@ -3597,10 +3607,47 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       normalized.startsWith('pipeline_stale_')
     );
   };
+  const getAnaSilentExitContext = () => {
+    const convForExit = anaLatestConversationForSilentExit;
+    const classification = convForExit?.classification ?? null;
+    const handoff = convForExit?.handoff === true;
+    const manualClosedAt = convForExit?.manual_closed_at != null;
+    const enterpriseId = convForExit?.enterprise_id ?? null;
+    const channel = String(convForExit?.channel ?? '').trim().toLowerCase();
+    const hardBlockReason =
+      handoff || classification === 'Handoff'
+        ? 'handoff'
+        : classification === 'Carteira'
+          ? 'carteira'
+          : manualClosedAt
+            ? 'manual_closed'
+            : isHardBlockedSilentExitReason(anaTurnAuditBlockedReason)
+              ? anaTurnAuditBlockedReason ?? 'hard_block'
+              : null;
+    const activeWhatsAppNoEnterprise =
+      channel === 'whatsapp' &&
+      enterpriseId == null &&
+      !handoff &&
+      classification !== 'Handoff' &&
+      classification !== 'Carteira' &&
+      !manualClosedAt;
+    return {
+      conversationId,
+      channel: channel || null,
+      enterpriseId,
+      classification,
+      handoff,
+      manualClosedAt,
+      globalNoEnterpriseMode: anaGlobalNoEnterpriseModeForTurn,
+      hardBlockReason,
+      activeWhatsAppNoEnterprise,
+    };
+  };
   const sendGlobalNoEnterpriseFinalSafeReply = async (reason: string | null): Promise<boolean> => {
-    if (!anaGlobalNoEnterpriseModeForTurn) return false;
+    const silentExitContext = getAnaSilentExitContext();
+    if (!anaGlobalNoEnterpriseModeForTurn && !silentExitContext.activeWhatsAppNoEnterprise) return false;
     if (anaTurnAuditOutcome !== 'silent' && anaTurnAuditOutcome !== 'blocked') return false;
-    if (isHardBlockedSilentExitReason(reason)) return false;
+    if (silentExitContext.hardBlockReason != null) return false;
     const safeReply = ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY;
     const safeSend = await sendAnaOutboundMessages({
       conversationId,
@@ -3629,6 +3676,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     console.log('[ANA_GLOBAL_NO_ENTERPRISE_FINAL_SAFE_REPLY]', {
       conversationId,
       reason: reason ?? 'unknown_silent_exit',
+      globalNoEnterpriseMode: silentExitContext.globalNoEnterpriseMode,
+      activeWhatsAppNoEnterprise: silentExitContext.activeWhatsAppNoEnterprise,
       outboundMetaMessageId: safeSend.metaMessageIds[safeSend.metaMessageIds.length - 1] ?? null,
       replyLen: safeReply.length,
     });
@@ -3929,6 +3978,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       console.error('[ANA DEBUG] conversa inexistente', { conversationId });
       return;
     }
+    anaLatestConversationForSilentExit = conv;
     let flowStateParsed: CommercialFlowState = parseCommercialFlowState(conv.commercial_flow_state) ?? {};
     anaTurnDiagnostics.contactId = conv.contact_id ?? null;
     const previousProductTypeHintForLog = flowStateParsed.productTypeHint ?? null;
@@ -3953,6 +4003,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     // Revalidacao imediata antes do bloqueio: sempre buscar estado mais recente (evita race: usuario muda Handoff->ANA durante processamento)
     const latestConv = await getConversationById(conversationId);
     let effectiveConv = latestConv ?? conv;
+    anaLatestConversationForSilentExit = effectiveConv;
     if (blockInternalConversation(effectiveConv.conversation_type)) {
       logger.info('Ana bloqueada para conversa interna', {
         conversationId: effectiveConv.id,
@@ -4024,6 +4075,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       if (substantiveBypass) {
         await clearConversationPendingResolutionState(conversationId);
         effectiveConv = { ...effectiveConv, pending_resolution_choice: false };
+        anaLatestConversationForSilentExit = effectiveConv;
         pendingResolutionChoiceIntent = null;
         pendingResolutionNeedsDisambiguation = false;
         console.log('[ANA_PENDING_RESOLUTION_BYPASSED_BY_SUBSTANTIVE_QUESTION]', {
@@ -4048,6 +4100,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         if (pendingChoice === 'visit') {
           await clearConversationPendingResolutionState(conversationId);
           effectiveConv = { ...effectiveConv, pending_resolution_choice: false };
+          anaLatestConversationForSilentExit = effectiveConv;
           console.log('[ANA_VISIT_SELECTED_FROM_RESOLUTION_OFFER]', { conversationId });
         } else if (pendingChoice === 'ambiguous') {
           pendingResolutionNeedsDisambiguation = true;
@@ -13909,18 +13962,26 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
     }
 
   } finally {
+    const silentExitContext = getAnaSilentExitContext();
     if (
-      anaGlobalNoEnterpriseModeForTurn &&
+      (anaGlobalNoEnterpriseModeForTurn || silentExitContext.activeWhatsAppNoEnterprise) &&
       (anaTurnAuditOutcome === 'silent' || anaTurnAuditOutcome === 'blocked') &&
-      !isHardBlockedSilentExitReason(anaTurnAuditBlockedReason)
+      silentExitContext.hardBlockReason == null
     ) {
       await sendGlobalNoEnterpriseFinalSafeReply(anaTurnAuditBlockedReason);
     }
     if (anaTurnAuditOutcome === 'silent' || anaTurnAuditOutcome === 'blocked') {
+      const finalSilentExitContext = getAnaSilentExitContext();
       console.log('[ANA_SILENT_EXIT_BLOCKED]', {
         conversationId,
         outcome: anaTurnAuditOutcome,
         reason: anaTurnAuditBlockedReason ?? 'unknown_silent_exit',
+        enterpriseId: finalSilentExitContext.enterpriseId,
+        classification: finalSilentExitContext.classification,
+        handoff: finalSilentExitContext.handoff,
+        manualClosedAt: finalSilentExitContext.manualClosedAt,
+        globalNoEnterpriseMode: finalSilentExitContext.globalNoEnterpriseMode,
+        hardBlockReason: finalSilentExitContext.hardBlockReason,
         replyPipelineToken: replyPipelineToken ?? null,
         enterpriseResolutionSource: anaEnterpriseResolutionForAudit.source,
         resolvedEnterpriseId: anaEnterpriseResolutionForAudit.enterpriseId,
