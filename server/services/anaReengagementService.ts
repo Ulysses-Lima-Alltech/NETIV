@@ -118,11 +118,11 @@ async function markConversationFollowupCancelled(params: {
 function persistFollowupStateSql(state: FollowupCycleState): { text: string; params: unknown[] } {
   return {
     text: `UPDATE conversations
-              SET reengagement_for_user_message_id = $2,
+              SET reengagement_for_user_message_id = $2::int,
                   reengagement_count = $3,
                   ana_followup_anchor_assistant_message_id = $4,
                   ana_followup_anchor_assistant_created_at = $5,
-                  ana_followup_for_user_message_id = $2,
+                  ana_followup_for_user_message_id = $7::bigint,
                   ana_followup_attempt_count = $3,
                   ana_followup_next_at = $6,
                   ana_followup_status = 'active',
@@ -136,6 +136,7 @@ function persistFollowupStateSql(state: FollowupCycleState): { text: string; par
       state.anchorAssistantMessageId,
       state.anchorAssistantCreatedAt,
       state.nextFollowupAt,
+      state.forUserMessageId,
     ],
   };
 }
@@ -241,14 +242,15 @@ export async function processAnaReengagementScan(): Promise<void> {
        AND COALESCE(classification, '') NOT IN ('Handoff', 'Carteira')
        AND manual_closed_at IS NULL
        AND COALESCE(ana_followup_status, 'idle') IN ('idle', 'active')
-       AND (ana_followup_next_at IS NULL OR ana_followup_next_at <= NOW())
+       AND ana_followup_next_at IS NOT NULL
+       AND ana_followup_next_at <= NOW()
        AND EXISTS (
          SELECT 1 FROM messages m
           WHERE m.conversation_id = conversations.id
             AND m.role = 'assistant'
             AND m.deleted_at IS NULL
        )
-     ORDER BY ana_followup_next_at ASC NULLS FIRST, updated_at ASC, id ASC
+     ORDER BY ana_followup_next_at ASC, updated_at ASC, id ASC
      LIMIT $1`,
     [SCAN_LIMIT]
   );
@@ -582,11 +584,11 @@ async function sendReengagementAfterFinalValidation(params: {
     await client.query(
       `UPDATE conversations SET
          reengagement_sent_at = NOW(),
-         reengagement_for_user_message_id = $1,
+         reengagement_for_user_message_id = $1::int,
          reengagement_count = $2,
          ana_followup_anchor_assistant_message_id = $3,
          ana_followup_anchor_assistant_created_at = $4,
-         ana_followup_for_user_message_id = $1,
+         ana_followup_for_user_message_id = $8::bigint,
          ana_followup_attempt_count = $2,
          ana_followup_last_attempt_at = NOW(),
          ana_followup_last_sent_message_id = $5,
@@ -604,6 +606,7 @@ async function sendReengagementAfterFinalValidation(params: {
         inserted.id,
         nextFollowupAt,
         params.conversationId,
+        u.id,
       ]
     );
 

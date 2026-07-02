@@ -26,6 +26,14 @@ import {
 const WORKER_ID = `ana-retry-${process.pid}`;
 let workerRunning = false;
 
+function automationBlockedReason(conv: Awaited<ReturnType<typeof getConversationById>>): string | null {
+  if (!conv) return 'conversation_not_found';
+  if (conv.handoff === true || conv.classification === 'Handoff') return 'handoff';
+  if (conv.classification === 'Carteira') return 'carteira';
+  if (conv.manual_closed_at != null) return 'manual_closed';
+  return null;
+}
+
 async function shouldSkipJob(job: AnaRetryJobRow): Promise<{ skip: boolean; stale: boolean }> {
   if (job.trigger_message_id == null) return { skip: false, stale: false };
   const lastInbound = await getLastUserMessageRow(job.conversation_id);
@@ -43,6 +51,22 @@ async function processOneJob(job: AnaRetryJobRow): Promise<void> {
       jobId: job.id,
       errorMessage: 'conversation_not_found',
       errorCode: 'conversation_not_found',
+    });
+    return;
+  }
+
+  const blockedReason = automationBlockedReason(conv);
+  if (blockedReason) {
+    console.log('[ANA_RETRY] skipped_automation_blocked', {
+      jobId: job.id,
+      conversationId: job.conversation_id,
+      triggerMessageId: job.trigger_message_id,
+      reason: blockedReason,
+    });
+    await markAnaRetryJobFailedNonRetryable({
+      jobId: job.id,
+      errorMessage: blockedReason,
+      errorCode: blockedReason,
     });
     return;
   }

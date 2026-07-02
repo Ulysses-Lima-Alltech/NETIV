@@ -19,7 +19,9 @@
     "kb:migrate:r2-s3": "tsx scripts/migrateKnowledgeStorageR2ToS3.ts",
     "kb:migrate:r2-s3:prod": "node dist/scripts/migrateKnowledgeStorageR2ToS3.js",
     "diagnose:lead-classifier": "node dist/scripts/diagnoseLeadClassifier.js",
-    "backfill:lead-classifier": "node dist/scripts/backfillLeadClassification.js"
+    "backfill:lead-classifier": "node dist/scripts/backfillLeadClassification.js",
+    "wallet:auto-dry-run": "tsx scripts/autoWalletInactiveConversations.ts --dry-run",
+    "wallet:auto-apply": "tsx scripts/autoWalletInactiveConversations.ts --apply"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1058.0",

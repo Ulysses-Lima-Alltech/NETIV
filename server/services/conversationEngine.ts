@@ -172,6 +172,12 @@ import {
   userAskedForSpecificImageFilenameTopic,
 } from '../utils/anaDocSendIntent.js';
 import {
+  ANA_IMAGE_MATERIAL_POST_SEND_FALLBACK_TEXT,
+  buildAnaImageMaterialCommercialContext,
+  buildAnaImageMaterialPostSendMessages,
+  type AnaImageMaterialPostSendContext,
+} from '../utils/anaImageMaterialPostSend.js';
+import {
   handleVisitSchedulingDeterministically,
   isCommercialQuestionThatShouldBypassVisitScheduling,
   isExplicitVisitSchedulingAcceptance,
@@ -268,6 +274,7 @@ import {
   detectAnaKnowledgeGap,
   isExplicitResolutionChoice,
   isSubstantiveQuestionThatBypassesResolutionChoice,
+  type AnaKnowledgeGapResult,
   validateKnowledgeGapResolutionOffer,
 } from '../utils/anaKnowledgeGapGuard.js';
 import {
@@ -345,6 +352,7 @@ export function __setAnaEmergencyHandoffTransportForTest(
 
 type AnaGenerationStrategy =
   | 'primary_json'
+  | 'conversational_text'
   | 'same_context_retry'
   | 'json_repair'
   | 'secondary_provider'
@@ -2483,6 +2491,39 @@ function buildAmbiguousEnterpriseReply(candidates: AnaEnterpriseResolution['cand
   return '';
 }
 
+function buildGlobalNoEnterpriseOperationalContext(params: {
+  enterpriseResolution: AnaEnterpriseResolution;
+  activeEnterpriseNames: string[];
+  requestedProductType: string | null | undefined;
+}): string {
+  const candidates = params.enterpriseResolution.candidates
+    .map((candidate) => candidate.enterpriseName)
+    .filter((name) => name.trim().length > 0)
+    .slice(0, 5);
+  const candidateLine =
+    params.enterpriseResolution.source === 'ambiguous' && candidates.length > 0
+      ? `Candidatos possiveis detectados: ${candidates.join(', ')}. Se fizer sentido, peca ao cliente escolher entre eles.`
+      : 'Nenhum empreendimento foi identificado com seguranca nesta mensagem.';
+  const portfolioLine =
+    params.activeEnterpriseNames.length > 0
+      ? `Portfolio ativo disponivel para referencia de nomes: ${params.activeEnterpriseNames.slice(0, 12).join(', ')}.`
+      : 'Portfolio ativo nao carregado para este turno.';
+  return [
+    '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
+    'A conversa ainda nao tem empreendimento resolvido. Use atendimento global da Ana, sem RAG especifico de empreendimento.',
+    'Nao invente dados de empreendimento, valores, endereco, planta, disponibilidade, prazos ou condicoes.',
+    'Nao acione handoff automatico so porque o empreendimento nao foi resolvido.',
+    'Objetivo deste turno: entender naturalmente qual empreendimento, regiao, tipo de planta/imovel, orcamento ou intencao o cliente busca.',
+    'Se o texto do cliente permitir uma inferencia clara, responda conduzindo essa confirmacao. Se ainda nao permitir, faca uma pergunta curta de qualificacao.',
+    'Responda em texto livre, comercial e humano, com no maximo uma pergunta.',
+    `Tipo de interesse inferido pelo backend: ${params.requestedProductType || 'INDEFINIDO'}.`,
+    candidateLine,
+    portfolioLine,
+    `Motivo de nao resolucao: ${params.enterpriseResolution.reasonWhenNoEnterprise ?? 'nao informado'}.`,
+    '[/CONTEXTO OPERACIONAL]',
+  ].join('\n');
+}
+
 function looksLikeStandaloneNameReply(message: string): boolean {
   const t = (message || '').trim();
   if (!t || t.length > 40 || t.includes('?') || t.includes('@')) return false;
@@ -3701,6 +3742,23 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
+    if (effectiveConv.classification === 'Carteira' || effectiveConv.manual_closed_at != null) {
+      const blockedReason = effectiveConv.classification === 'Carteira' ? 'carteira' : 'manual_closed';
+      console.log('[ANA_PIPELINE] engine_blocked_inactive_wallet_or_closed', {
+        conversationId,
+        reason: blockedReason,
+        classification: effectiveConv.classification,
+        manualClosedAt: effectiveConv.manual_closed_at != null,
+        toPhoneTail: anaPhoneTail(toPhoneNumber),
+        inboundMetaMessageId: inboundMetaFromCtx ?? null,
+      });
+      await cancelAnaVisitFollowupForConversation({
+        conversationId,
+        reason: blockedReason,
+      });
+      return;
+    }
+
     console.log('[ANA DEBUG] handoff check', {
       handoff: effectiveConv.handoff,
       classification: effectiveConv.classification,
@@ -4163,10 +4221,199 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       aiEnabled: resolvedAiSettings.aiEnabled,
       useGlobalDefaults: resolvedAiSettings.useGlobalDefaults,
     });
+    const globalNoEnterpriseMode =
+      enterpriseIdForAi == null &&
+      effectiveConv.enterprise_id == null &&
+      enterpriseResolution.enterpriseId == null &&
+      (enterpriseResolution.source === 'unresolved' || enterpriseResolution.source === 'ambiguous') &&
+      !resolvedAiSettings.blocked &&
+      resolvedAiSettings.aiEnabled === true &&
+      Boolean(resolvedAiSettings.openaiApiKey) &&
+      resolvedAiSettings.useGlobalDefaults === true;
+    if (globalNoEnterpriseMode) {
+      console.log('[ANA_GLOBAL_NO_ENTERPRISE_MODE]', {
+        conversationId,
+        enterpriseResolutionSource: enterpriseResolution.source,
+        reasonWhenNoEnterprise: enterpriseResolution.reasonWhenNoEnterprise,
+        aiEnabled: resolvedAiSettings.aiEnabled,
+        hasApiKey: Boolean(resolvedAiSettings.openaiApiKey),
+        useGlobalDefaults: resolvedAiSettings.useGlobalDefaults,
+      });
+    }
     anaTurnAuditProvider = resolvedAiSettings.provider;
     anaTurnAuditApiKeySource = resolvedAiSettings.apiKeySource;
     anaTurnAuditOpenaiApiKeyId = resolvedAiSettings.openaiApiKeyId;
     anaTurnAuditOpenaiProjectId = resolvedAiSettings.openaiProjectId;
+
+    const loadImageMaterialCommercialContextForModel = async (
+      enterprise: EnterpriseRow,
+      sourceUserMessage: string
+    ): Promise<string> => {
+      let variablesMap: Record<string, unknown> = {};
+      let knowledgeText = '';
+      try {
+        variablesMap = await getVariablesMap(enterprise.id);
+      } catch (error) {
+        console.warn('[ANA_IMAGE_MATERIAL_POST_SEND_CONTEXT_VARS_FAILED]', {
+          conversationId,
+          enterpriseId: enterprise.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      try {
+        const chunkMeta = await loadRankedKnowledgeChunksForPromptWithMeta(
+          enterprise.id,
+          `${enterprise.name}\n${sourceUserMessage}`.slice(0, 4000),
+          {}
+        );
+        knowledgeText = (chunkMeta.promptText || '').slice(0, 3000);
+      } catch (error) {
+        console.warn('[ANA_IMAGE_MATERIAL_POST_SEND_CONTEXT_RAG_FAILED]', {
+          conversationId,
+          enterpriseId: enterprise.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return buildAnaImageMaterialCommercialContext({
+        enterpriseName: enterprise.name,
+        variablesMap,
+        knowledgeText,
+      });
+    };
+
+    const sendAnaImageMaterialPostSendModelReply = async (
+      params: Omit<AnaImageMaterialPostSendContext, 'enterpriseName'> & {
+        enterprise: EnterpriseRow | null;
+        phase: string;
+      }
+    ): Promise<{ sent: boolean; text: string | null; source: 'model' | 'fallback' | 'skipped' }> => {
+      if (flowStateParsed.dialoguePolicy?.brokerHandoffAcceptedAt) {
+        console.log('[ANA_IMAGE_MATERIAL_POST_SEND_SUPPRESSED]', {
+          conversationId,
+          reason: 'broker_handoff',
+          requestedTheme: params.requestedTheme,
+        });
+        return { sent: false, text: null, source: 'skipped' };
+      }
+
+      let replyText = '';
+      let replySource: 'model' | 'fallback' = 'fallback';
+      const settings = resolvedAiSettings;
+      if (!settings || settings.blocked || !settings.openaiApiKey) {
+        console.log('[ANA_IMAGE_MATERIAL_POST_SEND_MODEL_SKIPPED]', {
+          conversationId,
+          enterpriseId: params.enterprise?.id ?? null,
+          requestedTheme: params.requestedTheme,
+          reason: !settings ? 'missing_settings' : settings.reason ?? 'missing_api_key_or_blocked',
+        });
+      } else {
+        const modelResolution = resolveAnaOpenAIModel({
+          configuredModelFromDb: (settings.modelHotLead || '').trim() || null,
+          slot: 'hot_lead',
+          provider: settings.provider,
+          baseUrl: settings.openaiBaseUrl,
+        });
+        if (modelResolution.blocked) {
+          console.log('[ANA_IMAGE_MATERIAL_POST_SEND_MODEL_SKIPPED]', {
+            conversationId,
+            enterpriseId: params.enterprise?.id ?? null,
+            requestedTheme: params.requestedTheme,
+            reason: modelResolution.reason,
+          });
+        } else {
+          const messages = buildAnaImageMaterialPostSendMessages({
+            requestedTheme: params.requestedTheme,
+            sentImages: params.sentImages,
+            lastUserMessage: params.lastUserMessage,
+            enterpriseName: params.enterprise?.name ?? null,
+            commercialContext: params.commercialContext ?? null,
+          });
+          console.log('[ANA_IMAGE_MATERIAL_POST_SEND_MODEL_REQUEST]', {
+            conversationId,
+            enterpriseId: params.enterprise?.id ?? null,
+            requestedTheme: params.requestedTheme,
+            sentImages: params.sentImages,
+            model: modelResolution.finalModel,
+          });
+          const result = await generateChatCompletion({
+            apiKey: settings.openaiApiKey,
+            baseUrl: settings.openaiBaseUrl,
+            model: modelResolution.finalModel,
+            messages,
+            temperature: Math.min(settings.temperature, 0.55),
+            maxTokens: Math.min(Math.max(settings.maxTokens || 180, 180), 360),
+            responseFormatJson: false,
+            costTracking: settings.costTrackingEnabled
+              ? {
+                  purpose: 'ana_image_material_post_send_reply',
+                  modelReason: 'db_config',
+                  apiKeySource: settings.apiKeySource,
+                  openaiApiKeyId: settings.openaiApiKeyId,
+                  openaiProjectId: settings.openaiProjectId,
+                  requestType: 'ana_image_material_post_send_reply',
+                  conversationId,
+                  contactId: effectiveConv.contact_id ?? null,
+                  enterpriseId: params.enterprise?.id ?? effectiveConv.enterprise_id ?? null,
+                  inboundMessageId: lastUserRowForLog?.id ?? null,
+                  metadata: {
+                    requestedTheme: params.requestedTheme,
+                    sentImages: params.sentImages,
+                    alreadySentToClient: true,
+                  },
+                }
+              : undefined,
+          });
+          captureLlmAudit(result, 'ana_image_material_post_send_reply');
+          if (result.success && result.content?.trim()) {
+            replyText = sanitizeAnaClientVisibleReplyText(result.content).replace(/\s+/g, ' ').trim().slice(0, 900);
+            replySource = replyText ? 'model' : 'fallback';
+          } else {
+            console.warn('[ANA_IMAGE_MATERIAL_POST_SEND_MODEL_EMPTY_OR_FAILED]', {
+              conversationId,
+              enterpriseId: params.enterprise?.id ?? null,
+              requestedTheme: params.requestedTheme,
+              success: result.success,
+              error: result.error ?? null,
+              httpStatus: result.httpStatus ?? null,
+            });
+          }
+        }
+      }
+
+      if (!replyText) replyText = ANA_IMAGE_MATERIAL_POST_SEND_FALLBACK_TEXT;
+      if (isPipelineStale(conversationId, replyPipelineToken)) {
+        console.log('[ANA_IMAGE_MATERIAL_POST_SEND_SUPPRESSED]', {
+          conversationId,
+          reason: 'pipeline_stale',
+          requestedTheme: params.requestedTheme,
+        });
+        return { sent: false, text: null, source: 'skipped' };
+      }
+      const send = await sendTextMessage({
+        conversationId,
+        to: toPhoneNumber,
+        text: replyText,
+        phase: params.phase,
+      });
+      if (!send.success || !send.metaMessageId) {
+        console.warn('[ANA_IMAGE_MATERIAL_POST_SEND_SEND_FAILED]', {
+          conversationId,
+          enterpriseId: params.enterprise?.id ?? null,
+          requestedTheme: params.requestedTheme,
+          source: replySource,
+        });
+        return { sent: false, text: null, source: 'skipped' };
+      }
+      await insertMessage(conversationId, 'assistant', replyText, send.metaMessageId);
+      console.log('[ANA_IMAGE_MATERIAL_POST_SEND_SENT]', {
+        conversationId,
+        enterpriseId: params.enterprise?.id ?? null,
+        requestedTheme: params.requestedTheme,
+        sentImages: params.sentImages,
+        source: replySource,
+      });
+      return { sent: true, text: replyText, source: replySource };
+    };
 
     // Legado desativado: esclarecimento sem empreendimento também deve passar pelo LLM/policy.
     if (false && (enterpriseResolution.source === 'ambiguous' || enterpriseResolution.source === 'unresolved')) {
@@ -4923,7 +5170,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         selectedImageNames: selectedImageFiles.map((file) => file.originalName),
       });
       let sentCount = 0;
-      let lastSentImage: (typeof selectedImageFiles)[number] | null = null;
+      const sentImageNames: string[] = [];
       for (const [idx, img] of selectedImageFiles.entries()) {
         if (idx > 0) await sleepMs(900);
         const mediaOutcome = await sendAnaEnterpriseMediaFirst({
@@ -4936,24 +5183,17 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         });
         if (!mediaOutcome.ok) continue;
         sentCount += 1;
-        lastSentImage = img;
+        sentImageNames.push(img.originalName);
       }
       if (sentCount > 0) {
-        const rowsAfterImageSend = await getMessagesByConversationId(conversationId);
-        const recentAssistantReplies = rowsAfterImageSend
-          .filter((msg) => msg.role === 'assistant')
-          .map((msg) => String(msg.content ?? '').trim())
-          .filter((msg) => msg.length > 0)
-          .slice(-8);
-        await maybeSendAnaMediaPostSendFollowup({
-          conversationId,
-          toPhoneNumber,
-          flowState: flowStateParsed,
-          mediaKind: 'image',
-          mediaCategory: (lastSentImage?.category ?? 'outro') as FileCategory,
-          mediaFileName: lastSentImage?.originalName ?? null,
-          recentAssistantReplies,
-          replyPipelineToken,
+        const commercialContext = await loadImageMaterialCommercialContextForModel(ent, trimmed);
+        await sendAnaImageMaterialPostSendModelReply({
+          enterprise: ent,
+          requestedTheme: requestedImageTopic,
+          sentImages: sentImageNames,
+          lastUserMessage: trimmed,
+          commercialContext,
+          phase: 'ana_image_material_model_followup',
         });
         console.log('[ANA_IMAGE_MATERIAL_SENT]', {
           conversationId,
@@ -7506,14 +7746,21 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
 
-    const knowledgeGapMeta = detectAnaKnowledgeGap({
-      userMessage: trimmed,
-      requestedAxis: requestedAxisForPolicy,
-      recentMessages: rows.map((m) => ({
-        role: m.role === 'assistant' ? 'assistant' : 'user',
-        content: m.content,
-      })),
-    });
+    const knowledgeGapMeta: AnaKnowledgeGapResult = globalNoEnterpriseMode
+      ? {
+          hasKnowledgeGap: false,
+          reason: 'global_no_enterprise_mode',
+          allowedNextActions: [],
+          instructionForModel: '',
+        }
+      : detectAnaKnowledgeGap({
+          userMessage: trimmed,
+          requestedAxis: requestedAxisForPolicy,
+          recentMessages: rows.map((m) => ({
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content: m.content,
+          })),
+        });
     const isKnowledgeGapTurn = knowledgeGapMeta.hasKnowledgeGap === true;
     const deterministicKnowledgeGapBridgeReply = isKnowledgeGapTurn
       ? buildLeadQualificationBridgeReply({
@@ -8799,6 +9046,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
       });
     }
     const shouldBlockFreeformWithoutRag =
+      !globalNoEnterpriseMode &&
       !ANA_LLM_FIRST_COMMERCIAL_REPLIES &&
       !isKnowledgeGapTurn &&
       ragMissingAndKnowledgeDependent;
@@ -8849,6 +9097,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
         ? !enterpriseEvidence.hasPricingInfo
         : commercialNoLlmIntent != null && isCommercialNoLlmIntentAlwaysSensitive(commercialNoLlmIntent);
     if (
+      !globalNoEnterpriseMode &&
       !ANA_LLM_FIRST_COMMERCIAL_REPLIES &&
       anaBudgetConfig.priceMissingNoLlm &&
       commercialNoLlmIntent != null &&
@@ -9127,6 +9376,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
       ANA_LLM_FIRST_COMMERCIAL_REPLIES && isEvoraEnterpriseName(ent?.name ?? null);
 
     const conversationalQwenMode =
+      globalNoEnterpriseMode ||
       isKnowledgeGapTurn === true ||
       evoraLlmFirstCompactMode ||
       (
@@ -9139,6 +9389,13 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
         )
       );
     const responseFormatJsonForTurn = isKnowledgeGapTurn === true ? false : !conversationalQwenMode;
+    const globalNoEnterpriseOperationalContext = globalNoEnterpriseMode
+      ? buildGlobalNoEnterpriseOperationalContext({
+          enterpriseResolution,
+          activeEnterpriseNames: allActiveEnterprises.map((enterprise) => enterprise.name),
+          requestedProductType: triageRequestedProductType,
+        })
+      : null;
     const initialDiscoveryGuidanceContext = buildInitialDiscoveryGuidanceContext({
       isEvora: isEvoraEnterpriseName(ent?.name ?? null),
       state: getLeadQualificationState(flowStateParsed),
@@ -9173,7 +9430,11 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
     console.log('[ANA_LLM_DECISION]', {
       conversationId,
       willCallQwen: true,
-      reason: conversationalQwenMode ? 'no_clear_deterministic_use_qwen_conversational' : 'no_deterministic_rule_use_llm_structured',
+      reason: globalNoEnterpriseMode
+        ? 'global_no_enterprise_use_llm'
+        : conversationalQwenMode
+          ? 'no_clear_deterministic_use_qwen_conversational'
+          : 'no_deterministic_rule_use_llm_structured',
       deterministicMatched: false,
       deterministicAxis: requestedAxisForPolicy ?? null,
       replySourceBeforeLlm: null,
@@ -9229,7 +9490,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
           ].join('\n')
         : '';
 
-      const conversationalPrompt = [
+      let conversationalPrompt = [
         'MODO CONVERSACIONAL DA ANA',
         'Você é Ana, consultora de vendas do Évora. Responda somente ao cliente, em português brasileiro natural.',
         'Não copie instruções internas. Não mencione sistema, RAG, base, regra, prompt, NETIV ou QMAPE.',
@@ -9242,6 +9503,19 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
       ]
         .filter((part): part is string => Boolean(part && part.trim()))
         .join('\n\n');
+      if (globalNoEnterpriseMode && globalNoEnterpriseOperationalContext) {
+        conversationalPrompt = [
+          'MODO CONVERSACIONAL DA ANA',
+          'Voce e Ana, atendimento comercial global. Responda somente ao cliente, em portugues brasileiro natural.',
+          'Nao copie instrucoes internas. Nao mencione sistema, RAG, base, regra, prompt, NETIV ou QMAPE.',
+          'Ainda nao ha empreendimento resolvido. Nao use dados especificos de nenhum empreendimento.',
+          globalNoEnterpriseOperationalContext,
+          initialDiscoveryGuidanceContext,
+          policyRuntimeDirectives,
+        ]
+          .filter((part): part is string => Boolean(part && part.trim()))
+          .join('\n\n');
+      }
       messages.push({ role: 'system', content: conversationalPrompt });
       if (knowledgeGapOperationalContext) {
         messages.push({ role: 'system', content: knowledgeGapOperationalContext });
@@ -9659,7 +9933,9 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
           conversationId,
           reason: 'conversational_raw_guard_forbidden_content',
           rawPreview: rawNatural.slice(0, 300),
-          replacementPreview: buildConversationalCanonicalFallback(currentAxisForRepetition).slice(0, 300),
+          replacementPreview: globalNoEnterpriseMode
+            ? null
+            : buildConversationalCanonicalFallback(currentAxisForRepetition).slice(0, 300),
         });
       }
       if (!structured && blockedUnsupportedPromise) {
@@ -9711,7 +9987,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
     recordAnaGenerationAttempt({
       diagnostics: anaTurnDiagnostics,
       attempt: 1,
-      strategy: 'primary_json',
+      strategy: conversationalQwenMode ? 'conversational_text' : 'primary_json',
       result,
       parsed: structured != null,
       failureReason: structured != null ? null : computeAnaTechnicalFallbackTraceReason(result, parseAttempted),
@@ -10078,7 +10354,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
         reason: 'local_qwen_json_repair_failed',
       });
     }
-    if (!structured && conversationalQwenMode && !isKnowledgeGapTurn) {
+    if (!structured && conversationalQwenMode && !isKnowledgeGapTurn && !globalNoEnterpriseMode) {
       const conversationalFallback = buildConversationalCanonicalFallback(currentAxisForRepetition);
       console.log('[ANA_QWEN_RESPONSE_REPLACED]', {
         conversationId,
@@ -11009,22 +11285,39 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
         anaTurnAuditBlockedReason = 'pipeline_stale_before_media_post_send_followup';
         return;
       }
-      const rowsAfterMediaSend = await getMessagesByConversationId(conversationId);
-      const recentAssistantReplies = rowsAfterMediaSend
-        .filter((msg) => msg.role === 'assistant')
-        .map((msg) => String(msg.content ?? '').trim())
-        .filter((msg) => msg.length > 0)
-        .slice(-8);
-      const postMediaFollowup = await maybeSendAnaMediaPostSendFollowup({
-        conversationId,
-        toPhoneNumber,
-        flowState: flowStateParsed,
-        mediaKind: mediaOutcome.messageKind,
-        mediaCategory: mediaOutcome.sentCategory,
-        mediaFileName: mediaOutcome.fileName,
-        recentAssistantReplies,
-        replyPipelineToken,
-      });
+      const postMediaFollowup =
+        mediaOutcome.messageKind === 'image'
+          ? await sendAnaImageMaterialPostSendModelReply({
+              enterprise: ent,
+              requestedTheme: extractAnaImageFilenameTopic(trimmed),
+              sentImages: [mediaOutcome.fileName].filter(Boolean),
+              lastUserMessage: trimmed,
+              commercialContext: buildAnaImageMaterialCommercialContext({
+                enterpriseName: ent?.name ?? null,
+                variablesMap: vars,
+                knowledgeText: promptKnowledgeText,
+                fileInventory,
+              }),
+              phase: 'ana_doc_image_material_model_followup',
+            })
+          : await (async () => {
+              const rowsAfterMediaSend = await getMessagesByConversationId(conversationId);
+              const recentAssistantReplies = rowsAfterMediaSend
+                .filter((msg) => msg.role === 'assistant')
+                .map((msg) => String(msg.content ?? '').trim())
+                .filter((msg) => msg.length > 0)
+                .slice(-8);
+              return maybeSendAnaMediaPostSendFollowup({
+                conversationId,
+                toPhoneNumber,
+                flowState: flowStateParsed,
+                mediaKind: mediaOutcome.messageKind,
+                mediaCategory: mediaOutcome.sentCategory,
+                mediaFileName: mediaOutcome.fileName,
+                recentAssistantReplies,
+                replyPipelineToken,
+              });
+            })();
       if (postMediaFollowup.sent && postMediaFollowup.text) {
         anaEngineTrace('final_send_success', {
           conversationId,
@@ -13187,6 +13480,16 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
         outboundMetaMessageId: sendResult.metaMessageIds[sendResult.metaMessageIds.length - 1] ?? null,
         replyLen: replyText.length,
       });
+      if (globalNoEnterpriseMode) {
+        console.log('[ANA_GLOBAL_NO_ENTERPRISE_REPLY_SENT]', {
+          conversationId,
+          enterpriseResolutionSource: enterpriseResolution.source,
+          reasonWhenNoEnterprise: enterpriseResolution.reasonWhenNoEnterprise,
+          outboundStatus: 'sent',
+          outboundMetaMessageId: sendResult.metaMessageIds[sendResult.metaMessageIds.length - 1] ?? null,
+          replyLen: replyText.length,
+        });
+      }
       console.log('[ANA DEBUG] WhatsApp reply sent', {
         metaMessageId: sendResult.metaMessageIds[sendResult.metaMessageIds.length - 1] ?? null,
         partsSent: sendResult.metaMessageIds.length,
@@ -13305,6 +13608,16 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
         code: sendResult.code ?? null,
         toPhoneTail: anaPhoneTail(toPhoneNumber),
       });
+      if (globalNoEnterpriseMode) {
+        console.warn('[ANA_GLOBAL_NO_ENTERPRISE_REPLY_SEND_FAILED]', {
+          conversationId,
+          enterpriseResolutionSource: enterpriseResolution.source,
+          reasonWhenNoEnterprise: enterpriseResolution.reasonWhenNoEnterprise,
+          outboundStatus: 'send_failed',
+          error: sendResult.error ?? null,
+          code: sendResult.code ?? null,
+        });
+      }
       console.error('[ANA DEBUG] Falha ao enviar WhatsApp:', sendResult.error, { toPhoneNumber });
       anaTurnAuditOutcome = 'send_failed';
       anaTurnAuditBlockedReason = 'main_reply_send_failed';
