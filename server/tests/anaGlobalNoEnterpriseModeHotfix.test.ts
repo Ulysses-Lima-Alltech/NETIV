@@ -3,9 +3,11 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  __testOnlyApplyGlobalNoEnterpriseUnsupportedEnterpriseMentionGuard,
   __testOnlyShouldUseAnaNoEnterpriseGlobalMode,
 } from '../services/conversationEngine.js';
 import type { ResolvedEnterpriseAiSettings } from '../services/enterpriseAiSettingsService.js';
+import type { EnterpriseRow } from '../repositories/enterpriseRepository.js';
 
 const engine = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
 
@@ -35,6 +37,28 @@ function globalAiSettings(partial: Partial<ResolvedEnterpriseAiSettings> = {}): 
   };
 }
 
+function enterprise(id: number, name: string, slug: string): EnterpriseRow {
+  return {
+    id,
+    name,
+    slug,
+    status: 'ativo',
+    language_style: 'natural',
+    prompt_addons: '[]',
+    tipo: 'LOTEAMENTO',
+    exclusivo: false,
+    city: null,
+    state_uf: null,
+    commercial_region: null,
+    ibge_code: null,
+    created_at: new Date('2026-01-01T00:00:00.000Z'),
+    updated_at: new Date('2026-01-01T00:00:00.000Z'),
+  };
+}
+
+const SAFE_DISCOVERY_REPLY =
+  'Claro, posso te ajudar. Você busca apartamento ou loteamento? Tem algum empreendimento ou região em mente?';
+
 test('conversation Novo sem enterprise e baixa confianca usa config global, LLM e envio normal', () => {
   const lowConfidenceSettings = globalAiSettings();
   assert.equal(
@@ -57,6 +81,8 @@ test('conversation Novo sem enterprise e baixa confianca usa config global, LLM 
   assert.match(engine, /responseFormatJsonForTurn = isKnowledgeGapTurn === true \? false : !conversationalQwenMode/);
   assert.match(engine, /buildGlobalNoEnterpriseOperationalContext\(\{[\s\S]*enterpriseResolution/);
   assert.match(engine, /qual empreendimento, regiao, tipo de planta\/imovel, orcamento/);
+  assert.match(engine, /Nao assuma Evora, nao assuma nenhum primeiro empreendimento da lista/);
+  assert.doesNotMatch(engine, /Portfolio ativo disponivel para referencia de nomes/);
   assert.match(engine, /const result = await generateChatCompletion\(\{/);
   assert.match(engine, /const sendResult = await sendAnaOutboundMessages\(\{/);
   assert.match(engine, /const sendResult = await sendTextMessage\(\{/);
@@ -66,6 +92,47 @@ test('conversation Novo sem enterprise e baixa confianca usa config global, LLM 
   assert.match(engine, /\[ANA_REPLY_SEND_RESULT\]/);
   assert.match(engine, /\[ANA_GLOBAL_NO_ENTERPRISE_REPLY_SENT\]/);
   assert.match(engine, /\[ANA_GLOBAL_NO_ENTERPRISE_REPLY_SEND_FAILED\]/);
+});
+
+test('modo global substitui mencao indevida a empreendimento por resposta segura de descoberta', () => {
+  const result = __testOnlyApplyGlobalNoEnterpriseUnsupportedEnterpriseMentionGuard({
+    globalNoEnterpriseMode: true,
+    userMessage: 'Ainda tenho interesse, pode me passar mais informações?',
+    replyText: 'Claro, posso te ajudar com o Évora.',
+    activeEnterprises: [
+      enterprise(1, 'Évora', 'evora'),
+      enterprise(2, 'Montaresa', 'montaresa'),
+    ],
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.enterpriseName, 'Évora');
+  assert.equal(result.text, SAFE_DISCOVERY_REPLY);
+  assert.match(engine, /\[ANA_GLOBAL_NO_ENTERPRISE_UNSUPPORTED_ENTERPRISE_MENTION\]/);
+  assert.match(engine, /replyText = globalNoEnterpriseMentionGuard\.text/);
+  assert.match(engine, /const committedFinalReply = commitTurnResponse/);
+  assert.match(engine, /const sendResult = await sendAnaOutboundMessages\(\{/);
+});
+
+test('guard global permite empreendimento quando usuario citou ou quando nao esta em modo global', () => {
+  const activeEnterprises = [enterprise(1, 'Évora', 'evora')];
+
+  const userMentioned = __testOnlyApplyGlobalNoEnterpriseUnsupportedEnterpriseMentionGuard({
+    globalNoEnterpriseMode: true,
+    userMessage: 'Quero informações do Évora',
+    replyText: 'Claro, posso te ajudar com o Évora.',
+    activeEnterprises,
+  });
+  assert.equal(userMentioned.changed, false);
+  assert.equal(userMentioned.text, 'Claro, posso te ajudar com o Évora.');
+
+  const scopedConversation = __testOnlyApplyGlobalNoEnterpriseUnsupportedEnterpriseMentionGuard({
+    globalNoEnterpriseMode: false,
+    userMessage: 'Ainda tenho interesse',
+    replyText: 'Claro, posso te ajudar com o Évora.',
+    activeEnterprises,
+  });
+  assert.equal(scopedConversation.changed, false);
 });
 
 test('modo global sem enterprise nao bloqueia por material/foto/video antes do LLM', () => {
