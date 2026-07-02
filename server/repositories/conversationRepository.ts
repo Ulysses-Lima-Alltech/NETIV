@@ -188,19 +188,16 @@ export async function findOrCreateConversation(
 ): Promise<ConversationRow> {
   let effectiveExternalId = externalId;
   let effectiveContactPhone = contactPhone;
+  let normalizedPhone: string | null = null;
   if (channel === 'whatsapp') {
     const canon = normalizePhoneE164(contactPhone ?? externalId) ?? String(externalId ?? '').replace(/\D/g, '');
     if (canon) {
       effectiveExternalId = canon;
       effectiveContactPhone = canon;
+      normalizedPhone = canon;
     }
   }
-  const existingBefore = await query<{ id: number }>(
-    `SELECT id FROM conversations WHERE channel = $1 AND external_contact_id = $2 LIMIT 1`,
-    [channel, effectiveExternalId]
-  );
-  const createdNow = !existingBefore.rows[0];
-  const normalizedPhone = normalizePhoneE164(effectiveContactPhone ?? effectiveExternalId);
+  normalizedPhone = normalizedPhone ?? normalizePhoneE164(effectiveContactPhone ?? effectiveExternalId);
   const contact =
     normalizedPhone != null
       ? await findOrCreateContactByPhone({
@@ -218,6 +215,92 @@ export async function findOrCreateConversation(
       : null;
 
   const waName = (opts?.whatsappDisplayName ?? '').trim() || null;
+
+  if (channel === 'whatsapp' && contact?.id != null && normalizedPhone) {
+    const openRows = await query<ConversationRow>(
+      `SELECT *
+       FROM conversations
+       WHERE channel = $1
+         AND manual_closed_at IS NULL
+         AND COALESCE(classification, '') <> 'Carteira'
+         AND (
+           contact_id = $2
+           OR regexp_replace(COALESCE(contact_phone, ''), '\D', '', 'g') = $3
+           OR regexp_replace(COALESCE(external_contact_id, ''), '\D', '', 'g') = $3
+         )
+       ORDER BY last_message_at DESC NULLS LAST, updated_at DESC, id DESC
+       LIMIT 10`,
+      [channel, contact.id, normalizedPhone]
+    );
+    if (openRows.rows.length > 1) {
+      console.warn('[WHATSAPP_DUPLICATE_OPEN_CONVERSATIONS_DETECTED]', {
+        contactId: contact.id,
+        phoneE164: normalizedPhone,
+        conversationIds: openRows.rows.map((row) => row.id),
+      });
+    }
+    const reusable = openRows.rows[0] ?? null;
+    if (reusable) {
+      const { rows: updatedRows } = await query<ConversationRow>(
+        `UPDATE conversations
+         SET contact_phone = COALESCE($2, contact_phone),
+             whatsapp_display_name = CASE
+               WHEN $3::text IS NOT NULL AND length(trim($3::text)) > 0
+               THEN trim($3::text)
+               ELSE whatsapp_display_name
+             END,
+             meta_phone_number_id = COALESCE($4, meta_phone_number_id),
+             contact_id = COALESCE(contact_id, $5),
+             last_message_at = NOW(),
+             updated_at = NOW(),
+             enterprise_origin_id = COALESCE(enterprise_origin_id, $6),
+             lead_source_raw = COALESCE(lead_source_raw, $7::jsonb),
+             enterprise_id = COALESCE(enterprise_id, $6)
+         WHERE id = $1
+         RETURNING *`,
+        [
+          reusable.id,
+          effectiveContactPhone,
+          waName,
+          metaPhoneNumberId,
+          contact.id,
+          resolvedEnterpriseId,
+          leadSourceJson != null ? JSON.stringify(leadSourceJson) : null,
+        ]
+      );
+      const reused = updatedRows[0] ?? reusable;
+      await assignContactToConversation(reused.id, contact.id);
+      void publishConversationUpdated(reused.id);
+      console.log('[WHATSAPP_CONVERSATION_REUSE_BY_CONTACT]', {
+        conversationId: reused.id,
+        contactId: contact.id,
+        phoneE164: normalizedPhone,
+        externalContactId: reused.external_contact_id,
+      });
+      return reused;
+    }
+  }
+
+  let insertExternalId = effectiveExternalId;
+  let createdNow = true;
+  if (channel === 'whatsapp') {
+    const existingExternalId = await query<{ id: number; manual_closed_at: Date | null; classification: string | null }>(
+      `SELECT id, manual_closed_at, classification
+       FROM conversations
+       WHERE channel = $1 AND external_contact_id = $2
+       LIMIT 1`,
+      [channel, effectiveExternalId]
+    );
+    if (existingExternalId.rows[0]) {
+      insertExternalId = `${effectiveExternalId}:${Date.now().toString(36)}-${process.hrtime.bigint().toString(36)}`;
+    }
+  } else {
+    const existingBefore = await query<{ id: number }>(
+      `SELECT id FROM conversations WHERE channel = $1 AND external_contact_id = $2 LIMIT 1`,
+      [channel, effectiveExternalId]
+    );
+    createdNow = !existingBefore.rows[0];
+  }
 
   const { rows } = await query<ConversationRow>(
     `INSERT INTO conversations (
@@ -242,7 +325,7 @@ export async function findOrCreateConversation(
      RETURNING *`,
     [
       channel,
-      effectiveExternalId,
+      insertExternalId,
       effectiveContactPhone,
       waName,
       metaPhoneNumberId,
@@ -259,6 +342,14 @@ export async function findOrCreateConversation(
   if (conv?.id) {
     if (createdNow) void publishConversationCreated(conv.id);
     else void publishConversationUpdated(conv.id);
+    if (channel === 'whatsapp' && contact?.id != null) {
+      console.log('[WHATSAPP_CONVERSATION_CREATED_FOR_CONTACT]', {
+        conversationId: conv.id,
+        contactId: contact.id,
+        phoneE164: normalizedPhone,
+        externalContactId: conv.external_contact_id,
+      });
+    }
   }
   return conv;
 }
