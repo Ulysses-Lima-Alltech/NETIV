@@ -326,6 +326,8 @@ const MAX_ANA_GENERATION_ATTEMPTS = 5;
 const ANA_DEBUG_QWEN_RAW = String(process.env.ANA_DEBUG_QWEN_RAW || '').trim().toLowerCase() === 'true';
 const ANA_LLM_FIRST_COMMERCIAL_REPLIES =
   String(process.env.ANA_LLM_FIRST_COMMERCIAL_REPLIES ?? 'true').trim().toLowerCase() !== 'false';
+const ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY =
+  'Claro, posso te ajudar. Você busca apartamento ou loteamento? Tem algum empreendimento ou região em mente?';
 
 type AnaEmergencyHandoffTransport = {
   sendTextMessage: (to: string, text: string) => Promise<AnaEmergencyHandoffSendResult>;
@@ -2551,29 +2553,130 @@ function shouldUseAnaNoEnterpriseGlobalMode(params: {
 
 export const __testOnlyShouldUseAnaNoEnterpriseGlobalMode = shouldUseAnaNoEnterpriseGlobalMode;
 
+type AnaGlobalNoEnterpriseMentionGuardResult =
+  | {
+      changed: false;
+      text: string;
+      enterpriseName: null;
+    }
+  | {
+      changed: true;
+      text: string;
+      enterpriseName: string;
+    };
+
+const ANA_ENTERPRISE_NAME_GENERIC_TOKENS = new Set([
+  'residencial',
+  'empreendimento',
+  'loteamento',
+  'loteamentos',
+  'condominio',
+  'condominios',
+  'edificio',
+  'parque',
+  'jardim',
+  'village',
+  'park',
+  'club',
+  'fase',
+  'torre',
+  'bloco',
+]);
+
+function normalizeEnterpriseMentionGuardText(value: string): string {
+  return normText(value)
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function enterpriseMentionNeedles(enterpriseName: string): string[] {
+  const normalizedName = normalizeEnterpriseMentionGuardText(enterpriseName);
+  const needles = new Set<string>();
+  if (normalizedName.length >= 4) needles.add(normalizedName);
+  for (const token of normalizedName.split(/\s+/).filter(Boolean)) {
+    if (token.length < 4) continue;
+    if (ANA_ENTERPRISE_NAME_GENERIC_TOKENS.has(token)) continue;
+    needles.add(token);
+  }
+  return Array.from(needles);
+}
+
+function normalizedTextContainsNeedle(text: string, needle: string): boolean {
+  if (!text || !needle) return false;
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|\\s)${escaped}(\\s|$)`).test(text);
+}
+
+function findUnsupportedEnterpriseMentionInGlobalNoEnterpriseReply(params: {
+  replyText: string;
+  userMessage: string;
+  activeEnterprises: EnterpriseRow[];
+}): EnterpriseRow | null {
+  const replyNorm = normalizeEnterpriseMentionGuardText(params.replyText);
+  const userNorm = normalizeEnterpriseMentionGuardText(params.userMessage);
+  if (!replyNorm) return null;
+  for (const enterprise of params.activeEnterprises) {
+    const needles = enterpriseMentionNeedles(enterprise.name);
+    if (needles.length === 0) continue;
+    const mentionedInReply = needles.some((needle) => normalizedTextContainsNeedle(replyNorm, needle));
+    if (!mentionedInReply) continue;
+    const mentionedByUser = needles.some((needle) => normalizedTextContainsNeedle(userNorm, needle));
+    if (mentionedByUser) continue;
+    return enterprise;
+  }
+  return null;
+}
+
+function applyGlobalNoEnterpriseUnsupportedEnterpriseMentionGuard(params: {
+  globalNoEnterpriseMode: boolean;
+  replyText: string;
+  userMessage: string;
+  activeEnterprises: EnterpriseRow[];
+}): AnaGlobalNoEnterpriseMentionGuardResult {
+  if (!params.globalNoEnterpriseMode) {
+    return { changed: false, text: params.replyText, enterpriseName: null };
+  }
+  const unsupportedEnterprise = findUnsupportedEnterpriseMentionInGlobalNoEnterpriseReply({
+    replyText: params.replyText,
+    userMessage: params.userMessage,
+    activeEnterprises: params.activeEnterprises,
+  });
+  if (!unsupportedEnterprise) {
+    return { changed: false, text: params.replyText, enterpriseName: null };
+  }
+  return {
+    changed: true,
+    text: ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY,
+    enterpriseName: unsupportedEnterprise.name,
+  };
+}
+
+export const __testOnlyApplyGlobalNoEnterpriseUnsupportedEnterpriseMentionGuard =
+  applyGlobalNoEnterpriseUnsupportedEnterpriseMentionGuard;
+
 function buildGlobalNoEnterpriseOperationalContext(params: {
   enterpriseResolution: AnaEnterpriseResolution;
   activeEnterpriseNames: string[];
   requestedProductType: string | null | undefined;
 }): string {
-  const candidates = params.enterpriseResolution.candidates
-    .map((candidate) => candidate.enterpriseName)
-    .filter((name) => name.trim().length > 0)
-    .slice(0, 5);
   const candidateLine =
-    params.enterpriseResolution.source === 'ambiguous' && candidates.length > 0
-      ? `Candidatos possiveis detectados: ${candidates.join(', ')}. Se fizer sentido, peca ao cliente escolher entre eles.`
+    params.enterpriseResolution.source === 'ambiguous' && params.enterpriseResolution.candidates.length > 0
+      ? 'Ha candidatos possiveis, mas sem confianca suficiente para citar nomes. Peca ao cliente confirmar o empreendimento ou regiao.'
       : 'Nenhum empreendimento foi identificado com seguranca nesta mensagem.';
   const portfolioLine =
     params.activeEnterpriseNames.length > 0
-      ? `Portfolio ativo disponivel para referencia de nomes: ${params.activeEnterpriseNames.slice(0, 12).join(', ')}.`
+      ? 'Existe portfolio ativo, mas seus nomes nao devem ser citados neste turno sem mencao explicita do cliente.'
       : 'Portfolio ativo nao carregado para este turno.';
   return [
     '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
     'A conversa ainda nao tem empreendimento resolvido. Use atendimento global da Ana, sem RAG especifico de empreendimento.',
+    'Nao assuma Evora, nao assuma nenhum primeiro empreendimento da lista e nao use nomes do portfolio como contexto principal.',
     'Nao invente dados de empreendimento, valores, endereco, planta, disponibilidade, prazos ou condicoes.',
+    'Nao mencione nome de empreendimento especifico, a menos que o cliente tenha citado explicitamente esse nome no turno atual.',
     'Nao acione handoff automatico so porque o empreendimento nao foi resolvido.',
     'Objetivo deste turno: entender naturalmente qual empreendimento, regiao, tipo de planta/imovel, orcamento ou intencao o cliente busca.',
+    `Resposta segura quando o cliente pedir informacoes gerais sem empreendimento: "${ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY}"`,
     'Se o texto do cliente permitir uma inferencia clara, responda conduzindo essa confirmacao. Se ainda nao permitir, faca uma pergunta curta de qualificacao.',
     'Responda em texto livre, comercial e humano, com no maximo uma pergunta.',
     `Tipo de interesse inferido pelo backend: ${params.requestedProductType || 'INDEFINIDO'}.`,
@@ -4576,9 +4679,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
     const currentFocusedEnterprise =
-      effectiveConv.enterprise_id != null ? await getActiveEnterpriseById(effectiveConv.enterprise_id) : null;
+      !globalNoEnterpriseMode && effectiveConv.enterprise_id != null
+        ? await getActiveEnterpriseById(effectiveConv.enterprise_id)
+        : null;
     const flowHintEnterpriseId =
-      flowStateParsed.lastSingleCatalogEnterpriseId ?? flowStateParsed.lastInferredEnterpriseId ?? null;
+      globalNoEnterpriseMode
+        ? null
+        : flowStateParsed.lastSingleCatalogEnterpriseId ?? flowStateParsed.lastInferredEnterpriseId ?? null;
     const flowHintEnterpriseName =
       currentFocusedEnterprise?.name ??
       (flowHintEnterpriseId != null
@@ -5366,7 +5473,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const authorizedLocationLink = pickAuthorizedLocationLink(vars);
     const authorizedLocationAddress = pickAuthorizedLocationAddress(vars);
     let commercialSnapshots: CommercialSnapshot[] = [];
-    if (mode === 'scoped' && ent) {
+    if (globalNoEnterpriseMode) {
+      commercialSnapshots = [];
+    } else if (mode === 'scoped' && ent) {
       commercialSnapshots = [{ enterpriseName: ent.name, variables: vars }];
     } else {
       for (const e of enterprisesPool) {
@@ -5551,7 +5660,9 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     ].join('\n');
 
     let allEnterpriseNames: string[] = [];
-    if (mode === 'scoped' && ent) {
+    if (globalNoEnterpriseMode) {
+      allEnterpriseNames = [];
+    } else if (mode === 'scoped' && ent) {
       allEnterpriseNames = enterprisesForSameTipoAsEnt.map((e) => e.name);
     } else if (locationQueryContext) {
       allEnterpriseNames = locationQueryContext.availableEnterprises.map((e) => e.name);
@@ -9286,7 +9397,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
       appointmentPreflight,
       openAppointmentSummary,
       locationQueryContext:
-        mode === 'scoped' && ent ? undefined : (locationQueryContext ?? undefined),
+        globalNoEnterpriseMode || (mode === 'scoped' && ent) ? undefined : (locationQueryContext ?? undefined),
       commercialSnapshots: commercialSnapshots.length > 0 ? commercialSnapshots : undefined,
       persistedContextBlock,
       isFirstAnaReply,
@@ -9581,6 +9692,8 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
           'Voce e Ana, atendimento comercial global. Responda somente ao cliente, em portugues brasileiro natural.',
           'Nao copie instrucoes internas. Nao mencione sistema, RAG, base, regra, prompt, NETIV ou QMAPE.',
           'Ainda nao ha empreendimento resolvido. Nao use dados especificos de nenhum empreendimento.',
+          'Nao mencione Evora nem qualquer nome especifico de empreendimento se o cliente nao tiver citado esse nome.',
+          `Para pedidos genericos de informacoes, use esta resposta segura: "${ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY}"`,
           globalNoEnterpriseOperationalContext,
           initialDiscoveryGuidanceContext,
           policyRuntimeDirectives,
@@ -13433,6 +13546,26 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
           reason: finalQuestionRetryResult.error || 'retry_generation_failed_or_empty',
         });
       }
+    }
+
+    const globalNoEnterpriseMentionGuard = applyGlobalNoEnterpriseUnsupportedEnterpriseMentionGuard({
+      globalNoEnterpriseMode,
+      replyText,
+      userMessage: trimmed,
+      activeEnterprises: allActiveEnterprises,
+    });
+    if (globalNoEnterpriseMentionGuard.changed) {
+      console.log('[ANA_GLOBAL_NO_ENTERPRISE_UNSUPPORTED_ENTERPRISE_MENTION]', {
+        conversationId,
+        enterpriseName: globalNoEnterpriseMentionGuard.enterpriseName,
+        originalReplyPreview: replyText.slice(0, 260),
+      });
+      replyText = globalNoEnterpriseMentionGuard.text;
+      appendedVisitOfferMessagesForFinalSend = [];
+      anaTurnAuditGuardsApplied.globalNoEnterpriseUnsupportedEnterpriseMention = {
+        changed: true,
+        enterpriseName: globalNoEnterpriseMentionGuard.enterpriseName,
+      };
     }
 
     if (containsForbiddenMissingDetailFallbackText(replyText)) {
