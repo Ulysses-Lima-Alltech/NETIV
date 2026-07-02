@@ -3578,6 +3578,62 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
   let isFirstAnaReplyForTurn = false;
   let pendingResolutionNeedsDisambiguation = false;
   let pendingResolutionChoiceIntent: 'broker' | 'visit' | 'ambiguous' | null = null;
+  let anaGlobalNoEnterpriseModeForTurn = false;
+  const isHardBlockedSilentExitReason = (reason: string | null): boolean => {
+    const normalized = String(reason ?? '').trim();
+    if (!normalized) return false;
+    return (
+      normalized === 'handoff' ||
+      normalized === 'carteira' ||
+      normalized === 'manual_closed' ||
+      normalized === 'ai_disabled' ||
+      normalized === 'missing_global_api_key' ||
+      normalized === 'missing_enterprise_api_key' ||
+      normalized === 'missing_resolved_api_key_after_gate' ||
+      normalized === 'ana_model_not_configured' ||
+      normalized === 'llm_generation_failed_after_retries' ||
+      normalized.endsWith('_send_failed') ||
+      normalized.includes('send_failed') ||
+      normalized.startsWith('pipeline_stale_')
+    );
+  };
+  const sendGlobalNoEnterpriseFinalSafeReply = async (reason: string | null): Promise<boolean> => {
+    if (!anaGlobalNoEnterpriseModeForTurn) return false;
+    if (anaTurnAuditOutcome !== 'silent' && anaTurnAuditOutcome !== 'blocked') return false;
+    if (isHardBlockedSilentExitReason(reason)) return false;
+    const safeReply = ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY;
+    const safeSend = await sendAnaOutboundMessages({
+      conversationId,
+      toPhoneNumber,
+      text: safeReply,
+      phase: 'ana_global_no_enterprise_final_safe_reply',
+      replyPipelineToken,
+    });
+    if (!safeSend.success || safeSend.metaMessageIds.length === 0) {
+      anaTurnAuditOutcome = 'send_failed';
+      anaTurnAuditBlockedReason = 'global_no_enterprise_final_safe_reply_send_failed';
+      anaTurnDiagnostics.finalResponse.replySource = 'global_no_enterprise_safe_reply';
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      return false;
+    }
+    anaTurnAuditOutcome = 'sent';
+    anaTurnAuditBlockedReason = null;
+    anaTurnDiagnostics.finalResponse.replySource = 'global_no_enterprise_safe_reply';
+    anaTurnDiagnostics.finalResponse.handoffUsed = false;
+    anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+    anaTurnAuditGuardsApplied.globalNoEnterpriseFinalSafeReply = {
+      sent: true,
+      originalReason: reason ?? 'unknown_silent_exit',
+      reply: safeReply,
+    };
+    console.log('[ANA_GLOBAL_NO_ENTERPRISE_FINAL_SAFE_REPLY]', {
+      conversationId,
+      reason: reason ?? 'unknown_silent_exit',
+      outboundMetaMessageId: safeSend.metaMessageIds[safeSend.metaMessageIds.length - 1] ?? null,
+      replyLen: safeReply.length,
+    });
+    return true;
+  };
   const selectTurnDecision = (params: {
     handler: string;
     reason: string;
@@ -4391,6 +4447,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       resolvedEnterpriseId: enterpriseResolution.enterpriseId ?? null,
       aiSettings: resolvedAiSettings,
     });
+    anaGlobalNoEnterpriseModeForTurn = globalNoEnterpriseMode;
     if (globalNoEnterpriseMode) {
       console.log('[ANA_NO_ENTERPRISE_GLOBAL_MODE]', {
         conversationId,
@@ -7290,6 +7347,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         outboundStatus: anaTurnAuditOutcome,
         blockedReason: anaTurnAuditBlockedReason,
       });
+      if (await sendGlobalNoEnterpriseFinalSafeReply(anaTurnAuditBlockedReason)) return;
       return;
     }
 
@@ -10840,6 +10898,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
           technical_fallback_used: false,
           outbound_blocked: true,
         });
+        if (await sendGlobalNoEnterpriseFinalSafeReply(anaTurnAuditBlockedReason)) return;
         return;
       }
       /*
@@ -13596,6 +13655,7 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
       anaTurnAuditOutcome = 'blocked';
       anaTurnAuditBlockedReason = 'final_reply_commit_blocked';
       anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      if (await sendGlobalNoEnterpriseFinalSafeReply(anaTurnAuditBlockedReason)) return;
       return;
     }
     replyText = committedFinalReply.text;
@@ -13849,6 +13909,13 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
     }
 
   } finally {
+    if (
+      anaGlobalNoEnterpriseModeForTurn &&
+      (anaTurnAuditOutcome === 'silent' || anaTurnAuditOutcome === 'blocked') &&
+      !isHardBlockedSilentExitReason(anaTurnAuditBlockedReason)
+    ) {
+      await sendGlobalNoEnterpriseFinalSafeReply(anaTurnAuditBlockedReason);
+    }
     if (anaTurnAuditOutcome === 'silent' || anaTurnAuditOutcome === 'blocked') {
       console.log('[ANA_SILENT_EXIT_BLOCKED]', {
         conversationId,
