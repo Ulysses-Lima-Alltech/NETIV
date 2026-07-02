@@ -323,6 +323,8 @@ function buildAnaNoInfoBrokerVisitOffer(): string {
 }
 
 const MAX_ANA_GENERATION_ATTEMPTS = 5;
+const ANA_HANDOFF_DISABLED =
+  String(process.env.ANA_HANDOFF_DISABLED ?? 'true').trim().toLowerCase() !== 'false';
 const ANA_DEBUG_QWEN_RAW = String(process.env.ANA_DEBUG_QWEN_RAW || '').trim().toLowerCase() === 'true';
 const ANA_LLM_FIRST_COMMERCIAL_REPLIES =
   String(process.env.ANA_LLM_FIRST_COMMERCIAL_REPLIES ?? 'true').trim().toLowerCase() !== 'false';
@@ -2291,7 +2293,7 @@ export interface IncomingMessageContext {
 /** Reprocessa a última mensagem do usuário sem resposta quando handoff muda true→false. */
 export async function reprocessLastUserMessage(conversationId: number): Promise<void> {
   console.log('[ANA REPROCESS]', { conversationId });
-  if (isAnaEmergencyHandoffEnabled()) {
+  if (!ANA_HANDOFF_DISABLED && isAnaEmergencyHandoffEnabled()) {
     console.log('[ANA_EMERGENCY_HANDOFF] reprocess_skipped', { conversationId });
     return;
   }
@@ -2998,7 +3000,8 @@ export function __testOnlyResolveMediaPostSendFollowup(params: {
 }): { shouldSend: boolean; reason: 'ok' | 'visit_flow' | 'broker_handoff' | 'repeat'; text: string; kind: AnaPostMediaFollowupKind } {
   const visitFlowActive =
     params.flowState.pendingVisitScheduling === true || params.flowState.visitScheduling?.active === true;
-  const brokerHandoffActive = Boolean(params.flowState.dialoguePolicy?.brokerHandoffAcceptedAt);
+  const brokerHandoffActive =
+    !ANA_HANDOFF_DISABLED && Boolean(params.flowState.dialoguePolicy?.brokerHandoffAcceptedAt);
   const followup = pickPostMediaFollowupText({
     kind: params.mediaKind,
     category: params.mediaCategory,
@@ -3518,7 +3521,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     return;
   }
 
-  if (isAnaEmergencyHandoffEnabled()) {
+  if (!ANA_HANDOFF_DISABLED && isAnaEmergencyHandoffEnabled()) {
     console.log('[ANA_EMERGENCY_HANDOFF] active', {
       conversationId,
       toPhoneTail: anaPhoneTail(toPhoneNumber),
@@ -3618,7 +3621,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const channel = String(convForExit?.channel ?? '').trim().toLowerCase();
     const hardBlockReason =
       hardBlockReasonForTurn ??
-      (handoff || classification === 'Handoff'
+      (!ANA_HANDOFF_DISABLED && (handoff || classification === 'Handoff')
         ? 'handoff'
         : classification === 'Carteira'
           ? 'carteira'
@@ -3630,8 +3633,8 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     const activeWhatsAppNoEnterprise =
       channel === 'whatsapp' &&
       enterpriseId == null &&
-      !handoff &&
-      classification !== 'Handoff' &&
+      (ANA_HANDOFF_DISABLED || !handoff) &&
+      (ANA_HANDOFF_DISABLED || classification !== 'Handoff') &&
       classification !== 'Carteira' &&
       !manualClosedAt;
     return {
@@ -3796,7 +3799,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       return;
     }
     const initialAttendanceMode =
-      convAfterAssignment.handoff === true || convAfterAssignment.classification === 'Handoff'
+      !ANA_HANDOFF_DISABLED && (convAfterAssignment.handoff === true || convAfterAssignment.classification === 'Handoff')
         ? 'handoff'
         : 'ana';
     console.log('[ANA_HANDOFF_MODE_VERIFY_AFTER_ASSIGNMENT]', {
@@ -3808,8 +3811,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       attendanceMode: initialAttendanceMode,
     });
     const shouldRepairHandoffMode =
+      !ANA_HANDOFF_DISABLED &&
       convAfterAssignment.assigned_broker_id != null &&
       (convAfterAssignment.handoff !== true || convAfterAssignment.classification !== 'Handoff');
+    if (ANA_HANDOFF_DISABLED && convAfterAssignment.assigned_broker_id != null) {
+      console.log('[ANA_HANDOFF_MUTATION_BLOCKED]', {
+        conversationId,
+        reason: 'verify_and_repair_handoff_disabled',
+        assignedBrokerId: convAfterAssignment.assigned_broker_id,
+      });
+    }
     if (shouldRepairHandoffMode) {
       await query(
         `UPDATE conversations
@@ -3836,15 +3847,16 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       });
     }
     const finalAttendanceMode =
-      convAfterAssignment?.handoff === true || convAfterAssignment?.classification === 'Handoff'
+      !ANA_HANDOFF_DISABLED && (convAfterAssignment?.handoff === true || convAfterAssignment?.classification === 'Handoff')
         ? 'handoff'
         : 'ana';
     const verificationFailed =
-      !convAfterAssignment ||
-      (assignment.assignedBrokerId != null && convAfterAssignment.assigned_broker_id == null) ||
-      convAfterAssignment.handoff !== true ||
-      convAfterAssignment.classification !== 'Handoff' ||
-      convAfterAssignment.pending_resolution_choice === true;
+      !ANA_HANDOFF_DISABLED &&
+      (!convAfterAssignment ||
+        (assignment.assignedBrokerId != null && convAfterAssignment.assigned_broker_id == null) ||
+        convAfterAssignment.handoff !== true ||
+        convAfterAssignment.classification !== 'Handoff' ||
+        convAfterAssignment.pending_resolution_choice === true);
     if (verificationFailed) {
       console.error('[ANA_HANDOFF_MODE_VERIFY_FAILED]', {
         conversationId,
@@ -3889,6 +3901,14 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         String(enterpriseNameFallback ?? '').trim() || 'empreendimento';
 
       if (assignedBrokerId == null) {
+        if (ANA_HANDOFF_DISABLED) {
+          console.log('[ANA_HANDOFF_MUTATION_BLOCKED]', {
+            conversationId,
+            reason: 'appointment_confirmed_broker_assignment_disabled',
+            appointmentId,
+          });
+          return;
+        }
         const appointmentAssignment = await assignConversationToNextBroker({
           conversationId,
           reason: 'appointment_confirmed',
@@ -4019,6 +4039,23 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     // Revalidacao imediata antes do bloqueio: sempre buscar estado mais recente (evita race: usuario muda Handoff->ANA durante processamento)
     const latestConv = await getConversationById(conversationId);
     let effectiveConv = latestConv ?? conv;
+    if (ANA_HANDOFF_DISABLED && (effectiveConv.handoff === true || effectiveConv.classification === 'Handoff')) {
+      console.log('[ANA_HANDOFF_DISABLED_IGNORED]', {
+        conversationId,
+        originalHandoff: effectiveConv.handoff === true,
+        originalClassification: effectiveConv.classification ?? null,
+      });
+      effectiveConv = {
+        ...effectiveConv,
+        handoff: false,
+        classification: effectiveConv.classification === 'Handoff' ? 'Novo' : effectiveConv.classification,
+      };
+      conv = {
+        ...conv,
+        handoff: false,
+        classification: conv.classification === 'Handoff' ? 'Novo' : conv.classification,
+      };
+    }
     anaLatestConversationForSilentExit = effectiveConv;
     if (blockInternalConversation(effectiveConv.conversation_type)) {
       hardBlockReasonForTurn = 'conversation_type_internal';
@@ -4057,7 +4094,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
 
     // Decisao final SEMPRE com base no estado mais recente. Modo handoff: NAO responder. Modo ANA: SEMPRE responder via IA.
-    if (effectiveConv.handoff === true || effectiveConv.classification === 'Handoff') {
+    if (!ANA_HANDOFF_DISABLED && (effectiveConv.handoff === true || effectiveConv.classification === 'Handoff')) {
       hardBlockReasonForTurn = 'handoff';
       assistantReplyAttemptedOrSent = true;
       console.log('[ANA_SKIPPED_HANDOFF_ACTIVE]', {
@@ -4094,7 +4131,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     activeWhatsAppNoEnterpriseForTurn =
       String(effectiveConv.channel ?? '').trim().toLowerCase() === 'whatsapp' &&
       effectiveConv.enterprise_id == null &&
-      effectiveConv.classification !== 'Handoff' &&
+      (ANA_HANDOFF_DISABLED || effectiveConv.classification !== 'Handoff') &&
       effectiveConv.classification !== 'Carteira' &&
       effectiveConv.manual_closed_at == null;
     console.log('[ANA_ACTIVE_WHATSAPP_NO_ENTERPRISE_GUARD]', {
@@ -4126,7 +4163,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
           const raw = (payload as Record<string, unknown>).allowedNextActions;
           return Array.isArray(raw) ? raw.map((item) => String(item)) : [];
         })();
-        const pendingAllowsBroker = pendingAllowedActions.includes('offer_broker_handoff');
+        const pendingAllowsBroker = !ANA_HANDOFF_DISABLED && pendingAllowedActions.includes('offer_broker_handoff');
         const pendingAllowsVisit = pendingAllowedActions.includes('offer_visit_scheduling');
         let pendingChoice = isExplicitResolutionChoice(trimmed) ?? classifyPendingResolutionChoice(trimmed);
         if (pendingChoice === 'ambiguous') {
@@ -4150,22 +4187,41 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
 
-    const explicitBrokerRequest = hasExplicitHandoffIntent(trimmed);
+    const rawExplicitBrokerRequest = hasExplicitHandoffIntent(trimmed);
+    const explicitBrokerRequest = ANA_HANDOFF_DISABLED ? false : rawExplicitBrokerRequest;
     const isFirstContactEnterpriseInterest = isFirstContactEnterpriseInterestMessage(trimmed);
+    const handoffDisabledBrokerIntent =
+      ANA_HANDOFF_DISABLED && (rawExplicitBrokerRequest || pendingResolutionChoiceIntent === 'broker');
+    if (handoffDisabledBrokerIntent) {
+      console.log('[ANA_HANDOFF_MUTATION_BLOCKED]', {
+        conversationId,
+        reason: 'handoff_disabled',
+        explicitBrokerRequest: rawExplicitBrokerRequest,
+        pendingResolutionChoiceIntent,
+      });
+      if (pendingResolutionChoiceIntent === 'broker') {
+        pendingResolutionChoiceIntent = null;
+      }
+    }
     const shouldAssignBroker =
-      (effectiveConv.pending_resolution_choice === true && pendingResolutionChoiceIntent === 'broker') ||
-      explicitBrokerRequest;
+      ANA_HANDOFF_DISABLED
+        ? false
+        : (effectiveConv.pending_resolution_choice === true && pendingResolutionChoiceIntent === 'broker') ||
+          explicitBrokerRequest;
     const brokerAssignReason =
-      effectiveConv.pending_resolution_choice === true && pendingResolutionChoiceIntent === 'broker'
-        ? 'pending_resolution_broker_choice'
-        : explicitBrokerRequest
-          ? 'explicit_broker_request'
-          : null;
+      handoffDisabledBrokerIntent
+        ? 'handoff_disabled'
+        : effectiveConv.pending_resolution_choice === true && pendingResolutionChoiceIntent === 'broker'
+          ? 'pending_resolution_broker_choice'
+          : explicitBrokerRequest
+            ? 'explicit_broker_request'
+            : null;
     console.log('[ANA_BROKER_ASSIGNMENT_DECISION]', {
       conversationId,
       shouldAssignBroker,
       reason: brokerAssignReason,
       explicitBrokerRequest,
+      rawExplicitBrokerRequest,
       pendingResolutionChoice: effectiveConv.pending_resolution_choice === true,
       classifiedChoice: pendingResolutionChoiceIntent,
       isFirstContactEnterpriseInterest,
@@ -4180,6 +4236,13 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     });
 
     if (shouldAssignBroker && brokerAssignReason) {
+      if (ANA_HANDOFF_DISABLED) {
+        console.log('[ANA_HANDOFF_MUTATION_BLOCKED]', {
+          conversationId,
+          reason: 'broker_assignment_branch_disabled',
+          brokerAssignReason,
+        });
+      } else {
       console.log('[ANA_BROKER_ASSIGNMENT_BRANCH_ENTERED]', {
         conversationId,
         reason: brokerAssignReason,
@@ -4255,6 +4318,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       anaTurnAuditOutcome = 'sent';
       anaTurnAuditBlockedReason = null;
       return;
+      }
     }
 
     if (ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY) {
@@ -4782,7 +4846,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
         phase: string;
       }
     ): Promise<{ sent: boolean; text: string | null; source: 'model' | 'fallback' | 'skipped' }> => {
-      if (flowStateParsed.dialoguePolicy?.brokerHandoffAcceptedAt) {
+      if (!ANA_HANDOFF_DISABLED && flowStateParsed.dialoguePolicy?.brokerHandoffAcceptedAt) {
         console.log('[ANA_IMAGE_MATERIAL_POST_SEND_SUPPRESSED]', {
           conversationId,
           reason: 'broker_handoff',
@@ -6524,6 +6588,15 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
             return;
           }
           if (pendingResolutionChoiceIntent === 'broker') {
+            if (ANA_HANDOFF_DISABLED) {
+              console.log('[ANA_HANDOFF_MUTATION_BLOCKED]', {
+                conversationId,
+                reason: 'pending_resolution_broker_assignment_disabled',
+              });
+              anaTurnAuditOutcome = 'sent';
+              anaTurnAuditBlockedReason = null;
+              return;
+            }
             let assignment: Awaited<ReturnType<typeof assignConversationToNextBroker>> = null;
             try {
               assignment = await assignConversationToNextBroker({
@@ -9963,7 +10036,8 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
       systemPromptLen: systemPrompt.length,
     });
     const messages: ChatMessage[] = [];
-    const knowledgeGapRequiresBrokerForPrompt = knowledgeGapMeta.allowedNextActions.includes('offer_broker_handoff');
+    const knowledgeGapRequiresBrokerForPrompt =
+      !ANA_HANDOFF_DISABLED && knowledgeGapMeta.allowedNextActions.includes('offer_broker_handoff');
     const knowledgeGapRequiresVisitForPrompt = knowledgeGapMeta.allowedNextActions.includes('offer_visit_scheduling');
     const knowledgeGapOperationalContext =
       isKnowledgeGapTurn
@@ -13618,7 +13692,8 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
           conversationId,
           missing: knowledgeGapOfferValidation.missing,
         });
-        const knowledgeGapRequiresBroker = knowledgeGapMeta.allowedNextActions.includes('offer_broker_handoff');
+        const knowledgeGapRequiresBroker =
+          !ANA_HANDOFF_DISABLED && knowledgeGapMeta.allowedNextActions.includes('offer_broker_handoff');
         const knowledgeGapRequiresVisit = knowledgeGapMeta.allowedNextActions.includes('offer_visit_scheduling');
         const knowledgeGapRequiredOptionLines = [
           knowledgeGapRequiresBroker ? '1. encaminhar para o corretor responsavel;' : null,
