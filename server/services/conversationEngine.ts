@@ -4478,6 +4478,185 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       }
     }
     const allActiveEnterprises = await listEnterprises(true);
+    if (activeWhatsAppNoEnterpriseForTurn) {
+      const portfolioLines = allActiveEnterprises
+        .slice(0, 12)
+        .map((enterprise) => {
+          const details = [
+            enterprise.tipo ? `tipo: ${enterprise.tipo}` : null,
+            enterprise.city ? `cidade: ${enterprise.city}` : null,
+            enterprise.commercial_region ? `regiao: ${enterprise.commercial_region}` : null,
+          ].filter(Boolean);
+          return `- ${enterprise.name}${details.length > 0 ? ` (${details.join(', ')})` : ''}`;
+        })
+        .join('\n');
+      const globalAiSettings = await resolveAiSettingsForEnterprise(null);
+      resolvedAiSettings = globalAiSettings;
+      anaTurnDiagnostics.provider = detectLlmProvider(globalAiSettings.openaiBaseUrl);
+      anaTurnDiagnostics.llm.provider = anaTurnDiagnostics.provider;
+      anaTurnAuditProvider = globalAiSettings.provider;
+      anaTurnAuditApiKeySource = globalAiSettings.apiKeySource;
+      anaTurnAuditOpenaiApiKeyId = globalAiSettings.openaiApiKeyId;
+      anaTurnAuditOpenaiProjectId = globalAiSettings.openaiProjectId;
+      console.log('[ANA_NO_ENTERPRISE_GLOBAL_LLM_START]', {
+        conversationId,
+        channel: effectiveConv.channel ?? null,
+        enterpriseId: effectiveConv.enterprise_id ?? null,
+        classification: effectiveConv.classification ?? null,
+        handoff: effectiveConv.handoff === true,
+        aiEnabled: globalAiSettings.aiEnabled,
+        hasApiKey: Boolean(globalAiSettings.openaiApiKey),
+        blocked: globalAiSettings.blocked,
+        reason: globalAiSettings.reason,
+        portfolioCount: allActiveEnterprises.length,
+      });
+      if (globalAiSettings.blocked || !globalAiSettings.aiEnabled || !globalAiSettings.openaiApiKey) {
+        hardBlockReasonForTurn = globalAiSettings.reason ?? 'missing_global_api_key';
+        assistantReplyAttemptedOrSent = true;
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = hardBlockReasonForTurn;
+        anaTurnAuditLlmStatus = 'blocked';
+        anaTurnAuditErrorCode = hardBlockReasonForTurn;
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        return;
+      }
+      const globalModelResolution = resolveAnaOpenAIModel({
+        configuredModelFromDb: globalAiSettings.modelHotLead,
+        slot: 'hot_lead',
+        provider: anaTurnDiagnostics.provider,
+        baseUrl: globalAiSettings.openaiBaseUrl,
+      });
+      if (globalModelResolution.blocked) {
+        hardBlockReasonForTurn = globalModelResolution.reason;
+        assistantReplyAttemptedOrSent = true;
+        anaTurnAuditOutcome = 'blocked';
+        anaTurnAuditBlockedReason = globalModelResolution.reason;
+        anaTurnAuditLlmStatus = 'blocked';
+        anaTurnAuditErrorCode = globalModelResolution.reason;
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        return;
+      }
+      const globalModel = globalModelResolution.finalModel;
+      anaTurnAuditModel = globalModel;
+      const recentHistory: ChatMessage[] = rows
+        .slice(-10)
+        .map((message) => ({
+          role: (message.role === 'assistant' ? 'assistant' : 'user') as 'assistant' | 'user',
+          content: String(message.content ?? '').slice(0, 900),
+        }))
+        .filter((message) => message.content.trim().length > 0);
+      const portfolioContext = portfolioLines.trim()
+        ? `Portfolio ativo seguro (use apenas nomes, tipo e cidade/regiao; nao fixe interesse sem escolha do cliente):\n${portfolioLines}`
+        : 'Portfolio ativo seguro: nenhum empreendimento ativo foi listado no contexto.';
+      const globalMessages: ChatMessage[] = [
+        {
+          role: 'system',
+          content: [
+            'Voce e Ana, consultora da NETIV. Responda em portugues brasileiro natural, curta e util.',
+            'Contexto: a conversa esta no WhatsApp, ativa, sem empreendimento definido.',
+            'Nao assuma empreendimento especifico. Nao diga que o cliente quer um empreendimento se ele nao citou.',
+            'Nao setar, escolher, classificar ou prometer interesse por empreendimento.',
+            'Nao invente precos, metragens, disponibilidade, condicoes, obra ou pagamento sem empreendimento escolhido.',
+            'Se o cliente perguntar quais opcoes voces tem, apresente uma visao geral do portfolio ativo quando houver nomes no contexto e pergunte se prefere apartamento ou loteamento/regiao.',
+            'Se faltar informacao, faca descoberta consultiva. Nao repita sempre a mesma frase fixa.',
+            portfolioContext,
+          ].join('\n'),
+        },
+        ...recentHistory,
+        {
+          role: 'user',
+          content: trimmed,
+        },
+      ];
+      const globalResult = await generateChatCompletion({
+        apiKey: globalAiSettings.openaiApiKey,
+        baseUrl: globalAiSettings.openaiBaseUrl,
+        model: globalModel,
+        messages: globalMessages,
+        temperature: Math.min(Math.max(globalAiSettings.temperature, 0.2), 0.7),
+        maxTokens: Math.min(Math.max(globalAiSettings.maxTokens, 300), 700),
+        responseFormatJson: false,
+        costTracking: globalAiSettings.costTrackingEnabled
+          ? {
+              purpose: 'ana_no_enterprise_global_llm',
+              apiKeySource: globalAiSettings.apiKeySource,
+              openaiApiKeyId: globalAiSettings.openaiApiKeyId,
+              openaiProjectId: globalAiSettings.openaiProjectId,
+              requestType: 'ana_no_enterprise_global_llm',
+              conversationId,
+              contactId: effectiveConv.contact_id ?? null,
+              enterpriseId: null,
+              metadata: {
+                mode: 'global_no_enterprise',
+                portfolioCount: allActiveEnterprises.length,
+              },
+            }
+          : undefined,
+      });
+      captureLlmAudit(globalResult, 'ana_no_enterprise_global_llm');
+      const globalReplyRaw = (globalResult.content ?? '').trim();
+      console.log('[ANA_NO_ENTERPRISE_GLOBAL_LLM_REPLY]', {
+        conversationId,
+        success: globalResult.success,
+        hasReply: globalReplyRaw.length > 0,
+        model: globalResult.model ?? globalModel,
+        replyPreview: globalReplyRaw.slice(0, 260),
+        error: globalResult.error ?? null,
+      });
+      if (!globalResult.success || !globalReplyRaw) {
+        anaTurnAuditOutcome = 'silent';
+        anaTurnAuditBlockedReason = globalResult.success ? 'global_no_enterprise_llm_empty' : 'global_no_enterprise_llm_failed';
+        return;
+      }
+      let globalReplyText = finalizeAnaReplyText(globalReplyRaw, {
+        userMessage: trimmed,
+        lastAssistantMessage: lastAssistantPlain,
+        conversationMode: 'triage',
+        isFirstAnaReply,
+        enterpriseName: null,
+        isKnowledgeGapTurn: false,
+      }).slice(0, 1400);
+      const globalMentionGuard = applyGlobalNoEnterpriseUnsupportedEnterpriseMentionGuard({
+        globalNoEnterpriseMode: true,
+        replyText: globalReplyText,
+        userMessage: trimmed,
+        activeEnterprises: allActiveEnterprises,
+      });
+      if (globalMentionGuard.changed) {
+        console.log('[ANA_GLOBAL_NO_ENTERPRISE_UNSUPPORTED_ENTERPRISE_MENTION]', {
+          conversationId,
+          enterpriseName: globalMentionGuard.enterpriseName,
+          originalReplyPreview: globalReplyText.slice(0, 260),
+        });
+        globalReplyText = globalMentionGuard.text;
+      }
+      assistantReplyAttemptedOrSent = true;
+      const globalSend = await sendAnaOutboundMessages({
+        conversationId,
+        toPhoneNumber,
+        text: globalReplyText,
+        phase: 'ana_no_enterprise_global_llm',
+        replyPipelineToken,
+      });
+      if (!globalSend.success || globalSend.metaMessageIds.length === 0) {
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'global_no_enterprise_llm_send_failed';
+        anaTurnDiagnostics.finalResponse.replySource = 'global_no_enterprise_llm';
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        return;
+      }
+      anaTurnAuditOutcome = 'sent';
+      anaTurnAuditBlockedReason = null;
+      anaTurnDiagnostics.finalResponse.replySource = 'global_no_enterprise_llm';
+      anaTurnDiagnostics.finalResponse.handoffUsed = false;
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      console.log('[ANA_NO_ENTERPRISE_GLOBAL_LLM_SENT]', {
+        conversationId,
+        outboundMetaMessageId: globalSend.metaMessageIds[globalSend.metaMessageIds.length - 1] ?? null,
+        replyLen: globalReplyText.length,
+      });
+      return;
+    }
     const linkedContact =
       effectiveConv.contact_id != null ? await findContactById(effectiveConv.contact_id) : null;
     let enterpriseResolution = await resolveEnterpriseForAnaTurn({
