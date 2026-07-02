@@ -10,6 +10,8 @@ test('globalNoEnterpriseMode bloqueia saida silenciosa com safe discovery reply'
     /const ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY =\s*['"]Claro, posso te ajudar\. Voc/
   );
   assert.match(source, /let anaGlobalNoEnterpriseModeForTurn = false/);
+  assert.match(source, /let activeWhatsAppNoEnterpriseForTurn = false/);
+  assert.match(source, /let assistantReplyAttemptedOrSent = false/);
   assert.match(source, /let anaLatestConversationForSilentExit/);
   assert.match(source, /anaGlobalNoEnterpriseModeForTurn = globalNoEnterpriseMode/);
   assert.match(source, /const sendGlobalNoEnterpriseFinalSafeReply = async \(reason\)/);
@@ -19,7 +21,7 @@ test('globalNoEnterpriseMode bloqueia saida silenciosa com safe discovery reply'
   assert.match(source, /\[ANA_GLOBAL_NO_ENTERPRISE_FINAL_SAFE_REPLY\]/);
   assert.match(
     source,
-    /\(anaGlobalNoEnterpriseModeForTurn \|\| silentExitContext\.activeWhatsAppNoEnterprise\)[\s\S]*sendGlobalNoEnterpriseFinalSafeReply\(anaTurnAuditBlockedReason\)/
+    /\(anaGlobalNoEnterpriseModeForTurn \|\| silentExitContext\.activeWhatsAppNoEnterprise\)[\s\S]*!assistantReplyAttemptedOrSent[\s\S]*sendGlobalNoEnterpriseFinalSafeReply\(anaTurnAuditBlockedReason\)/
   );
 });
 
@@ -49,7 +51,10 @@ test('ANA_SILENT_EXIT_BLOCKED serializa contexto e hardBlockReason', () => {
   assert.match(logSource, /handoff:/);
   assert.match(logSource, /manualClosedAt:/);
   assert.match(logSource, /globalNoEnterpriseMode:/);
+  assert.match(logSource, /activeWhatsAppNoEnterprise:/);
+  assert.match(logSource, /assistantReplyAttemptedOrSent:/);
   assert.match(logSource, /hardBlockReason:/);
+  assert.match(logSource, /returnReason:/);
 });
 
 test('conversa WhatsApp ativa sem enterprise tem safe reply mesmo antes da flag global', () => {
@@ -62,4 +67,17 @@ test('conversa WhatsApp ativa sem enterprise tem safe reply mesmo antes da flag 
   assert.match(contextSource, /classification !== 'Carteira'/);
   assert.match(contextSource, /!manualClosedAt/);
   assert.match(contextSource, /activeWhatsAppNoEnterprise/);
+});
+
+test('conversa 15298: WhatsApp Novo sem enterprise dispara safe reply no finally', () => {
+  assert.match(
+    source,
+    /activeWhatsAppNoEnterpriseForTurn =\s*String\(effectiveConv\.channel \?\? ''\)[\s\S]*effectiveConv\.enterprise_id == null[\s\S]*effectiveConv\.classification !== 'Handoff'[\s\S]*effectiveConv\.classification !== 'Carteira'[\s\S]*effectiveConv\.manual_closed_at == null/
+  );
+  assert.match(source, /\[ANA_ACTIVE_WHATSAPP_NO_ENTERPRISE_GUARD\]/);
+  assert.match(
+    source,
+    /console\.log\('\[ANA_GLOBAL_NO_ENTERPRISE_FINAL_SAFE_REPLY\]'[\s\S]*channel: silentExitContext\.channel[\s\S]*classification: silentExitContext\.classification[\s\S]*enterpriseId: silentExitContext\.enterpriseId[\s\S]*reason: reason \?\? 'unknown_silent_exit'/
+  );
+  assert.match(source, /assistantReplyAttemptedOrSent = true;[\s\S]*sendAnaOutboundMessages\(\{[\s\S]*phase: 'ana_global_no_enterprise_final_safe_reply'/);
 });
