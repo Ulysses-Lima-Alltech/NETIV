@@ -35,11 +35,11 @@ import {
   extractCustomerNameFromUserUtterance,
   replyExplicitlyAsksCustomerName,
 } from '../utils/extractCustomerNameFromMessage.js';
-/** Desligado enquanto se testa o bypass no conversationEngine (`ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY`). Se true, dÃ¡ `continue` e o motor nÃ£o corre. */
+/** Desligado enquanto se testa o bypass no conversationEngine (`ANA_ENGINE_DIAGNOSTIC_FIXED_REPLY`). Se true, dá `continue` e o motor não corre. */
 const ANA_DIAGNOSTIC_FIXED_REPLY = false;
-const ANA_DIAGNOSTIC_FIXED_TEXT = 'DiagnÃ³stico: recebi sua mensagem no fluxo automÃ¡tico.';
+const ANA_DIAGNOSTIC_FIXED_TEXT = 'Diagnóstico: recebi sua mensagem no fluxo automático.';
 
-const NON_TEXT_MESSAGE = 'No momento sÃ³ consigo responder a mensagens de texto.';
+const NON_TEXT_MESSAGE = 'No momento só consigo responder a mensagens de texto.';
 
 function phoneDigitsTail(raw: string | null | undefined, len = 6): string | null {
   const d = String(raw ?? '').replace(/\D/g, '');
@@ -62,7 +62,7 @@ function errorStackShort(e: unknown): string | null {
 }
 
 /**
- * Varre todo o payload (todos os changes). Veredito Ãºnico: POST sÃ³ de status vs inbound com texto processÃ¡vel.
+ * Varre todo o payload (todos os changes). Veredito único: POST só de status vs inbound com texto processável.
  */
 function classifyWebhookInboundSurface(payload: WebhookPayload): {
   verdict:
@@ -172,7 +172,7 @@ function extractMessageId(payload: WebhookPayload): string | null {
   return msg?.id ?? value?.statuses?.[0]?.id ?? null;
 }
 
-/** SÃ³ para log: separa id de mensagem inbound vs id em statuses (evita ambiguidade do compat). */
+/** Só para log: separa id de mensagem inbound vs id em statuses (evita ambiguidade do compat). */
 function extractMessageIdsForLog(payload: WebhookPayload): {
   metaMessageIdFromMessages: string | null;
   metaMessageIdFromStatuses: string | null;
@@ -208,7 +208,7 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
     inboundTextWithBodyCount: inboundSurface.inboundTextWithBodyCount,
     interpretacao:
       inboundSurface.verdict === 'messages_field_only_statuses_or_empty_messages'
-        ? 'Este POST nao contem bolha de texto inbound; metaMessageIdCompat pode vir sÃ³ de statuses[].id'
+        ? 'Este POST nao contem bolha de texto inbound; metaMessageIdCompat pode vir só de statuses[].id'
         : inboundSurface.verdict === 'has_inbound_text_body'
           ? 'Este POST contem ao menos uma mensagem de texto com corpo; espere message_persisted na sequencia'
           : undefined,

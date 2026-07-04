@@ -25,15 +25,15 @@ const ANA_FOLLOWUP_MIN_GAP_AFTER_SEND_MS = 60_000;
 let anaFollowupScanRunning = false;
 
 const BODY_WITH_NAME = [
-  'Oi, {{name}}. Passando sÃ³ pra nÃ£o te deixar sem retorno. Se ainda fizer sentido, sigo por aqui.',
+  'Oi, {{name}}. Passando só pra não te deixar sem retorno. Se ainda fizer sentido, sigo por aqui.',
   'Oi, {{name}}. Vi que nossa conversa ficou em aberto. Quando quiser, continuo daqui.',
-  'Oi, {{name}}. SÃ³ retomando por aqui pra nÃ£o perder seu atendimento. Me chama quando for melhor pra vocÃª.',
+  'Oi, {{name}}. Só retomando por aqui pra não perder seu atendimento. Me chama quando for melhor pra você.',
 ];
 
 const BODY_NO_NAME = [
-  'Oi. Passando sÃ³ pra nÃ£o te deixar sem retorno. Se ainda fizer sentido, sigo por aqui.',
+  'Oi. Passando só pra não te deixar sem retorno. Se ainda fizer sentido, sigo por aqui.',
   'Oi. Vi que nossa conversa ficou em aberto. Quando quiser, continuo daqui.',
-  'Oi. SÃ³ retomando por aqui pra nÃ£o perder seu atendimento. Me chama quando for melhor pra vocÃª.',
+  'Oi. Só retomando por aqui pra não perder seu atendimento. Me chama quando for melhor pra você.',
 ];
 
 function firstName(raw: string | null | undefined): string | null {

@@ -37,7 +37,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/webhook', webhookMetaRouter);
 app.use('/api', apiRouter);
 
-/** Health checks ALB/ECS: corpo fixo, sem dependÃªncia de banco ou auth */
+/** Health checks ALB/ECS: corpo fixo, sem dependência de banco ou auth */
 app.get('/', (_req, res) => {
   res.type('text/plain').status(200).send('ok');
 });
@@ -79,13 +79,13 @@ initPostgres()
       const ai = await getOpenAIConfig();
       console.log('[startup] Config do banco:',
         `WhatsApp=${wa?.enabled ? 'ATIVO' : 'inativo'}`,
-        `(token=${wa?.metaAccessToken ? 'sim' : 'nÃ£o'},`,
-        `phoneId=${wa?.whatsappPhoneNumberId ? 'sim' : 'nÃ£o'})`,
+        `(token=${wa?.metaAccessToken ? 'sim' : 'não'},`,
+        `phoneId=${wa?.whatsappPhoneNumberId ? 'sim' : 'não'})`,
         `| IA=${ai?.aiEnabled ? 'ATIVO' : 'inativo'}`,
-        `(key=${ai?.openaiApiKey ? 'sim' : 'nÃ£o'})`
+        `(key=${ai?.openaiApiKey ? 'sim' : 'não'})`
       );
     } catch (e) {
-      console.warn('[startup] NÃ£o foi possÃ­vel ler config do banco:', e instanceof Error ? e.message : e);
+      console.warn('[startup] Não foi possível ler config do banco:', e instanceof Error ? e.message : e);
     }
     if (realtimeEnabled) {
       console.log('[Realtime] enabled');
