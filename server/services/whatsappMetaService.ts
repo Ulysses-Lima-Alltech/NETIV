@@ -286,7 +286,7 @@ export async function sendTemplateMessage(
   if (bodyParams.some((param) => shouldBlockEmergencyOutboundText(param.text))) {
     return buildEmergencyBlockedResponse();
   }
-  // Nome na Meta = `key` do catÃ¡logo (snake_case); o campo `name` legÃ­vel do catÃ¡logo não Ã© o ID do template.
+  // Nome na Meta = `key` do catálogo (snake_case); o campo `name` legível do catálogo não é o ID do template.
   const components: Array<Record<string, unknown>> = [];
   const persisted = await getMediaSetting(template.key, template.languageCode);
   const headerMediaId = (persisted?.headerMediaId ?? template.headerMediaId ?? '').trim();
@@ -316,7 +316,7 @@ export async function sendTemplateMessage(
     } else {
       return {
         success: false,
-        error: 'Este template exige imagem de cabeÃ§alho. Anexe uma imagem antes de enviar.',
+        error: 'Este template exige imagem de cabeçalho. Anexe uma imagem antes de enviar.',
       };
     }
   } else if (headerMediaId) {
@@ -475,7 +475,7 @@ export async function sendTemplateMessageByName(
   }
 }
 
-/** Contexto opcional para logs de diagnÃ³stico (envio book/material). */
+/** Contexto opcional para logs de diagnóstico (envio book/material). */
 export interface DocumentSendLogContext {
   enterpriseId: number;
   enterpriseName: string;
@@ -486,7 +486,7 @@ export interface DocumentSendLogContext {
   absolutePath: string;
 }
 
-/** Imagem, vÃ­deo (MP4/3GP) ou documento - alinhado a `manualWhatsappAttachment`. */
+/** Imagem, vídeo (MP4/3GP) ou documento - alinhado a `manualWhatsappAttachment`. */
 export function classifyOutboundWhatsAppMedia(filename: string, mimeFromDb: string): 'image' | 'video' | 'document' {
   const k = classifyManualMediaKind(filename, mimeFromDb);
   if (k) return k;
@@ -503,7 +503,7 @@ function resolveImageMimeType(filename: string, mimeFromDb: string): string {
   return 'image/jpeg';
 }
 
-/** MIME suportado pela Cloud API para documentos (evita application/octet-stream genÃ©rico). */
+/** MIME suportado pela Cloud API para documentos (evita application/octet-stream genérico). */
 function resolveDocumentMimeType(filename: string, mimeFromDb: string): string {
   const name = (filename || '').toLowerCase();
   const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : '';
@@ -538,7 +538,7 @@ function logWhatsappDocumentResult(params: {
   });
 }
 
-/** Envia documento: upload multipart para /media (com `type` obrigatÃ³rio na API Meta) e depois mensagem type=document com media id. */
+/** Envia documento: upload multipart para /media (com `type` obrigatório na API Meta) e depois mensagem type=document com media id. */
 export async function sendDocumentMessage(
   to: string,
   filePath: string,
@@ -572,7 +572,7 @@ export async function sendDocumentMessage(
     const mimeType = resolveDocumentMimeType(safeFilename, mimeFromDb);
 
     if (logCtx) {
-      console.log('[WhatsAppMeta][document] prÃ©-envio', {
+      console.log('[WhatsAppMeta][document] pré-envio', {
         enterprise_id: logCtx.enterpriseId,
         enterprise_name: logCtx.enterpriseName,
         conversation_id: logCtx.conversationId,
@@ -590,7 +590,7 @@ export async function sendDocumentMessage(
 
     const FormDataCtor = (globalThis as unknown as { FormData?: new () => FormData }).FormData;
     if (!FormDataCtor) {
-      errorMessageIfAny = 'FormData indisponÃ­vel no runtime.';
+      errorMessageIfAny = 'FormData indisponível no runtime.';
       return { success: false, error: errorMessageIfAny };
     }
 
@@ -640,7 +640,7 @@ export async function sendDocumentMessage(
       upData = JSON.parse(upRaw) as typeof upData;
     } catch {
       throw new Error(
-        `[upload parse] Resposta não Ã© JSON. HTTP ${up.status}. Corpo (inÃ­cio): ${upRaw.slice(0, 2000)}`
+        `[upload parse] Resposta não é JSON. HTTP ${up.status}. Corpo (início): ${upRaw.slice(0, 2000)}`
       );
     }
 
@@ -664,7 +664,7 @@ export async function sendDocumentMessage(
     const uploadedId = upData.id;
     if (!uploadedId || typeof uploadedId !== 'string') {
       throw new Error(
-        `[upload sem media id] A Meta não retornou o campo "id" obrigatÃ³rio apÃ³s upload. HTTP ${up.status}. Corpo: ${upRaw.slice(0, 4000)}`
+        `[upload sem media id] A Meta não retornou o campo "id" obrigatório após upload. HTTP ${up.status}. Corpo: ${upRaw.slice(0, 4000)}`
       );
     }
     mediaId = uploadedId;
@@ -713,7 +713,7 @@ export async function sendDocumentMessage(
       data = JSON.parse(resRaw) as MetaSendMessageResponse | MetaErrorResponse;
     } catch {
       throw new Error(
-        `[messages parse] Resposta não Ã© JSON. HTTP ${res.status}. Corpo (inÃ­cio): ${resRaw.slice(0, 2000)}`
+        `[messages parse] Resposta não é JSON. HTTP ${res.status}. Corpo (início): ${resRaw.slice(0, 2000)}`
       );
     }
 
@@ -840,7 +840,7 @@ export async function sendVideoMessage(
 
     const FormDataCtor = (globalThis as unknown as { FormData?: new () => FormData }).FormData;
     if (!FormDataCtor) {
-      errorMessageIfAny = 'FormData indisponÃ­vel no runtime.';
+      errorMessageIfAny = 'FormData indisponível no runtime.';
       return { success: false, error: errorMessageIfAny };
     }
 
@@ -881,7 +881,7 @@ export async function sendVideoMessage(
       upData = JSON.parse(upRaw) as typeof upData;
     } catch {
       throw new Error(
-        `[upload parse] Resposta não Ã© JSON. HTTP ${up.status}. Corpo (inÃ­cio): ${upRaw.slice(0, 2000)}`
+        `[upload parse] Resposta não é JSON. HTTP ${up.status}. Corpo (início): ${upRaw.slice(0, 2000)}`
       );
     }
 
@@ -997,7 +997,7 @@ export async function sendImageMessage(
 
     const FormDataCtor = (globalThis as unknown as { FormData?: new () => FormData }).FormData;
     if (!FormDataCtor) {
-      errorMessageIfAny = 'FormData indisponÃ­vel no runtime.';
+      errorMessageIfAny = 'FormData indisponível no runtime.';
       return { success: false, error: errorMessageIfAny };
     }
 
@@ -1038,7 +1038,7 @@ export async function sendImageMessage(
       upData = JSON.parse(upRaw) as typeof upData;
     } catch {
       throw new Error(
-        `[upload parse] Resposta não Ã© JSON. HTTP ${up.status}. Corpo (inÃ­cio): ${upRaw.slice(0, 2000)}`
+        `[upload parse] Resposta não é JSON. HTTP ${up.status}. Corpo (início): ${upRaw.slice(0, 2000)}`
       );
     }
 
@@ -1128,7 +1128,7 @@ export async function sendImageMessage(
   }
 }
 
-/** Envia arquivo local: image, video ou document conforme MIME/extensÃ£o. */
+/** Envia arquivo local: image, video ou document conforme MIME/extensão. */
 export async function sendLocalMediaToWhatsApp(
   to: string,
   filePath: string,
@@ -1148,7 +1148,7 @@ export async function sendLocalMediaToWhatsApp(
 
 export async function testConnection(): Promise<{ success: boolean; error?: string; detail?: string }> {
   const config = await getWhatsAppConfig();
-  if (!config?.enabled) return { success: false, error: 'Integração não estÃ¡ ativa.' };
+  if (!config?.enabled) return { success: false, error: 'Integração não está ativa.' };
   if (!config.metaAccessToken?.trim()) return { success: false, error: 'Token não configurado.' };
   if (!config.whatsappPhoneNumberId?.trim()) return { success: false, error: 'Phone Number ID não configurado.' };
   const url = `${META_GRAPH_BASE}/${config.apiVersion}/${config.whatsappPhoneNumberId}?fields=verified_name,display_phone_number`;
@@ -1166,7 +1166,7 @@ export async function testConnection(): Promise<{ success: boolean; error?: stri
     return { success: true };
   } catch (e) {
     clearTimeout(timeout);
-    return { success: false, error: 'Erro de conexÃ£o.', detail: e instanceof Error ? e.message : String(e) };
+    return { success: false, error: 'Erro de conexão.', detail: e instanceof Error ? e.message : String(e) };
   }
 }
 
