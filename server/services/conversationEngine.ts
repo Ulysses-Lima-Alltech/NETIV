@@ -260,6 +260,7 @@ import {
   sendAnaEmergencyHandoff,
   type AnaEmergencyHandoffSendResult,
 } from '../utils/anaEmergencyHandoff.js';
+import { getAnaAutomationPauseReason } from '../utils/anaAutomationKillSwitch.js';
 import {
   isEvoraEnterpriseName,
   isUserIrritated,
@@ -392,6 +393,30 @@ function logAnaOutboundBlocked(params: {
   console.log(`[ANA_OUTBOUND_BLOCKED] user_message=${params.userMessage.slice(0, 500)}`);
   console.log(`[ANA_OUTBOUND_BLOCKED] conversation_id=${params.conversationId}`);
   console.log(`[ANA_OUTBOUND_BLOCKED] reply_candidate=${params.replyCandidate.slice(0, 500)}`);
+}
+
+function logAnaEngineKillSwitchSkip(reason: string, conversationId: number): void {
+  if (reason === 'ana_automation_disabled') {
+    console.log('[ANA_AUTOMATION_SKIP]', {
+      reason: 'ana_automation_disabled',
+      source: 'ana_inbound_engine',
+      conversationId,
+    });
+    return;
+  }
+  if (reason === 'ana_outbound_disabled') {
+    console.log('[ANA_OUTBOUND_BLOCKED]', {
+      reason: 'ana_outbound_disabled',
+      source: 'ana_inbound_engine',
+      conversationId,
+    });
+    return;
+  }
+  console.log('[ANA_AUTOMATION_SKIP]', {
+    reason,
+    source: 'ana_inbound_engine',
+    conversationId,
+  });
 }
 
 type AnaTurnTopic =
@@ -2297,6 +2322,11 @@ export async function reprocessLastUserMessage(conversationId: number): Promise<
     console.log('[ANA_EMERGENCY_HANDOFF] reprocess_skipped', { conversationId });
     return;
   }
+  const reprocessKillSwitchReason = getAnaAutomationPauseReason();
+  if (reprocessKillSwitchReason) {
+    logAnaEngineKillSwitchSkip(reprocessKillSwitchReason, conversationId);
+    return;
+  }
   const conv = await getConversationById(conversationId);
   if (!conv) return;
   const toPhoneNumber = (conv.contact_phone || conv.external_contact_id || '').trim();
@@ -3541,6 +3571,12 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
       error: emergencyResult.error,
       replyLen: ANA_EMERGENCY_HANDOFF_MESSAGE.length,
     });
+    return;
+  }
+
+  const engineKillSwitchReason = getAnaAutomationPauseReason();
+  if (engineKillSwitchReason) {
+    logAnaEngineKillSwitchSkip(engineKillSwitchReason, conversationId);
     return;
   }
 

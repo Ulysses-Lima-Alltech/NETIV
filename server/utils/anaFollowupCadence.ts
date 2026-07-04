@@ -2,12 +2,14 @@ const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 const TZ = 'America/Sao_Paulo';
 
-const ANA_FOLLOWUP_OFFSETS_MINUTES = [
+export const ANA_FOLLOWUP_OFFSETS_MINUTES = [
   5, 6, 7, 8, 9,
   69, 70, 71, 72, 73,
   313, 314, 315, 316, 317,
   617, 618, 619, 620, 621,
 ] as const;
+
+export const ANA_FOLLOWUP_MAX_ATTEMPTS = ANA_FOLLOWUP_OFFSETS_MINUTES.length;
 
 /**
  * Official Ana follow-up cadence, expressed as an offset from the anchor assistant message.

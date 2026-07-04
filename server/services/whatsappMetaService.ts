@@ -178,7 +178,7 @@ export async function sendTextMessage(to: string, text: string): Promise<SendTex
     const c = await getWhatsAppConfig();
     const detail = !c
       ? 'Nenhuma config no banco'
-      : `token=${c.metaAccessToken ? 'sim' : 'NÃƒO'}, phoneId=${c.whatsappPhoneNumberId ? 'sim' : 'NÃƒO'}`;
+      : `token=${c.metaAccessToken ? 'sim' : 'NÃO'}, phoneId=${c.whatsappPhoneNumberId ? 'sim' : 'NÃO'}`;
     console.error('[WhatsAppMeta] sendTextMessage: config inválida -', detail);
     console.log('[ANA_PIPELINE] meta_text_send_outcome', { success: false, reason: 'whatsapp_config_invalid', detail });
     if (!c) return { success: false, error: 'Integração WhatsApp não configurada no banco.' };

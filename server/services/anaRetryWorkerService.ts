@@ -1,7 +1,4 @@
 ﻿
-function isAnaEmergencyRetryReengagementDisabled(): boolean {
-  return process.env.ANA_DISABLE_RETRY_REENGAGEMENT !== 'false';
-}
 import { getConversationById } from '../repositories/conversationRepository.js';
 import {
   getLastUserMessageRow,
@@ -22,6 +19,7 @@ import {
   mapRetryReason,
   sanitizeRetryErrorMessage,
 } from '../utils/llmRetry.js';
+import { getAnaAutomationPauseReason } from '../utils/anaAutomationKillSwitch.js';
 
 const WORKER_ID = `ana-retry-${process.pid}`;
 let workerRunning = false;
@@ -34,11 +32,40 @@ function automationBlockedReason(conv: Awaited<ReturnType<typeof getConversation
   return null;
 }
 
+function sameDbId(a: unknown, b: unknown): boolean {
+  if (a == null || b == null) return false;
+  return String(a) === String(b);
+}
+
+function logRetryKillSwitchSkip(reason: string, conversationId: number | null = null): void {
+  if (reason === 'ana_emergency_handoff_active') {
+    console.log('[ANA_RETRY_SKIP]', { reason: 'ana_emergency_handoff_active', conversationId });
+    return;
+  }
+  if (reason === 'ana_automation_disabled') {
+    console.log('[ANA_AUTOMATION_SKIP]', {
+      reason: 'ana_automation_disabled',
+      source: 'ana_retry_worker',
+      conversationId,
+    });
+    console.log('[ANA_RETRY_SKIP]', { reason, conversationId });
+    return;
+  }
+  if (reason === 'ana_outbound_disabled') {
+    console.log('[ANA_OUTBOUND_BLOCKED]', {
+      reason: 'ana_outbound_disabled',
+      source: 'ana_retry_worker',
+      conversationId,
+    });
+    console.log('[ANA_RETRY_SKIP]', { reason, conversationId });
+  }
+}
+
 async function shouldSkipJob(job: AnaRetryJobRow): Promise<{ skip: boolean; stale: boolean }> {
   if (job.trigger_message_id == null) return { skip: false, stale: false };
   const lastInbound = await getLastUserMessageRow(job.conversation_id);
   if (!lastInbound) return { skip: true, stale: true };
-  if (lastInbound.id !== job.trigger_message_id) return { skip: true, stale: true };
+  if (!sameDbId(lastInbound.id, job.trigger_message_id)) return { skip: true, stale: true };
   const alreadyAnswered = await hasAssistantMessageAfterMessageId(job.conversation_id, lastInbound.id);
   if (alreadyAnswered) return { skip: true, stale: false };
   return { skip: false, stale: false };
@@ -142,6 +169,12 @@ async function processOneJob(job: AnaRetryJobRow): Promise<void> {
 }
 
 export async function processAnaRetryJobsTick(): Promise<void> {
+  const killSwitchReason = getAnaAutomationPauseReason();
+  if (killSwitchReason) {
+    logRetryKillSwitchSkip(killSwitchReason);
+    return;
+  }
+
   if (workerRunning) return;
   workerRunning = true;
   try {

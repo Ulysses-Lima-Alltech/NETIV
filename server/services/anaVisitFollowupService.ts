@@ -27,6 +27,7 @@ import {
   shouldStartAnaVisitFollowup,
 } from '../utils/anaVisitFollowupCadence.js';
 import { sendAnaTextMessageWithQuota } from './anaOutboundQuotaService.js';
+import { getAnaAutomationPauseReason } from '../utils/anaAutomationKillSwitch.js';
 
 const WORKER_ID = `ana-visit-followup-${process.pid}`;
 let visitFollowupWorkerRunning = false;
@@ -44,6 +45,29 @@ function automationBlockedReason(conv: Awaited<ReturnType<typeof getConversation
   if (conv.manual_closed_at != null) return 'manual_closed';
   if ((conv.conversation_type ?? 'CLIENT') !== 'CLIENT') return 'non_client_conversation';
   return null;
+}
+
+function logVisitFollowupKillSwitchSkip(reason: string, conversationId: number | null = null): void {
+  if (reason === 'ana_automation_disabled') {
+    console.log('[ANA_AUTOMATION_SKIP]', {
+      reason: 'ana_automation_disabled',
+      source: 'ana_visit_followup',
+      conversationId,
+    });
+    return;
+  }
+  if (reason === 'ana_outbound_disabled') {
+    console.log('[ANA_OUTBOUND_BLOCKED]', {
+      reason: 'ana_outbound_disabled',
+      source: 'ana_visit_followup',
+      conversationId,
+    });
+    return;
+  }
+  console.log('[ANA_VISIT_FOLLOWUP] skipped_kill_switch', {
+    reason,
+    conversationId,
+  });
 }
 
 function visitStateAllowsFollowup(flowState: CommercialFlowState | null): boolean {
@@ -67,6 +91,12 @@ export async function startAnaVisitFollowupIfEligible(params: {
   missingSlot?: string | null;
   now?: Date;
 }): Promise<void> {
+  const killSwitchReason = getAnaAutomationPauseReason();
+  if (killSwitchReason) {
+    logVisitFollowupKillSwitchSkip(killSwitchReason, params.conversationId);
+    return;
+  }
+
   if (
     !shouldStartAnaVisitFollowup({
       flowState: params.flowState,
@@ -182,6 +212,13 @@ async function advanceAfterClaimedDuplicate(
 }
 
 async function processOneAnaVisitFollowupJob(job: AnaVisitFollowupJobRow): Promise<void> {
+  const killSwitchReason = getAnaAutomationPauseReason();
+  if (killSwitchReason) {
+    logVisitFollowupKillSwitchSkip(killSwitchReason, job.conversation_id);
+    await cancelJob(job, killSwitchReason);
+    return;
+  }
+
   const conv = await getConversationById(job.conversation_id);
   const blockedReason = automationBlockedReason(conv);
   if (blockedReason) {
@@ -215,11 +252,7 @@ async function processOneAnaVisitFollowupJob(job: AnaVisitFollowupJobRow): Promi
   const suggestedSlotLabel = job.suggested_slot_label ?? flowState?.suggestedVisitSlotLabel ?? null;
   const messageText = getAnaVisitFollowupMessage(attemptIndex, suggestedSlotLabel);
   if (!messageText) {
-    await markAnaVisitFollowupJobFailed({
-      jobId: job.id,
-      error: `invalid_attempt_index_${attemptIndex}`,
-      workerId: WORKER_ID,
-    });
+    await cancelJob(job, 'followup_cycle_exhausted');
     return;
   }
 
@@ -272,6 +305,17 @@ async function processOneAnaVisitFollowupJob(job: AnaVisitFollowupJobRow): Promi
           attemptIndex,
           reason: readiness.reason,
         });
+        return;
+      }
+
+      const finalKillSwitchReason = getAnaAutomationPauseReason();
+      if (finalKillSwitchReason) {
+        logVisitFollowupKillSwitchSkip(finalKillSwitchReason, job.conversation_id);
+        await markAnaVisitFollowupAttemptSkipped({
+          attemptId: claim.attempt.id,
+          reason: finalKillSwitchReason,
+        });
+        await cancelJob(job, finalKillSwitchReason);
         return;
       }
 
@@ -346,6 +390,12 @@ async function processOneAnaVisitFollowupJob(job: AnaVisitFollowupJobRow): Promi
 }
 
 export async function processAnaVisitFollowupTick(): Promise<void> {
+  const killSwitchReason = getAnaAutomationPauseReason();
+  if (killSwitchReason) {
+    logVisitFollowupKillSwitchSkip(killSwitchReason);
+    return;
+  }
+
   if (visitFollowupWorkerRunning) return;
   visitFollowupWorkerRunning = true;
   try {

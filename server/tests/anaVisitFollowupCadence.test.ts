@@ -7,36 +7,36 @@ import {
   shouldStartAnaVisitFollowup,
 } from '../utils/anaVisitFollowupCadence.js';
 
-test('regua de visita usa a cadencia oficial sem teto de tentativas', () => {
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(1), 60_000);
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(2), 120_000);
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(3), 180_000);
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(4), 240_000);
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(5), 300_000);
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(6), 65 * 60_000);
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(7), 125 * 60_000);
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(8), 185 * 60_000);
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(9), 186 * 60_000);
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(13), 190 * 60_000);
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(14), 310 * 60_000);
-  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(15), 430 * 60_000);
+test('regua de visita usa a cadencia oficial com teto de 20 tentativas', () => {
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(1), 5 * 60_000);
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(2), 6 * 60_000);
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(5), 9 * 60_000);
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(6), 69 * 60_000);
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(10), 73 * 60_000);
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(11), 313 * 60_000);
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(15), 317 * 60_000);
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(16), 617 * 60_000);
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(20), 621 * 60_000);
   assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(0), null);
+  assert.equal(getAnaVisitFollowupOffsetFromAnchorMs(21), null);
 
   assert.match(getAnaVisitFollowupMessage(1, 'amanha as 14h') ?? '', /amanha as 14h/);
   assert.match(getAnaVisitFollowupMessage(10, 'amanha as 14h') ?? '', /amanha as 14h/);
-  assert.match(getAnaVisitFollowupMessage(14, 'amanha as 14h') ?? '', /amanha as 14h/);
+  assert.match(getAnaVisitFollowupMessage(20, 'amanha as 14h') ?? '', /amanha as 14h/);
+  assert.equal(getAnaVisitFollowupMessage(21, 'amanha as 14h'), null);
 });
 
 test('calculo de next_run_at usa anchor e notBefore para evitar rajada apos atraso', () => {
   const anchor = new Date('2026-06-10T12:00:00.000Z');
   assert.equal(
     computeAnaVisitFollowupNextRunAt({ anchor, nextAttemptIndex: 1 })?.toISOString(),
-    '2026-06-10T12:01:00.000Z'
+    '2026-06-10T12:05:00.000Z'
   );
   assert.equal(
-    computeAnaVisitFollowupNextRunAt({ anchor, nextAttemptIndex: 14 })?.toISOString(),
-    '2026-06-10T17:10:00.000Z'
+    computeAnaVisitFollowupNextRunAt({ anchor, nextAttemptIndex: 20 })?.toISOString(),
+    '2026-06-10T22:21:00.000Z'
   );
+  assert.equal(computeAnaVisitFollowupNextRunAt({ anchor, nextAttemptIndex: 21 }), null);
   assert.equal(
     computeAnaVisitFollowupNextRunAt({
       anchor,

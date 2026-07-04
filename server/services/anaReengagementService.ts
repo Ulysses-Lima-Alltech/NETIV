@@ -13,8 +13,8 @@ import { publishConversationUpdated, publishMessageCreated } from '../realtime/r
 import {
   sendAnaTextMessageWithQuota,
 } from './anaOutboundQuotaService.js';
-import { computeAnaFollowupAtUtc } from '../utils/anaFollowupCadence.js';
-import { isAnaEmergencyHandoffEnabled } from '../utils/anaEmergencyHandoff.js';
+import { ANA_FOLLOWUP_MAX_ATTEMPTS, computeAnaFollowupAtUtc } from '../utils/anaFollowupCadence.js';
+import { getAnaAutomationPauseReason } from '../utils/anaAutomationKillSwitch.js';
 import { getActiveEnterpriseById } from '../repositories/enterpriseRepository.js';
 import { resolveAiSettingsForEnterprise } from './enterpriseAiSettingsService.js';
 import { resolveAnaCommercialFollowupMessage } from './anaCommercialRulesService.js';
@@ -74,6 +74,18 @@ interface FollowupCycleState {
   continuedStoredCycle: boolean;
 }
 
+interface FollowupCycleExhaustedState {
+  exhausted: true;
+  attemptCount: number;
+  attemptIndex: number;
+}
+
+type FollowupCycleResolution = FollowupCycleState | FollowupCycleExhaustedState | null;
+
+function isFollowupCycleExhausted(value: FollowupCycleResolution): value is FollowupCycleExhaustedState {
+  return Boolean(value && 'exhausted' in value);
+}
+
 function toDateOrNull(value: unknown): Date | null {
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
   if (typeof value === 'string' || typeof value === 'number') {
@@ -104,6 +116,30 @@ function logFollowupSkip(params: {
     reason: params.reason,
     ...(params.extra ?? {}),
   });
+}
+
+function logFollowupKillSwitchSkip(reason: string, conversationId: number | null = null): void {
+  if (reason === 'ana_emergency_handoff_active') {
+    console.log('[ANA_FOLLOWUP_SKIP]', { reason: 'ana_emergency_handoff_active', conversationId });
+    return;
+  }
+  if (reason === 'ana_automation_disabled') {
+    console.log('[ANA_AUTOMATION_SKIP]', {
+      reason: 'ana_automation_disabled',
+      source: 'ana_followup_scan',
+      conversationId,
+    });
+    console.log('[ANA_FOLLOWUP_SKIP]', { reason, conversationId });
+    return;
+  }
+  if (reason === 'ana_outbound_disabled') {
+    console.log('[ANA_OUTBOUND_BLOCKED]', {
+      reason: 'ana_outbound_disabled',
+      source: 'ana_followup_scan',
+      conversationId,
+    });
+    console.log('[ANA_FOLLOWUP_SKIP]', { reason, conversationId });
+  }
 }
 
 async function markConversationFollowupCancelled(params: {
@@ -166,7 +202,7 @@ async function resolveFollowupCycleState(params: {
   lastUser: { id: number; created_at: Date };
   lastVisible: LastVisibleAssistant;
   notBefore?: Date | null;
-}): Promise<FollowupCycleState | null> {
+}): Promise<FollowupCycleResolution> {
   const storedUserMessageId =
     params.conv.ana_followup_for_user_message_id ?? params.conv.reengagement_for_user_message_id ?? null;
   const storedAnchorMessageId = params.conv.ana_followup_anchor_assistant_message_id ?? null;
@@ -191,6 +227,14 @@ async function resolveFollowupCycleState(params: {
     ? Math.max(0, Number(params.conv.ana_followup_attempt_count ?? params.conv.reengagement_count ?? 0) || 0)
     : 0;
   const attemptIndex = attemptCount + 1;
+  if (attemptIndex > ANA_FOLLOWUP_MAX_ATTEMPTS) {
+    return {
+      exhausted: true,
+      attemptCount,
+      attemptIndex,
+    };
+  }
+
   const nextFollowupAt = computeAnaFollowupAtUtc({
     anchor: anchorAssistantCreatedAt,
     attemptIndex,
@@ -236,8 +280,9 @@ async function cancelAndLogFollowup(params: {
  * Uma passada do worker: tenta reengajamento para conversas candidatas (com lock por linha).
  */
 export async function processAnaReengagementScan(): Promise<void> {
-  if (isAnaEmergencyHandoffEnabled()) {
-    console.log('[ANA_FOLLOWUP_SKIP]', { reason: 'ana_emergency_handoff_active' });
+  const killSwitchReason = getAnaAutomationPauseReason();
+  if (killSwitchReason) {
+    logFollowupKillSwitchSkip(killSwitchReason);
     return;
   }
 
@@ -288,6 +333,12 @@ export async function processAnaReengagementScan(): Promise<void> {
 async function trySendReengagementForConversation(conversationId: number): Promise<void> {
   const conv = await getConversationById(conversationId);
   if (!conv) return;
+
+  const killSwitchReason = getAnaAutomationPauseReason();
+  if (killSwitchReason) {
+    logFollowupKillSwitchSkip(killSwitchReason, conversationId);
+    return;
+  }
 
   const automationBlockedReason = getAutomationBlockedReason(conv);
   if (automationBlockedReason) {
@@ -358,6 +409,15 @@ async function trySendReengagementForConversation(conversationId: number): Promi
       created_at: lastOverall.created_at,
     },
   });
+  if (isFollowupCycleExhausted(followupState)) {
+    await cancelAndLogFollowup({
+      conversationId,
+      enterpriseId: conv.enterprise_id ?? null,
+      attemptIndex: followupState.attemptIndex,
+      reason: 'followup_cycle_exhausted',
+    });
+    return;
+  }
   if (!followupState) {
     logFollowupSkip({ conversationId, enterpriseId: conv.enterprise_id ?? null, reason: 'missing_anchor' });
     return;
@@ -440,6 +500,13 @@ async function sendReengagementAfterFinalValidation(params: {
       return;
     }
 
+    const killSwitchReason = getAnaAutomationPauseReason();
+    if (killSwitchReason) {
+      await client.query('ROLLBACK');
+      logFollowupKillSwitchSkip(killSwitchReason, params.conversationId);
+      return;
+    }
+
     const blockedReason = getAutomationBlockedReason(locked);
     if (blockedReason) {
       await client.query('ROLLBACK');
@@ -460,6 +527,10 @@ async function sendReengagementAfterFinalValidation(params: {
     const u = uRow.rows[0];
     if (!u || !sameDbId(u.id, params.expectedUserMessageId)) {
       await client.query('ROLLBACK');
+      await markConversationFollowupCancelled({
+        conversationId: params.conversationId,
+        reason: 'customer_replied_after_candidate',
+      });
       logFollowupSkip({
         conversationId: params.conversationId,
         enterpriseId: locked.enterprise_id ?? null,
@@ -494,6 +565,16 @@ async function sendReengagementAfterFinalValidation(params: {
         created_at: lastVisible.created_at,
       },
     });
+    if (isFollowupCycleExhausted(state)) {
+      await client.query('ROLLBACK');
+      await cancelAndLogFollowup({
+        conversationId: params.conversationId,
+        enterpriseId: locked.enterprise_id ?? null,
+        attemptIndex: state.attemptIndex,
+        reason: 'followup_cycle_exhausted',
+      });
+      return;
+    }
     if (!state) {
       await client.query('ROLLBACK');
       logFollowupSkip({
@@ -544,6 +625,16 @@ async function sendReengagementAfterFinalValidation(params: {
       return;
     }
 
+    const nextAttemptIndex = state.attemptIndex + 1;
+    const nextFollowupAt =
+      nextAttemptIndex <= ANA_FOLLOWUP_MAX_ATTEMPTS
+        ? computeAnaFollowupAtUtc({
+            anchor: state.anchorAssistantCreatedAt,
+            attemptIndex: nextAttemptIndex,
+            notBefore: new Date(Date.now() + ANA_FOLLOWUP_MIN_GAP_AFTER_SEND_MS),
+          })
+        : null;
+
     const commercialFollowupText = resolveAnaCommercialFollowupMessage({
       enterpriseName: lockedEnterprise?.name ?? null,
       cycleCount: state.attemptCount,
@@ -590,13 +681,6 @@ async function sendReengagementAfterFinalValidation(params: {
       throw new Error('Ana follow-up message insert returned no row');
     }
 
-    const nextAttemptIndex = state.attemptIndex + 1;
-    const nextFollowupAt = computeAnaFollowupAtUtc({
-      anchor: state.anchorAssistantCreatedAt,
-      attemptIndex: nextAttemptIndex,
-      notBefore: new Date(Date.now() + ANA_FOLLOWUP_MIN_GAP_AFTER_SEND_MS),
-    });
-
     await client.query(
       `UPDATE conversations SET
          reengagement_sent_at = NOW(),
@@ -609,8 +693,8 @@ async function sendReengagementAfterFinalValidation(params: {
          ana_followup_last_attempt_at = NOW(),
          ana_followup_last_sent_message_id = $5,
          ana_followup_next_at = $6,
-         ana_followup_status = 'active',
-         ana_followup_cancel_reason = NULL,
+         ana_followup_status = CASE WHEN $6::timestamptz IS NULL THEN 'cancelled' ELSE 'active' END,
+         ana_followup_cancel_reason = CASE WHEN $6::timestamptz IS NULL THEN 'followup_cycle_exhausted' ELSE NULL END,
          last_message_at = NOW(),
          updated_at = NOW()
        WHERE id = $7`,
@@ -647,7 +731,7 @@ async function sendReengagementAfterFinalValidation(params: {
       userMessageId: u.id,
       anchorAssistantMessageId: state.anchorAssistantMessageId,
       attemptIndex: state.attemptIndex,
-      nextFollowupAt: nextFollowupAt.toISOString(),
+      nextFollowupAt: nextFollowupAt?.toISOString() ?? null,
       metaMessageId: sendRes.metaMessageId,
       textLen: outboundText.length,
       kind: commercialFollowupText ? 'commercial_followup' : 'generic_followup',
