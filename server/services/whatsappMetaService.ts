@@ -89,7 +89,7 @@ export async function uploadWhatsAppMedia(params: {
   metaErrorType?: string;
 }> {
   const config = await getCfg();
-  if (!config) return { success: false, error: 'IntegraÃ§Ã£o WhatsApp nÃ£o configurada no banco.' };
+  if (!config) return { success: false, error: 'Integração WhatsApp não configurada no banco.' };
   const url = `${META_GRAPH_BASE}/${config.apiVersion}/${config.whatsappPhoneNumberId}/media`;
   const form = new FormData();
   form.append('messaging_product', 'whatsapp');
@@ -114,7 +114,7 @@ export async function uploadWhatsAppMedia(params: {
         metaErrorType: payload.error?.type,
       };
     }
-    if (!payload.id) return { success: false, error: 'Meta nÃ£o retornou media_id.', httpStatus: res.status };
+    if (!payload.id) return { success: false, error: 'Meta não retornou media_id.', httpStatus: res.status };
     return { success: true, mediaId: payload.id };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Erro no upload para Meta.' };
@@ -142,7 +142,7 @@ export function buildTemplateParams(
     enterpriseName: (ctx?.enterpriseName || '').trim() || 'nosso empreendimento',
     agentName: (ctx?.agentName || '').trim() || 'Ana',
     city: (ctx?.city || '').trim() || 'sua cidade',
-    productType: (ctx?.productType || '').trim() || 'imÃ³vel',
+    productType: (ctx?.productType || '').trim() || 'imóvel',
   };
   return (template.bodyParamKeys ?? []).map((k) => ({ type: 'text', text: map[k] }));
 }
@@ -179,15 +179,15 @@ export async function sendTextMessage(to: string, text: string): Promise<SendTex
     const detail = !c
       ? 'Nenhuma config no banco'
       : `token=${c.metaAccessToken ? 'sim' : 'NÃƒO'}, phoneId=${c.whatsappPhoneNumberId ? 'sim' : 'NÃƒO'}`;
-    console.error('[WhatsAppMeta] sendTextMessage: config invÃ¡lida â€”', detail);
+    console.error('[WhatsAppMeta] sendTextMessage: config inválida -', detail);
     console.log('[ANA_PIPELINE] meta_text_send_outcome', { success: false, reason: 'whatsapp_config_invalid', detail });
-    if (!c) return { success: false, error: 'IntegraÃ§Ã£o WhatsApp nÃ£o configurada no banco.' };
+    if (!c) return { success: false, error: 'Integração WhatsApp não configurada no banco.' };
     return { success: false, error: `Token ou Phone Number ID ausente (${detail}).` };
   }
   const normalizedTo = to.replace(/\D/g, '');
   if (!normalizedTo) {
     console.log('[ANA_PIPELINE] meta_text_send_outcome', { success: false, reason: 'invalid_to_number' });
-    return { success: false, error: 'NÃºmero invÃ¡lido.' };
+    return { success: false, error: 'Número inválido.' };
   }
   const url = `${META_GRAPH_BASE}/${config.apiVersion}/${config.whatsappPhoneNumberId}/messages`;
   const requestBody = {
@@ -249,7 +249,7 @@ export async function sendTextMessage(to: string, text: string): Promise<SendTex
         reason: 'no_messages_id_in_response',
         toTail: normalizedTo.slice(-6),
       });
-      return { success: false, error: 'Meta nÃ£o retornou o ID da mensagem.' };
+      return { success: false, error: 'Meta não retornou o ID da mensagem.' };
     }
     console.log('[ANA_PIPELINE] meta_text_send_outcome', {
       success: true,
@@ -275,18 +275,18 @@ export async function sendTemplateMessage(
   ctx?: TemplateParamsContext
 ): Promise<SendTextResult> {
   const config = await getCfg();
-  if (!config) return { success: false, error: 'IntegraÃ§Ã£o WhatsApp nÃ£o configurada no banco.' };
+  if (!config) return { success: false, error: 'Integração WhatsApp não configurada no banco.' };
   const normalizedTo = to.replace(/\D/g, '');
-  if (!normalizedTo) return { success: false, error: 'NÃºmero invÃ¡lido.' };
+  if (!normalizedTo) return { success: false, error: 'Número inválido.' };
   const template = resolveManualTemplate(templateKey);
-  if (!template) return { success: false, error: 'Template invÃ¡lido.' };
+  if (!template) return { success: false, error: 'Template inválido.' };
 
   const url = `${META_GRAPH_BASE}/${config.apiVersion}/${config.whatsappPhoneNumberId}/messages`;
   const bodyParams = buildTemplateParams(template, ctx);
   if (bodyParams.some((param) => shouldBlockEmergencyOutboundText(param.text))) {
     return buildEmergencyBlockedResponse();
   }
-  // Nome na Meta = `key` do catÃ¡logo (snake_case); o campo `name` legÃ­vel do catÃ¡logo nÃ£o Ã© o ID do template.
+  // Nome na Meta = `key` do catÃ¡logo (snake_case); o campo `name` legÃ­vel do catÃ¡logo não Ã© o ID do template.
   const components: Array<Record<string, unknown>> = [];
   const persisted = await getMediaSetting(template.key, template.languageCode);
   const headerMediaId = (persisted?.headerMediaId ?? template.headerMediaId ?? '').trim();
@@ -386,7 +386,7 @@ export async function sendTemplateMessage(
       };
     }
     const mid = (data as MetaSendMessageResponse).messages?.[0]?.id;
-    if (!mid || typeof mid !== 'string') return { success: false, error: 'Meta nÃ£o retornou o ID da mensagem.' };
+    if (!mid || typeof mid !== 'string') return { success: false, error: 'Meta não retornou o ID da mensagem.' };
     return { success: true, metaMessageId: mid };
   } catch (e) {
     clearTimeout(timeout);
@@ -486,7 +486,7 @@ export interface DocumentSendLogContext {
   absolutePath: string;
 }
 
-/** Imagem, vÃ­deo (MP4/3GP) ou documento â€” alinhado a `manualWhatsappAttachment`. */
+/** Imagem, vÃ­deo (MP4/3GP) ou documento - alinhado a `manualWhatsappAttachment`. */
 export function classifyOutboundWhatsAppMedia(filename: string, mimeFromDb: string): 'image' | 'video' | 'document' {
   const k = classifyManualMediaKind(filename, mimeFromDb);
   if (k) return k;
@@ -555,12 +555,12 @@ export async function sendDocumentMessage(
   try {
     const config = await getCfg();
     if (!config) {
-      errorMessageIfAny = 'WhatsApp nÃ£o configurado.';
+      errorMessageIfAny = 'WhatsApp não configurado.';
       return { success: false, error: errorMessageIfAny };
     }
     const normalizedTo = to.replace(/\D/g, '');
     if (!normalizedTo) {
-      errorMessageIfAny = 'NÃºmero invÃ¡lido.';
+      errorMessageIfAny = 'Número inválido.';
       return { success: false, error: errorMessageIfAny };
     }
     const token = config.metaAccessToken;
@@ -640,7 +640,7 @@ export async function sendDocumentMessage(
       upData = JSON.parse(upRaw) as typeof upData;
     } catch {
       throw new Error(
-        `[upload parse] Resposta nÃ£o Ã© JSON. HTTP ${up.status}. Corpo (inÃ­cio): ${upRaw.slice(0, 2000)}`
+        `[upload parse] Resposta não Ã© JSON. HTTP ${up.status}. Corpo (inÃ­cio): ${upRaw.slice(0, 2000)}`
       );
     }
 
@@ -664,7 +664,7 @@ export async function sendDocumentMessage(
     const uploadedId = upData.id;
     if (!uploadedId || typeof uploadedId !== 'string') {
       throw new Error(
-        `[upload sem media id] A Meta nÃ£o retornou o campo "id" obrigatÃ³rio apÃ³s upload. HTTP ${up.status}. Corpo: ${upRaw.slice(0, 4000)}`
+        `[upload sem media id] A Meta não retornou o campo "id" obrigatÃ³rio apÃ³s upload. HTTP ${up.status}. Corpo: ${upRaw.slice(0, 4000)}`
       );
     }
     mediaId = uploadedId;
@@ -713,7 +713,7 @@ export async function sendDocumentMessage(
       data = JSON.parse(resRaw) as MetaSendMessageResponse | MetaErrorResponse;
     } catch {
       throw new Error(
-        `[messages parse] Resposta nÃ£o Ã© JSON. HTTP ${res.status}. Corpo (inÃ­cio): ${resRaw.slice(0, 2000)}`
+        `[messages parse] Resposta não Ã© JSON. HTTP ${res.status}. Corpo (inÃ­cio): ${resRaw.slice(0, 2000)}`
       );
     }
 
@@ -737,7 +737,7 @@ export async function sendDocumentMessage(
     const mid = (data as MetaSendMessageResponse).messages?.[0]?.id;
     if (!mid || typeof mid !== 'string') {
       throw new Error(
-        `[messages sem message id] A Meta nÃ£o retornou messages[0].id. HTTP ${res.status}. Corpo: ${resRaw.slice(0, 4000)}`
+        `[messages sem message id] A Meta não retornou messages[0].id. HTTP ${res.status}. Corpo: ${resRaw.slice(0, 4000)}`
       );
     }
     metaMessageId = mid;
@@ -822,12 +822,12 @@ export async function sendVideoMessage(
   try {
     const config = await getCfg();
     if (!config) {
-      errorMessageIfAny = 'WhatsApp nÃ£o configurado.';
+      errorMessageIfAny = 'WhatsApp não configurado.';
       return { success: false, error: errorMessageIfAny };
     }
     const normalizedTo = to.replace(/\D/g, '');
     if (!normalizedTo) {
-      errorMessageIfAny = 'NÃºmero invÃ¡lido.';
+      errorMessageIfAny = 'Número inválido.';
       return { success: false, error: errorMessageIfAny };
     }
     const token = config.metaAccessToken;
@@ -881,7 +881,7 @@ export async function sendVideoMessage(
       upData = JSON.parse(upRaw) as typeof upData;
     } catch {
       throw new Error(
-        `[upload parse] Resposta nÃ£o Ã© JSON. HTTP ${up.status}. Corpo (inÃ­cio): ${upRaw.slice(0, 2000)}`
+        `[upload parse] Resposta não Ã© JSON. HTTP ${up.status}. Corpo (inÃ­cio): ${upRaw.slice(0, 2000)}`
       );
     }
 
@@ -979,12 +979,12 @@ export async function sendImageMessage(
   try {
     const config = await getCfg();
     if (!config) {
-      errorMessageIfAny = 'WhatsApp nÃ£o configurado.';
+      errorMessageIfAny = 'WhatsApp não configurado.';
       return { success: false, error: errorMessageIfAny };
     }
     const normalizedTo = to.replace(/\D/g, '');
     if (!normalizedTo) {
-      errorMessageIfAny = 'NÃºmero invÃ¡lido.';
+      errorMessageIfAny = 'Número inválido.';
       return { success: false, error: errorMessageIfAny };
     }
     const token = config.metaAccessToken;
@@ -1038,7 +1038,7 @@ export async function sendImageMessage(
       upData = JSON.parse(upRaw) as typeof upData;
     } catch {
       throw new Error(
-        `[upload parse] Resposta nÃ£o Ã© JSON. HTTP ${up.status}. Corpo (inÃ­cio): ${upRaw.slice(0, 2000)}`
+        `[upload parse] Resposta não Ã© JSON. HTTP ${up.status}. Corpo (inÃ­cio): ${upRaw.slice(0, 2000)}`
       );
     }
 
@@ -1148,9 +1148,9 @@ export async function sendLocalMediaToWhatsApp(
 
 export async function testConnection(): Promise<{ success: boolean; error?: string; detail?: string }> {
   const config = await getWhatsAppConfig();
-  if (!config?.enabled) return { success: false, error: 'IntegraÃ§Ã£o nÃ£o estÃ¡ ativa.' };
-  if (!config.metaAccessToken?.trim()) return { success: false, error: 'Token nÃ£o configurado.' };
-  if (!config.whatsappPhoneNumberId?.trim()) return { success: false, error: 'Phone Number ID nÃ£o configurado.' };
+  if (!config?.enabled) return { success: false, error: 'Integração não estÃ¡ ativa.' };
+  if (!config.metaAccessToken?.trim()) return { success: false, error: 'Token não configurado.' };
+  if (!config.whatsappPhoneNumberId?.trim()) return { success: false, error: 'Phone Number ID não configurado.' };
   const url = `${META_GRAPH_BASE}/${config.apiVersion}/${config.whatsappPhoneNumberId}?fields=verified_name,display_phone_number`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
