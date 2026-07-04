@@ -11,6 +11,10 @@ import {
   WHATSAPP_IMAGE_MAX_BYTES,
   WHATSAPP_VIDEO_MAX_BYTES,
 } from '../constants/mediaLimits.js';
+import {
+  logAnaAutomationBlock,
+  shouldBlockAnaAutomationOutbound,
+} from '../utils/anaAutomationKillSwitch.js';
 
 export type AnaQuotaSendResult = SendTextResult;
 
@@ -20,8 +24,18 @@ export async function sendAnaTextMessageWithQuota(params: {
   text: string;
   phase: string;
 }): Promise<AnaQuotaSendResult> {
-  void params.conversationId;
-  void params.phase;
+  const blocked = shouldBlockAnaAutomationOutbound({
+    source: params.phase,
+    conversationId: params.conversationId,
+  });
+  if (blocked.blocked) {
+    logAnaAutomationBlock(blocked);
+    return {
+      success: false,
+      error: blocked.reason,
+      code: 423,
+    };
+  }
   return sendTextMessage(params.to, params.text);
 }
 
@@ -34,8 +48,18 @@ export async function sendAnaLocalMediaToWhatsAppWithQuota(params: {
   phase: string;
   options?: { logCtx?: DocumentSendLogContext; caption?: string | null };
 }): Promise<AnaQuotaSendResult> {
-  void params.conversationId;
-  void params.phase;
+  const blocked = shouldBlockAnaAutomationOutbound({
+    source: params.phase,
+    conversationId: params.conversationId,
+  });
+  if (blocked.blocked) {
+    logAnaAutomationBlock(blocked);
+    return {
+      success: false,
+      error: blocked.reason,
+      code: 423,
+    };
+  }
   let fileSize = 0;
   try {
     fileSize = statSync(params.filePath).size;

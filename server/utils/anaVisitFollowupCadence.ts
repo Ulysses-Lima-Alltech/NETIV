@@ -1,5 +1,9 @@
 import type { CommercialFlowState } from './commercialFlowState.js';
-import { computeAnaFollowupAtUtc, getAnaFollowupDelayMs } from './anaFollowupCadence.js';
+import {
+  ANA_FOLLOWUP_MAX_ATTEMPTS,
+  computeAnaFollowupAtUtc,
+  getAnaFollowupDelayMs,
+} from './anaFollowupCadence.js';
 
 export const ANA_VISIT_FOLLOWUP_MIN_GAP_AFTER_SEND_MS = 60_000;
 
@@ -37,6 +41,7 @@ export function getAnaVisitFollowupMessage(
 ): string | null {
   if (!Number.isInteger(attemptIndex)) return null;
   if (attemptIndex < 1) return null;
+  if (attemptIndex > ANA_FOLLOWUP_MAX_ATTEMPTS) return null;
   const template =
     ANA_VISIT_FOLLOWUP_MESSAGES[Math.min(attemptIndex - 1, ANA_VISIT_FOLLOWUP_MESSAGES.length - 1)] ?? null;
   return template ? renderSuggestedSlotMessage(template, suggestedSlotLabel) : null;
@@ -49,6 +54,7 @@ export function getAnaVisitFollowupDelayBeforeAttemptMs(attemptIndex: number): n
 export function getAnaVisitFollowupOffsetFromAnchorMs(attemptIndex: number): number | null {
   if (!Number.isInteger(attemptIndex)) return null;
   if (attemptIndex < 1) return null;
+  if (attemptIndex > ANA_FOLLOWUP_MAX_ATTEMPTS) return null;
   return getAnaFollowupDelayMs(attemptIndex);
 }
 
@@ -58,6 +64,7 @@ export function computeAnaVisitFollowupNextRunAt(params: {
   notBefore?: Date | null;
 }): Date | null {
   if (!Number.isInteger(params.nextAttemptIndex) || params.nextAttemptIndex < 1) return null;
+  if (params.nextAttemptIndex > ANA_FOLLOWUP_MAX_ATTEMPTS) return null;
   return computeAnaFollowupAtUtc({
     anchor: params.anchor,
     attemptIndex: params.nextAttemptIndex,

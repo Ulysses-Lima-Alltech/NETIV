@@ -21,6 +21,7 @@ import { scheduleWhatsAppAiAfterUserMessage } from './whatsappAiDebounce.js';
 import { handleIncomingMessage } from './conversationEngine.js';
 import { leadOriginFromMetaWhatsAppMessage } from './leadOriginResolver.js';
 import { sendTextMessage } from './whatsappMetaService.js';
+import { sendAnaTextMessageWithQuota } from './anaOutboundQuotaService.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
 import { mergeContactNameIfMissing } from '../repositories/contactsRepository.js';
 import { listEnterprises } from '../repositories/enterpriseRepository.js';
@@ -385,7 +386,12 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
             }
             if (waReady) {
               try {
-                const r = await sendTextMessage(String(msg.from), NON_TEXT_MESSAGE);
+                const r = await sendAnaTextMessageWithQuota({
+                  conversationId: conv.id,
+                  to: String(msg.from),
+                  text: NON_TEXT_MESSAGE,
+                  phase: 'ana_webhook_non_text_reply',
+                });
                 console.log('[ANA_PIPELINE] non_text_reply_sent', {
                   conversationId: conv.id,
                   metaMessageId: mid,
@@ -455,8 +461,8 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           });
 
 
-          // HOTFIX: resposta curta de nome nï¿½o pode depender do lead classifier.
-          // Fluxo correto: pediu nome -> cliente respondeu nome -> salva nome -> responde qualificaï¿½ï¿½o -> continue.
+          // HOTFIX: resposta curta de nome não pode depender do lead classifier.
+          // Fluxo correto: pediu nome -> cliente respondeu nome -> salva nome -> responde qualificação -> continue.
           {
             const recentForName = await getRecentConversationMessages(conv.id, 12);
             const lastAssistantNameQuestion =
@@ -538,7 +544,12 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
               'Voc\u00EA quer que eu siga te explicando pela estrutura do loteamento, lazer ou formas de pagamento?'
             ].join('\n\n');
 
-            const locationReply = await sendTextMessage(String(msg.from), locationDeepDiveReply);
+            const locationReply = await sendAnaTextMessageWithQuota({
+              conversationId: conv.id,
+              to: String(msg.from),
+              text: locationDeepDiveReply,
+              phase: 'ana_webhook_location_deep_dive',
+            });
 
             if (locationReply.success && locationReply.metaMessageId) {
               await insertMessage(conv.id, 'assistant', locationDeepDiveReply, locationReply.metaMessageId ?? null);
@@ -571,7 +582,7 @@ const shouldFastScheduleAnaBeforeClassifier =
               text.length <= 100 ||
 
 
-              /^(sim|quero|quero entender|quero saber|fala|fale|me fala|me explica|entender|regi[aï¿½]o|localiza[cï¿½][aï¿½]o|lazer|seguran[cï¿½]a|valor|valores|pagamento|formas|lote|lotes)\b/i.test(text)
+              /^(sim|quero|quero entender|quero saber|fala|fale|me fala|me explica|entender|regi[aã]o|localiza[cç][aã]o|lazer|seguran[cç]a|valor|valores|pagamento|formas|lote|lotes)\b/i.test(text)
 
 
             );
@@ -737,7 +748,12 @@ const shouldFastScheduleAnaBeforeClassifier =
                 toTail: phoneDigitsTail(msg.from, 4),
               });
               try {
-                const dr = await sendTextMessage(String(msg.from), ANA_DIAGNOSTIC_FIXED_TEXT);
+                const dr = await sendAnaTextMessageWithQuota({
+                  conversationId: conv.id,
+                  to: String(msg.from),
+                  text: ANA_DIAGNOSTIC_FIXED_TEXT,
+                  phase: 'ana_webhook_diagnostic_fixed_reply',
+                });
                 if (dr.success && dr.metaMessageId) {
                   await insertMessage(conv.id, 'assistant', ANA_DIAGNOSTIC_FIXED_TEXT, dr.metaMessageId);
                   console.log('[ANA_DIAGNOSTIC_FIXED_REPLY] sent_success', {

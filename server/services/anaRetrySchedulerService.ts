@@ -1,7 +1,4 @@
 ﻿
-function isAnaEmergencyRetryReengagementDisabled(): boolean {
-  return process.env.ANA_DISABLE_RETRY_REENGAGEMENT !== 'false';
-}
 import { upsertAnaRetryJob } from '../repositories/anaRetryJobRepository.js';
 import {
   computeRetryDelayMs,
@@ -9,6 +6,7 @@ import {
   mapRetryReason,
   sanitizeRetryErrorMessage,
 } from '../utils/llmRetry.js';
+import { getAnaAutomationPauseReason } from '../utils/anaAutomationKillSwitch.js';
 
 export async function scheduleAnaRetry(params: {
   conversationId: number;
@@ -17,6 +15,30 @@ export async function scheduleAnaRetry(params: {
   attemptCount?: number;
   reasonOverride?: string;
 }): Promise<void> {
+  const killSwitchReason = getAnaAutomationPauseReason();
+  if (killSwitchReason) {
+    if (killSwitchReason === 'ana_emergency_handoff_active') {
+      console.log('[ANA_RETRY_SKIP]', {
+        reason: 'ana_emergency_handoff_active',
+        conversationId: params.conversationId,
+        triggerMessageId: params.triggerMessageId,
+      });
+    } else if (killSwitchReason === 'ana_automation_disabled') {
+      console.log('[ANA_AUTOMATION_SKIP]', {
+        reason: 'ana_automation_disabled',
+        source: 'ana_retry_scheduler',
+        conversationId: params.conversationId,
+      });
+    } else {
+      console.log('[ANA_OUTBOUND_BLOCKED]', {
+        reason: 'ana_outbound_disabled',
+        source: 'ana_retry_scheduler',
+        conversationId: params.conversationId,
+      });
+    }
+    return;
+  }
+
   const retryAfterMsRaw = extractRetryAfterMs(params.error);
   const retryAfterMs = computeRetryDelayMs({
     attemptCount: params.attemptCount ?? 0,
