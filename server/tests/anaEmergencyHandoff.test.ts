@@ -72,7 +72,7 @@ test('ANA_EMERGENCY_HANDOFF=true responde handoff padrao sem OpenAI/RAG', async 
   ]);
   assert.equal(networkCalls, 0);
 
-  const engineSource = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
+  const engineSource = readFileSync(new URL('../../services/conversationEngine.ts', import.meta.url), 'utf8');
   const emergencyCheck = engineSource.indexOf('isAnaEmergencyHandoffEnabled()');
   const aiSettingsResolve = engineSource.indexOf('resolveAiSettingsForEnterprise(');
   const ragLoad = engineSource.indexOf('await loadRankedKnowledgeChunksForPromptWithMeta');

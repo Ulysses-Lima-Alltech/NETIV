@@ -1800,7 +1800,7 @@ function splitRhetoricalSeparatorsForWhatsApp(part: string): string[] {
       nextSeparatorIndex >= 0
         ? source.slice(afterStart, afterStart + nextSeparatorIndex).trim()
         : source.slice(afterStart).trim();
-    const leftIsShortOpener = current.length <= 16 && /^[A-Za-zÀ-ÿ]+\.?$/i.test(current);
+    const leftIsShortOpener = current.length <= 16 && /^\p{L}+\.?$/u.test(current);
     if (leftIsShortOpener && after) {
       current = `${current.replace(/[.]$/g, '')},`;
     } else if (current) {
@@ -2293,7 +2293,7 @@ export interface IncomingMessageContext {
 /** Reprocessa a última mensagem do usuário sem resposta quando handoff muda true→false. */
 export async function reprocessLastUserMessage(conversationId: number): Promise<void> {
   console.log('[ANA REPROCESS]', { conversationId });
-  if (!ANA_HANDOFF_DISABLED && isAnaEmergencyHandoffEnabled()) {
+  if (isAnaEmergencyHandoffEnabled()) {
     console.log('[ANA_EMERGENCY_HANDOFF] reprocess_skipped', { conversationId });
     return;
   }
@@ -3521,7 +3521,7 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     return;
   }
 
-  if (!ANA_HANDOFF_DISABLED && isAnaEmergencyHandoffEnabled()) {
+  if (isAnaEmergencyHandoffEnabled()) {
     console.log('[ANA_EMERGENCY_HANDOFF] active', {
       conversationId,
       toPhoneTail: anaPhoneTail(toPhoneNumber),

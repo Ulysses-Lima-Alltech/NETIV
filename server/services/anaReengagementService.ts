@@ -20,8 +20,9 @@ import { resolveAiSettingsForEnterprise } from './enterpriseAiSettingsService.js
 import { resolveAnaCommercialFollowupMessage } from './anaCommercialRulesService.js';
 import { parseCommercialFlowState } from '../utils/commercialFlowState.js';
 
-const SCAN_LIMIT = 500;
+const SCAN_LIMIT = 150;
 const ANA_FOLLOWUP_MIN_GAP_AFTER_SEND_MS = 60_000;
+let anaFollowupScanRunning = false;
 
 const BODY_WITH_NAME = [
   'Oi, {{name}}. Passando sÃ³ pra nÃ£o te deixar sem retorno. Se ainda fizer sentido, sigo por aqui.',
@@ -80,6 +81,11 @@ function toDateOrNull(value: unknown): Date | null {
     return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
   return null;
+}
+
+function sameDbId(a: unknown, b: unknown): boolean {
+  if (a == null || b == null) return false;
+  return String(a) === String(b);
 }
 
 function logFollowupSkip(params: {
@@ -166,15 +172,15 @@ async function resolveFollowupCycleState(params: {
   const storedAnchorMessageId = params.conv.ana_followup_anchor_assistant_message_id ?? null;
   const storedLastSentMessageId = params.conv.ana_followup_last_sent_message_id ?? null;
   const canContinueStoredCycle =
-    storedUserMessageId === params.lastUser.id &&
+    sameDbId(storedUserMessageId, params.lastUser.id) &&
     storedAnchorMessageId != null &&
-    (params.lastVisible.id === storedAnchorMessageId ||
-      (storedLastSentMessageId != null && params.lastVisible.id === storedLastSentMessageId));
+    (sameDbId(params.lastVisible.id, storedAnchorMessageId) ||
+      (storedLastSentMessageId != null && sameDbId(params.lastVisible.id, storedLastSentMessageId)));
 
   const anchorAssistantMessageId = canContinueStoredCycle ? storedAnchorMessageId : params.lastVisible.id;
   const anchorAssistantCreatedAt = canContinueStoredCycle
     ? toDateOrNull(params.conv.ana_followup_anchor_assistant_created_at) ??
-      (params.lastVisible.id === storedAnchorMessageId
+      (sameDbId(params.lastVisible.id, storedAnchorMessageId)
         ? params.lastVisible.created_at
         : await getMessageCreatedAtById(storedAnchorMessageId))
     : params.lastVisible.created_at;
@@ -235,37 +241,47 @@ export async function processAnaReengagementScan(): Promise<void> {
     return;
   }
 
-  const { rows } = await query<{ id: number }>(
-    `SELECT id FROM conversations
-     WHERE channel = 'whatsapp'
-       AND COALESCE(handoff, false) = false
-       AND COALESCE(classification, '') NOT IN ('Handoff', 'Carteira')
-       AND manual_closed_at IS NULL
-       AND COALESCE(ana_followup_status, 'idle') IN ('idle', 'active')
-       AND ana_followup_next_at IS NOT NULL
-       AND ana_followup_next_at <= NOW()
-       AND EXISTS (
-         SELECT 1 FROM messages m
-          WHERE m.conversation_id = conversations.id
-            AND m.role = 'assistant'
-            AND m.deleted_at IS NULL
-       )
-     ORDER BY ana_followup_next_at ASC, updated_at ASC, id ASC
-     LIMIT $1`,
-    [SCAN_LIMIT]
-  );
+  if (anaFollowupScanRunning) {
+    console.log('[ANA_FOLLOWUP_SKIP]', { reason: 'scan_already_running' });
+    return;
+  }
 
-  console.log('[ANA_FOLLOWUP_SCAN]', { candidates: rows.length });
+  anaFollowupScanRunning = true;
+  try {
+    const { rows } = await query<{ id: number }>(
+      `SELECT id FROM conversations
+       WHERE channel = 'whatsapp'
+         AND COALESCE(handoff, false) = false
+         AND COALESCE(classification, '') NOT IN ('Handoff', 'Carteira')
+         AND manual_closed_at IS NULL
+         AND COALESCE(ana_followup_status, 'idle') IN ('idle', 'active')
+         AND ana_followup_next_at IS NOT NULL
+         AND ana_followup_next_at <= NOW()
+         AND EXISTS (
+           SELECT 1 FROM messages m
+            WHERE m.conversation_id = conversations.id
+              AND m.role = 'assistant'
+              AND m.deleted_at IS NULL
+         )
+       ORDER BY ana_followup_next_at ASC, updated_at ASC, id ASC
+       LIMIT $1`,
+      [SCAN_LIMIT]
+    );
 
-  for (const r of rows) {
-    try {
-      await trySendReengagementForConversation(r.id);
-    } catch (e) {
-      console.error('[ANA_FOLLOWUP_ERROR]', {
-        conversationId: r.id,
-        error: e instanceof Error ? e.message : String(e),
-      });
+    console.log('[ANA_FOLLOWUP_SCAN]', { candidates: rows.length });
+
+    for (const r of rows) {
+      try {
+        await trySendReengagementForConversation(r.id);
+      } catch (e) {
+        console.error('[ANA_FOLLOWUP_ERROR]', {
+          conversationId: r.id,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
+  } finally {
+    anaFollowupScanRunning = false;
   }
 }
 
@@ -442,7 +458,7 @@ async function sendReengagementAfterFinalValidation(params: {
       [params.conversationId]
     );
     const u = uRow.rows[0];
-    if (!u || u.id !== params.expectedUserMessageId) {
+    if (!u || !sameDbId(u.id, params.expectedUserMessageId)) {
       await client.query('ROLLBACK');
       logFollowupSkip({
         conversationId: params.conversationId,
