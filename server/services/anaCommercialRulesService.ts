@@ -310,8 +310,8 @@ export function resolveAnaCommercialFollowupMessage(params: {
   cycleCount: number;
 }): string | null {
   if (!isEvoraEnterpriseName(params.enterpriseName)) return null;
-  const idx = Math.max(0, Math.min(params.cycleCount, ANA_COMMERCIAL_RULES.followupWhileNoResponseMessages.length - 1));
-  const message = ANA_COMMERCIAL_RULES.followupWhileNoResponseMessages[idx] ?? null;
+  if (!Number.isInteger(params.cycleCount) || params.cycleCount < 0) return null;
+  const message = ANA_COMMERCIAL_RULES.followupWhileNoResponseMessages[params.cycleCount] ?? null;
   return message && message.trim() ? message : null;
 }
 
