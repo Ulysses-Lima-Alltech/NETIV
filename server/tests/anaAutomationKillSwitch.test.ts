@@ -8,8 +8,11 @@ import { processAnaRetryJobsTick } from '../services/anaRetryWorkerService.js';
 import { startAnaVisitFollowupIfEligible } from '../services/anaVisitFollowupService.js';
 import { sendAnaEmergencyHandoff } from '../utils/anaEmergencyHandoff.js';
 import {
+  getAnaAutomationPauseReason,
   isAnaAutomationDisabled,
+  isAnaDirectInboundReplyEnabled,
   isAnaOutboundDisabled,
+  runWithAnaAutomationOutboundSource,
   shouldBlockAnaAutomationOutbound,
 } from '../utils/anaAutomationKillSwitch.js';
 
@@ -38,12 +41,38 @@ function withEnv(env: Record<string, string | undefined>, fn: () => Promise<void
   }
 }
 
+async function captureConsoleLogs(fn: () => Promise<void>): Promise<string[]> {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  const originalError = console.error;
+  const capture = (...args: unknown[]) => {
+    logs.push(
+      args
+        .map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg)))
+        .join(' ')
+    );
+  };
+  console.log = capture;
+  console.warn = capture;
+  console.error = capture;
+  try {
+    await fn();
+    return logs;
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+    console.error = originalError;
+  }
+}
+
 test('ANA_OUTBOUND_DISABLED=true impede sendAnaTextMessageWithQuota de chamar Meta', async () => {
   await withEnv(
     {
       ANA_OUTBOUND_DISABLED: 'true',
       ANA_AUTOMATION_DISABLED: undefined,
       ANA_EMERGENCY_HANDOFF: undefined,
+      ANA_DIRECT_INBOUND_REPLY_ENABLED: undefined,
     },
     async () => {
       let fetchCalls = 0;
@@ -71,12 +100,151 @@ test('ANA_OUTBOUND_DISABLED=true impede sendAnaTextMessageWithQuota de chamar Me
   );
 });
 
+test('inbound engine direto nao e bloqueado por ANA_AUTOMATION_DISABLED quando flag explicita esta ativa', async () => {
+  await withEnv(
+    {
+      ANA_AUTOMATION_DISABLED: 'true',
+      ANA_DIRECT_INBOUND_REPLY_ENABLED: 'true',
+      ANA_OUTBOUND_DISABLED: 'false',
+      ANA_EMERGENCY_HANDOFF: 'false',
+    },
+    async () => {
+      assert.equal(isAnaAutomationDisabled(), true);
+      assert.equal(isAnaDirectInboundReplyEnabled(), true);
+      assert.equal(
+        getAnaAutomationPauseReason({ source: 'ana_inbound_engine', conversationId: 15310 }),
+        null
+      );
+      assert.deepEqual(
+        shouldBlockAnaAutomationOutbound({ source: 'ana_inbound_engine', conversationId: 15310 }),
+        { blocked: false }
+      );
+
+      assert.deepEqual(
+        shouldBlockAnaAutomationOutbound({ source: 'ana_main_reply', conversationId: 15310 }),
+        {
+          blocked: true,
+          reason: 'ana_automation_disabled',
+          source: 'ana_main_reply',
+          conversationId: 15310,
+        }
+      );
+
+      await runWithAnaAutomationOutboundSource('ana_inbound_engine', async () => {
+        assert.deepEqual(
+          shouldBlockAnaAutomationOutbound({ source: 'ana_main_reply', conversationId: 15310 }),
+          { blocked: false }
+        );
+      });
+    }
+  );
+});
+
+test('handleIncomingMessage escopa outbound direto como ana_inbound_engine', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  assert.match(source, /runWithAnaAutomationOutboundSource\('ana_inbound_engine'/);
+  assert.match(source, /getAnaAutomationPauseReason\(\{\s*source: 'ana_inbound_engine',\s*conversationId,/s);
+});
+
+test('background sources continuam bloqueados com ANA_AUTOMATION_DISABLED=true mesmo com direct inbound ligado', () => {
+  withEnv(
+    {
+      ANA_AUTOMATION_DISABLED: 'true',
+      ANA_DIRECT_INBOUND_REPLY_ENABLED: 'true',
+      ANA_OUTBOUND_DISABLED: 'false',
+      ANA_EMERGENCY_HANDOFF: 'false',
+    },
+    () => {
+      const sources = [
+        'ana_followup_scan',
+        'ana_retry_worker',
+        'ana_visit_followup',
+        'ana_reengagement_followup',
+        'scheduled_batch',
+        'ana_retry_scheduler',
+        'ana_reprocess',
+      ];
+
+      for (const source of sources) {
+        assert.equal(
+          getAnaAutomationPauseReason({ source, conversationId: 15310 }),
+          'ana_automation_disabled',
+          source
+        );
+        assert.deepEqual(
+          shouldBlockAnaAutomationOutbound({ source, conversationId: 15310 }),
+          {
+            blocked: true,
+            reason: 'ana_automation_disabled',
+            source,
+            conversationId: 15310,
+          },
+          source
+        );
+      }
+    }
+  );
+});
+
+test('ANA_OUTBOUND_DISABLED=true bloqueia tambem inbound direto autorizado', async () => {
+  await withEnv(
+    {
+      ANA_AUTOMATION_DISABLED: 'true',
+      ANA_DIRECT_INBOUND_REPLY_ENABLED: 'true',
+      ANA_OUTBOUND_DISABLED: 'true',
+      ANA_EMERGENCY_HANDOFF: 'false',
+    },
+    async () => {
+      assert.equal(
+        getAnaAutomationPauseReason({ source: 'ana_inbound_engine', conversationId: 15310 }),
+        'ana_outbound_disabled'
+      );
+      await runWithAnaAutomationOutboundSource('ana_inbound_engine', async () => {
+        assert.deepEqual(
+          shouldBlockAnaAutomationOutbound({ source: 'ana_main_reply', conversationId: 15310 }),
+          {
+            blocked: true,
+            reason: 'ana_outbound_disabled',
+            source: 'ana_inbound_engine',
+            conversationId: 15310,
+          }
+        );
+      });
+
+      let fetchCalls = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => {
+        fetchCalls += 1;
+        throw new Error('fetch should not be called');
+      }) as typeof fetch;
+
+      try {
+        const result = await runWithAnaAutomationOutboundSource('ana_inbound_engine', () =>
+          sendAnaTextMessageWithQuota({
+            conversationId: 15310,
+            to: '5512992367544',
+            text: 'Oi',
+            phase: 'ana_main_reply',
+          })
+        );
+
+        assert.equal(result.success, false);
+        assert.equal(result.error, 'ana_outbound_disabled');
+        assert.equal(fetchCalls, 0);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }
+  );
+});
+
 test('ANA_EMERGENCY_HANDOFF=true bloqueia scan e retry worker antes de DB/OpenAI/Meta', async () => {
   await withEnv(
     {
       ANA_EMERGENCY_HANDOFF: 'true',
       ANA_AUTOMATION_DISABLED: undefined,
       ANA_OUTBOUND_DISABLED: undefined,
+      ANA_DIRECT_INBOUND_REPLY_ENABLED: undefined,
     },
     async () => {
       await processAnaReengagementScan();
@@ -91,21 +259,28 @@ test('ANA_AUTOMATION_DISABLED=true bloqueia follow-up, retry e visit follow-up s
       ANA_AUTOMATION_DISABLED: 'true',
       ANA_EMERGENCY_HANDOFF: undefined,
       ANA_OUTBOUND_DISABLED: undefined,
+      ANA_DIRECT_INBOUND_REPLY_ENABLED: 'true',
     },
     async () => {
       assert.equal(isAnaAutomationDisabled(), true);
-      await processAnaReengagementScan();
-      await processAnaRetryJobsTick();
-      await startAnaVisitFollowupIfEligible({
-        conversationId: 456,
-        flowState: {
-          pendingVisitScheduling: true,
-          suggestedVisitStatus: 'awaiting_confirmation',
-          suggestedVisitSlotLabel: 'amanha as 14h',
-        },
-        replyText: 'Que tal uma visita amanha as 14h?',
-        anchorAssistantMessageId: null,
+      const logs = await captureConsoleLogs(async () => {
+        await processAnaReengagementScan();
+        await processAnaRetryJobsTick();
+        await startAnaVisitFollowupIfEligible({
+          conversationId: 456,
+          flowState: {
+            pendingVisitScheduling: true,
+            suggestedVisitStatus: 'awaiting_confirmation',
+            suggestedVisitSlotLabel: 'amanha as 14h',
+          },
+          replyText: 'Que tal uma visita amanha as 14h?',
+          anchorAssistantMessageId: null,
+        });
       });
+      const joinedLogs = logs.join('\n');
+      assert.match(joinedLogs, /ANA_AUTOMATION_SKIP/);
+      assert.doesNotMatch(joinedLogs, /ANA_FOLLOWUP_SENT/);
+      assert.doesNotMatch(joinedLogs, /outboundMetaMessageId/);
     }
   );
 });
@@ -116,6 +291,7 @@ test('ANA_OUTBOUND_DISABLED=true prevalece ate sobre handoff de emergencia', asy
       ANA_OUTBOUND_DISABLED: 'true',
       ANA_AUTOMATION_DISABLED: undefined,
       ANA_EMERGENCY_HANDOFF: 'true',
+      ANA_DIRECT_INBOUND_REPLY_ENABLED: 'true',
     },
     async () => {
       let sendCalls = 0;
