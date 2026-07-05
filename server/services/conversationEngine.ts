@@ -260,7 +260,10 @@ import {
   sendAnaEmergencyHandoff,
   type AnaEmergencyHandoffSendResult,
 } from '../utils/anaEmergencyHandoff.js';
-import { getAnaAutomationPauseReason } from '../utils/anaAutomationKillSwitch.js';
+import {
+  getAnaAutomationPauseReason,
+  runWithAnaAutomationOutboundSource,
+} from '../utils/anaAutomationKillSwitch.js';
 import {
   isEvoraEnterpriseName,
   isUserIrritated,
@@ -3525,6 +3528,10 @@ async function handleMaterialRequestTurn(params: {
   return { handled: true, status: 'MATERIAL_SENT', log: logPayload };
 }
 export async function handleIncomingMessage(ctx: IncomingMessageContext): Promise<void> {
+  return runWithAnaAutomationOutboundSource('ana_inbound_engine', () => handleIncomingMessageCore(ctx));
+}
+
+async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<void> {
   const {
     conversationId,
     userMessage,
@@ -3574,7 +3581,10 @@ export async function handleIncomingMessage(ctx: IncomingMessageContext): Promis
     return;
   }
 
-  const engineKillSwitchReason = getAnaAutomationPauseReason();
+  const engineKillSwitchReason = getAnaAutomationPauseReason({
+    source: 'ana_inbound_engine',
+    conversationId,
+  });
   if (engineKillSwitchReason) {
     logAnaEngineKillSwitchSkip(engineKillSwitchReason, conversationId);
     return;
