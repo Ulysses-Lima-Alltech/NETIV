@@ -130,6 +130,7 @@ function weekdayTokenToJsDay(token: string): number | null {
 function parseTimeHmFromText(text: string): string | null {
   const n = norm(text);
   const patterns = [
+    /\b(?:umas?|por volta das?)\s+(\d{1,2})(?:h(\d{2})|\s*:\s*(\d{2}))?\b/g,
     /\bas\s+(\d{1,2})(?:h(\d{2})|\s*:\s*(\d{2}))?\b/g,
     /\b(\d{1,2})h(\d{2})\b/g,
     /\b(\d{1,2})h\b/g,
@@ -166,14 +167,24 @@ function nextYmdForWeekday(startYmd: string, targetWeekday: number): string | nu
   return null;
 }
 
+function nextWeekYmdForWeekday(referenceYmd: string, targetWeekday: number): string {
+  const currentWeekday = getJsWeekdayForYmdInSaoPaulo(referenceYmd);
+  const daysSinceMonday = currentWeekday === 0 ? 6 : currentWeekday - 1;
+  const nextWeekMonday = addDaysYmd(referenceYmd, 7 - daysSinceMonday);
+  const targetOffset = targetWeekday === 0 ? 6 : targetWeekday - 1;
+  return addDaysYmd(nextWeekMonday, targetOffset);
+}
+
 export function extractAnaVisitSlotPreferenceFromText(
   text: string,
-  referenceNow: Date = new Date()
+  referenceNow: Date = new Date(),
+  options?: { preferNextWeekForWeekday?: boolean }
 ): AnaVisitSlotPreference {
   const n = norm(text);
   const todayYmd = formatYmdInSaoPaulo(referenceNow);
   let dateYmd: string | null = null;
   let weekday: number | null = null;
+  const mentionsNextWeek = /\bsemana que vem\b/.test(n);
 
   if (/\bdepois de amanha\b/.test(n)) {
     dateYmd = addDaysYmd(todayYmd, 2);
@@ -187,7 +198,12 @@ export function extractAnaVisitSlotPreferenceFromText(
     );
     if (weekdayMatch?.[1]) {
       weekday = weekdayTokenToJsDay(weekdayMatch[1]);
-      if (weekday != null) dateYmd = nextYmdForWeekday(todayYmd, weekday);
+      if (weekday != null) {
+        dateYmd =
+          mentionsNextWeek || options?.preferNextWeekForWeekday === true
+            ? nextWeekYmdForWeekday(todayYmd, weekday)
+            : nextYmdForWeekday(todayYmd, weekday);
+      }
     }
   }
 
@@ -214,7 +230,7 @@ function resolveSearchStartYmd(referenceNow: Date, preference: AnaVisitSlotPrefe
 function slotMatchesPeriod(minutes: number, period: AnaVisitPeriodPreference | null | undefined): boolean {
   if (!period) return true;
   if (period === 'manha') return minutes >= 9 * 60 && minutes < 12 * 60;
-  if (period === 'tarde') return minutes >= 12 * 60 && minutes <= 18 * 60;
+  if (period === 'tarde') return minutes >= 13 * 60 && minutes <= 18 * 60;
   return false;
 }
 
