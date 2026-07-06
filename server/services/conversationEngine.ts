@@ -1582,6 +1582,9 @@ function isImageMaterialRequest(text: string): boolean {
   );
 }
 
+const ANA_IMAGE_NOT_FOUND_REPLY =
+  'Ainda não encontrei essa foto cadastrada aqui, mas posso te passar as informações do espaço.';
+
 function isVideoMaterialRequest(text: string): boolean {
   const n = normText(text || '');
   if (!n) return false;
@@ -5696,8 +5699,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
           enterpriseId: null,
           reason: 'enterprise_not_resolved',
         });
-        const notAvailableText =
-          'Não tenho fotos liberadas para envio por aqui no momento. Quer que eu te explique algum ponto específico do empreendimento?';
+        const notAvailableText = ANA_IMAGE_NOT_FOUND_REPLY;
         const sendNotAvailable = await sendTextMessage({
           conversationId,
           to: toPhoneNumber,
@@ -5726,8 +5728,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
           reason: 'no_authorized_images',
           requestedImageTopic,
         });
-        const notAvailableText =
-          'Não tenho fotos liberadas para envio por aqui no momento. Quer que eu te explique algum ponto específico do empreendimento?';
+        const notAvailableText = ANA_IMAGE_NOT_FOUND_REPLY;
         const sendNotAvailable = await sendTextMessage({
           conversationId,
           to: toPhoneNumber,
@@ -5753,8 +5754,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
           authorizedImageCount: imageFiles.length,
           authorizedImageNames: imageFiles.map((file) => file.originalName).slice(0, 20),
         });
-        const notAvailableText =
-          'Nao encontrei foto especifica desse ambiente entre os arquivos liberados. Posso te enviar as fotos disponiveis do empreendimento ou te encaminhar para um corretor.';
+        const notAvailableText = ANA_IMAGE_NOT_FOUND_REPLY;
         const sendNotAvailable = await sendTextMessage({
           conversationId,
           to: toPhoneNumber,
@@ -5818,8 +5818,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         enterpriseId: ent.id,
         reason: 'send_failed_all',
       });
-      const notAvailableText =
-        'Não tenho fotos liberadas para envio por aqui no momento. Quer que eu te explique algum ponto específico do empreendimento?';
+      const notAvailableText = ANA_IMAGE_NOT_FOUND_REPLY;
       const sendNotAvailable = await sendTextMessage({
         conversationId,
         to: toPhoneNumber,
@@ -6727,6 +6726,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         pendingVisitMissingSlot: null,
         pendingVisitCustomerName: null,
         pendingVisitConfirmationAsked: false,
+        pendingAppointmentCandidate: null,
         updatedAt: new Date().toISOString(),
       };
       await mergeConversationCommercialFlowState(conversationId, cancelledSchedulingState);
@@ -6864,6 +6864,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
           pendingVisitMissingSlot: null,
           pendingVisitCustomerName: null,
           pendingVisitConfirmationAsked: false,
+          pendingAppointmentCandidate: null,
           visitScheduling: previousVisitScheduling
             ? {
                 ...previousVisitScheduling,
@@ -6943,6 +6944,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
           pendingVisitMissingSlot: null,
           pendingVisitCustomerName: null,
           pendingVisitConfirmationAsked: false,
+          pendingAppointmentCandidate: null,
           visitScheduling: previousVisitScheduling
             ? {
                 ...previousVisitScheduling,
@@ -6998,7 +7000,16 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
     let exactSlotUnavailable = false;
 
     if (visitSchedulingFlowActiveForTurn && !userRefusedScheduling && visitAvailabilityEnterpriseId != null) {
-      const preferenceFromMessage = extractAnaVisitSlotPreferenceFromText(trimmed, lastUserMessageAt);
+      const preferNextWeekForVisitWeekday = /\bsemana que vem\b/.test(
+        normText(
+          `${flowStateParsed.pendingVisitDateLabel ?? ''} ${flowStateParsed.pendingVisitDay ?? ''} ${
+            flowStateParsed.visitScheduling?.requestedDateText ?? ''
+          }`
+        )
+      );
+      const preferenceFromMessage = extractAnaVisitSlotPreferenceFromText(trimmed, lastUserMessageAt, {
+        preferNextWeekForWeekday: preferNextWeekForVisitWeekday,
+      });
       const pendingSuggestedStartAt = flowStateParsed.suggestedVisitStartAt
         ? new Date(flowStateParsed.suggestedVisitStartAt)
         : null;
@@ -7387,6 +7398,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
             pendingVisitMissingSlot: null,
             pendingVisitCustomerName: null,
             pendingVisitConfirmationAsked: false,
+            pendingAppointmentCandidate: null,
             visitScheduling: {
               active: false,
               offered: true,
@@ -7442,6 +7454,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
             pendingVisitMissingSlot: null,
             pendingVisitCustomerName: flowStateParsed.pendingVisitCustomerName ?? null,
             pendingVisitConfirmationAsked: false,
+            pendingAppointmentCandidate: null,
             updatedAt: new Date().toISOString(),
           };
           await mergeConversationCommercialFlowState(conversationId, waitingEnterpriseState);
@@ -7632,6 +7645,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
           pendingVisitMissingSlot: null,
           pendingVisitCustomerName: null,
           pendingVisitConfirmationAsked: false,
+          pendingAppointmentCandidate: null,
           visitScheduling: {
             ...baseVisitScheduling,
             active: false,

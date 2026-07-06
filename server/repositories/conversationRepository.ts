@@ -1342,6 +1342,25 @@ export async function setConversationEnterpriseId(
   return afterClass;
 }
 
+export async function setConversationEnterpriseIdAndOrigin(
+  conversationId: number,
+  enterpriseId: number
+): Promise<ConversationRow | null> {
+  const updated = await setConversationEnterpriseId(conversationId, enterpriseId);
+  if (!updated || updated.enterprise_id !== enterpriseId) return updated;
+  if (updated.enterprise_origin_id != null) return updated;
+
+  const { rows } = await query<ConversationRow>(
+    `UPDATE conversations
+      SET enterprise_origin_id = COALESCE(enterprise_origin_id, $1),
+          updated_at = NOW()
+     WHERE id = $2
+     RETURNING *`,
+    [enterpriseId, conversationId]
+  );
+  return rows[0] ?? updated;
+}
+
 export async function setConversationLeadTemperature(
   conversationId: number,
   leadTemperature: 'quente' | 'morno' | 'frio'

@@ -2,6 +2,9 @@
   'Se fizer sentido para você, posso te ajudar a agendar uma visita.',
 ] as const;
 
+const EVORA_CANONICAL_LOCATION_REPLY =
+  'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo.';
+
 function normalizeText(value: string | null | undefined): string {
   return String(value ?? '')
     .normalize('NFD')
@@ -46,6 +49,11 @@ function hasLucasAsAccessLeak(answer: string): boolean {
     n.includes('lucas nogueira garces') &&
     /(acesso|acessar|rota|caminho|endereco|chegar|localizacao exata|acesso facilitado)/.test(n)
   );
+}
+
+function hasCampinasRegionLeak(answer: string): boolean {
+  const n = normalizeText(answer);
+  return /\bcampinas\b/.test(n);
 }
 
 function hasVisitOffer(text: string): boolean {
@@ -167,6 +175,26 @@ export function applyEvoraLocationGuard(params: {
   void params.userMessage;
   if (!isEvoraEnterprise(params.enterpriseName)) {
     return { text: params.answer, changed: false, reason: null };
+  }
+
+  if (hasCampinasRegionLeak(params.answer)) {
+    const sanitized = params.answer
+      .split(/(?<=[.!?])\s+/)
+      .map((sentence) => sentence.trim())
+      .filter((sentence) => sentence.length > 0 && !hasCampinasRegionLeak(sentence))
+      .join(' ')
+      .trim();
+    const finalAnswer = sanitized
+      ? `${sanitized}\n\n${EVORA_CANONICAL_LOCATION_REPLY}`
+      : EVORA_CANONICAL_LOCATION_REPLY;
+    console.log('[ANA_EVORA_LOCATION_GUARD]', {
+      conversationId: params.conversationId,
+      enterpriseId: params.enterpriseId,
+      reason: 'campinas_region_leak_rewritten',
+      originalAnswer: params.answer,
+      finalAnswer,
+    });
+    return { text: finalAnswer, changed: true, reason: 'campinas_region_leak_rewritten' };
   }
 
   if (!hasLucasAsAccessLeak(params.answer)) {
