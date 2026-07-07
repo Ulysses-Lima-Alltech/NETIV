@@ -28,6 +28,10 @@ import {
 const app = express();
 const httpServer = createServer(app);
 const realtimeEnabled = String(process.env.REALTIME_ENABLED ?? '').trim().toLowerCase() === 'true';
+const anaReengagementScanIntervalMs = (() => {
+  const raw = Number.parseInt(String(process.env.ANA_REENGAGEMENT_SCAN_INTERVAL_MS ?? ''), 10);
+  return Number.isFinite(raw) && raw >= 10_000 ? raw : 60_000;
+})();
 const autoWalletInactiveEnabled = process.env.AUTO_WALLET_INACTIVE_ENABLED === 'true';
 setRealtimeEnabled(realtimeEnabled);
 app.use(cors({ origin: true }));
@@ -147,4 +151,5 @@ initPostgres()
     console.error('[startup]', e);
     process.exit(1);
   });
+
 

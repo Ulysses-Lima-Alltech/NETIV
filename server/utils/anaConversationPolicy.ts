@@ -1,4 +1,4 @@
-import type { CommercialFlowState } from './commercialFlowState.js';
+﻿import type { CommercialFlowState } from './commercialFlowState.js';
 import {
   detectAnaDialogueTopics,
   selectAnaNextFollowupQuestion,
@@ -21,14 +21,14 @@ const GENERIC_SINGLE_FOLLOWUP_FALLBACK =
   '';
 const BANNED_GENERIC_FALLBACK = '';
 const GENERIC_LOOP_PATTERNS: RegExp[] = [
-  /tem algum ponto espec[ií]fico que voc[eê] quer que eu detalhe melhor\??/i,
-  /tem algum ponto espec[ií]fico que voc[eê] quer saber\??/i,
-  /me conta,?\s*qual ponto voc[eê] quer entender primeiro\??/i,
-  /me conta,?\s*qual ponto voc[eê] quer entender\??/i,
-  /posso te contar sobre os valores,\s*a localizacao,\s*o lazer ou as formas de pagamento(?: do evora)?\.?\s*qual desses pontos voc[eê] quer ver primeiro\??/i,
+  /tem algum ponto espec[iÃ­]fico que voc[eÃª] quer que eu detalhe melhor\??/i,
+  /tem algum ponto espec[iÃ­]fico que voc[eÃª] quer saber\??/i,
+  /me conta,?\s*qual ponto voc[eÃª] quer entender primeiro\??/i,
+  /me conta,?\s*qual ponto voc[eÃª] quer entender\??/i,
+  /posso te contar sobre os valores,\s*a localizacao,\s*o lazer ou as formas de pagamento(?: do evora)?\.?\s*qual desses pontos voc[eÃª] quer ver primeiro\??/i,
   /claro\.\s*voce quer saber mais sobre valores,\s*lazer,\s*localizacao,\s*seguranca ou formas de pagamento\??/i,
 ];
-const ME_CONTA_GENERIC_LOOP_PATTERN = /me conta,?\s*qual ponto voc[eê] quer entender primeiro\??/i;
+const ME_CONTA_GENERIC_LOOP_PATTERN = /me conta,?\s*qual ponto voc[eÃª] quer entender primeiro\??/i;
 
 type RequestedTopicActionType =
   | 'direct_topic_request'
@@ -89,13 +89,13 @@ function buildLocationProgressBridgeReply(): string {
 }
 
 const EVORA_ATIBAIA_REGION_CONTEXT_REPLY =
-  'Sem problema, vou te situar.\n\nAtibaia é uma cidade muito procurada por quem quer sair um pouco da correria de São Paulo, mas sem ficar longe demais.\n\nO Évora fica na região da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.\n\nVocê quer que eu te explique mais sobre a região ou sobre a estrutura do loteamento?';
+  'Sem problema, vou te situar.\n\nAtibaia Ã© uma cidade muito procurada por quem quer sair um pouco da correria de SÃ£o Paulo, mas sem ficar longe demais.\n\nO Ã‰vora fica na regiÃ£o da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.\n\nVocÃª quer que eu te explique mais sobre a regiÃ£o ou sobre a estrutura do loteamento?';
 
 const EVORA_ATIBAIA_REGION_UNKNOWN_REPLY =
-  'Claro, essa é uma dúvida importante.\n\nAtibaia tem um perfil mais tranquilo, com bastante natureza, clima agradável e boa estrutura para quem quer morar com mais qualidade de vida.\n\nNo caso do Évora, ele fica na região da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.\n\nVocê está pensando em sair de São Paulo para morar com mais calma ou ainda está só comparando possibilidades?';
+  'Claro, essa Ã© uma dÃºvida importante.\n\nAtibaia tem um perfil mais tranquilo, com bastante natureza, clima agradÃ¡vel e boa estrutura para quem quer morar com mais qualidade de vida.\n\nNo caso do Ã‰vora, ele fica na regiÃ£o da Pedreira, no bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.\n\nVocÃª estÃ¡ pensando em sair de SÃ£o Paulo para morar com mais calma ou ainda estÃ¡ sÃ³ comparando possibilidades?';
 
 const EVORA_SAO_PAULO_CONTEXT_REPLY =
-  'Então faz sentido eu te explicar a diferença.\n\nPara quem vem de São Paulo, o Évora tem uma proposta de mais espaço, tranquilidade e contato com natureza, sem ficar tão distante da capital.\n\nAtibaia fica a cerca de 50 minutos de São Paulo, dependendo do ponto de saída, e o acesso ao Évora é pela Rodovia Dom Pedro I.\n\nVocê quer entender mais sobre o deslocamento ou sobre a estrutura do loteamento?';
+  'EntÃ£o faz sentido eu te explicar a diferenÃ§a.\n\nPara quem vem de SÃ£o Paulo, o Ã‰vora tem uma proposta de mais espaÃ§o, tranquilidade e contato com natureza, sem ficar tÃ£o distante da capital.\n\nAtibaia fica a cerca de 50 minutos de SÃ£o Paulo, dependendo do ponto de saÃ­da, e o acesso ao Ã‰vora Ã© pela Rodovia Dom Pedro I.\n\nVocÃª quer entender mais sobre o deslocamento ou sobre a estrutura do loteamento?';
 
 function isAssistantAskingAtibaiaRegionContext(text: string | null | undefined): boolean {
   const n = norm(text || '');
@@ -132,7 +132,7 @@ function buildEvoraRegionContextReplyForUser(userMessage: string | null | undefi
 }
 
 function startsWithGreeting(text: string): boolean {
-  return /^(oi|ol[aá]|bom dia|boa tarde|boa noite)\b/i.test((text || '').trim());
+  return /^(oi|ol[aÃ¡]|bom dia|boa tarde|boa noite)\b/i.test((text || '').trim());
 }
 
 function startsWithComposedCordialGreeting(text: string): boolean {
@@ -155,7 +155,7 @@ function greetingByHour(referenceNow?: Date): 'Bom dia' | 'Boa tarde' | 'Boa noi
 
 function stripLeadingGreetingPrefix(text: string): string {
   let next = (text || '').trim();
-  next = next.replace(/^(oi|ol[aá])(?:[!,. ]+)?/i, '').trim();
+  next = next.replace(/^(oi|ol[aÃ¡])(?:[!,. ]+)?/i, '').trim();
   next = next.replace(/^(bom dia|boa tarde|boa noite)(?:[!,. ]+)?/i, '').trim();
   next = next.replace(/^tudo bem\s*\?\s*/i, '').trim();
   return next;
@@ -184,9 +184,9 @@ function stripLeadingStaleTopicCta(text: string): { text: string; changed: boole
 
 function periodHumanLabel(period: string | null | undefined): string | null {
   const n = norm(period || '');
-  if (n === 'manha') return 'de manhã';
-  if (n === 'tarde') return 'à tarde';
-  if (n === 'noite') return 'à noite';
+  if (n === 'manha') return 'de manhÃ£';
+  if (n === 'tarde') return 'Ã  tarde';
+  if (n === 'noite') return 'Ã  noite';
   return null;
 }
 
@@ -226,43 +226,43 @@ function askVisitMissingSlotQuestion(
   const pendingMissingSlot = flowState.pendingVisitMissingSlot ?? null;
   const invalidTimeFlow = pendingMissingSlot === 'valid_time' || pendingInvalidTime.length > 0;
   if (invalidTimeFlow) {
-    const invalidTimeLabel = pendingInvalidTime || 'Esse horário';
+    const invalidTimeLabel = pendingInvalidTime || 'Esse horÃ¡rio';
     if (isConfusionVisitMessage(userMessage || '')) {
-      return `Você tem razão, eu me expressei mal. ${invalidTimeLabel} fica fora do horário disponível para visitas. Consigo seguir com um horário entre 09h e 18h. Qual fica melhor?`;
+      return `VocÃª tem razÃ£o, eu me expressei mal. ${invalidTimeLabel} fica fora do horÃ¡rio disponÃ­vel para visitas. Consigo seguir com um horÃ¡rio entre 09h e 18h. Qual fica melhor?`;
     }
     if (isAckLikeMessage(userMessage || '')) {
-      return 'Certo. Qual horário entre 09h e 18h você prefere?';
+      return 'Certo. Qual horÃ¡rio entre 09h e 18h vocÃª prefere?';
     }
-    return `${invalidTimeLabel} fica fora do horário de visitas. Posso seguir com um horário entre 09h e 18h. Qual prefere?`;
+    return `${invalidTimeLabel} fica fora do horÃ¡rio de visitas. Posso seguir com um horÃ¡rio entre 09h e 18h. Qual prefere?`;
   }
   const label = combineDateAndPeriodLabel(pendingDateLabel, pendingPeriod);
   if (!pendingDate) {
-    return 'Perfeito. Para qual dia você prefere agendar a visita?';
+    return 'Perfeito. Para qual dia vocÃª prefere agendar a visita?';
   }
   if (!pendingTime) {
-    if (label) return `Perfeito, ${label}. Qual horário fica melhor para você? ${VISIT_SLOT_WINDOW}`;
-    return `Perfeito. Qual horário fica melhor para você? ${VISIT_SLOT_WINDOW}`;
+    if (label) return `Perfeito, ${label}. Qual horÃ¡rio fica melhor para vocÃª? ${VISIT_SLOT_WINDOW}`;
+    return `Perfeito. Qual horÃ¡rio fica melhor para vocÃª? ${VISIT_SLOT_WINDOW}`;
   }
   if (!hasKnownName) {
     const hm = displayTime(pendingTime);
-    if (hm && label) return `Perfeito, ${label} às ${hm}. Como posso te chamar para confirmar o agendamento?`;
+    if (hm && label) return `Perfeito, ${label} Ã s ${hm}. Como posso te chamar para confirmar o agendamento?`;
     return 'Perfeito. Como posso te chamar para confirmar o agendamento?';
   }
   const hm = displayTime(pendingTime);
-  if (hm && label) return `Perfeito. Posso confirmar sua visita para ${label} às ${hm}?`;
+  if (hm && label) return `Perfeito. Posso confirmar sua visita para ${label} Ã s ${hm}?`;
   return 'Perfeito. Posso confirmar sua visita?';
 }
 
 function looksLikeVisitFlowReply(text: string): boolean {
   const n = norm(text);
   if (!n) return false;
-  return /\b(visita|agendar|agendamento|qual horario|qual horário|para qual dia|como posso te chamar|confirmar o agendamento|ficou agendada)\b/.test(n);
+  return /\b(visita|agendar|agendamento|qual horario|qual horÃ¡rio|para qual dia|como posso te chamar|confirmar o agendamento|ficou agendada)\b/.test(n);
 }
 
 function containsMediaOffer(text: string): boolean {
   const n = norm(text);
   if (!n) return false;
-  return /\b(video|vídeo|book|fotos|foto|imagens|galeria|te envio|posso te enviar)\b/.test(n);
+  return /\b(video|vÃ­deo|book|fotos|foto|imagens|galeria|te envio|posso te enviar)\b/.test(n);
 }
 
 function containsVisitOffer(text: string): boolean {
@@ -278,7 +278,7 @@ function containsBrokerAsk(text: string): boolean {
 
 function isAckLikeMessage(text: string): boolean {
   const n = norm(text).replace(/[.!?]+$/g, '').trim();
-  return /^(sim|ok|perfeito|ta bom|tá bom|pode ser|pode sim|fechado|claro|beleza|isso|pode|quero)$/.test(n);
+  return /^(sim|ok|perfeito|ta bom|tÃ¡ bom|pode ser|pode sim|fechado|claro|beleza|isso|pode|quero)$/.test(n);
 }
 
 function stripVisitOffer(text: string): string {
@@ -295,8 +295,8 @@ function stripVisitOffer(text: string): string {
 
 function stripMediaOffer(text: string): string {
   return (text || '')
-    .replace(/posso te enviar (?:o )?(?:book|vídeo|video|fotos?|imagens?)\??/gi, '')
-    .replace(/tamb[eé]m posso te mostrar[\s\S]*?(?:\.|$)/gi, '')
+    .replace(/posso te enviar (?:o )?(?:book|vÃ­deo|video|fotos?|imagens?)\??/gi, '')
+    .replace(/tamb[eÃ©]m posso te mostrar[\s\S]*?(?:\.|$)/gi, '')
     .replace(/se preferir[\s\S]*?(?:\.|$)/gi, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
@@ -319,7 +319,7 @@ function ensureFirstReplyGreeting(text: string, referenceNow?: Date): { text: st
     return { text: raw, changed: false };
   }
   const greeting = greetingByHour(referenceNow).toLowerCase();
-  const desiredPrefix = `Olá, ${greeting}, tudo bem?`;
+  const desiredPrefix = `OlÃ¡, ${greeting}, tudo bem?`;
   const withoutLeadingGreeting = stripLeadingGreetingPrefix(raw) || raw;
   const separator = /\r?\n/.test(withoutLeadingGreeting) ? '\n\n' : ' ';
   const merged = `${desiredPrefix}${separator}${withoutLeadingGreeting}`;
@@ -350,7 +350,7 @@ function isUncertainDisplayName(name: string | null | undefined): boolean {
 function removeUnconfirmedVocativeName(text: string): string {
   return (text || '')
     .replace(
-      /^(oi|ol[aá]|bom dia|boa tarde|boa noite)[,! ]+([a-zà-ÿ'-]{2,24})[,! ]+/i,
+      /^(oi|ol[aÃ¡]|bom dia|boa tarde|boa noite)[,! ]+([a-zÃ -Ã¿'-]{2,24})[,! ]+/i,
       '$1! ',
     )
     .replace(/\s{2,}/g, ' ')
@@ -398,15 +398,15 @@ function replyLooksInfoGap(text: string): boolean {
 
 function isAffirmativeUserReply(userMessage: string): boolean {
   const n = norm(userMessage).replace(/[.!?]+$/g, '').trim();
-  return /^(sim|pode ser|pode sim|quero sim|quero|ok|perfeito|fechado|claro|ta bom|tá bom|isso|pode)$/.test(n);
+  return /^(sim|pode ser|pode sim|quero sim|quero|ok|perfeito|fechado|claro|ta bom|tÃ¡ bom|isso|pode)$/.test(n);
 }
 
 function isContinuationDemandUserReply(userMessage: string): boolean {
   const n = norm(userMessage);
   if (!n) return false;
   return (
-    /\b(vc disse que ia falar mais|voce disse que ia falar mais|você disse que ia falar mais)\b/.test(n) ||
-    /\b(fala mais|me explica melhor|voce falou que ia explicar|você falou que ia explicar|quero saber mais)\b/.test(n)
+    /\b(vc disse que ia falar mais|voce disse que ia falar mais|vocÃª disse que ia falar mais)\b/.test(n) ||
+    /\b(fala mais|me explica melhor|voce falou que ia explicar|vocÃª falou que ia explicar|quero saber mais)\b/.test(n)
   );
 }
 function isInsistenceOrClarificationUserReply(userMessage: string): boolean {
@@ -417,7 +417,7 @@ function isInsistenceOrClarificationUserReply(userMessage: string): boolean {
     /\b(nao entendi|nao ficou claro|nao ajudou|explica de novo|explica melhor|me manda certinho|onde exatamente|onde fica exatamente)\b/.test(
       n
     ) ||
-    /\b(n[ãa]o entendi|n[ãa]o ficou claro|n[ãa]o ajudou)\b/.test(n)
+    /\b(n[Ã£a]o entendi|n[Ã£a]o ficou claro|n[Ã£a]o ajudou)\b/.test(n)
   );
 }
 
@@ -478,7 +478,7 @@ function isAssistantVisitOfferQuestion(text: string | null | undefined): boolean
   const n = norm(raw);
   if (!raw || !/\?/.test(raw)) return false;
   if (containsVisitOffer(raw)) return true;
-  return /\b(agendar|agendamento|marcar visita|conhecer pessoalmente|reservar horario|reservar horário)\b/.test(n);
+  return /\b(agendar|agendamento|marcar visita|conhecer pessoalmente|reservar horario|reservar horÃ¡rio)\b/.test(n);
 }
 
 type LastAssistantQuestionContext = {
@@ -629,8 +629,8 @@ function detectOfferedTopicsInSentence(text: string): AnaOfferTopic[] {
   if (/\b(valores?|preco|quanto custa|r\$)\b/.test(n)) topics.push('valores');
   if (/\b(formas? de pagamento|pagamento|entrada|parcela|parcelamento|financiamento)\b/.test(n)) topics.push('pagamento');
   if (/\b(fotos?|imagens?|galeria)\b/.test(n)) topics.push('fotos');
-  if (/\b(video|videos|v[�i]deo|v[�i]deos)\b/.test(n)) topics.push('video');
-  if (/\b(book|catalogo|cat[�a]logo|pdf|material)\b/.test(n)) topics.push('book');
+  if (/\b(video|videos|v[ï¿½i]deo|v[ï¿½i]deos)\b/.test(n)) topics.push('video');
+  if (/\b(book|catalogo|cat[ï¿½a]logo|pdf|material)\b/.test(n)) topics.push('book');
   return [...new Set(topics)];
 }
 
@@ -897,7 +897,7 @@ function ensureSingleFinalQuestion(params: {
   const genericLeadRemoved = stripGenericLoopQuestion(
     next
       .replace(/\bme conta,\s*quais sao suas duvidas\?\s*vou responder todas\.?/i, '')
-      .replace(/\bme conta,\s*quais s[a�]o suas d[u�]vidas\?\s*vou responder todas\.?/i, '')
+      .replace(/\bme conta,\s*quais s[aï¿½]o suas d[uï¿½]vidas\?\s*vou responder todas\.?/i, '')
       .replace(/\s{2,}/g, ' ')
       .trim()
   );
@@ -1075,7 +1075,8 @@ export function evaluateAnaReengagementPolicy(
   const closeExchange =
     Number.isFinite(lastInboundMs) &&
     Number.isFinite(lastOutboundMs) &&
-    Math.abs(lastInboundMs - lastOutboundMs) < minIdleMs;
+    Math.abs(lastInboundMs - lastOutboundMs) < minIdleMs &&
+    now.getTime() - Math.max(lastInboundMs, lastOutboundMs) < minIdleMs;
   if (closeExchange) return { allowed: false, reason: 'active_conversation', activeConversation: true };
   return { allowed: true, reason: 'ok', activeConversation: false };
 }
@@ -1471,7 +1472,7 @@ export function applyAnaConversationPolicy(
   if (visitFlowActive && !visitAlreadyScheduled) {
     const hasTopicSwitchIntent =
       containsMediaOffer(reply) ||
-      /\b(lazer|localizacao|localização|infraestrutura|pagamento|valor|seguranca|segurança|book|vídeo|video|foto|fotos)\b/.test(norm(reply));
+      /\b(lazer|localizacao|localizaÃ§Ã£o|infraestrutura|pagamento|valor|seguranca|seguranÃ§a|book|vÃ­deo|video|foto|fotos)\b/.test(norm(reply));
     const replyNeedsVisitAnchor = !looksLikeVisitFlowReply(reply) || isAckLikeMessage(input.userMessage);
     if (hasTopicSwitchIntent || replyNeedsVisitAnchor) {
       const anchoredVisitReply = askVisitMissingSlotQuestion(nextState, hasKnownName, input.userMessage);
@@ -1711,6 +1712,7 @@ export function applyAnaConversationPolicy(
     changed: reply !== (input.replyText || '').trim() || appliedRules.length > 0 || shouldPersistQuestionContext,
   };
 }
+
 
 
 
