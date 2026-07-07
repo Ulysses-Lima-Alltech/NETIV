@@ -466,6 +466,10 @@ export const settingsApi = {
     request<EnterpriseApiConnectionTestResult>(`/settings/api/enterprises/${enterpriseId}/test`, {
       method: 'POST',
     }),
+  deleteApiEnterprise: (enterpriseId: number) =>
+    request<{ ok: boolean }>(`/settings/api/enterprises/${enterpriseId}`, {
+      method: 'DELETE',
+    }),
   getOpenAiCostsConfig: () =>
     request<OpenAiCostSettingsPublic>('/settings/api/costs/config'),
   putOpenAiCostsConfig: (body: OpenAiCostSettingsUpdate) =>

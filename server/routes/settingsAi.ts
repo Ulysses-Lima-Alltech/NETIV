@@ -13,6 +13,7 @@ import {
   updateGlobalAiSettings,
   upsertEnterpriseAiSettings,
 } from '../services/enterpriseAiSettingsService.js';
+import { deleteEnterprisePermanently } from '../repositories/enterpriseRepository.js';
 import { listOpenAiCostSnapshots, syncOpenAiCosts } from '../services/openaiCostSyncService.js';
 import { OPENAI_ALLOWED_MODELS } from '../catalogs/aiModels.js';
 import {
@@ -215,6 +216,31 @@ router.post('/api/enterprises/:enterpriseId/test', async (req, res) => {
     console.error('[Settings] POST api/enterprises/:enterpriseId/test:', error);
     const msg = error instanceof Error ? error.message : 'Erro ao testar configuracao do empreendimento.';
     return res.status(500).json({ error: msg });
+  }
+});
+
+router.delete('/api/enterprises/:enterpriseId', async (req, res) => {
+  try {
+    const enterpriseId = parseEnterpriseId(req.params.enterpriseId);
+    if (enterpriseId == null) {
+      return res.status(400).json({ error: 'enterpriseId invalido.' });
+    }
+
+    const result = await deleteEnterprisePermanently(enterpriseId);
+
+    if (!result.ok && result.reason === 'not_found') {
+      return res.status(404).json({ error: 'Empreendimento nao encontrado.' });
+    }
+    if (!result.ok && result.reason === 'has_appointments') {
+      return res.status(409).json({
+        error: 'Este empreendimento possui agendamentos vinculados e nao pode ser excluido definitivamente.',
+      });
+    }
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('[Settings] DELETE api/enterprises/:enterpriseId:', error);
+    return res.status(500).json({ error: 'Erro ao excluir empreendimento.' });
   }
 });
 

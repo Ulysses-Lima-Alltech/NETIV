@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { isNavItemActive, useAppNav } from '../../hooks/useAppNav';
+import { useEnterprisesMenu } from '../../hooks/useEnterprisesMenu';
 import { SidebarIcon } from './SidebarIcons';
 import anaAvatar from '../../assets/ana-avatar.png';
 
@@ -15,6 +16,7 @@ export function SidebarNav({ collapsed, onToggleCollapsed, mobileOpen, onRequest
   const { pathname } = useLocation();
   const { user, logout } = useAuth();
   const items = useAppNav();
+  const { enterprises } = useEnterprisesMenu();
   const isDev = import.meta.env.DEV;
 
   const mainItems = items.filter((item) => item.section === 'main');
@@ -43,17 +45,33 @@ export function SidebarNav({ collapsed, onToggleCollapsed, mobileOpen, onRequest
         {mainItems.map((item) => {
           const active = isNavItemActive(pathname, item.to);
           return (
-            <Link
-              key={item.to}
-              to={item.to}
-              onClick={onRequestCloseMobile}
-              className={`netiv-sidebar__item ${active ? 'is-active' : ''}`}
-            >
-              <span className="netiv-sidebar__icon">
-                <SidebarIcon name={item.icon} />
-              </span>
-              <span className="netiv-collapsible-text truncate">{item.label}</span>
-            </Link>
+            <div key={item.to}>
+              <Link
+                to={item.to}
+                onClick={onRequestCloseMobile}
+                className={`netiv-sidebar__item ${active ? 'is-active' : ''}`}
+              >
+                <span className="netiv-sidebar__icon">
+                  <SidebarIcon name={item.icon} />
+                </span>
+                <span className="netiv-collapsible-text truncate">{item.label}</span>
+              </Link>
+
+              {item.to === '/settings/empreendimentos' && enterprises.length > 0 && (
+                <div className="netiv-sidebar__submenu">
+                  {enterprises.map((ent) => (
+                    <Link
+                      key={ent.id}
+                      to={`/settings/empreendimentos?id=${ent.id}`}
+                      onClick={onRequestCloseMobile}
+                      className="netiv-sidebar__subitem"
+                    >
+                      {ent.name}
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
           );
         })}
       </nav>

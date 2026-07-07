@@ -301,6 +301,7 @@ export function SettingsWhatsAppPage() {
   const [savingGlobalApi, setSavingGlobalApi] = useState(false);
   const [savingEnterpriseId, setSavingEnterpriseId] = useState<number | null>(null);
   const [testingEnterpriseId, setTestingEnterpriseId] = useState<number | null>(null);
+  const [deletingEnterpriseId, setDeletingEnterpriseId] = useState<number | null>(null);
   const [savingCostSettings, setSavingCostSettings] = useState(false);
   const [testingCostSettings, setTestingCostSettings] = useState(false);
   const [syncingCostsNow, setSyncingCostsNow] = useState(false);
@@ -662,6 +663,26 @@ export function SettingsWhatsAppPage() {
       setApiMessage({ type: 'error', text: msg });
     } finally {
       setSavingEnterpriseId(null);
+    }
+  };
+
+  const handleDeleteEnterprise = async (enterpriseId: number, enterpriseName: string) => {
+    const confirmed = window.confirm(
+      `Excluir definitivamente "${enterpriseName}"? Essa ação não pode ser desfeita.`
+    );
+    if (!confirmed) return;
+
+    setDeletingEnterpriseId(enterpriseId);
+    setApiMessage(null);
+    try {
+      await settingsApi.deleteApiEnterprise(enterpriseId);
+      await loadApiSettings();
+      setApiMessage({ type: 'success', text: 'Empreendimento excluído definitivamente.' });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Erro ao excluir empreendimento.';
+      setApiMessage({ type: 'error', text: msg });
+    } finally {
+      setDeletingEnterpriseId(null);
     }
   };
 
@@ -1532,6 +1553,14 @@ export function SettingsWhatsAppPage() {
                                   ) : (
                                     'Testar conexão'
                                   )}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteEnterprise(item.enterprise_id, item.enterprise_name)}
+                                  disabled={deletingEnterpriseId === item.enterprise_id}
+                                  className="inline-flex items-center justify-center text-[13px] font-medium text-red-600 hover:text-red-700 transition-colors"
+                                >
+                                  {deletingEnterpriseId === item.enterprise_id ? 'Excluindo…' : 'Excluir definitivamente'}
                                 </button>
                               </div>
                             </div>

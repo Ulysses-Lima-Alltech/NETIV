@@ -264,6 +264,44 @@ export async function inactivateEnterprise(id: number): Promise<EnterpriseRow | 
   return updateEnterprise(id, { status: 'inativo' });
 }
 
+export type DeleteEnterprisePermanentlyResult =
+  | { ok: true }
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'has_appointments' };
+
+export async function deleteEnterprisePermanently(
+  id: number
+): Promise<DeleteEnterprisePermanentlyResult> {
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const found = await client.query<{ id: number }>(
+      `SELECT id FROM enterprises WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    if (!found.rows[0]) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'not_found' };
+    }
+
+    await client.query(`DELETE FROM enterprises WHERE id = $1`, [id]);
+
+    await client.query('COMMIT');
+    return { ok: true };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    const pgCode = (error as { code?: string })?.code;
+    if (pgCode === '23503') {
+      return { ok: false, reason: 'has_appointments' };
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export function varsToFrontend(row: Record<string, string>) {
   return {
     priceLabel: row.preco ?? '',
