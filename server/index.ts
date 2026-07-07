@@ -133,7 +133,7 @@ initPostgres()
     }, 60 * 60 * 1000);
     setInterval(() => {
       void processAnaReengagementScan().catch((err) => console.error('[ana reengage]', err));
-    }, 30_000);
+    }, anaReengagementScanIntervalMs);
     setInterval(() => {
       void processDueScheduledBatchSends().catch((err) => console.error('[whatsapp batch scheduled worker]', err));
     }, 30_000);
@@ -151,6 +151,7 @@ initPostgres()
     console.error('[startup]', e);
     process.exit(1);
   });
+
 
 
 
