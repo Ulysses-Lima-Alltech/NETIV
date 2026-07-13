@@ -28,6 +28,16 @@ interface AuthContextValue extends AuthState {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+const SSO_BOOT_TIMEOUT_MS = 7000;
+
+function isEmbeddedInIframe(): boolean {
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -61,6 +71,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Listener para postMessage com token SSO
   useEffect(() => {
+    const embedded = isEmbeddedInIframe();
+
     const handleMessage = (event: MessageEvent) => {
       // Verificar se é um evento SSO válido
       if (event.data && event.data.type === 'sso_token' && event.data.token) {
@@ -75,12 +87,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Adicionar listener
     window.addEventListener('message', handleMessage);
 
-    // Timeout para fallback (se não receber SSO em 3 segundos)
+    // Timeout para fallback (se não receber SSO em 7 segundos)
     const timeoutId = setTimeout(() => {
       if (!user && loading) {
+        if (embedded) {
+          console.info('[Auth] Aguardando sincronismo do SSO dentro do iframe');
+          return;
+        }
         activateBypass();
       }
-    }, 3000);
+    }, SSO_BOOT_TIMEOUT_MS);
 
     return () => {
       window.removeEventListener('message', handleMessage);

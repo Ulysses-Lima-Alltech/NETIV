@@ -1,6 +1,6 @@
 ﻿import { useCallback, useEffect, useState } from 'react';
 import { AppNav } from '../components/AppNav';
-import { usersApi, userRoleLabel, type UserListItem, type UserRole } from '../api/client';
+import { usersApi, corretoresApi, userRoleLabel, type UserListItem, type UserRole, type Corretor } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 
 const field =
@@ -54,7 +54,9 @@ export function UsersPage() {
   const [formPassword, setFormPassword] = useState('');
   const [formRole, setFormRole] = useState<UserRole>('COLLABORATOR');
   const [formActive, setFormActive] = useState(true);
+  const [formBrokerId, setFormBrokerId] = useState<number | null>(null);
   const [newPassword, setNewPassword] = useState('');
+  const [corretores, setCorretores] = useState<Corretor[]>([]);
 
   const loadList = useCallback(() => {
     setLoading(true);
@@ -69,6 +71,13 @@ export function UsersPage() {
     loadList();
   }, [loadList]);
 
+  useEffect(() => {
+    corretoresApi
+      .list()
+      .then((d) => setCorretores(d.corretores))
+      .catch(() => setCorretores([]));
+  }, []);
+
   const openCreate = () => {
     setEditingUser(null);
     setFormName('');
@@ -76,6 +85,7 @@ export function UsersPage() {
     setFormPassword('');
     setFormRole('COLLABORATOR');
     setFormActive(true);
+    setFormBrokerId(null);
     setError(null);
     setCreateOpen(true);
   };
@@ -87,6 +97,7 @@ export function UsersPage() {
     setFormEmail(u.email);
     setFormRole(u.role);
     setFormActive(u.active);
+    setFormBrokerId(u.brokerId);
     setError(null);
     setEditOpen(true);
   };
@@ -103,6 +114,11 @@ export function UsersPage() {
     e.preventDefault();
     setError(null);
     setSaving(true);
+    if (formRole === 'COLLABORATOR' && formBrokerId == null) {
+      setError('Selecione o corretor vinculado a este colaborador.');
+      setSaving(false);
+      return;
+    }
     try {
       await usersApi.create({
         name: formName.trim(),
@@ -110,6 +126,7 @@ export function UsersPage() {
         password: formPassword,
         role: formRole,
         active: formActive,
+        brokerId: formRole === 'COLLABORATOR' ? formBrokerId : null,
       });
       setCreateOpen(false);
       loadList();
@@ -125,12 +142,18 @@ export function UsersPage() {
     if (!editingUser) return;
     setError(null);
     setSaving(true);
+    if (formRole === 'COLLABORATOR' && formBrokerId == null) {
+      setError('Selecione o corretor vinculado a este colaborador.');
+      setSaving(false);
+      return;
+    }
     try {
       await usersApi.update(editingUser.id, {
         name: formName.trim(),
         email: formEmail.trim(),
         role: formRole,
         active: formActive,
+        brokerId: formRole === 'COLLABORATOR' ? formBrokerId : null,
       });
       setEditOpen(false);
       loadList();
@@ -198,6 +221,7 @@ export function UsersPage() {
                     <th className="py-3 pr-4 font-semibold text-[#111827]">Nome</th>
                     <th className="py-3 pr-4 font-semibold text-[#111827]">E-mail</th>
                     <th className="py-3 pr-4 font-semibold text-[#111827]">Perfil</th>
+                    <th className="py-3 pr-4 font-semibold text-[#111827]">Corretor</th>
                     <th className="py-3 pr-4 font-semibold text-[#111827]">Ativo</th>
                     <th className="py-3 font-semibold text-[#111827]">Ações</th>
                   </tr>
@@ -209,6 +233,9 @@ export function UsersPage() {
                       <td className="py-3 pr-4 text-[#6B7280]">{u.email}</td>
                       <td className="py-3 pr-4">
                         <span className={profileAccentClass(u.role)}>{userRoleLabel(u.role)}</span>
+                      </td>
+                      <td className="py-3 pr-4 text-[#6B7280]">
+                        {corretores.find((c) => c.id === u.brokerId)?.fullName ?? '—'}
                       </td>
                       <td className="py-3 pr-4">{u.active ? 'Sim' : 'Não'}</td>
                       <td className="py-3 flex items-center gap-2">
@@ -274,6 +301,24 @@ export function UsersPage() {
                   ))}
                 </select>
               </div>
+              {formRole === 'COLLABORATOR' && (
+                <div>
+                  <label className={label}>Corretor vinculado</label>
+                  <select
+                    value={formBrokerId ?? ''}
+                    onChange={(e) => setFormBrokerId(e.target.value ? Number(e.target.value) : null)}
+                    className={field}
+                    required
+                  >
+                    <option value="">Selecione um corretor…</option>
+                    {corretores.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.fullName}{c.active ? '' : ' (inativo)'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="create-active" checked={formActive} onChange={(e) => setFormActive(e.target.checked)} />
                 <label htmlFor="create-active" className="text-[13px] text-[#6B7280]">Ativo</label>
@@ -317,6 +362,24 @@ export function UsersPage() {
                 </select>
                 {currentUser?.id === editingUser.id && <p className="text-[12px] text-[#6B7280] mt-1">Você não pode alterar seu próprio perfil.</p>}
               </div>
+              {formRole === 'COLLABORATOR' && (
+                <div>
+                  <label className={label}>Corretor vinculado</label>
+                  <select
+                    value={formBrokerId ?? ''}
+                    onChange={(e) => setFormBrokerId(e.target.value ? Number(e.target.value) : null)}
+                    className={field}
+                    required
+                  >
+                    <option value="">Selecione um corretor…</option>
+                    {corretores.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.fullName}{c.active ? '' : ' (inativo)'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="edit-active" checked={formActive} onChange={(e) => setFormActive(e.target.checked)} disabled={currentUser?.id === editingUser.id} />
                 <label htmlFor="edit-active" className="text-[13px] text-[#6B7280]">Ativo</label>

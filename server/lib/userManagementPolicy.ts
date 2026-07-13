@@ -7,6 +7,7 @@ export type PatchUserBody = {
   email?: string;
   role?: UserRole;
   active?: boolean;
+  brokerId?: number | null;
 };
 
 export class UserManagementPolicyError extends Error {
