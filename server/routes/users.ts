@@ -9,6 +9,7 @@ import {
   type AppUser,
   type AppUserPublic,
 } from '../repositories/userRepository.js';
+import { getCorretorById } from '../repositories/corretorRepository.js';
 import { createUserSchema, updateUserSchema, updatePasswordSchema } from '../validators/users.js';
 import {
   assertManagerialCanChangePassword,
@@ -19,13 +20,16 @@ import {
 
 const router = Router();
 
-function toPublicWithActive(u: AppUser): AppUserPublic & { active: boolean; createdAt: string; updatedAt: string } {
+function toPublicWithActive(
+  u: AppUser
+): AppUserPublic & { active: boolean; brokerId: number | null; createdAt: string; updatedAt: string } {
   return {
     id: u.id,
     name: u.name,
     email: u.email,
     role: u.role,
     active: u.active,
+    brokerId: u.broker_id,
     createdAt: u.created_at.toISOString(),
     updatedAt: u.updated_at.toISOString(),
   };
@@ -58,12 +62,17 @@ router.post('/', async (req, res: Response) => {
     if (existing) {
       return res.status(400).json({ error: 'E-mail já cadastrado.' });
     }
+    if (data.brokerId != null) {
+      const broker = await getCorretorById(data.brokerId);
+      if (!broker) return res.status(400).json({ error: 'Corretor selecionado não encontrado.' });
+    }
     const user = await createUser({
       name: data.name,
       email: data.email,
       password: data.password,
       role: data.role,
       active: data.active,
+      broker_id: data.brokerId ?? null,
     });
     res.status(201).json({ user: toPublicWithActive(user) });
   } catch (e) {
@@ -102,11 +111,22 @@ router.patch('/:id', async (req, res: Response) => {
         return res.status(400).json({ error: 'E-mail já cadastrado.' });
       }
     }
+    const effectiveRole = data.role ?? targetBefore.role;
+    const effectiveBrokerId = data.brokerId !== undefined ? data.brokerId : targetBefore.broker_id;
+    const changingRoleOrBroker = data.role !== undefined || data.brokerId !== undefined;
+    if (changingRoleOrBroker && effectiveRole === 'COLLABORATOR' && effectiveBrokerId == null) {
+      return res.status(400).json({ error: 'Selecione o corretor vinculado a este colaborador.' });
+    }
+    if (data.brokerId != null) {
+      const broker = await getCorretorById(data.brokerId);
+      if (!broker) return res.status(400).json({ error: 'Corretor selecionado não encontrado.' });
+    }
     const user = await updateUser(id, {
       name: data.name,
       email: data.email,
       role: data.role,
       active: data.active,
+      broker_id: data.brokerId,
     });
     if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
     res.json({ user: toPublicWithActive(user) });

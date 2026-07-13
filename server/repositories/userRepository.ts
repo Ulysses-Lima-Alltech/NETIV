@@ -203,6 +203,7 @@ export interface CreateUserInput {
   password: string;
   role: UserRole;
   active: boolean;
+  broker_id?: number | null;
 }
 
 export async function createUser(input: CreateUserInput): Promise<AppUser> {
@@ -222,7 +223,7 @@ export async function createUser(input: CreateUserInput): Promise<AppUser> {
     `INSERT INTO app_users (name, email, password_hash, role, active, broker_id, django_user_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING id, name, email, role, active, broker_id, django_user_id, created_at, updated_at`,
-    [input.name.trim(), email, hash, input.role, input.active, null, null]
+    [input.name.trim(), email, hash, input.role, input.active, input.broker_id ?? null, null]
   );
   const row = result.rows[0];
   if (!row) throw new Error('Falha ao criar usuário.');

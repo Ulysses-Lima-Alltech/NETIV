@@ -1267,15 +1267,16 @@ export interface UserListItem {
   email: string;
   role: UserRole;
   active: boolean;
+  brokerId: number | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export const usersApi = {
   list: () => request<{ users: UserListItem[] }>('/users'),
-  create: (body: { name: string; email: string; password: string; role: UserRole; active: boolean }) =>
+  create: (body: { name: string; email: string; password: string; role: UserRole; active: boolean; brokerId?: number | null }) =>
     request<{ user: UserListItem }>('/users', { method: 'POST', body }),
-  update: (id: number, body: { name?: string; email?: string; role?: UserRole; active?: boolean }) =>
+  update: (id: number, body: { name?: string; email?: string; role?: UserRole; active?: boolean; brokerId?: number | null }) =>
     request<{ user: UserListItem }>(`/users/${id}`, { method: 'PATCH', body }),
   updatePassword: (id: number, newPassword: string) =>
     request<{ ok: boolean }>(`/users/${id}/password`, { method: 'PATCH', body: { newPassword } }),
