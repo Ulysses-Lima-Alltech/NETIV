@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import multer from 'multer';
 import { query } from '../db/pg.js';
 import {
@@ -15,9 +15,19 @@ import {
   listImportBatches,
   previewImportFromCsv,
 } from '../services/contactImportService.js';
+import { requireRole, type AuthenticatedRequest } from '../middleware/auth.js';
+import { canAccessAll, canAccessBroker, canAccessContact, canAccessEnterprise, getAccessibleContactIds } from '../services/authorizationService.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+router.use('/import', requireRole('ADMIN'));
+
+async function assertContactAccess(req: AuthenticatedRequest, res: Response, id: number): Promise<boolean> {
+  if (await canAccessContact(req.user, id)) return true;
+  res.status(404).json({ error: 'Contato não encontrado no seu escopo.', code: 'OUT_OF_SCOPE' });
+  return false;
+}
 
 /** Express usa o nome do parâmetro `id` em runtime; tipos do pacote podem expor `id(\\d+)`. */
 function contactIdParam(req: { params: Record<string, string | undefined> }): string | undefined {
@@ -87,15 +97,17 @@ router.get('/', async (req, res) => {
   try {
     console.debug('[ContactsRoute] GET /contacts query', req.query);
     const filters = parseContactFilters(req as { query: Record<string, unknown> });
+    const allowedContactIds = canAccessAll(req.user!) ? undefined : await getAccessibleContactIds(req.user!);
     const page = Math.max(parseOptionalInt(req.query.page) ?? 1, 1);
     const pageSize = Math.min(Math.max(parseOptionalInt(req.query.pageSize) ?? parseOptionalInt(req.query.limit) ?? 100, 1), 500);
     const offset = parseOptionalInt(req.query.offset) ?? (page - 1) * pageSize;
     const rows = await listContacts({
       ...filters,
+      contactIds: allowedContactIds,
       limit: pageSize,
       offset: Math.max(offset, 0),
     });
-    const total = await countContacts(filters);
+    const total = await countContacts({ ...filters, contactIds: allowedContactIds });
     const ownerIds = [...new Set(rows.map((r) => r.owner_user_id).filter((x): x is number => x != null))];
     const ownerMap = new Map<number, string>();
     if (ownerIds.length > 0) {
@@ -141,6 +153,7 @@ router.get('/export', async (req, res) => {
   try {
     console.debug('[ContactsRoute] GET /contacts/export query', req.query);
     const filters = parseContactFilters(req as { query: Record<string, unknown> });
+    const allowedContactIds = canAccessAll(req.user!) ? undefined : await getAccessibleContactIds(req.user!);
 
     // Exporta todos os resultados do filtro (sem paginação visual)
     const allRows: Awaited<ReturnType<typeof listContacts>> = [];
@@ -149,6 +162,7 @@ router.get('/export', async (req, res) => {
     for (;;) {
       const chunk = await listContacts({
         ...filters,
+        contactIds: allowedContactIds,
         limit: pageSize,
         offset,
       });
@@ -394,9 +408,20 @@ router.get('/export', async (req, res) => {
   }
 });
 
-router.get('/filter-options', async (_req, res) => {
+router.get('/filter-options', async (req, res) => {
   try {
-    const origins = await listContactOrigins();
+    const authReq = req as AuthenticatedRequest;
+    const origins = canAccessAll(authReq.user)
+      ? await listContactOrigins()
+      : (await query<{ source: string }>(
+          `SELECT DISTINCT source
+           FROM contacts
+           WHERE id = ANY($1::int[])
+             AND archived_at IS NULL
+             AND NULLIF(BTRIM(source), '') IS NOT NULL
+           ORDER BY source ASC`,
+          [await getAccessibleContactIds(authReq.user)]
+        )).rows.map((row) => row.source);
     res.json({ origins });
   } catch (e) {
     console.error('[Contacts] GET /filter-options', e);
@@ -407,6 +432,7 @@ router.get('/filter-options', async (_req, res) => {
 router.get('/:id(\\d+)', async (req, res) => {
   try {
     const id = parseInt(String(contactIdParam(req)), 10);
+    if (!Number.isNaN(id) && !(await assertContactAccess(req as AuthenticatedRequest, res, id))) return;
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
     const c = await findContactById(id);
     if (!c) return res.status(404).json({ error: 'Contato não encontrado.' });
@@ -447,6 +473,7 @@ router.get('/:id(\\d+)', async (req, res) => {
 router.patch('/:id(\\d+)', async (req, res) => {
   try {
     const id = parseInt(String(contactIdParam(req)), 10);
+    if (!Number.isNaN(id) && !(await assertContactAccess(req as AuthenticatedRequest, res, id))) return;
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
     const body = req.body ?? {};
     const patch: Parameters<typeof updateContactAdmin>[1] = {
@@ -466,6 +493,9 @@ router.patch('/:id(\\d+)', async (req, res) => {
     } else if (typeof body.enterpriseInterest === 'string') {
       patch.enterpriseInterest = body.enterpriseInterest;
     }
+    if (patch.enterpriseId != null && !(await canAccessEnterprise((req as AuthenticatedRequest).user, patch.enterpriseId))) {
+      return res.status(403).json({ error: 'Empreendimento fora do seu escopo.', code: 'OUT_OF_SCOPE' });
+    }
     const c = await updateContactAdmin(id, patch);
     if (!c) return res.status(404).json({ error: 'Contato não encontrado.' });
     res.json({ success: true });
@@ -478,6 +508,7 @@ router.patch('/:id(\\d+)', async (req, res) => {
 router.patch('/:id(\\d+)/owner', async (req, res) => {
   try {
     const id = parseInt(String(contactIdParam(req)), 10);
+    if (!Number.isNaN(id) && !(await assertContactAccess(req as AuthenticatedRequest, res, id))) return;
     if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
     if (!req.user?.id) return res.status(401).json({ error: 'Não autenticado.' });
     const ownerUserId =
@@ -486,6 +517,10 @@ router.patch('/:id(\\d+)/owner', async (req, res) => {
         : Number.isFinite(Number(String(req.body.ownerUserId)))
           ? parseInt(String(req.body.ownerUserId), 10)
           : null;
+    if (req.user.role === 'COLLABORATOR') return res.status(403).json({ error: 'Colaborador não pode transferir contatos.' });
+    if (ownerUserId != null && !(await canAccessBroker(req.user, ownerUserId))) {
+      return res.status(403).json({ error: 'Corretor fora do seu escopo.', code: 'OUT_OF_SCOPE' });
+    }
     const row = await setContactOwnerAdmin({
       contactId: id,
       ownerUserId,

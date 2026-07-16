@@ -9,7 +9,6 @@ import webhookMetaRouter from './routes/webhookMeta.js';
 import { initPostgres } from './db/pg.js';
 import { getWhatsAppConfig } from './repositories/whatsappConfigRepository.js';
 import { getOpenAIConfig } from './repositories/openaiConfigRepository.js';
-import { bootstrapFirstAdmin } from './bootstrap/adminBootstrap.js';
 import { processDueDeferredHandoffs } from './repositories/conversationRepository.js';
 import { processAnaReengagementScan } from './services/anaReengagementService.js';
 import { syncAllConversationOwnersFromContacts } from './repositories/contactsRepository.js';
@@ -34,8 +33,24 @@ const anaReengagementScanIntervalMs = (() => {
 })();
 const autoWalletInactiveEnabled = process.env.AUTO_WALLET_INACTIVE_ENABLED === 'true';
 setRealtimeEnabled(realtimeEnabled);
-app.use(cors({ origin: true }));
-app.use(express.json({ limit: '10mb' }));
+const browserOrigins = String(process.env.CORS_ORIGIN ?? process.env.FRONTEND_URL ?? '')
+  .split(',').map((value) => value.trim()).filter(Boolean);
+app.use(cors({
+  credentials: true,
+  origin(origin, callback) {
+    if (!origin || browserOrigins.includes(origin) || (config.nodeEnv !== 'production' && browserOrigins.length === 0)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error('Origin não autorizada.'));
+  },
+}));
+app.use(express.json({
+  limit: '10mb',
+  verify(req, _res, buffer) {
+    (req as express.Request).rawBody = Buffer.from(buffer);
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.use('/webhook', webhookMetaRouter);
@@ -61,14 +76,8 @@ app.get('/health', (_req, res) => {
   });
 });
 
-initPostgres()
+initPostgres({ applyMigrations: config.nodeEnv !== 'production' })
   .then(async () => {
-    try {
-      await bootstrapFirstAdmin();
-    } catch (e) {
-      console.error('[startup] Falha no bootstrap do admin:', e instanceof Error ? e.stack ?? e.message : e);
-    }
-
     try {
       const synced = await syncAllConversationOwnersFromContacts();
       if (synced > 0) {

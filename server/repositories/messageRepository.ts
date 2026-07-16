@@ -288,6 +288,7 @@ export async function getTrailingUserMessageBurst(conversationId: number): Promi
  */
 export async function softDeleteMessage(
   messageId: number,
+  conversationId: number,
   deletedByUserId: number,
 ): Promise<MessageRow | null> {
   const { rows } = await query<MessageRow>(
@@ -295,9 +296,9 @@ export async function softDeleteMessage(
      SET deleted_at = NOW(),
          deleted_by_user_id = $1,
          delete_scope = 'internal'
-     WHERE id = $2 AND deleted_at IS NULL
+     WHERE id = $2 AND conversation_id = $3 AND deleted_at IS NULL
      RETURNING *`,
-    [deletedByUserId, messageId],
+    [deletedByUserId, messageId, conversationId],
   );
   const deleted = rows[0] ?? null;
   if (deleted) {

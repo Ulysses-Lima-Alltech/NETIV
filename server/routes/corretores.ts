@@ -22,8 +22,22 @@ import {
   createBrokerAvailabilitySchema,
   updateBrokerAvailabilitySchema,
 } from '../validators/brokerAvailability.js';
+import { canAccessBroker, getAccessibleBrokerIds } from '../services/authorizationService.js';
 
 const router = Router();
+
+router.use((req, res, next) => {
+  if (req.user?.role === 'ADMIN' || req.method === 'GET') return next();
+  return res.status(403).json({ error: 'Somente ADMIN pode alterar corretores.', code: 'ROLE_FORBIDDEN' });
+});
+router.param('id', async (req, res, next, rawId) => {
+  const id = Number(rawId);
+  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'ID inválido.' });
+  if (!req.user || !(await canAccessBroker(req.user, id))) {
+    return res.status(404).json({ error: 'Corretor não encontrado no seu escopo.', code: 'OUT_OF_SCOPE' });
+  }
+  next();
+});
 
 router.get('/', async (req, res) => {
   try {
@@ -31,8 +45,9 @@ router.get('/', async (req, res) => {
     const rows = enterpriseId != null && !Number.isNaN(enterpriseId)
       ? await listCorretoresByEnterprise(enterpriseId)
       : await listCorretoresWithEnterprises(false);
+    const allowedIds = req.user?.role === 'ADMIN' ? null : new Set(await getAccessibleBrokerIds(req.user!));
     res.json({
-      corretores: rows.map((r) => ({
+      corretores: rows.filter((row) => allowedIds == null || allowedIds.has(row.id)).map((r) => ({
         id: r.id,
         fullName: r.full_name,
         city: r.city,

@@ -25,6 +25,7 @@ export interface AppointmentRow {
 }
 
 export interface ListAppointmentsParams {
+  appointmentIds?: number[];
   enterpriseId?: number;
   brokerId?: number;
   status?: string;
@@ -35,6 +36,10 @@ export async function listAppointments(params: ListAppointmentsParams = {}): Pro
   const conditions: string[] = [];
   const values: unknown[] = [];
   let i = 1;
+  if (params.appointmentIds !== undefined) {
+    conditions.push(`id = ANY($${i++}::int[])`);
+    values.push(params.appointmentIds);
+  }
   if (params.enterpriseId != null) {
     conditions.push(`enterprise_id = $${i++}`);
     values.push(params.enterpriseId);

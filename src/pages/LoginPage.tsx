@@ -9,7 +9,7 @@ const btnPrimary =
   'w-full inline-flex items-center justify-center gap-2 text-[14px] font-semibold bg-[#F97316] text-white rounded-[10px] px-6 py-[10px] hover:bg-[#EA580C] active:bg-[#C2410C] disabled:opacity-40 transition-colors shadow-sm';
 
 export function LoginPage() {
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -17,7 +17,7 @@ export function LoginPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!loading && user) navigate('/inbox', { replace: true });
+    if (!loading && user) navigate(user.mustChangePassword ? '/change-password' : '/inbox', { replace: true });
   }, [loading, user, navigate]);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -25,8 +25,8 @@ export function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await login(email.trim(), password);
-      navigate('/inbox', { replace: true });
+      const authenticatedUser = await login(identifier.trim(), password);
+      navigate(authenticatedUser.mustChangePassword ? '/change-password' : '/inbox', { replace: true });
     } catch (err) {
       let msg = err instanceof Error ? err.message : 'Erro inesperado ao fazer login.';
       if (err instanceof TypeError || msg === 'Failed to fetch') {
@@ -42,7 +42,7 @@ export function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-[#F9FAFB] p-4">
       <div className="w-full max-w-[380px] bg-white rounded-[12px] border border-[#E5E7EB] shadow-[0_1px_2px_rgba(0,0,0,0.04)] p-6">
         <h1 className="text-[20px] font-semibold text-[#111827] mb-1">Entrar</h1>
-        <p className="text-[13px] text-[#6B7280] mb-4">Use seu e-mail e senha para acessar.</p>
+        <p className="text-[13px] text-[#6B7280] mb-4">Use seu usuário ou e-mail e senha para acessar.</p>
         {error && (
           <div
             role="alert"
@@ -58,20 +58,20 @@ export function LoginPage() {
         )}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label htmlFor="login-email" className="block text-[13px] font-medium text-[#6B7280] mb-1.5">
-              E-mail
+            <label htmlFor="login-identifier" className="block text-[13px] font-medium text-[#6B7280] mb-1.5">
+              Usuário ou e-mail
             </label>
             <input
-              id="login-email"
-              type="email"
-              autoComplete="email"
-              value={email}
+              id="login-identifier"
+              type="text"
+              autoComplete="username"
+              value={identifier}
               onChange={(e) => {
                 setError(null);
-                setEmail(e.target.value);
+                setIdentifier(e.target.value);
               }}
               className={field}
-              placeholder="seu@email.com"
+              placeholder="seu.usuario"
               required
             />
           </div>

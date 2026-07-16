@@ -1,254 +1,201 @@
-// server/routes/sso.ts
-import { Router, Request, Response } from 'express';
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
+import { Router, type Request, type Response } from 'express';
+import { query } from '../db/pg.js';
 import {
+  createSession,
+  createUser,
   findByEmail,
   findByEmailIncludingInactive,
-  createUser,
+  isValidUsername,
+  revokeAllSessions,
   updateUser,
-  createSession,
   type AppUser,
   type SessionScope,
 } from '../repositories/userRepository.js';
-import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
-import { isUserRole, type UserRole } from '../constants/roles.js';
 import { upsertCorretorAndEnterprise } from '../repositories/corretorRepository.js';
-import { getPool } from '../db/pg.js';
+import { recordAccessAudit } from '../services/authorizationService.js';
+import { disconnectUserSockets } from '../realtime/socketServer.js';
+import { disconnectSseUser } from '../services/whatsappEvents.js';
+import { ssoRateLimit } from '../middleware/rateLimit.js';
 
 const router = Router();
 
-// ── Funções auxiliares para verificar JWT (sem dependência externa) ──
-
-/**
- * Decodifica Base64-URL para string.
- *
- * Base64-URL é como Base64 normal, mas troca + por -, / por _, e remove o = final.
- * Isso é necessário porque + e / têm significados especiais em URLs.
- */
-function base64UrlDecode(str: string): string {
-  // Restaurar os caracteres originais do Base64
-  let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
-  // Adicionar padding (=) se necessário (Base64 precisa de múltiplos de 4)
-  while (base64.length % 4 !== 0) base64 += '=';
-  return Buffer.from(base64, 'base64').toString('utf-8');
-}
-
-/**
- * Verifica e decodifica um JWT assinado com HMAC-SHA256.
- *
- * Retorna o payload se válido, ou null se:
- * - A assinatura não bater (token foi adulterado)
- * - O token expirou (exp < agora)
- * - O iat está no futuro (clock skew / replay)
- */
-function verifyJwt(token: string, secret: string): Record<string, unknown> | null {
-  // JWT tem 3 partes: header.payload.signature
-  const parts = token.split('.');
-  if (parts.length !== 3) return null;
-
-  const [headerB64, payloadB64, signatureB64] = parts;
-
-  // Recriar a assinatura esperada usando o secret
-  const signatureInput = `${headerB64}.${payloadB64}`;
-  const expectedSig = createHmac('sha256', secret)
-    .update(signatureInput)
-    .digest('base64url');
-
-  // Comparar assinaturas com timingSafeEqual (previne timing attacks)
-  // Timing attack: um atacante mede o tempo da comparação para adivinhar a assinatura byte a byte
-  const sigBuffer = Buffer.from(signatureB64, 'base64url');
-  const expectedBuffer = Buffer.from(expectedSig, 'base64url');
-  if (sigBuffer.length !== expectedBuffer.length) return null;
-  if (!timingSafeEqual(sigBuffer, expectedBuffer)) return null;
-
-  // Assinatura ok! Agora decodificar o payload
+function decodeJsonPart(value: string): Record<string, unknown> | null {
   try {
-    const payload = JSON.parse(base64UrlDecode(payloadB64));
-
-    // Verificar expiração
-    const now = Math.floor(Date.now() / 1000);
-    if (typeof payload.exp === 'number' && now > payload.exp) {
-      console.log('[SSO] JWT expirado:', { exp: payload.exp, now });
-      return null; // Token expirado
-    }
-
-    // Verificar iat (issued at) — não aceitar tokens do "futuro" (clock skew > 60s)
-    if (typeof payload.iat === 'number' && payload.iat > now + 60) {
-      console.log('[SSO] JWT iat no futuro:', { iat: payload.iat, now });
-      return null;
-    }
-
-    return payload;
+    return JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Record<string, unknown>;
   } catch {
     return null;
   }
 }
 
-// ── Rota SSO ──
+function audienceMatches(raw: unknown, expected: string): boolean {
+  return typeof raw === 'string' ? raw === expected : Array.isArray(raw) && raw.includes(expected);
+}
 
-// POST /api/auth/sso
-// Chamado pelo Django server-to-server (NÃO pelo navegador!)
-router.post('/', async (req: Request, res: Response): Promise<void> => {
-  const client = await getPool().connect();
+function verifyJwt(token: string, secret: string, issuer: string, audience: string): Record<string, unknown> | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const [headerPart, payloadPart, signaturePart] = parts;
+  const header = decodeJsonPart(headerPart);
+  const payload = decodeJsonPart(payloadPart);
+  if (!header || !payload || header.alg !== 'HS256' || (header.typ != null && header.typ !== 'JWT')) return null;
+  const expected = createHmac('sha256', secret).update(`${headerPart}.${payloadPart}`).digest();
+  const supplied = Buffer.from(signaturePart, 'base64url');
+  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  const exp = payload.exp;
+  const iat = payload.iat;
+  const jti = payload.jti;
+  const maxTtl = Math.max(60, Number.parseInt(process.env.SSO_MAX_TOKEN_TTL_SECONDS ?? '300', 10) || 300);
+  if (typeof exp !== 'number' || typeof iat !== 'number' || typeof jti !== 'string' || !jti.trim()) return null;
+  if (exp <= now || iat > now + 60 || exp - iat > maxTtl) return null;
+  if (payload.iss !== issuer || !audienceMatches(payload.aud, audience)) return null;
+  return payload;
+}
+
+async function consumeJti(jti: string, exp: number): Promise<boolean> {
+  await query(`DELETE FROM app_sso_token_uses WHERE expires_at <= NOW()`);
+  const result = await query(
+    `INSERT INTO app_sso_token_uses (jti, expires_at)
+     VALUES ($1, TO_TIMESTAMP($2))
+     ON CONFLICT (jti) DO NOTHING`,
+    [jti, exp]
+  );
+  return (result.rowCount ?? 0) === 1;
+}
+
+router.post('/', ssoRateLimit, async (req: Request, res: Response): Promise<void> => {
   try {
-    // ── PASSO 1: Ler o JWT do body ──
-    const { token: jwtToken } = req.body;
-    if (!jwtToken || typeof jwtToken !== 'string') {
+    const jwtToken = typeof req.body?.token === 'string' ? req.body.token : '';
+    if (!jwtToken) {
       res.status(400).json({ error: 'Token JWT é obrigatório.' });
       return;
     }
-
-    // ── PASSO 2: Verificar o JWT ──
-    const secret = process.env.SSO_SHARED_SECRET;
-    if (!secret) {
-      console.error('[SSO] SSO_SHARED_SECRET não configurado no ambiente.');
-      res.status(500).json({ error: 'SSO não configurado.' });
+    const secret = process.env.SSO_SHARED_SECRET?.trim();
+    const issuer = process.env.SSO_EXPECTED_ISSUER?.trim();
+    const audience = process.env.SSO_EXPECTED_AUDIENCE?.trim();
+    if (!secret || !issuer || !audience) {
+      res.status(503).json({ error: 'SSO não configurado.' });
       return;
     }
-
-    const payload = verifyJwt(jwtToken, secret);
+    const payload = verifyJwt(jwtToken, secret, issuer, audience);
     if (!payload) {
-      // Assinatura inválida, expirado, ou mal-formado
       res.status(401).json({ error: 'JWT inválido ou expirado.' });
       return;
     }
+    if (!(await consumeJti(String(payload.jti), Number(payload.exp)))) {
+      res.status(401).json({ error: 'JWT já utilizado.', code: 'SSO_REPLAY' });
+      return;
+    }
 
-    // ── PASSO 3: Extrair dados do payload ──
-    const email = typeof payload.email === 'string' ? payload.email : '';
-    const name = typeof payload.name === 'string' ? payload.name : '';
-    const role = typeof payload.role === 'string' ? payload.role : '';
-    const brokerId = typeof payload.broker_id === 'number' ? payload.broker_id : null;
+    const email = typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : '';
+    const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+    const usernameRaw = typeof payload.username === 'string' ? payload.username.trim().toLowerCase() : null;
+    const username = usernameRaw && isValidUsername(usernameRaw) ? usernameRaw : null;
+    const requestedRole = typeof payload.role === 'string' ? payload.role : null;
     const djangoUserId = typeof payload.django_user_id === 'number' ? payload.django_user_id : null;
-
-    const brokerInfo = (payload.broker && typeof payload.broker === 'object')
-      ? payload.broker as Record<string, unknown>
-      : null;
-
+    let effectiveBrokerId = typeof payload.broker_id === 'number' ? payload.broker_id : null;
     if (!email) {
       res.status(400).json({ error: 'Email é obrigatório no JWT.' });
       return;
     }
 
-    // Se o role não for válido (ADMIN, MANAGERIAL, COLLABORATOR), usa COLLABORATOR
-    const safeRole: UserRole = isUserRole(role) ? role : 'COLLABORATOR';
+    const inactive = await findByEmailIncludingInactive(email);
+    if (inactive && !inactive.active) {
+      res.status(403).json({ error: 'Usuário inativo.', code: 'USER_INACTIVE' });
+      return;
+    }
+    // O SSO autentica a identidade, mas não é uma via paralela para elevar ou
+    // rebaixar perfis locais. Novas identidades entram com privilégio mínimo.
+    const localRole = inactive?.role ?? 'COLLABORATOR';
 
-    // ── Iniciar transação ──
-    await client.query('BEGIN');
-
-    // ── PASSO 4: Upsert do corretor (apenas para COLLABORATOR com broker_info) ──
-    let effectiveBrokerId: number | null = brokerId;
-    if (safeRole === 'COLLABORATOR' && brokerInfo && typeof brokerInfo.enterprise_id === 'number') {
-      // Se o Django não mandou broker_id, tentar achar pelo app_user existente (email)
-      if (effectiveBrokerId == null) {
-        const existingAppUser = await findByEmail(email);
-        if (existingAppUser?.broker_id != null) {
-          effectiveBrokerId = existingAppUser.broker_id;
-        }
-      }
-
-      console.log('[SSO][broker-upsert] Iniciando upsert de corretor para email:', email);
-      try {
-        effectiveBrokerId = await upsertCorretorAndEnterprise({
-          existingBrokerId: effectiveBrokerId,
-          fullName: String(brokerInfo.full_name ?? name ?? email),
-          phone: typeof brokerInfo.phone === 'string' ? brokerInfo.phone : null,
-          email: typeof brokerInfo.email === 'string' ? brokerInfo.email : email || null,
-          realEstateAgency: String(brokerInfo.real_estate_agency ?? ''),
-          enterpriseId: brokerInfo.enterprise_id as number,
-        });
-        console.log('[SSO][broker-upsert] Corretor upsert concluído, broker_id:', effectiveBrokerId);
-      } catch (e) {
-        console.error('[SSO][broker-upsert] Erro no upsert do corretor:', e);
-        await client.query('ROLLBACK');
-        res.status(500).json({ error: 'Erro ao provisionar corretor.' });
-        return;
-      }
+    const brokerInfo = payload.broker && typeof payload.broker === 'object'
+      ? payload.broker as Record<string, unknown>
+      : null;
+    if (localRole === 'COLLABORATOR' && brokerInfo && typeof brokerInfo.enterprise_id === 'number') {
+      effectiveBrokerId = await upsertCorretorAndEnterprise({
+        existingBrokerId: effectiveBrokerId ?? inactive?.broker_id ?? null,
+        fullName: String(brokerInfo.full_name ?? (name || email)),
+        phone: typeof brokerInfo.phone === 'string' ? brokerInfo.phone : null,
+        email: typeof brokerInfo.email === 'string' ? brokerInfo.email : email,
+        realEstateAgency: String(brokerInfo.real_estate_agency ?? ''),
+        enterpriseId: brokerInfo.enterprise_id,
+      });
     }
 
-    // ── PASSO 5: Buscar ou criar o usuário ──
     let user: AppUser | null = await findByEmail(email);
-
     if (user) {
-      // Usuário já existe → atualizar nome, role, broker_id e django_user_id
-      await updateUser(user.id, {
+      const securityChanged = user.broker_id !== effectiveBrokerId;
+      user = await updateUser(user.id, {
+        username: user.username ?? username,
         name: name || user.name,
-        role: safeRole,
-        active: true,
         broker_id: effectiveBrokerId,
         django_user_id: djangoUserId,
       });
-    } else {
-      // Verificar se existe mas está inativo
-      const inactive = await findByEmailIncludingInactive(email);
-      if (inactive) {
-        // Reativar o usuário
-        await updateUser(inactive.id, {
-          name: name || inactive.name,
-          role: safeRole,
-          active: true,
-          broker_id: effectiveBrokerId,
-          django_user_id: djangoUserId,
-        });
-        user = await findByEmail(email);
-      } else {
-        // Criar usuário novo com senha aleatória (nunca vai fazer login manual)
-        const randomPassword = randomBytes(32).toString('hex');
-        user = await createUser({
-          name: name || email.split('@')[0],
-          email,
-          password: randomPassword,
-          role: safeRole,
-          active: true,
-        });
-        // Após criar, atualizar broker_id e django_user_id
-        await updateUser(user.id, {
-          broker_id: effectiveBrokerId,
-          django_user_id: djangoUserId,
-        });
+      if (securityChanged && user) {
+        await revokeAllSessions(user.id);
+        disconnectUserSockets(user.id, 'sso_identity_changed');
+        disconnectSseUser(user.id);
       }
+    } else {
+      user = await createUser({
+        username,
+        name: name || email.split('@')[0],
+        email,
+        password: randomBytes(32).toString('hex'),
+        role: 'COLLABORATOR',
+        active: true,
+        must_change_password: false,
+        broker_id: effectiveBrokerId,
+        django_user_id: djangoUserId,
+      });
     }
-
     if (!user) {
-      await client.query('ROLLBACK');
-      res.status(500).json({ error: 'Falha ao criar/buscar usuário.' });
+      res.status(500).json({ error: 'Falha ao provisionar usuário.' });
       return;
     }
 
-    // ── PASSO 6: Ler e validar a whitelist do JWT ──
-    const rawIds = payload.allowed_conversation_ids;
-    const scopeKind = typeof payload.scope_kind === 'string' ? payload.scope_kind : null;
-    const totalPortfolioSize = typeof payload.total_portfolio_size === 'number' ? payload.total_portfolio_size : null;
-
-    let scope: SessionScope | null = null;
-    if (Array.isArray(rawIds) && scopeKind) {
-      const convIds = rawIds
-        .map((n) => Number(n))
-        .filter((n) => Number.isFinite(n) && n > 0);
-      scope = {
-        kind: scopeKind,
-        convIds,
-        totalSize: totalPortfolioSize ?? undefined,
-      };
-      console.log(`[SSO] scope=${scopeKind} size=${convIds.length} total=${totalPortfolioSize} user=${email}`);
+    // Mantém a compatibilidade do broker_id legado por uma atribuição explícita.
+    // Atribuições feitas por ADMIN ou gestor nunca são removidas por este fluxo.
+    await query(
+      `DELETE FROM app_user_brokers
+       WHERE user_id = $1
+         AND assignment_source = 'LEGACY'
+         AND ($2::int IS NULL OR broker_id <> $2)`,
+      [user.id, effectiveBrokerId]
+    );
+    if (effectiveBrokerId != null) {
+      await query(
+        `INSERT INTO app_user_brokers (user_id, broker_id, assigned_by_user_id, assignment_source)
+         VALUES ($1, $2, NULL, 'LEGACY')
+         ON CONFLICT (user_id, broker_id) DO NOTHING`,
+        [user.id, effectiveBrokerId]
+      );
     }
 
-    // ── PASSO 7: Criar sessão (token) ──
-    // Isso é a mesma função que o login normal usa.
-    // O token gerado funciona exatamente como se o usuário tivesse digitado email+senha.
-    // É um randomBytes(32) = 256 bits de entropia → impossível adivinhar (anti-IDOR)
+    const rawIds = payload.allowed_conversation_ids;
+    const scopeKind = payload.scope_kind === 'broker_portfolio' ? 'broker_portfolio' : null;
+    const totalSize = typeof payload.total_portfolio_size === 'number' ? payload.total_portfolio_size : undefined;
+    let scope: SessionScope | null = null;
+    if (scopeKind) {
+      const convIds = Array.isArray(rawIds)
+        ? [...new Set(rawIds.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))]
+        : [];
+      scope = { kind: scopeKind, convIds, totalSize };
+    }
     const sessionToken = await createSession(user.id, scope);
-
-    // ── Commit da transação ──
-    await client.query('COMMIT');
-
-    // ── PASSO 8: Retornar o session token (e o broker_id resolvido) para o Django ──
+    await recordAccessAudit({
+      actorUserId: user.id,
+      targetUserId: user.id,
+      action: 'SSO_SESSION_CREATED',
+      resourceType: 'session',
+      metadata: { scopeKind, scopeSize: scope?.convIds.length ?? null, roleClaimIgnored: requestedRole },
+    });
     res.json({ sessionToken, brokerId: effectiveBrokerId });
-
-  } catch (e) {
-    console.error('[SSO] Erro:', e);
-    await client.query('ROLLBACK').catch(() => {});
+  } catch (error) {
+    console.error('[SSO]', error);
     res.status(500).json({ error: 'Erro interno no SSO.' });
-  } finally {
-    client.release();
   }
 });
 

@@ -2,11 +2,9 @@
 
 export function AppNav() {
   const { user } = useAuth();
-  const isDev = import.meta.env.DEV;
-
   if (!user) return null;
 
-  const displayName = !isDev && /bypass/i.test(user.name) ? '' : user.name;
+  const displayName = user.name;
   if (!displayName) return null;
 
   return (

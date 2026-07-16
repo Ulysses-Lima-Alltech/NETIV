@@ -1,5 +1,7 @@
 import { query } from '../db/pg.js';
 import { getInboxGlobalRoom, getSocketServer } from './socketServer.js';
+import { getSessionUser } from '../repositories/userRepository.js';
+import { canAccessConversation } from '../services/authorizationService.js';
 
 export interface RealtimeConversationPayload {
   id: string;
@@ -198,7 +200,7 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
   };
 }
 
-function emitSocketEvent<T>(event: string, payload: T, conversationId?: number): void {
+export async function publishAccessControlledRealtimeEvent<T>(event: string, payload: T, conversationId?: number): Promise<void> {
   try {
     const io = getSocketServer();
     if (!io) return;
@@ -213,6 +215,15 @@ function emitSocketEvent<T>(event: string, payload: T, conversationId?: number):
         const socket = io.sockets.sockets.get(socketId);
         if (!socket) continue;
 
+        const token = typeof socket.data.sessionToken === 'string' ? socket.data.sessionToken : '';
+        const user = token ? await getSessionUser(token) : null;
+        if (!user || user.must_change_password) {
+          socket.emit('auth.revoked', { reason: user ? 'password_change_required' : 'session_invalid' });
+          socket.disconnect(true);
+          continue;
+        }
+        if (!(await canAccessConversation(user, conversationId))) continue;
+
         const scope = socket.data.sessionScope;
         if (scope && scope.kind === 'broker_portfolio') {
           // Lista vazia → nunca recebe push de conversa nova
@@ -221,8 +232,19 @@ function emitSocketEvent<T>(event: string, payload: T, conversationId?: number):
         socket.emit(event, payload);
       }
     } else {
-      // Sem ID de conversa → broadcast global (ex: mensagens genéricas)
-      io.to(room).emit(event, payload);
+      // Sem recurso identificável: somente ADMIN recebe o evento.
+      for (const socketId of sockets) {
+        const socket = io.sockets.sockets.get(socketId);
+        if (!socket) continue;
+        const token = typeof socket.data.sessionToken === 'string' ? socket.data.sessionToken : '';
+        const user = token ? await getSessionUser(token) : null;
+        if (!user || user.must_change_password) {
+          socket.emit('auth.revoked', { reason: user ? 'password_change_required' : 'session_invalid' });
+          socket.disconnect(true);
+          continue;
+        }
+        if (user.role === 'ADMIN') socket.emit(event, payload);
+      }
     }
   } catch (error) {
     console.warn('[Realtime] publish_emit_failed', {
@@ -237,7 +259,7 @@ export async function publishConversationCreated(conversationId: number): Promis
     const payload = await buildConversationPayload(conversationId);
     if (!payload) return;
     console.info('[Realtime] publish conversation.created', { conversationId });
-    emitSocketEvent('conversation.created', payload, conversationId);
+    await publishAccessControlledRealtimeEvent('conversation.created', payload, conversationId);
   } catch (error) {
     console.warn('[Realtime] publishConversationCreated_failed', {
       conversationId,
@@ -251,7 +273,7 @@ export async function publishConversationUpdated(conversationId: number): Promis
     const payload = await buildConversationPayload(conversationId);
     if (!payload) return;
     console.info('[Realtime] publish conversation.updated', { conversationId });
-    emitSocketEvent('conversation.updated', payload, conversationId);
+    await publishAccessControlledRealtimeEvent('conversation.updated', payload, conversationId);
   } catch (error) {
     console.warn('[Realtime] publishConversationUpdated_failed', {
       conversationId,
@@ -268,7 +290,7 @@ export function publishMessageCreated(message: RealtimeMessagePayload): void {
       messageId: message.id,
       direction,
     });
-    emitSocketEvent('message.created', message, message.conversationId);
+    void publishAccessControlledRealtimeEvent('message.created', message, message.conversationId);
   } catch (error) {
     console.warn('[Realtime] publishMessageCreated_failed', {
       conversationId: message.conversationId,
@@ -284,7 +306,7 @@ export function publishMessageUpdated(payload: {
   deletedAt?: string | null;
 }): void {
   try {
-    emitSocketEvent('message.updated', payload);
+    void publishAccessControlledRealtimeEvent('message.updated', payload, payload.conversationId);
   } catch (error) {
     console.warn('[Realtime] publishMessageUpdated_failed', {
       conversationId: payload.conversationId,

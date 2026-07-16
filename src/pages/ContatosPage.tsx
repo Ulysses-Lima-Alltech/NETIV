@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
 import {
   contactsApi,
@@ -43,7 +43,7 @@ const initialFilters: ContactFilters = {
 };
 
 export function ContatosPage() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [contacts, setContacts] = useState<ContactListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<ContactFilters>(initialFilters);
@@ -186,7 +186,6 @@ export function ContatosPage() {
     setPage(1);
   }, []);
 
-  if (!isAdmin) return <Navigate to="/inbox" replace />;
 
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-[#111827]">
@@ -195,7 +194,7 @@ export function ContatosPage() {
         <AppNav />
       </nav>
       <div className="w-full max-w-none px-6 lg:px-8 py-6 space-y-5">
-        <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3">
+        <section className={`${isAdmin ? '' : 'hidden '}bg-white border border-[#E5E7EB] rounded-[12px] p-4 space-y-3`}>
           <h2 className="text-[14px] font-semibold">Filtros</h2>
           <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
             <input
@@ -490,6 +489,7 @@ export function ContatosPage() {
               />
               <select
                 className={inputCls}
+                disabled={user?.role === 'COLLABORATOR'}
                 value={editContact.enterpriseId != null ? String(editContact.enterpriseId) : ''}
                 onChange={(e) => {
                   const raw = e.target.value;
@@ -513,6 +513,7 @@ export function ContatosPage() {
               <select
                 className={inputCls}
                 value={editContact.ownerUserId ?? ''}
+                disabled={user?.role === 'COLLABORATOR'}
                 onChange={(e) =>
                   setEditContact({
                     ...editContact,
@@ -570,7 +571,9 @@ export function ContatosPage() {
                         source: editContact.source ?? undefined,
                         ...(modalEnterpriseTouched ? { enterpriseId: editContact.enterpriseId ?? null } : {}),
                       });
-                      await contactsApi.setOwner(editContact.id, editContact.ownerUserId);
+                      if (user?.role !== 'COLLABORATOR') {
+                        await contactsApi.setOwner(editContact.id, editContact.ownerUserId);
+                      }
                       setEditContact(null);
                       await load();
                     } catch (e) {

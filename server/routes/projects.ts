@@ -32,9 +32,25 @@ import { createProjectSchema, updateProjectSchema, patchKnowledgeFileSchema } fr
 import { insertPromptAddonsHistory, listPromptAddonsHistory } from '../repositories/promptAddonsHistoryRepository.js';
 import { getKnowledgeBackfillJob, startKnowledgeBackfill } from '../services/knowledgeBackfillService.js';
 import { SYSTEM_UPLOAD_MAX_BYTES } from '../constants/mediaLimits.js';
+import { requireRole } from '../middleware/auth.js';
+import { canAccessEnterprise, getAccessibleEnterpriseIds } from '../services/authorizationService.js';
 
 const router = Router();
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+
+router.use('/knowledge/backfill', requireRole('ADMIN'));
+router.use((req, res, next) => {
+  if (req.user?.role === 'ADMIN' || req.method === 'GET') return next();
+  return res.status(403).json({ error: 'Somente ADMIN pode alterar empreendimentos ou materiais.', code: 'ROLE_FORBIDDEN' });
+});
+router.param('id', async (req, res, next, rawId) => {
+  const id = Number(rawId);
+  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'ID inválido.' });
+  if (!req.user || !(await canAccessEnterprise(req.user, id))) {
+    return res.status(404).json({ error: 'Empreendimento não encontrado no seu escopo.', code: 'OUT_OF_SCOPE' });
+  }
+  next();
+});
 
 function isImageUploadMimeOrExt(mime: string, name: string): boolean {
   const m = (mime || '').toLowerCase();
@@ -148,8 +164,10 @@ router.get('/', async (req, res) => {
     const activeOnly = req.query.active !== '0' && req.query.active !== 'false';
     const filters = parseListFilters(req);
     const rows = await listEnterprises(activeOnly, Object.keys(filters).length ? filters : undefined);
+    const allowedIds = req.user?.role === 'ADMIN' ? null : new Set(await getAccessibleEnterpriseIds(req.user!));
     const out = await Promise.all(
-      rows.map(async (r) => enterpriseToPublic(r, await getVariablesMap(r.id)))
+      rows.filter((row) => allowedIds == null || allowedIds.has(row.id))
+        .map(async (r) => enterpriseToPublic(r, await getVariablesMap(r.id)))
     );
     res.json({ projects: out });
   } catch (e) {
@@ -481,7 +499,7 @@ router.post('/:id/knowledge', upload.single('file'), handleMulterError, async (r
       return res.status(502).json({ error: 'Falha no upload para S3.' });
     }
 
-    const storageProvider: 's3' = 's3';
+    const storageProvider = 's3' as const;
     const storageKey = s3Res.key;
     const bucketName = s3Res.bucket || getKnowledgeS3Bucket();
     const publicUrl: string | null = null;

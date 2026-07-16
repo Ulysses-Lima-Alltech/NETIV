@@ -3,6 +3,7 @@ import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { config } from '../config.js';
 import { processIncomingWebhook } from '../services/webhookProcessor.js';
 import type { WebhookPayload } from '../types/webhook.js';
+import { createHmac, timingSafeEqual } from 'crypto';
 
 const router = Router();
 
@@ -30,6 +31,18 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 router.post('/', (req: Request, res: Response) => {
+  const appSecret = config.meta.appSecret.trim();
+  const signature = String(req.header('x-hub-signature-256') ?? '');
+  const expected = req.rawBody && appSecret
+    ? `sha256=${createHmac('sha256', appSecret).update(req.rawBody).digest('hex')}`
+    : '';
+  const validSignature = Boolean(signature && expected) &&
+    Buffer.byteLength(signature) === Buffer.byteLength(expected) &&
+    timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  if (!validSignature) {
+    res.status(appSecret ? 401 : 503).send(appSecret ? 'Invalid signature' : 'Webhook signature not configured');
+    return;
+  }
   res.status(200).send('OK');
   const payload = req.body as WebhookPayload;
   if (!payload || typeof payload !== 'object') {
