@@ -17,16 +17,11 @@ export function SidebarNav({ collapsed, onToggleCollapsed, mobileOpen, onRequest
   const { user, logout } = useAuth();
   const items = useAppNav();
   const { enterprises } = useEnterprisesMenu();
-  const isDev = import.meta.env.DEV;
 
   const mainItems = items.filter((item) => item.section === 'main');
   const footerItems = items.filter((item) => item.section === 'footer');
 
-  const profileName = user
-    ? !isDev && /bypass/i.test(user.name)
-      ? ''
-      : user.name
-    : '';
+  const profileName = user?.name ?? '';
 
   return (
     <aside

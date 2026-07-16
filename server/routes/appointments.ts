@@ -1,73 +1,30 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import {
-  listAppointments,
-  getAppointmentById,
-  updateAppointmentStatus,
+  APPOINTMENT_STATUSES,
   deleteAppointment,
+  getAppointmentById,
+  listAppointments,
+  updateAppointmentStatus,
+  type AppointmentRow,
 } from '../repositories/appointmentRepository.js';
-import { checkAvailability, assignAppointment, assignPendingAppointment } from '../services/appointmentService.js';
+import { assignAppointment, assignPendingAppointment, checkAvailability } from '../services/appointmentService.js';
 import {
-  checkAvailabilitySchema,
   assignAppointmentSchema,
   createAppointmentSchema,
+  checkAvailabilitySchema,
   updateAppointmentStatusSchema,
 } from '../validators/appointments.js';
-import { APPOINTMENT_STATUSES } from '../repositories/appointmentRepository.js';
-import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
+import {
+  canAccessAppointment,
+  canAccessBroker,
+  canAccessEnterprise,
+  getAccessibleAppointmentIds,
+} from '../services/authorizationService.js';
 
 const router = Router();
 
-/**
- * Isolamento temporário por corretor: COLLABORATOR só pode operar nos próprios appointments.
- * ADMIN/MANAGERIAL passam direto. Retorna false e responde 403/404 em caso de bloqueio.
- */
-async function assertCanAccessAppointment(
-  req: AuthenticatedRequest,
-  res: Response,
-  appointmentId: number,
-): Promise<boolean> {
-  const user = req.user;
-  if (!user) {
-    res.status(401).json({ error: 'Não autenticado.' });
-    return false;
-  }
-  if (user.role !== 'COLLABORATOR') return true;
-  const appt = await getAppointmentById(appointmentId);
-  if (!appt) {
-    res.status(404).json({ error: 'Agendamento não encontrado.' });
-    return false;
-  }
-  if (user.broker_id == null || appt.broker_id !== user.broker_id) {
-    res.status(403).json({ error: 'Acesso negado a este agendamento.' });
-    return false;
-  }
-  return true;
-}
-
-function denyCollaboratorManagerial(req: AuthenticatedRequest, res: Response): boolean {
-  if (req.user?.role === 'COLLABORATOR') {
-    res.status(403).json({ error: 'Operação restrita a gestores.' });
-    return true;
-  }
-  return false;
-}
-
-function toAppointmentDto(row: {
-  id: number;
-  customer_name: string;
-  customer_phone: string;
-  enterprise_id: number;
-  broker_id: number | null;
-  city: string;
-  start_at: Date;
-  end_at: Date;
-  status: string;
-  source: string;
-  notes: string;
-  created_at: Date;
-  updated_at: Date;
-}) {
+function dto(row: AppointmentRow) {
   return {
     id: row.id,
     customerName: row.customer_name,
@@ -75,228 +32,154 @@ function toAppointmentDto(row: {
     enterpriseId: row.enterprise_id,
     brokerId: row.broker_id,
     city: row.city,
-    startAt: row.start_at instanceof Date ? row.start_at.toISOString() : String(row.start_at),
-    endAt: row.end_at instanceof Date ? row.end_at.toISOString() : String(row.end_at),
+    startAt: row.start_at.toISOString(),
+    endAt: row.end_at.toISOString(),
     status: row.status,
     source: row.source,
     notes: row.notes,
-    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
-    updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
   };
 }
 
-// POST /check-availability — antes de /:id
+async function assertAppointment(req: AuthenticatedRequest, res: Response, id: number) {
+  if (await canAccessAppointment(req.user, id)) return true;
+  res.status(404).json({ error: 'Agendamento não encontrado no seu escopo.', code: 'OUT_OF_SCOPE' });
+  return false;
+}
+
+function assertManagerOrAdmin(req: AuthenticatedRequest, res: Response): boolean {
+  if (req.user.role === 'ADMIN' || req.user.role === 'MANAGERIAL') return true;
+  res.status(403).json({ error: 'Operação restrita a gestores e administradores.', code: 'ROLE_FORBIDDEN' });
+  return false;
+}
+
+async function assertAssignmentScope(req: AuthenticatedRequest, enterpriseId: number, brokerId: number | null | undefined): Promise<boolean> {
+  if (!(await canAccessEnterprise(req.user, enterpriseId))) return false;
+  if (req.user.role !== 'ADMIN' && (brokerId == null || !(await canAccessBroker(req.user, brokerId)))) return false;
+  return brokerId == null || canAccessBroker(req.user, brokerId);
+}
+
 router.post('/check-availability', async (req, res) => {
   try {
-    if (denyCollaboratorManagerial(req as AuthenticatedRequest, res)) return;
+    const authReq = req as AuthenticatedRequest;
+    if (!assertManagerOrAdmin(authReq, res)) return;
     const parsed = checkAvailabilitySchema.safeParse(req.body);
-    if (!parsed.success) {
-      const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
-      return res.status(400).json({ error: msg });
-    }
-    const { enterpriseId, startAt, endAt } = parsed.data;
-    const result = await checkAvailability(
-      enterpriseId,
-      new Date(startAt),
-      new Date(endAt)
-    );
-    res.json(result);
-  } catch (e) {
-    console.error('[Appointments] check-availability:', e);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues.map((issue) => issue.message).join('; ') });
+    if (!(await canAccessEnterprise(authReq.user, parsed.data.enterpriseId))) return res.status(403).json({ error: 'Empreendimento fora do escopo.' });
+    res.json(await checkAvailability(parsed.data.enterpriseId, new Date(parsed.data.startAt), new Date(parsed.data.endAt)));
+  } catch (error) {
+    console.error('[Appointments] availability', error);
     res.status(500).json({ error: 'Erro ao consultar disponibilidade.' });
   }
 });
 
-// POST /assign — antes de /:id
 router.post('/assign', async (req, res) => {
   try {
-    if (denyCollaboratorManagerial(req as AuthenticatedRequest, res)) return;
+    const authReq = req as AuthenticatedRequest;
+    if (!assertManagerOrAdmin(authReq, res)) return;
     const parsed = assignAppointmentSchema.safeParse(req.body);
-    if (!parsed.success) {
-      const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
-      return res.status(400).json({ error: msg });
-    }
-    const d = parsed.data;
-    const result = await assignAppointment({
-      customerName: d.customerName,
-      customerPhone: d.customerPhone ?? '',
-      enterpriseId: d.enterpriseId,
-      city: d.city ?? '',
-      startAt: new Date(d.startAt),
-      endAt: new Date(d.endAt),
-      notes: d.notes,
-      source: d.source,
-      brokerId: d.brokerId ?? undefined,
-    });
-    res.status(201).json(result);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : 'Erro ao confirmar agendamento.';
-    console.error('[Appointments] assign:', e);
-    res.status(500).json({ error: msg });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues.map((issue) => issue.message).join('; ') });
+    const data = parsed.data;
+    if (!(await assertAssignmentScope(authReq, data.enterpriseId, data.brokerId))) return res.status(403).json({ error: 'Empreendimento ou corretor fora do escopo.' });
+    res.status(201).json(await assignAppointment({
+      customerName: data.customerName, customerPhone: data.customerPhone, enterpriseId: data.enterpriseId,
+      city: data.city, startAt: new Date(data.startAt), endAt: new Date(data.endAt), notes: data.notes,
+      source: data.source, brokerId: data.brokerId,
+    }));
+  } catch (error) {
+    console.error('[Appointments] assign', error);
+    res.status(500).json({ error: 'Erro ao confirmar agendamento.' });
   }
 });
 
-// GET /
 router.get('/', async (req, res) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const enterpriseId = req.query.enterpriseId != null ? parseInt(String(req.query.enterpriseId), 10) : undefined;
-    let brokerId = req.query.brokerId != null ? parseInt(String(req.query.brokerId), 10) : undefined;
-    // COLLABORATOR: força filtro pelo próprio broker_id (ignora query)
-    if (authReq.user?.role === 'COLLABORATOR') {
-      if (authReq.user.broker_id == null) {
-        return res.json({ appointments: [] });
-      }
-      brokerId = authReq.user.broker_id;
-    }
-    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-    const date = typeof req.query.date === 'string' ? req.query.date : undefined;
-    const rows = await listAppointments({ enterpriseId, brokerId, status, date });
-    res.json({
-      appointments: rows.map(toAppointmentDto),
+    const appointmentIds = authReq.user.role === 'ADMIN' ? undefined : await getAccessibleAppointmentIds(authReq.user);
+    const enterpriseId = req.query.enterpriseId == null ? undefined : Number(req.query.enterpriseId);
+    const brokerId = req.query.brokerId == null ? undefined : Number(req.query.brokerId);
+    const rows = await listAppointments({
+      appointmentIds,
+      enterpriseId: Number.isSafeInteger(enterpriseId) ? enterpriseId : undefined,
+      brokerId: Number.isSafeInteger(brokerId) ? brokerId : undefined,
+      status: typeof req.query.status === 'string' ? req.query.status : undefined,
+      date: typeof req.query.date === 'string' ? req.query.date : undefined,
     });
-  } catch (e) {
-    console.error('[Appointments] GET:', e);
+    res.json({ appointments: rows.map(dto) });
+  } catch (error) {
+    console.error('[Appointments] list', error);
     res.status(500).json({ error: 'Erro ao listar agendamentos.' });
   }
 });
 
-// POST /:id/assign — atribuição manual para PENDENTE_DISTRIBUICAO (antes de /:id)
 router.post('/:id/assign', async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
-    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
-    if (denyCollaboratorManagerial(req as AuthenticatedRequest, res)) return;
-    const body = req.body as { brokerId?: number };
-    const brokerId = body?.brokerId;
-    if (brokerId == null || typeof brokerId !== 'number' || brokerId < 1) {
-      return res.status(400).json({ error: 'brokerId é obrigatório.' });
-    }
+    const authReq = req as AuthenticatedRequest;
+    const id = Number(req.params.id);
+    const brokerId = Number(req.body?.brokerId);
+    if (!assertManagerOrAdmin(authReq, res)) return;
+    if (!Number.isSafeInteger(id) || !Number.isSafeInteger(brokerId)) return res.status(400).json({ error: 'IDs inválidos.' });
+    if (!(await assertAppointment(authReq, res, id))) return;
+    if (!(await canAccessBroker(authReq.user, brokerId))) return res.status(403).json({ error: 'Corretor fora do escopo.' });
     const result = await assignPendingAppointment(id, brokerId);
-    res.json({
-      appointment: {
-        id: result.appointment.id,
-        customerName: result.appointment.customer_name,
-        customerPhone: result.appointment.customer_phone,
-        enterpriseId: result.appointment.enterprise_id,
-        brokerId: result.appointment.broker_id,
-        city: result.appointment.city,
-        startAt: result.appointment.start_at instanceof Date ? result.appointment.start_at.toISOString() : String(result.appointment.start_at),
-        endAt: result.appointment.end_at instanceof Date ? result.appointment.end_at.toISOString() : String(result.appointment.end_at),
-        status: result.appointment.status,
-        source: result.appointment.source,
-        notes: result.appointment.notes,
-        createdAt: result.appointment.created_at instanceof Date ? result.appointment.created_at.toISOString() : String(result.appointment.created_at),
-        updatedAt: result.appointment.updated_at instanceof Date ? result.appointment.updated_at.toISOString() : String(result.appointment.updated_at),
-      },
-      broker: result.broker,
-    });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : 'Erro ao atribuir.';
-    console.error('[Appointments] assign :id:', e);
-    res.status(400).json({ error: msg });
+    res.json({ appointment: dto(result.appointment), broker: result.broker });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Erro ao atribuir.' });
   }
 });
 
-// GET /:id
 router.get('/:id', async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
-    if (!(await assertCanAccessAppointment(req as AuthenticatedRequest, res, id))) return;
-    const row = await getAppointmentById(id);
-    if (!row) return res.status(404).json({ error: 'Agendamento não encontrado.' });
-    res.json(toAppointmentDto(row));
-  } catch (e) {
-    console.error('[Appointments] GET :id:', e);
-    res.status(500).json({ error: 'Erro ao carregar agendamento.' });
-  }
+  const authReq = req as AuthenticatedRequest;
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id)) return res.status(400).json({ error: 'ID inválido.' });
+  if (!(await assertAppointment(authReq, res, id))) return;
+  const row = await getAppointmentById(id);
+  if (!row) return res.status(404).json({ error: 'Agendamento não encontrado.' });
+  res.json(dto(row));
 });
 
-// POST / — criação manual (usa assign internamente ou cria sem corretor)
 router.post('/', async (req, res) => {
   try {
-    if (denyCollaboratorManagerial(req as AuthenticatedRequest, res)) return;
+    const authReq = req as AuthenticatedRequest;
+    if (!assertManagerOrAdmin(authReq, res)) return;
     const parsed = createAppointmentSchema.safeParse(req.body);
-    if (!parsed.success) {
-      const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
-      return res.status(400).json({ error: msg });
-    }
-    const d = parsed.data;
-    // Usa assign para seleção automática do corretor
-    const result = await assignAppointment({
-      customerName: d.customerName,
-      customerPhone: d.customerPhone ?? '',
-      enterpriseId: d.enterpriseId,
-      city: d.city ?? '',
-      startAt: new Date(d.startAt),
-      endAt: new Date(d.endAt),
-      notes: d.notes,
-      source: d.source ?? 'ANA',
-    });
-    res.status(201).json(result);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : 'Erro ao criar agendamento.';
-    console.error('[Appointments] POST:', e);
-    res.status(500).json({ error: msg });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues.map((issue) => issue.message).join('; ') });
+    const data = parsed.data;
+    if (!(await assertAssignmentScope(authReq, data.enterpriseId, data.brokerId))) return res.status(403).json({ error: 'Empreendimento ou corretor fora do escopo.' });
+    res.status(201).json(await assignAppointment({
+      customerName: data.customerName, customerPhone: data.customerPhone, enterpriseId: data.enterpriseId,
+      city: data.city, startAt: new Date(data.startAt), endAt: new Date(data.endAt), notes: data.notes,
+      source: data.source, brokerId: data.brokerId,
+    }));
+  } catch (error) {
+    console.error('[Appointments] create', error);
+    res.status(500).json({ error: 'Erro ao criar agendamento.' });
   }
 });
 
-// PATCH /:id
-router.patch('/:id', async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
-    if (!(await assertCanAccessAppointment(req as AuthenticatedRequest, res, id))) return;
-    const body = req.body as Record<string, unknown>;
-    if (body.status != null && typeof body.status === 'string') {
-      if (!APPOINTMENT_STATUSES.includes(body.status as typeof APPOINTMENT_STATUSES[number])) {
-        return res.status(400).json({ error: `Status inválido. Use: ${APPOINTMENT_STATUSES.join(', ')}` });
-      }
-      const updated = await updateAppointmentStatus(id, body.status);
-      if (!updated) return res.status(404).json({ error: 'Agendamento não encontrado.' });
-      return res.json(toAppointmentDto(updated));
-    }
-    return res.status(400).json({ error: 'Use PATCH /:id/status para alterar status.' });
-  } catch (e) {
-    console.error('[Appointments] PATCH :id:', e);
-    res.status(500).json({ error: 'Erro ao atualizar.' });
-  }
-});
+async function updateStatus(req: AuthenticatedRequest, res: Response) {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id)) return res.status(400).json({ error: 'ID inválido.' });
+  if (!(await assertAppointment(req, res, id))) return;
+  const parsed = updateAppointmentStatusSchema.safeParse(req.body);
+  if (!parsed.success || !APPOINTMENT_STATUSES.includes(parsed.data.status)) return res.status(400).json({ error: 'Status inválido.' });
+  const updated = await updateAppointmentStatus(id, parsed.data.status);
+  if (!updated) return res.status(404).json({ error: 'Agendamento não encontrado.' });
+  res.json(dto(updated));
+}
 
-// PATCH /:id/status
-router.patch('/:id/status', async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
-    if (!(await assertCanAccessAppointment(req as AuthenticatedRequest, res, id))) return;
-    const parsed = updateAppointmentStatusSchema.safeParse(req.body);
-    if (!parsed.success) {
-      const msg = parsed.error.issues.map((e) => e.message).join('; ') || 'Dados inválidos.';
-      return res.status(400).json({ error: msg });
-    }
-    const updated = await updateAppointmentStatus(id, parsed.data.status);
-    if (!updated) return res.status(404).json({ error: 'Agendamento não encontrado.' });
-    res.json(toAppointmentDto(updated));
-  } catch (e) {
-    console.error('[Appointments] PATCH :id/status:', e);
-    res.status(500).json({ error: 'Erro ao atualizar status.' });
-  }
-});
+router.patch('/:id', (req, res) => void updateStatus(req as AuthenticatedRequest, res));
+router.patch('/:id/status', (req, res) => void updateStatus(req as AuthenticatedRequest, res));
 
-// DELETE /:id — exclusão real (não é cancelamento; use PATCH /:id/status para cancelar)
 router.delete('/:id', async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    if (Number.isNaN(id)) return res.status(400).json({ error: 'ID inválido.' });
-    if (denyCollaboratorManagerial(req as AuthenticatedRequest, res)) return;
-    const deleted = await deleteAppointment(id);
-    if (!deleted) return res.status(404).json({ error: 'Agendamento não encontrado.' });
-    res.status(204).send();
-  } catch (e) {
-    console.error('[Appointments] DELETE:', e);
-    res.status(500).json({ error: 'Erro ao excluir.' });
-  }
+  const authReq = req as AuthenticatedRequest;
+  const id = Number(req.params.id);
+  if (!assertManagerOrAdmin(authReq, res)) return;
+  if (!Number.isSafeInteger(id)) return res.status(400).json({ error: 'ID inválido.' });
+  if (!(await assertAppointment(authReq, res, id))) return;
+  if (!(await deleteAppointment(id))) return res.status(404).json({ error: 'Agendamento não encontrado.' });
+  res.status(204).send();
 });
 
 export default router;

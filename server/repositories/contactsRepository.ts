@@ -295,6 +295,7 @@ export async function releaseContactOwnersByCorretor(corretorId: number): Promis
 }
 
 export async function listContacts(params: {
+  contactIds?: number[];
   search?: string;
   enterprise?: string;
   enterpriseId?: number;
@@ -314,6 +315,11 @@ export async function listContacts(params: {
   const conds: string[] = ['c.archived_at IS NULL'];
   const vals: unknown[] = [];
   let idx = 1;
+  if (params.contactIds !== undefined) {
+    conds.push(`c.id = ANY($${idx}::bigint[])`);
+    vals.push(params.contactIds);
+    idx++;
+  }
   if (params.search?.trim()) {
     conds.push(`(COALESCE(full_name,'') ILIKE $${idx} OR phone_e164 ILIKE $${idx})`);
     vals.push(`%${params.search.trim()}%`);
@@ -399,6 +405,7 @@ export async function listContacts(params: {
 }
 
 export async function countContacts(params: {
+  contactIds?: number[];
   search?: string;
   enterprise?: string;
   enterpriseId?: number;
@@ -416,6 +423,11 @@ export async function countContacts(params: {
   const conds: string[] = ['c.archived_at IS NULL'];
   const vals: unknown[] = [];
   let idx = 1;
+  if (params.contactIds !== undefined) {
+    conds.push(`c.id = ANY($${idx}::bigint[])`);
+    vals.push(params.contactIds);
+    idx++;
+  }
   if (params.search?.trim()) {
     conds.push(`(COALESCE(c.full_name,'') ILIKE $${idx} OR c.phone_e164 ILIKE $${idx})`);
     vals.push(`%${params.search.trim()}%`);

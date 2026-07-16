@@ -7,6 +7,12 @@ import {
   type DashboardPeriod,
   type DashboardCsvRow,
 } from '../repositories/dashboardRepository.js';
+import { canAccessAll, canViewDashboard, getAccessibleConversationIds } from '../services/authorizationService.js';
+import {
+  getScopedDashboardAttentionItems,
+  getScopedDashboardCsvRows,
+  getScopedDashboardOverview,
+} from '../services/scopedDashboardService.js';
 
 const router = Router();
 
@@ -72,7 +78,10 @@ router.get('/overview', async (req, res) => {
       const n = parseInt(String(req.query.enterpriseId), 10);
       if (!Number.isNaN(n)) enterpriseId = n;
     }
-    const overview = await getDashboardOverview(period, enterpriseId);
+    if (!req.user || !canViewDashboard(req.user)) return res.status(403).json({ error: 'Acesso negado.' });
+    const overview = canAccessAll(req.user)
+      ? await getDashboardOverview(period, enterpriseId)
+      : await getScopedDashboardOverview(period, enterpriseId, await getAccessibleConversationIds(req.user));
     res.json(overview);
   } catch (e) {
     console.error('[Dashboard] GET /overview:', e);
@@ -89,7 +98,10 @@ router.get('/export.csv', async (req, res) => {
       const n = parseInt(String(req.query.enterpriseId), 10);
       if (!Number.isNaN(n)) enterpriseId = n;
     }
-    const rows = await getDashboardCsvRows(period, enterpriseId);
+    if (!req.user || !canViewDashboard(req.user)) return res.status(403).json({ error: 'Acesso negado.' });
+    const rows = canAccessAll(req.user)
+      ? await getDashboardCsvRows(period, enterpriseId)
+      : await getScopedDashboardCsvRows(period, enterpriseId, await getAccessibleConversationIds(req.user));
     const body = `\uFEFF${buildDashboardCsv(rows)}`;
     const dateStr = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/Sao_Paulo',
@@ -187,7 +199,10 @@ router.get('/export-django.csv', async (req, res) => {
       const n = parseInt(String(req.query.enterpriseId), 10);
       if (!Number.isNaN(n)) enterpriseId = n;
     }
-    const rows = await getDashboardCsvRows(period, enterpriseId);
+    if (!req.user || !canViewDashboard(req.user)) return res.status(403).json({ error: 'Acesso negado.' });
+    const rows = canAccessAll(req.user)
+      ? await getDashboardCsvRows(period, enterpriseId)
+      : await getScopedDashboardCsvRows(period, enterpriseId, await getAccessibleConversationIds(req.user));
     const body = `\uFEFF${buildDjangoCsv(rows)}`; // BOM para Excel reconhecer UTF-8
     const dateStr = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/Sao_Paulo',
@@ -215,7 +230,10 @@ router.get('/attention-items', async (req, res) => {
     const attentionType = parseDashboardAttentionType(
       typeof req.query.attentionType === 'string' ? req.query.attentionType : undefined
     );
-    const payload = await getDashboardAttentionItems(enterpriseId, attentionType);
+    if (!req.user || !canViewDashboard(req.user)) return res.status(403).json({ error: 'Acesso negado.' });
+    const payload = canAccessAll(req.user)
+      ? await getDashboardAttentionItems(enterpriseId, attentionType)
+      : await getScopedDashboardAttentionItems(enterpriseId, attentionType, await getAccessibleConversationIds(req.user));
     res.json(payload);
   } catch (e) {
     console.error('[Dashboard] GET /attention-items:', e);

@@ -14,6 +14,7 @@ const API_BASE =
     : '/api';
 
 const AUTH_TOKEN_KEY = 'auth_token';
+export const AUTH_UNAUTHORIZED_EVENT = 'netiv:auth-unauthorized';
 
 export function getStoredAuthToken(): string | null {
   return localStorage.getItem(AUTH_TOKEN_KEY);
@@ -29,9 +30,9 @@ export class ApiError extends Error {
   status?: number;
 }
 
-/** Bypass temporário: 401 só limpa token local; sem redirect para /login. */
 function handleUnauthorized(): void {
   setStoredAuthToken(null);
+  window.dispatchEvent(new CustomEvent(AUTH_UNAUTHORIZED_EVENT));
 }
 
 async function request<T>(
@@ -112,28 +113,39 @@ export function userRoleLabel(role: UserRole): string {
 
 export interface AuthUser {
   id: number;
+  username: string | null;
   name: string;
-  email: string;
+  email: string | null;
   role: UserRole;
+  active: boolean;
+  mustChangePassword: boolean;
+  managerId?: number | null;
+  scope?: UserScopeSummary;
 }
 
-/** Usuário mock estável para bypass temporário de auth (sem chamadas à API de login). */
-export const AUTH_BYPASS_MOCK_USER: AuthUser = {
-  id: 0,
-  name: 'Dev (bypass)',
-  email: 'dev@local',
-  role: 'ADMIN',
-};
+export interface UserScopeSummary {
+  accessAll: boolean;
+  managerId: number | null;
+  enterpriseIds: number[];
+  brokerIds: number[];
+  conversationIds: number[];
+  contactIds: number[];
+  appointmentIds: number[];
+  managedCollaboratorIds: number[];
+  accessibleConversationCount: number | null;
+}
 
 export const authApi = {
-  login: (_email: string, _password: string) =>
+  login: (identifier: string, password: string) =>
     request<{ token: string; user: AuthUser }>('/auth/login', {
       method: 'POST',
-      body: { email: _email, password: _password },
+      body: { identifier, password },
     }),
   me: () =>
     request<{ user: AuthUser; session: { scopeKind: string | null; scopeSize: number | null; scopeTotal: number | null } | null }>('/auth/me'),
   logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
+  changePassword: (body: { currentPassword: string; newPassword: string; confirmPassword: string }) =>
+    request<{ token: string; user: AuthUser }>('/auth/change-password', { method: 'POST', body }),
 };
 
 export interface WhatsAppConfigPublic {
@@ -1263,23 +1275,45 @@ export const dashboardApi = {
 
 export interface UserListItem {
   id: number;
+  username: string | null;
   name: string;
-  email: string;
+  email: string | null;
   role: UserRole;
   active: boolean;
+  mustChangePassword: boolean;
   brokerId: number | null;
+  managerId: number | null;
+  scope: UserScopeSummary;
   createdAt: string;
   updatedAt: string;
 }
 
+export interface UserScopeInput {
+  managerId: number | null;
+  enterpriseIds: number[];
+  brokerIds: number[];
+  conversationIds: number[];
+  contactIds: number[];
+  appointmentIds: number[];
+}
+
+export interface AssignableResources {
+  enterprises: Array<{ id: number; name: string }>;
+  brokers: Array<{ id: number; name: string; active: boolean }>;
+}
+
 export const usersApi = {
   list: () => request<{ users: UserListItem[] }>('/users'),
-  create: (body: { name: string; email: string; password: string; role: UserRole; active: boolean; brokerId?: number | null }) =>
+  resources: () => request<AssignableResources>('/users/resources'),
+  create: (body: { name: string; username: string; email?: string | null; password: string; role: UserRole; active: boolean } & UserScopeInput & { allowDirectAssignment?: boolean }) =>
     request<{ user: UserListItem }>('/users', { method: 'POST', body }),
-  update: (id: number, body: { name?: string; email?: string; role?: UserRole; active?: boolean; brokerId?: number | null }) =>
+  update: (id: number, body: { name?: string; username?: string | null; email?: string | null; role?: UserRole; active?: boolean }) =>
     request<{ user: UserListItem }>(`/users/${id}`, { method: 'PATCH', body }),
   updatePassword: (id: number, newPassword: string) =>
-    request<{ ok: boolean }>(`/users/${id}/password`, { method: 'PATCH', body: { newPassword } }),
+    request<{ ok: boolean; mustChangePassword: boolean }>(`/users/${id}/password`, { method: 'PATCH', body: { newPassword } }),
+  updateScope: (id: number, body: UserScopeInput) =>
+    request<{ scope: UserScopeInput }>(`/users/${id}/scope`, { method: 'PUT', body }),
+  revokeSessions: (id: number) => request<{ ok: boolean; revoked: number }>(`/users/${id}/sessions`, { method: 'DELETE' }),
 };
 
 // API de disparo em lote (templates WhatsApp; rotas /whatsapp-batch no servidor)

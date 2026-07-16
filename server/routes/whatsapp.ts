@@ -55,7 +55,7 @@ import {
   reopenConversationManual,
   type ConversationWithPreview,
 } from '../repositories/conversationRepository.js';
-import type { AuthenticatedRequest } from '../middleware/auth.js';
+import { requireRole, type AuthenticatedRequest } from '../middleware/auth.js';
 import { assertCanAccessConversation } from '../middleware/conversationAccess.js';
 import { reprocessLastUserMessage } from '../services/conversationEngine.js';
 import { getEnterpriseById } from '../repositories/enterpriseRepository.js';
@@ -81,8 +81,12 @@ import {
 } from '../services/whatsappWindowService.js';
 import { registerWhatsAppEventsSse } from '../services/whatsappEvents.js';
 import { publishConversationUpdated } from '../realtime/realtimePublisher.js';
+import { canAccessAll, canAccessBroker, canAccessEnterprise, getAccessibleConversationIds } from '../services/authorizationService.js';
 
 const router = Router();
+
+router.use('/templates', requireRole('ADMIN'));
+router.use('/config', requireRole('ADMIN'));
 
 router.get('/events', (req, res) => {
   registerWhatsAppEventsSse(req, res);
@@ -364,7 +368,7 @@ router.post('/templates/batch/send', batchUpload.single('file'), async (req, res
   }
 });
 
-router.post('/send', async (req, res) => {
+router.post('/send', requireRole('ADMIN'), async (req, res) => {
   try {
     console.log('[MANUAL_SEND_ROUTE] body recebido', req.body);
     const templateKey = typeof req.body?.templateKey === 'string' ? req.body.templateKey.trim() : '';
@@ -474,23 +478,13 @@ router.get('/conversations', async (req, res) => {
     // Se o usuário tem escopo broker_portfolio, SEMPRE passa o array (mesmo vazio).
     // O repositório interpreta `[]` como "não retornar nada" e `undefined` como "sem restrição".
     const user = (req as AuthenticatedRequest).user;
-    let scopeConvIds: number[] | undefined;
-    if (user?.sessionScope?.kind === 'broker_portfolio') {
-      scopeConvIds = user.sessionScope.convIds;
-    }
-
-    // ── Legacy broker_id filter (COLLABORATOR) ──
-    let brokerId: number | undefined;
-    if (user?.role === 'COLLABORATOR' && user?.broker_id) {
-      brokerId = user.broker_id;
-    }
+    const scopeConvIds = canAccessAll(user) ? undefined : await getAccessibleConversationIds(user);
 
     const filters: {
       mode?: 'ANA' | 'handoff';
       status?: string;
       enterpriseId?: number;
       search?: string;
-      brokerId?: number;
       conversationTypeFilter?: 'CLIENT' | 'INTERNO';
       scopeConvIds?: number[];
     } = {};
@@ -498,7 +492,6 @@ router.get('/conversations', async (req, res) => {
     if (status && status !== 'all') filters.status = status;
     if (enterpriseId != null && !Number.isNaN(enterpriseId)) filters.enterpriseId = enterpriseId;
     if (search && search.trim() !== '') filters.search = search.trim();
-    if (brokerId != null) filters.brokerId = brokerId;
     if (scopeConvIds !== undefined) filters.scopeConvIds = scopeConvIds;
     filters.conversationTypeFilter = type as 'CLIENT' | 'INTERNO';
     const hasFilters = Object.keys(filters).length > 0;
@@ -536,7 +529,7 @@ router.get('/conversations/:id', async (req, res) => {
 
 router.delete('/conversations/by-phone/:phone', async (req, res) => {
   try {
-    if ((req as AuthenticatedRequest).user?.role === 'COLLABORATOR') {
+    if ((req as AuthenticatedRequest).user?.role !== 'ADMIN') {
       return res.status(403).json({ error: 'Operação não permitida.' });
     }
     const phone = (req.params.phone || '').trim();
@@ -592,6 +585,13 @@ router.patch('/conversations/:id/classification', async (req, res) => {
       return res.status(400).json({ error: msg });
     }
     const { project_id, classification_status, handoff, reserve, lead_temperature, assigned_broker_id } = parsed.data;
+    const actor = (req as AuthenticatedRequest).user;
+    if (project_id != null && !(await canAccessEnterprise(actor, project_id))) {
+      return res.status(403).json({ error: 'Empreendimento fora do seu escopo.', code: 'OUT_OF_SCOPE' });
+    }
+    if (assigned_broker_id != null && !(await canAccessBroker(actor, assigned_broker_id))) {
+      return res.status(403).json({ error: 'Corretor fora do seu escopo.', code: 'OUT_OF_SCOPE' });
+    }
     const convBefore = handoff === false ? await getConversationById(id) : null;
     const conv = await updateClassification(id, {
       enterprise_id: project_id !== undefined ? project_id : undefined,
@@ -1044,7 +1044,7 @@ router.delete('/conversations/:convId/messages/:msgId', async (req, res) => {
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' });
 
     const userId = (req as Request & { user?: { id: number } }).user?.id ?? 0;
-    const deleted = await softDeleteMessage(msgId, userId);
+    const deleted = await softDeleteMessage(msgId, convId, userId);
     if (!deleted) {
       return res.status(404).json({ error: 'Mensagem não encontrada ou já apagada.' });
     }

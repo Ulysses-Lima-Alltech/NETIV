@@ -1,6 +1,6 @@
 import type { Server as HttpServer } from 'http';
 import { Server as SocketIOServer, type Socket } from 'socket.io';
-import { findEmbeddedDefaultUser, getSessionUser } from '../repositories/userRepository.js';
+import { getSessionUser } from '../repositories/userRepository.js';
 
 const INBOX_GLOBAL_ROOM = 'inbox:global';
 const SOCKET_PATH = '/socket.io';
@@ -11,11 +11,6 @@ const allowedOrigins = String(process.env.FRONTEND_URL ?? process.env.CORS_ORIGI
 
 let io: SocketIOServer | null = null;
 let realtimeEnabled = false;
-
-function isAuthBypassEnabled(): boolean {
-  const raw = String(process.env.AUTH_BYPASS_ENABLED ?? '').trim().toLowerCase();
-  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
-}
 
 function parseCookieValue(cookieHeader: string | undefined, key: string): string | null {
   if (!cookieHeader) return null;
@@ -36,10 +31,7 @@ function parseCookieValue(cookieHeader: string | undefined, key: string): string
 
 function resolveHandshakeToken(socket: Socket): string | null {
   const authToken =
-    (typeof socket.handshake.auth?.token === 'string' ? socket.handshake.auth.token : null) ??
-    (typeof socket.handshake.query?.access_token === 'string'
-      ? socket.handshake.query.access_token
-      : null);
+    (typeof socket.handshake.auth?.token === 'string' ? socket.handshake.auth.token : null);
   if (authToken && authToken.trim().length > 0) return authToken.trim();
 
   const cookieToken =
@@ -57,7 +49,7 @@ export function initSocketServer(server: HttpServer): SocketIOServer {
   io = new SocketIOServer(server, {
     path: SOCKET_PATH,
     cors: {
-      origin: allowedOrigins.length > 0 ? allowedOrigins : true,
+      origin: allowedOrigins.length > 0 ? allowedOrigins : process.env.NODE_ENV !== 'production',
       credentials: true,
     },
   });
@@ -67,25 +59,14 @@ export function initSocketServer(server: HttpServer): SocketIOServer {
       const token = resolveHandshakeToken(socket);
       if (token) {
         const user = await getSessionUser(token);
-        if (!user) {
+        if (!user || user.must_change_password) {
           console.warn('[realtime] unauthorized_invalid_credentials');
           return next(new Error('unauthorized'));
         }
         socket.data.userId = user.id;
         socket.data.userRole = user.role;
-        socket.data.sessionScope = (user as any).sessionScope ?? null;
-        return next();
-      }
-
-      if (isAuthBypassEnabled()) {
-        const embeddedUser = await findEmbeddedDefaultUser();
-        if (!embeddedUser) {
-          console.warn('[realtime] unauthorized_missing_credentials');
-          return next(new Error('unauthorized'));
-        }
-        socket.data.userId = embeddedUser.id;
-        socket.data.userRole = embeddedUser.role;
-        socket.data.sessionScope = null;
+        socket.data.sessionScope = user.sessionScope ?? null;
+        socket.data.sessionToken = token;
         return next();
       }
 
@@ -135,4 +116,31 @@ export function getSocketServer(): SocketIOServer | null {
 
 export function getInboxGlobalRoom(): string {
   return INBOX_GLOBAL_ROOM;
+}
+
+export function disconnectUserSockets(userId: number, reason = 'session_revoked'): void {
+  if (!io) return;
+  for (const socket of io.sockets.sockets.values()) {
+    if (socket.data.userId === userId) {
+      socket.emit('auth.revoked', { reason });
+      socket.disconnect(true);
+    }
+  }
+}
+
+export function disconnectSessionSockets(token: string, reason = 'session_revoked'): void {
+  if (!io) return;
+  for (const socket of io.sockets.sockets.values()) {
+    if (socket.data.sessionToken === token) {
+      socket.emit('auth.revoked', { reason });
+      socket.disconnect(true);
+    }
+  }
+}
+
+export async function closeSocketServerForTests(): Promise<void> {
+  if (!io) return;
+  const current = io;
+  io = null;
+  await new Promise<void>((resolve) => current.close(() => resolve()));
 }
