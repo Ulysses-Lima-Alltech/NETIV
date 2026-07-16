@@ -101,6 +101,7 @@ export interface CommercialFlowState {
   /** Nome capturado no fluxo de visita (quando ainda nao foi confirmado no cadastro principal). */
   pendingVisitCustomerName?: string | null;
   /** Marca quando a Ana já perguntou confirmacao final da visita e aguarda resposta curta. */
+  pendingAppointmentCandidate?: PendingAppointmentCandidate | null;
   pendingVisitConfirmationAsked?: boolean;
   suggestedVisitStartAt?: string | null;
   suggestedVisitEndAt?: string | null;
@@ -183,6 +184,7 @@ export function resetCommercialScopeHints(prev: CommercialFlowState | null): Com
   delete next.pendingVisitMissingSlot;
   delete next.pendingVisitCustomerName;
   delete next.pendingVisitConfirmationAsked;
+  delete next.pendingAppointmentCandidate;
   delete next.suggestedVisitStartAt;
   delete next.suggestedVisitEndAt;
   delete next.suggestedVisitBrokerId;
