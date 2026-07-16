@@ -11,6 +11,14 @@ import {
   type PurchaseIntent,
 } from './anaCommercialAxisGuard.js';
 
+export interface PendingAppointmentCandidate {
+  date: string;
+  time: string;
+  datetime: string;
+  sourceMessage: string;
+  confidence: number;
+  offeredAt: string;
+}
 export type MaterialPendingAction = 'send_material';
 export type MaterialSendStatus =
   | 'sent'
