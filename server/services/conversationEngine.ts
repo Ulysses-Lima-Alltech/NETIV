@@ -2,6 +2,7 @@ import { statSync } from 'fs';
 import { query } from '../db/pg.js';
 import {
   getMessagesByConversationId,
+  getLastUserMessageRow,
   getLastUserMessageNeedingReply,
   insertMessage,
   type MessageAttachmentPayload,
@@ -168,8 +169,13 @@ import {
   inferPreferredCategoryFromUserText,
   buildDocCategoryTryOrder,
   extractAnaImageFilenameTopic,
+  extractAnaSpecificMediaSpace,
   filterAnaImageFilesByFilenameTopic,
+  filterAnaMediaFilesBySpecificSpace,
+  listAnaSpecificMediaSpacesAvailableFromFiles,
+  buildAnaSpecificMediaUnavailableReply,
   userAskedForSpecificImageFilenameTopic,
+  userAskedForSpecificMediaSpace,
 } from '../utils/anaDocSendIntent.js';
 import {
   ANA_IMAGE_MATERIAL_POST_SEND_FALLBACK_TEXT,
@@ -238,6 +244,10 @@ import {
   startAnaVisitFollowupIfEligible,
 } from './anaVisitFollowupService.js';
 import {
+  cancelAnaGeneralFollowupForConversation,
+  startAnaGeneralFollowupIfEligible,
+} from './anaGeneralFollowupService.js';
+import {
   extractAnaVisitSlotPreferenceFromText,
   findNextAvailableVisitSlot,
   formatAnaVisitSlotLabel,
@@ -297,18 +307,14 @@ import {
   type AnaCommittedQuestionType,
 } from '../utils/anaFinalQuestionPolicy.js';
 import {
-  buildEvoraShortPresentationAfterName,
   buildEvoraLeadQualificationProgressReply,
-  buildLeadQualificationNameQuestion,
   extractLeadQualificationSignals,
   getLeadQualificationState,
   isObjectiveCustomerQuestion,
   markLeadQualificationQuestionAsked,
   mergeLeadQualificationState,
   selectNextLeadQualificationQuestion,
-  shouldAskNameFirst,
   stripTrailingQuestion,
-  type LeadQualificationQuestionSelection,
 } from '../utils/anaLeadQualificationPolicy.js';
 
 /** Desligado para rastrear o fluxo real com [ANA_ENGINE_TRACE]. */
@@ -320,8 +326,6 @@ const ANA_LLM_FIRST_TECHNICAL_FALLBACK_REPLY =
   buildAnaNoInfoBrokerVisitOffer();
 const ANA_LLM_FIRST_MISSING_INFO_REPLY =
   buildAnaNoInfoBrokerVisitOffer();
-const ANA_NAME_QUESTION_REPAIR_REPLY =
-  'Perfeito. Só para eu seguir certinho, como posso te chamar?';
 function buildAnaNoInfoBrokerVisitOffer(): string {
   return 'Esse ponto precisa de confirma\u00E7\u00E3o atualizada. Posso te encaminhar para um corretor ou te ajudar a agendar uma visita?';
 }
@@ -332,8 +336,12 @@ const ANA_HANDOFF_DISABLED =
 const ANA_DEBUG_QWEN_RAW = String(process.env.ANA_DEBUG_QWEN_RAW || '').trim().toLowerCase() === 'true';
 const ANA_LLM_FIRST_COMMERCIAL_REPLIES =
   String(process.env.ANA_LLM_FIRST_COMMERCIAL_REPLIES ?? 'true').trim().toLowerCase() !== 'false';
-const ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY =
-  'Claro, posso te ajudar. Você busca apartamento ou loteamento? Tem algum empreendimento ou região em mente?';
+export const ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY =
+  'Claro, posso te ajudar. Qual empreendimento, região ou tipo de imóvel você procura?';
+
+export function buildEvoraDeliveryUnavailableReply(): string {
+  return 'Ainda não tenho essa previsão exata confirmada por aqui.';
+}
 
 type AnaEmergencyHandoffTransport = {
   sendTextMessage: (to: string, text: string) => Promise<AnaEmergencyHandoffSendResult>;
@@ -1256,70 +1264,41 @@ function isLlmFirstCommercialTurn(params: {
 
 
 
-function buildInitialDiscoveryGuidanceContext(params: {
+export function buildInitialDiscoveryGuidanceContext(params: {
   isEvora: boolean;
   state: ReturnType<typeof getLeadQualificationState>;
-  customerName?: string | null;
-  nameCapturedThisTurn: boolean;
   userMessage: string;
   recentAssistantCount: number;
 }): string | null {
   if (!params.isEvora) return null;
+  if (params.recentAssistantCount > 6) return null;
 
   const state = params.state;
-  const knownName = String(params.customerName ?? state.customerName ?? state.name ?? '').trim();
-  const hasName = Boolean(knownName) || state.nameCollected === true;
-  if (!hasName) return null;
-
-  const earlyConversation = params.nameCapturedThisTurn || params.recentAssistantCount <= 4;
-  if (!earlyConversation) return null;
-
-  const hasPurpose = state.purpose != null;
-  const hasProductFit = state.productFit != null;
   const currentUserHasObjectiveQuestion = isObjectiveCustomerQuestion(params.userMessage);
-  const nameJustCapturedWithoutPurpose = params.nameCapturedThisTurn && !hasPurpose;
-  const lifestyleSignal =
-    /\b(calmaria|calma|tranquilidade|tranquilo|paz|sossego|natureza|verde|lazer|família|familia|qualidade de vida|descanso|segurança|seguranca)\b/i.test(
-      params.userMessage
-    );
-
   const nextDiscovery =
-    !hasPurpose
-      ? 'Próxima descoberta preferencial: entender se o cliente pensa em morar, investir ou ainda está conhecendo as possibilidades.'
-      : !hasProductFit
-        ? 'Próxima descoberta preferencial: entender se ele já decidiu por loteamento fechado ou ainda está comparando com outros tipos de imóvel.'
-        : 'Próxima descoberta preferencial: entender tamanho, perfil de lote desejado ou critério de decisão, somente se isso couber naturalmente.';
+    !state.purchaseIntent
+      ? 'Próxima qualificação útil: interesse para morar ou investir.'
+      : !state.desiredRegion
+        ? 'Próxima qualificação útil: região de interesse.'
+        : !state.desiredSize
+          ? 'Próxima qualificação útil: tamanho ou metragem procurada.'
+          : state.priceMin == null && state.priceMax == null
+            ? 'Próxima qualificação útil: faixa de valor.'
+            : !state.paymentMethod
+              ? 'Próxima qualificação útil: forma de pagamento.'
+              : 'Não force nova pergunta se o próximo passo já estiver claro.';
 
   return [
-    '[ORIENTAÇÃO DE DESCOBERTA INICIAL - NÃO MOSTRAR AO CLIENTE]',
-    'Isto não é fallback, não é resposta pronta e não deve interceptar o LLM.',
-    'Use apenas como ponto de partida conversacional depois da captura do nome.',
-    knownName ? `Nome conhecido do cliente: ${knownName}.` : 'Nome do cliente já foi capturado.',
+    '[ORIENTAÇÃO DE QUALIFICAÇÃO OBJETIVA - NÃO MOSTRAR AO CLIENTE]',
+    'Isto não é fallback nem resposta pronta.',
     nextDiscovery,
-    nameJustCapturedWithoutPurpose
-      ? 'Quando o nome acabou de ser capturado e a intenção ainda não está clara, comece com uma saudação completa e natural, por exemplo: "Prazer, [Nome]!" ou "Prazer, [Nome], tudo bem?". Não responda apenas o nome isolado.'
-      : null,
-    nameJustCapturedWithoutPurpose
-      ? 'Depois da saudação, explique em uma frase curta que vai fazer algumas perguntas rápidas para entender melhor o momento do cliente.'
-      : null,
-    nameJustCapturedWithoutPurpose
-      ? 'A primeira pergunta de descoberta deve ser sobre intenção: morar, investir ou ainda conhecer as possibilidades. Não substitua essa primeira pergunta por "você já visitou algum loteamento?" ou pergunta parecida.'
-      : null,
-    'Tópicos sugeridos para descoberta: intenção de compra/moradia/investimento; decisão por loteamento fechado; tamanho ou perfil de lote desejado.',
-    lifestyleSignal
-      ? 'O cliente trouxe sinal de estilo de vida/desejo emocional. Antes de listar itens, acolha com uma frase consultiva e humana, conectando o desejo dele ao Évora. Exemplo de tom: "Faz sentido, [Nome]. Para quem busca calmaria sem abrir mão de lazer, o Évora conversa bem com esse perfil." Depois traga os fatos autorizados.'
-      : null,
-    lifestyleSignal
-      ? 'Evite resposta seca em formato apenas informativo. Não comece direto com "Tem uma estrutura..." quando o cliente falar desejos como calmaria, lazer, tranquilidade, natureza ou família.'
-      : null,
     currentUserHasObjectiveQuestion
-      ? 'A mensagem atual do cliente contém pergunta objetiva. Responda primeiro a pergunta dele com base nas evidências e, se natural, avance com apenas UMA pergunta de descoberta.'
-      : 'Se a mensagem atual não traz pergunta objetiva, conduza com UMA pergunta inicial de descoberta, em tom natural.',
-    'Se o cliente responder apenas "sim" a uma pergunta com duas opções, não troque as opções. Retome as opções exatas ou escolha a continuidade mais natural pelo histórico.',
-    'Não pergunte todos os tópicos de uma vez.',
-    'Não copie literalmente um roteiro fixo. Varie a formulação conforme o histórico.',
-    'Não invente informação comercial. Se faltar dado confirmado, ofereça corretor ou visita de forma natural.',
-    '[/ORIENTAÇÃO DE DESCOBERTA INICIAL]',
+      ? 'Responda primeiro à pergunta atual com as evidências disponíveis. Só depois, se útil, faça UMA pergunta objetiva.'
+      : 'Faça no máximo UMA pergunta objetiva e apenas se ela ajudar o próximo passo comercial.',
+    'Não peça nome antes de preço, localização, metragem, fotos, materiais ou condições.',
+    'Não repita informação já presente no estado e não use perguntas emocionais ou aspiracionais.',
+    'Se faltar dado, informe claramente a indisponibilidade sem criar handoff automático.',
+    '[/ORIENTAÇÃO DE QUALIFICAÇÃO OBJETIVA]',
   ]
     .filter((line): line is string => Boolean(line && line.trim()))
     .join('\n');
@@ -1338,19 +1317,11 @@ function buildInitialQualificationClarificationReply(params: {
   lastAssistantMessage?: string | null;
   state: ReturnType<typeof getLeadQualificationState>;
 }): string {
-  const last = normText(params.lastAssistantMessage || '');
-  if (!params.state.nameCollected && /\b(nome|como posso te chamar|me conta seu nome)\b/.test(last)) {
-    return [
-      'Sem problema, eu explico melhor.',
-      'Eu pergunto seu nome só para te atender de forma mais organizada por aqui.',
-      'Como posso te chamar?',
-    ].join('\n\n');
-  }
-  return [
-    'Sem problema, eu explico melhor.',
-    'Vou te fazer perguntas simples para entender o que você procura e te passar as informações certas do Évora.',
-    'Você está olhando mais para morar, investir ou só conhecendo por enquanto?',
-  ].join('\n\n');
+  void params.lastAssistantMessage;
+  const lastQuestion = String(params.state.lastQualificationQuestion ?? '').trim();
+  return lastQuestion
+    ? `Vou reformular de forma direta: ${lastQuestion}`
+    : 'Qual informação você quer consultar: valor, localização, metragem, pagamento ou disponibilidade?';
 }
 
 function axisHumanLabel(axis: CommercialAxis): string {
@@ -1578,7 +1549,8 @@ function isImageMaterialRequest(text: string): boolean {
   if (!n) return false;
   return (
     /\b(foto|fotos|imagem|imagens|manda foto|tem foto|quero ver|galeria)\b/.test(n) ||
-    userAskedForSpecificImageFilenameTopic(text)
+    userAskedForSpecificImageFilenameTopic(text) ||
+    userAskedForSpecificMediaSpace(text)
   );
 }
 
@@ -1660,7 +1632,7 @@ function buildEvoraLocationOverview(args: {
   addressNumber?: string | null;
 }): string {
   const canonicalBase =
-    'O Evora fica em Atibaia, na regiao da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de Sao Paulo, em uma regiao com qualidade de vida e contato com a natureza.';
+    'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo.';
   const addressComplete = String(args.addressComplete ?? '').trim();
   const addressNumber = String(args.addressNumber ?? '').trim();
   if (addressComplete) {
@@ -1674,7 +1646,7 @@ function buildEvoraLocationOverview(args: {
 }
 
 function buildEvoraRegionCanonicalReply(): string {
-  return 'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com fácil acesso pela Rodovia Dom Pedro I e a aproximadamente 50 minutos de São Paulo. É uma região com perfil mais tranquilo, contato com natureza e boa qualidade de vida.';
+  return 'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I e a aproximadamente 50 minutos de São Paulo.';
 }
 
 function buildEvoraAddressCanonicalReply(): string {
@@ -1902,6 +1874,207 @@ function splitAnaOutboundMessages(text: string): string[] {
 
 export const __testOnlySplitAnaOutboundMessages = splitAnaOutboundMessages;
 
+const ANA_PIPELINE_STALE_SPLIT_ERROR = 'pipeline_stale_before_split_outbound_part';
+
+export const ANA_EVORA_INFRASTRUCTURE_CONTINUATION_REPLY =
+  'O Évora conta com portaria 24h e controle de acesso. O lazer cadastrado inclui piscina, academia, playground, salão de festas, coworking, espaço zen, fireplace, quadra de beach tennis, campo society e estação para carros elétricos. Os lotes começam em 360 m², em Atibaia, com acesso pela Rodovia Dom Pedro I. Deseja consultar lazer ou segurança?';
+
+export function isIncompleteAssistantReply(text: string): boolean {
+  const cleaned = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return false;
+  if (/(:\.?|[-•])\s*$/u.test(cleaned)) return true;
+
+  const lastColon = cleaned.lastIndexOf(':');
+  if (lastColon < 0) return false;
+
+  const beforeColon = normText(cleaned.slice(0, lastColon));
+  const afterColon = cleaned.slice(lastColon + 1).replace(/[.\s•-]+/gu, '').trim();
+  if (afterColon.length === 0) return true;
+
+  return (
+    afterColon.split(/\s+/).filter(Boolean).length <= 1 &&
+    /\b(diferenciais|infraestrutura|principais pontos|itens|conta com|inclui|incluem)\b/.test(beforeColon)
+  );
+}
+
+export function isContinuationPrompt(text: string): boolean {
+  const normalized = normText(String(text || ''))
+    .replace(/\s+([?!])/g, '$1')
+    .replace(/([?!])\s+/g, '$1')
+    .trim();
+  return /^(?:\?|e\?|continua|continue|pode continuar|como assim\?|faltou|termina)$/.test(normalized);
+}
+
+function inferAnaAssistantContinuationTopic(params: {
+  topic?: string | null;
+  enterpriseId?: number | null;
+  enterpriseName?: string | null;
+  lastAssistantText?: string | null;
+  fullAssistantText?: string | null;
+  userText?: string | null;
+  commercialFlowState?: CommercialFlowState | null;
+}): string | null {
+  const explicitTopic = normText(params.topic ?? params.commercialFlowState?.pendingAssistantContinuation?.topic ?? '');
+  if (explicitTopic === 'evora_infraestrutura_diferenciais') return 'evora_infraestrutura_diferenciais';
+
+  const corpus = normText(
+    [
+      explicitTopic,
+      params.enterpriseName ?? '',
+      params.lastAssistantText ?? '',
+      params.fullAssistantText ?? '',
+      params.userText ?? '',
+      params.commercialFlowState?.lastAssistantSnippet ?? '',
+    ].join('\n')
+  );
+  const mentionsEvora = /\bevora\b/.test(corpus);
+  const mentionsInfrastructureOrDifferentials =
+    /\b(diferenciais|infraestrutura|transformam o dia a dia|portaria|lazer completo|piscina|academia|playground|coworking|beach tennis|campo society|carros eletricos)\b/.test(
+      corpus
+    );
+  if (mentionsEvora && mentionsInfrastructureOrDifferentials) {
+    return 'evora_infraestrutura_diferenciais';
+  }
+  return null;
+}
+
+export function buildAnaDeterministicContinuationReply(params: {
+  topic?: string | null;
+  enterpriseId?: number | null;
+  enterpriseName?: string | null;
+  lastAssistantText?: string | null;
+  userText?: string | null;
+  commercialFlowState?: CommercialFlowState | null;
+}): string | null {
+  const topic = inferAnaAssistantContinuationTopic(params);
+  if (topic === 'evora_infraestrutura_diferenciais') {
+    return ANA_EVORA_INFRASTRUCTURE_CONTINUATION_REPLY;
+  }
+  return null;
+}
+
+export function clearPendingAssistantContinuationFromState(prev: CommercialFlowState): CommercialFlowState {
+  const next: CommercialFlowState = {
+    ...prev,
+    updatedAt: new Date().toISOString(),
+  };
+  delete next.pendingAssistantContinuation;
+  return next;
+}
+
+export function buildCommercialFlowStateWithPendingAssistantContinuation(params: {
+  prev: CommercialFlowState;
+  sentParts: string[];
+  messageIds: number[];
+  fullReplyText?: string | null;
+  userText?: string | null;
+  createdAt?: string;
+}): CommercialFlowState | null {
+  const lastSentText = params.sentParts.map((part) => String(part || '').trim()).filter(Boolean).join('\n\n').trim();
+  if (!lastSentText || !isIncompleteAssistantReply(lastSentText)) return null;
+
+  const createdAt = params.createdAt ?? new Date().toISOString();
+  const topic = inferAnaAssistantContinuationTopic({
+    lastAssistantText: lastSentText,
+    fullAssistantText: params.fullReplyText ?? null,
+    userText: params.userText ?? null,
+    commercialFlowState: params.prev,
+  });
+  const lastSentAssistantMessageId = params.messageIds[params.messageIds.length - 1] ?? null;
+  return {
+    ...params.prev,
+    pendingAssistantContinuation: {
+      reason: 'split_interrupted_by_new_inbound',
+      topic,
+      lastSentAssistantMessageId,
+      lastSentText,
+      createdAt,
+    },
+    updatedAt: createdAt,
+  };
+}
+
+export function shouldBlockAnaTextReplyForDocMediaFailure(params: {
+  shouldAttemptDocSend: boolean;
+  explicitMaterialRequestThisTurn: boolean;
+  docMediaFirstSkipReason: string | null;
+}): boolean {
+  if (!params.shouldAttemptDocSend) return false;
+  if (params.docMediaFirstSkipReason === 'no_pre_resolved_file' && !params.explicitMaterialRequestThisTurn) {
+    return false;
+  }
+  return true;
+}
+
+async function startAnaGeneralFollowupAfterSuccessfulAnaSend(params: {
+  conversationId: number;
+  sourcePhase: string;
+  finalReplyText: string;
+  assistantMessageId: number;
+  assistantCreatedAt: Date;
+}): Promise<void> {
+  try {
+    const [conversation, lastUserMessage] = await Promise.all([
+      getConversationById(params.conversationId),
+      getLastUserMessageRow(params.conversationId),
+    ]);
+    await startAnaGeneralFollowupIfEligible({
+      conversationId: params.conversationId,
+      enterpriseId: conversation?.enterprise_id ?? null,
+      assistantMessageId: params.assistantMessageId,
+      assistantCreatedAt: params.assistantCreatedAt,
+      lastUserMessageId: lastUserMessage?.id ?? null,
+      finalReplyText: params.finalReplyText,
+      commercialFlowState: conversation?.commercial_flow_state ?? null,
+      sourcePhase: params.sourcePhase,
+      conversation,
+    });
+  } catch (error) {
+    console.error('[ANA_GENERAL_FOLLOWUP] start_error', {
+      conversationId: params.conversationId,
+      sourcePhase: params.sourcePhase,
+      assistantMessageId: params.assistantMessageId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function persistPendingAssistantContinuationFromSplitStale(params: {
+  conversationId: number;
+  sentParts: string[];
+  messageIds: number[];
+  fullReplyText: string;
+}): Promise<boolean> {
+  if (params.sentParts.length === 0) return false;
+  try {
+    const conversation = await getConversationById(params.conversationId);
+    const prev = parseCommercialFlowState(conversation?.commercial_flow_state) ?? {};
+    const next = buildCommercialFlowStateWithPendingAssistantContinuation({
+      prev,
+      sentParts: params.sentParts,
+      messageIds: params.messageIds,
+      fullReplyText: params.fullReplyText,
+    });
+    if (!next?.pendingAssistantContinuation) return false;
+    await mergeConversationCommercialFlowState(params.conversationId, next);
+    console.log('[ANA_PENDING_CONTINUATION_SET]', {
+      conversationId: params.conversationId,
+      reason: next.pendingAssistantContinuation.reason,
+      topic: next.pendingAssistantContinuation.topic,
+      lastSentAssistantMessageId: next.pendingAssistantContinuation.lastSentAssistantMessageId,
+      lastSentTextPreview: next.pendingAssistantContinuation.lastSentText.slice(0, 260),
+      sentPartsCount: params.sentParts.length,
+    });
+    return true;
+  } catch (error) {
+    console.error('[ANA_PENDING_CONTINUATION_SET_FAILED]', {
+      conversationId: params.conversationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
 async function sendAnaOutboundMessages(params: {
   conversationId: number;
   toPhoneNumber: string;
@@ -1942,13 +2115,20 @@ async function sendAnaOutboundMessages(params: {
   const metaMessageIds: string[] = [];
   const messageIds: number[] = [];
   const sentParts: string[] = [];
+  const insertedMessages: Array<{ id: number; created_at: Date }> = [];
   for (const part of messageParts) {
     if (isPipelineStale(params.conversationId, params.replyPipelineToken)) {
+      await persistPendingAssistantContinuationFromSplitStale({
+        conversationId: params.conversationId,
+        sentParts,
+        messageIds,
+        fullReplyText: params.text,
+      });
       console.log('[ANA_REPLY_SEND_RESULT]', {
         conversationId: params.conversationId,
         phase: params.phase,
         success: false,
-        reason: 'pipeline_stale_before_split_outbound_part',
+        reason: ANA_PIPELINE_STALE_SPLIT_ERROR,
         partsSent: sentParts.length,
       });
       return {
@@ -1956,7 +2136,7 @@ async function sendAnaOutboundMessages(params: {
         metaMessageIds,
         messageIds,
         sentParts,
-        error: 'pipeline_stale_before_split_outbound_part',
+        error: ANA_PIPELINE_STALE_SPLIT_ERROR,
         code: 'PIPELINE_STALE',
       };
     }
@@ -1988,6 +2168,7 @@ async function sendAnaOutboundMessages(params: {
     sentParts.push(part);
     const inserted = await insertMessage(params.conversationId, 'assistant', part, sendResult.metaMessageId);
     messageIds.push(inserted.id);
+    insertedMessages.push({ id: inserted.id, created_at: inserted.created_at });
   }
   console.log('[ANA_REPLY_SEND_RESULT]', {
     conversationId: params.conversationId,
@@ -1996,7 +2177,154 @@ async function sendAnaOutboundMessages(params: {
     partsSent: sentParts.length,
     outboundMetaMessageIds: metaMessageIds,
   });
+  const anchorAssistantMessage = insertedMessages[insertedMessages.length - 1] ?? null;
+  if (anchorAssistantMessage) {
+    await startAnaGeneralFollowupAfterSuccessfulAnaSend({
+      conversationId: params.conversationId,
+      sourcePhase: params.phase,
+      finalReplyText: sentParts.join('\n\n').trim() || params.text,
+      assistantMessageId: anchorAssistantMessage.id,
+      assistantCreatedAt: anchorAssistantMessage.created_at,
+    });
+  }
   return { success: true, metaMessageIds, messageIds, sentParts };
+}
+
+async function tryHandlePendingAssistantContinuation(params: {
+  conversationId: number;
+  toPhoneNumber: string;
+  userText: string;
+  flowState: CommercialFlowState;
+  enterpriseId: number | null;
+  enterpriseName?: string | null;
+  replyPipelineToken?: number;
+}): Promise<{
+  handled: boolean;
+  sent: boolean;
+  reason: string | null;
+  nextFlowState?: CommercialFlowState;
+  replyText?: string;
+}> {
+  if (!isContinuationPrompt(params.userText)) {
+    return { handled: false, sent: false, reason: null };
+  }
+
+  let source: 'state' | 'last_assistant_incomplete' = 'state';
+  let lastSentText = String(params.flowState.pendingAssistantContinuation?.lastSentText ?? '').trim();
+  let topic = params.flowState.pendingAssistantContinuation?.topic ?? null;
+  let lastSentAssistantMessageId = params.flowState.pendingAssistantContinuation?.lastSentAssistantMessageId ?? null;
+
+  if (!lastSentText || !isIncompleteAssistantReply(lastSentText)) {
+    const rows = await getMessagesByConversationId(params.conversationId);
+    const lastAssistant = [...rows]
+      .reverse()
+      .find((message) => message.role === 'assistant' && message.deleted_at == null && String(message.content ?? '').trim());
+    const lastAssistantText = String(lastAssistant?.content ?? '').trim();
+    if (!lastAssistantText || !isIncompleteAssistantReply(lastAssistantText)) {
+      console.log('[ANA_PENDING_CONTINUATION_SKIP]', {
+        conversationId: params.conversationId,
+        reason: 'no_pending_or_incomplete_last_assistant',
+        userText: params.userText.slice(0, 80),
+      });
+      return { handled: false, sent: false, reason: null };
+    }
+    source = 'last_assistant_incomplete';
+    lastSentText = lastAssistantText;
+    lastSentAssistantMessageId = lastAssistant?.id ?? null;
+    topic = inferAnaAssistantContinuationTopic({
+      topic,
+      enterpriseId: params.enterpriseId,
+      enterpriseName: params.enterpriseName ?? null,
+      lastAssistantText,
+      userText: params.userText,
+      commercialFlowState: params.flowState,
+    });
+  }
+
+  const replyText = buildAnaDeterministicContinuationReply({
+    topic,
+    enterpriseId: params.enterpriseId,
+    enterpriseName: params.enterpriseName ?? null,
+    lastAssistantText: lastSentText,
+    userText: params.userText,
+    commercialFlowState: params.flowState,
+  });
+
+  if (!replyText) {
+    console.log('[ANA_PENDING_CONTINUATION_SKIP]', {
+      conversationId: params.conversationId,
+      reason: 'deterministic_topic_not_resolved',
+      source,
+      topic,
+      lastSentAssistantMessageId,
+      lastSentTextPreview: lastSentText.slice(0, 220),
+    });
+    return { handled: false, sent: false, reason: null };
+  }
+
+  if (isPipelineStale(params.conversationId, params.replyPipelineToken)) {
+    return { handled: true, sent: false, reason: 'pipeline_stale_before_pending_assistant_continuation' };
+  }
+
+  console.log('[ANA_PENDING_CONTINUATION_RESOLVED]', {
+    conversationId: params.conversationId,
+    source,
+    topic,
+    lastSentAssistantMessageId,
+    replyPreview: replyText.slice(0, 260),
+  });
+
+  const sendResult = await sendAnaOutboundMessages({
+    conversationId: params.conversationId,
+    toPhoneNumber: params.toPhoneNumber,
+    text: replyText,
+    phase: 'ana_pending_assistant_continuation',
+    replyPipelineToken: params.replyPipelineToken,
+  });
+  if (!sendResult.success || sendResult.metaMessageIds.length === 0) {
+    return { handled: true, sent: false, reason: 'pending_assistant_continuation_send_failed' };
+  }
+
+  const sentReplyText = sendResult.sentParts.join('\n\n').trim() || replyText;
+  const conversationAfterSend = await getConversationById(params.conversationId);
+  const prevAfterSend = clearPendingAssistantContinuationFromState(
+    parseCommercialFlowState(conversationAfterSend?.commercial_flow_state) ?? params.flowState
+  );
+  const committedState = updateConversationStateFromCommittedReply({
+    conversationId: params.conversationId,
+    flowState: prevAfterSend,
+    finalReplyParts: sendResult.sentParts.length > 0 ? sendResult.sentParts : [sentReplyText],
+    finalReplyText: sentReplyText,
+    handler: 'pending_assistant_continuation',
+    currentTopic: null,
+    requestedTopic: null,
+    commercialAxis: null,
+  });
+  const allActiveEnterprises = await listEnterprises(true);
+  const nextFlow = clearPendingAssistantContinuationFromState(
+    computeNextCommercialFlowState(committedState.nextState, sentReplyText, {
+      conversationPhase: 'assistant_continuation',
+      enterpriseIdResolved: params.enterpriseId,
+      enterprises: allActiveEnterprises,
+      productTypeHint: undefined,
+      userMessage: params.userText,
+    })
+  );
+  await mergeConversationCommercialFlowState(params.conversationId, nextFlow);
+  console.log('[ANA_PENDING_CONTINUATION_CLEARED]', {
+    conversationId: params.conversationId,
+    source,
+    topic,
+    outboundMetaMessageId: sendResult.metaMessageIds[sendResult.metaMessageIds.length - 1] ?? null,
+  });
+
+  return {
+    handled: true,
+    sent: true,
+    reason: null,
+    nextFlowState: nextFlow,
+    replyText: sentReplyText,
+  };
 }
 
 function userAskedDirectOperationalAxis(
@@ -2534,7 +2862,7 @@ function hasExplicitHandoffIntent(message: string): boolean {
 }
 
 function buildEvoraFirstReplySafeFallback(): string {
-  return buildLeadQualificationNameQuestion();
+  return 'O Évora é um loteamento fechado em Atibaia, com lotes a partir de 360 m². Seu interesse é para morar ou investir?';
 }
 
 function userExplicitlyAskedPriceInCurrentTurn(message: string): boolean {
@@ -2716,7 +3044,7 @@ function buildGlobalNoEnterpriseOperationalContext(params: {
     'Objetivo deste turno: entender naturalmente qual empreendimento, regiao, tipo de planta/imovel, orcamento ou intencao o cliente busca.',
     `Resposta segura quando o cliente pedir informacoes gerais sem empreendimento: "${ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY}"`,
     'Se o texto do cliente permitir uma inferencia clara, responda conduzindo essa confirmacao. Se ainda nao permitir, faca uma pergunta curta de qualificacao.',
-    'Responda em texto livre, comercial e humano, com no maximo uma pergunta.',
+    'Responda em texto livre, comercial, objetivo e profissional, com no maximo uma pergunta.',
     `Tipo de interesse inferido pelo backend: ${params.requestedProductType || 'INDEFINIDO'}.`,
     candidateLine,
     portfolioLine,
@@ -3986,7 +4314,18 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         }
       }
 
-      if (assignedBrokerId != null && brokerPhone == null) {
+      // No broker means no operational notification recipient. Do not build a
+      // payload, persist notification status, enqueue work, or fall back to a
+      // manager. Appointment and handoff state remain as resolved above.
+      if (assignedBrokerId == null) {
+        console.log('[BROKER_APPOINTMENT_CONFIRMED_TEMPLATE_SKIPPED_NO_BROKER]', {
+          conversationId,
+          appointmentId,
+        });
+        return;
+      }
+
+      if (brokerPhone == null) {
         const broker = await getCorretorById(assignedBrokerId);
         brokerName = broker?.full_name ?? brokerName;
         brokerPhone = broker?.phone ?? brokerPhone;
@@ -4133,6 +4472,11 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         conversationId,
         reason: blockedReason,
       });
+      await cancelAnaGeneralFollowupForConversation({
+        conversationId,
+        reason: blockedReason,
+        source: 'engine_blocked_inactive_wallet_or_closed',
+      });
       return;
     }
 
@@ -4174,6 +4518,11 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         conversationId,
         reason: 'handoff',
       });
+      await cancelAnaGeneralFollowupForConversation({
+        conversationId,
+        reason: 'handoff',
+        source: 'engine_blocked_handoff',
+      });
       return;
     }
     console.log('[ANA DEBUG] handoff check passed');
@@ -4192,6 +4541,49 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
       enterpriseId: effectiveConv.enterprise_id ?? null,
       activeWhatsAppNoEnterprise: activeWhatsAppNoEnterpriseForTurn,
     });
+
+    const pendingContinuationTurn = await tryHandlePendingAssistantContinuation({
+      conversationId,
+      toPhoneNumber,
+      userText: trimmed,
+      flowState: flowStateParsed,
+      enterpriseId:
+        effectiveConv.enterprise_id ??
+        flowStateParsed.lastInferredEnterpriseId ??
+        flowStateParsed.lastSingleCatalogEnterpriseId ??
+        null,
+      replyPipelineToken,
+    });
+    if (pendingContinuationTurn.handled) {
+      assistantReplyAttemptedOrSent = pendingContinuationTurn.sent;
+      if (pendingContinuationTurn.sent) {
+        flowStateParsed = pendingContinuationTurn.nextFlowState ?? flowStateParsed;
+        anaTurnAuditOutcome = 'sent';
+        anaTurnAuditBlockedReason = null;
+        anaTurnAuditLlmStatus = 'skipped';
+        anaTurnAuditModel = 'deterministic_pending_assistant_continuation';
+        anaTurnDiagnostics.finalResponse.replySource = 'pending_assistant_continuation';
+        anaTurnDiagnostics.finalResponse.handoffUsed = false;
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
+          replySource: 'pending_assistant_continuation',
+          outboundStatus: anaTurnAuditOutcome,
+        });
+      } else {
+        const reason = pendingContinuationTurn.reason ?? 'pending_assistant_continuation_not_sent';
+        anaTurnAuditOutcome = reason.startsWith('pipeline_stale_') ? 'silent' : 'send_failed';
+        anaTurnAuditBlockedReason = reason;
+        anaTurnDiagnostics.finalResponse.replySource = 'pending_assistant_continuation';
+        anaTurnDiagnostics.finalResponse.handoffUsed = false;
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'failed', {
+          replySource: 'pending_assistant_continuation',
+          outboundStatus: anaTurnAuditOutcome,
+          blockedReason: reason,
+        });
+      }
+      return;
+    }
 
     if (effectiveConv.pending_resolution_choice === true) {
       const substantiveBypass = isSubstantiveQuestionThatBypassesResolutionChoice(trimmed);
@@ -4336,6 +4728,11 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         await cancelAnaVisitFollowupForConversation({
           conversationId,
           reason: 'handoff',
+        });
+        await cancelAnaGeneralFollowupForConversation({
+          conversationId,
+          reason: 'handoff',
+          source: 'broker_assignment',
         });
         if (assignment.assignedBrokerId != null) {
           const enterpriseNameForNotification = assignment.enterpriseName ?? 'empreendimento';
@@ -5293,9 +5690,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
 
     const evoraLeadQualificationEnabled = isEvoraEnterpriseName(ent?.name ?? null);
     let leadQualificationStateBeforeTurn = getLeadQualificationState(flowStateParsed);
-    let leadQualificationStateForTurn = leadQualificationStateBeforeTurn;
     let leadQualificationSignalsChangedThisTurn = false;
-    let leadQualificationNameCollectedThisTurn = false;
     const objectiveCustomerQuestionThisTurn = isObjectiveCustomerQuestion(trimmed);
     if (evoraLeadQualificationEnabled) {
       const extractedQualificationSignals = extractLeadQualificationSignals(trimmed, leadQualificationStateBeforeTurn);
@@ -5310,198 +5705,12 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
       if (hasExtractedSignals) {
         leadQualificationSignalsChangedThisTurn = true;
         flowStateParsed = mergeLeadQualificationState(flowStateParsed, extractedQualificationSignals);
-        leadQualificationStateForTurn = getLeadQualificationState(flowStateParsed);
+        const leadQualificationStateForTurn = getLeadQualificationState(flowStateParsed);
         console.log('[ANA_LEAD_QUALIFICATION_STATE_EXTRACTED]', {
           conversationId,
           state: leadQualificationStateForTurn,
         });
-        if (!leadQualificationStateBeforeTurn.nameCollected && leadQualificationStateForTurn.nameCollected) {
-          leadQualificationNameCollectedThisTurn = true;
-          console.log('[ANA_LEAD_QUALIFICATION_NAME_COLLECTED]', {
-            conversationId,
-            customerName: leadQualificationStateForTurn.name ?? leadQualificationStateForTurn.customerName ?? null,
-          });
-        }
       }
-    }
-
-    if (
-      evoraLeadQualificationEnabled &&
-      isFirstAnaReply &&
-      !objectiveCustomerQuestionThisTurn &&
-      !leadQualificationStateForTurn.nameAsked &&
-      !trustedCustomerName &&
-      !String(effectiveConv.customer_name ?? '').trim() &&
-      !String(leadQualificationStateForTurn.name ?? leadQualificationStateForTurn.customerName ?? '').trim()
-    ) {
-      const nameQuestion = buildLeadQualificationNameQuestion();
-
-      flowStateParsed = markLeadQualificationQuestionAsked(flowStateParsed, {
-        key: 'name',
-        question: nameQuestion,
-      });
-
-      console.log('[ANA_FIRST_CONTACT_NAME_GATE_BEFORE_LLM]', {
-        conversationId,
-        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
-        isFirstAnaReply,
-        objectiveCustomerQuestionThisTurn,
-      });
-
-      const committedNameGate = commitTurnResponse({
-        handler: 'lead_qualification_name_gate',
-        reason: 'first_contact_missing_confirmed_name',
-        parts: [nameQuestion],
-        stage: 'lead_qualification_name_gate',
-        requestedTopic: null,
-        commercialAxis: null,
-        shouldCallQwen: false,
-      });
-
-      if (!committedNameGate.committed || !committedNameGate.text.trim()) {
-        anaTurnAuditOutcome = 'blocked';
-        anaTurnAuditBlockedReason = 'lead_qualification_name_gate_commit_blocked';
-        return;
-      }
-
-      if (isPipelineStale(conversationId, replyPipelineToken)) {
-        anaTurnAuditOutcome = 'silent';
-        anaTurnAuditBlockedReason = 'pipeline_stale_before_lead_qualification_name_gate';
-        return;
-      }
-
-      const nameGateSend = await sendAnaOutboundMessages({
-        conversationId,
-        toPhoneNumber,
-        text: committedNameGate.text,
-        phase: 'lead_qualification_name_gate',
-        replyPipelineToken,
-      });
-
-      if (!nameGateSend.success || nameGateSend.metaMessageIds.length === 0) {
-        anaTurnAuditOutcome = 'send_failed';
-        anaTurnAuditBlockedReason = 'lead_qualification_name_gate_send_failed';
-        return;
-      }
-
-      const committedNameGateState = updateConversationStateFromCommittedReply({
-        conversationId,
-        flowState: flowStateParsed,
-        finalReplyParts: committedNameGate.parts,
-        finalReplyText: committedNameGate.text,
-        handler: 'lead_qualification_name_gate',
-        currentTopic: null,
-        requestedTopic: null,
-        commercialAxis: null,
-      });
-
-      flowStateParsed = committedNameGateState.nextState;
-      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
-      await markAnaAskedForCustomerName(conversationId);
-
-      anaTurnAuditOutcome = 'sent';
-      anaTurnAuditBlockedReason = null;
-      anaTurnAuditLlmStatus = 'skipped';
-      anaTurnAuditModel = 'lead_qualification_name_gate';
-      anaTurnDiagnostics.finalResponse.replySource = 'lead_qualification_name_gate';
-      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-      return;
-    }
-
-    if (
-      evoraLeadQualificationEnabled &&
-      leadQualificationNameCollectedThisTurn &&
-      !objectiveCustomerQuestionThisTurn &&
-      !leadQualificationStateForTurn.purpose &&
-      !leadQualificationStateForTurn.askedQualificationKeys.includes('purpose')
-    ) {
-      const firstName =
-        toFirstName(
-          trustedCustomerName ||
-            leadQualificationStateForTurn.name ||
-            leadQualificationStateForTurn.customerName ||
-            effectiveConv.customer_name ||
-            null
-        ) || 'tudo bem';
-
-      const postNameIntro =
-        firstName === 'tudo bem'
-          ? 'Prazer! Vou te fazer algumas perguntas rápidas para entender melhor seu momento e te orientar melhor sobre o Évora.'
-          : `Prazer, ${firstName}! Vou te fazer algumas perguntas rápidas para entender melhor seu momento e te orientar melhor sobre o Évora.`;
-
-      const postNameDiscoveryQuestion =
-        'Você está pensando mais em morar, investir ou ainda está conhecendo as possibilidades?';
-
-      flowStateParsed = markLeadQualificationQuestionAsked(flowStateParsed, {
-        key: 'purpose' as const,
-        question: postNameDiscoveryQuestion,
-      });
-
-      console.log('[ANA_POST_NAME_DISCOVERY_GATE_BEFORE_LLM]', {
-        conversationId,
-        enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
-        customerName: firstName,
-        isFirstAnaReply,
-        leadQualificationNameCollectedThisTurn,
-      });
-
-      const committedPostNameDiscovery = commitTurnResponse({
-        handler: 'lead_qualification_post_name_discovery_gate',
-        reason: 'name_collected_missing_purpose',
-        parts: [postNameIntro, postNameDiscoveryQuestion],
-        stage: 'lead_qualification_post_name_discovery_gate',
-        requestedTopic: null,
-        commercialAxis: null,
-        shouldCallQwen: false,
-      });
-
-      if (!committedPostNameDiscovery.committed || !committedPostNameDiscovery.text.trim()) {
-        anaTurnAuditOutcome = 'blocked';
-        anaTurnAuditBlockedReason = 'lead_qualification_post_name_discovery_commit_blocked';
-        return;
-      }
-
-      if (isPipelineStale(conversationId, replyPipelineToken)) {
-        anaTurnAuditOutcome = 'silent';
-        anaTurnAuditBlockedReason = 'pipeline_stale_before_lead_qualification_post_name_discovery';
-        return;
-      }
-
-      const postNameDiscoverySend = await sendAnaOutboundMessages({
-        conversationId,
-        toPhoneNumber,
-        text: committedPostNameDiscovery.text,
-        phase: 'lead_qualification_post_name_discovery_gate',
-        replyPipelineToken,
-      });
-
-      if (!postNameDiscoverySend.success || postNameDiscoverySend.metaMessageIds.length === 0) {
-        anaTurnAuditOutcome = 'send_failed';
-        anaTurnAuditBlockedReason = 'lead_qualification_post_name_discovery_send_failed';
-        return;
-      }
-
-      const committedPostNameDiscoveryState = updateConversationStateFromCommittedReply({
-        conversationId,
-        flowState: flowStateParsed,
-        finalReplyParts: committedPostNameDiscovery.parts,
-        finalReplyText: committedPostNameDiscovery.text,
-        handler: 'lead_qualification_post_name_discovery_gate',
-        currentTopic: null,
-        requestedTopic: null,
-        commercialAxis: null,
-      });
-
-      flowStateParsed = committedPostNameDiscoveryState.nextState;
-      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
-
-      anaTurnAuditOutcome = 'sent';
-      anaTurnAuditBlockedReason = null;
-      anaTurnAuditLlmStatus = 'skipped';
-      anaTurnAuditModel = 'lead_qualification_post_name_discovery_gate';
-      anaTurnDiagnostics.finalResponse.replySource = 'lead_qualification_post_name_discovery_gate';
-      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-      return;
     }
 
     const proactiveVideoIntent = isProactiveVideoOfferIntent(trimmed) && !isVideoMaterialRequest(trimmed);
@@ -5591,15 +5800,25 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         anaTurnAuditBlockedReason = 'video_not_available_send_failed';
         return;
       }
-      const videoFiles = await resolveSendableEnterpriseVideoFilesCurrentVersion(ent.id, 2);
+      const requestedVideoSpace = extractAnaSpecificMediaSpace(trimmed);
+      const videoFiles = await resolveSendableEnterpriseVideoFilesCurrentVersion(ent.id, requestedVideoSpace ? 10 : 2);
+      const selectedVideoFiles = requestedVideoSpace
+        ? filterAnaMediaFilesBySpecificSpace(videoFiles, requestedVideoSpace).slice(0, 2)
+        : videoFiles;
       if (videoFiles.length === 0) {
         console.log('[ANA_VIDEO_MATERIAL_NOT_AVAILABLE]', {
           conversationId,
           enterpriseId: ent.id,
           reason: 'no_authorized_videos',
+          requestedVideoSpace,
         });
-        const notAvailableText =
-          'Não tenho vídeos liberados para envio por aqui no momento. Quer que eu te explique algum ponto específico do empreendimento?';
+        const notAvailableText = requestedVideoSpace
+          ? buildAnaSpecificMediaUnavailableReply({
+              requestedSpace: requestedVideoSpace,
+              mediaKind: 'video',
+              enterpriseName: ent.name,
+            })
+          : 'Não tenho vídeos liberados para envio por aqui no momento. Quer que eu te explique algum ponto específico do empreendimento?';
         const sendNotAvailable = await sendTextMessage({
           conversationId,
           to: toPhoneNumber,
@@ -5616,14 +5835,46 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         anaTurnAuditBlockedReason = 'video_not_available_send_failed';
         return;
       }
+      if (requestedVideoSpace && selectedVideoFiles.length === 0) {
+        console.log('[ANA_VIDEO_MATERIAL_NOT_AVAILABLE]', {
+          conversationId,
+          enterpriseId: ent.id,
+          reason: 'no_matching_specific_space',
+          requestedVideoSpace,
+          authorizedVideoCount: videoFiles.length,
+          authorizedVideoNames: videoFiles.map((file) => file.originalName).slice(0, 20),
+        });
+        const notAvailableText = buildAnaSpecificMediaUnavailableReply({
+          requestedSpace: requestedVideoSpace,
+          mediaKind: 'video',
+          enterpriseName: ent.name,
+          availableSpaces: listAnaSpecificMediaSpacesAvailableFromFiles(videoFiles),
+        });
+        const sendNotAvailable = await sendTextMessage({
+          conversationId,
+          to: toPhoneNumber,
+          text: notAvailableText,
+          phase: 'ana_video_specific_space_not_available',
+        });
+        if (sendNotAvailable.success && sendNotAvailable.metaMessageId) {
+          await insertMessage(conversationId, 'assistant', notAvailableText, sendNotAvailable.metaMessageId);
+          anaTurnAuditOutcome = 'sent';
+          anaTurnAuditBlockedReason = null;
+          return;
+        }
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = 'video_specific_space_not_available_send_failed';
+        return;
+      }
       console.log('[ANA_VIDEO_MATERIAL_FOUND]', {
         conversationId,
         enterpriseId: ent.id,
-        count: videoFiles.length,
+        count: selectedVideoFiles.length,
+        requestedVideoSpace,
       });
       let sentCount = 0;
       let lastSentVideo: (typeof videoFiles)[number] | null = null;
-      for (const [idx, video] of videoFiles.entries()) {
+      for (const [idx, video] of selectedVideoFiles.entries()) {
         if (idx > 0) await sleepMs(900);
         const mediaOutcome = await sendAnaEnterpriseMediaFirst({
           conversationId,
@@ -5717,18 +5968,31 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         return;
       }
       const requestedImageTopic = extractAnaImageFilenameTopic(trimmed);
-      const imageFiles = await resolveSendableEnterpriseImageFilesCurrentVersion(ent.id, requestedImageTopic ? 20 : 3);
-      const selectedImageFiles = requestedImageTopic
-        ? filterAnaImageFilesByFilenameTopic(imageFiles, requestedImageTopic).slice(0, 6)
-        : imageFiles;
+      const requestedImageSpace = extractAnaSpecificMediaSpace(trimmed);
+      const imageFiles = await resolveSendableEnterpriseImageFilesCurrentVersion(
+        ent.id,
+        requestedImageSpace ? 50 : requestedImageTopic ? 20 : 3
+      );
+      const selectedImageFiles = requestedImageSpace
+        ? filterAnaMediaFilesBySpecificSpace(imageFiles, requestedImageSpace).slice(0, 6)
+        : requestedImageTopic
+          ? filterAnaImageFilesByFilenameTopic(imageFiles, requestedImageTopic).slice(0, 6)
+          : imageFiles;
       if (imageFiles.length === 0) {
         console.log('[ANA_IMAGE_MATERIAL_NOT_AVAILABLE]', {
           conversationId,
           enterpriseId: ent.id,
           reason: 'no_authorized_images',
           requestedImageTopic,
+          requestedImageSpace,
         });
-        const notAvailableText = ANA_IMAGE_NOT_FOUND_REPLY;
+        const notAvailableText = requestedImageSpace
+          ? buildAnaSpecificMediaUnavailableReply({
+              requestedSpace: requestedImageSpace,
+              mediaKind: 'foto',
+              enterpriseName: ent.name,
+            })
+          : ANA_IMAGE_NOT_FOUND_REPLY;
         const sendNotAvailable = await sendTextMessage({
           conversationId,
           to: toPhoneNumber,
@@ -5745,21 +6009,27 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         anaTurnAuditBlockedReason = 'image_not_available_send_failed';
         return;
       }
-      if (requestedImageTopic && selectedImageFiles.length === 0) {
+      if (requestedImageSpace && selectedImageFiles.length === 0) {
         console.log('[ANA_IMAGE_MATERIAL_NOT_AVAILABLE]', {
           conversationId,
           enterpriseId: ent.id,
-          reason: 'no_matching_image_filename_topic',
+          reason: 'no_matching_specific_space',
           requestedImageTopic,
+          requestedImageSpace,
           authorizedImageCount: imageFiles.length,
           authorizedImageNames: imageFiles.map((file) => file.originalName).slice(0, 20),
         });
-        const notAvailableText = ANA_IMAGE_NOT_FOUND_REPLY;
+        const notAvailableText = buildAnaSpecificMediaUnavailableReply({
+          requestedSpace: requestedImageSpace,
+          mediaKind: 'foto',
+          enterpriseName: ent.name,
+          availableSpaces: listAnaSpecificMediaSpacesAvailableFromFiles(imageFiles),
+        });
         const sendNotAvailable = await sendTextMessage({
           conversationId,
           to: toPhoneNumber,
           text: notAvailableText,
-          phase: 'ana_image_topic_not_available',
+          phase: 'ana_image_specific_space_not_available',
         });
         if (sendNotAvailable.success && sendNotAvailable.metaMessageId) {
           await insertMessage(conversationId, 'assistant', notAvailableText, sendNotAvailable.metaMessageId);
@@ -5768,7 +6038,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
           return;
         }
         anaTurnAuditOutcome = 'send_failed';
-        anaTurnAuditBlockedReason = 'image_topic_not_available_send_failed';
+        anaTurnAuditBlockedReason = 'image_specific_space_not_available_send_failed';
         return;
       }
       console.log('[ANA_IMAGE_MATERIAL_FOUND]', {
@@ -5776,6 +6046,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         enterpriseId: ent.id,
         count: selectedImageFiles.length,
         requestedImageTopic,
+        requestedImageSpace,
         selectedImageNames: selectedImageFiles.map((file) => file.originalName),
       });
       let sentCount = 0;
@@ -6666,6 +6937,11 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
                 conversationId,
                 reason: 'handoff',
               });
+              await cancelAnaGeneralFollowupForConversation({
+                conversationId,
+                reason: 'handoff',
+                source: 'pending_resolution_broker_assignment',
+              });
 
               if (assignment.assignedBrokerId != null) {
                 const enterpriseNameForNotification =
@@ -7428,6 +7704,11 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
             conversationId,
             reason: 'visit_scheduled',
           });
+          await cancelAnaGeneralFollowupForConversation({
+            conversationId,
+            reason: 'visit_scheduled',
+            source: 'direct_visit_confirmed_before_send',
+          });
           console.log('[ANA_VISIT_STATE_SAVED]', {
             conversationId,
             source: 'direct_visit_confirmed',
@@ -7665,6 +7946,11 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
           conversationId,
           reason: 'visit_scheduled',
         });
+        await cancelAnaGeneralFollowupForConversation({
+          conversationId,
+          reason: 'visit_scheduled',
+          source: 'direct_visit_confirmed_after_send',
+        });
       } else if (directVisitDeclinedSuggestedSlot) {
         await cancelAnaVisitFollowupForConversation({
           conversationId,
@@ -7756,80 +8042,6 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         blockedReason: anaTurnAuditBlockedReason,
       });
       if (await sendGlobalNoEnterpriseFinalSafeReply(anaTurnAuditBlockedReason)) return;
-      return;
-    }
-
-    if (
-      lastAssistantAskedCustomerNameThisTurn &&
-      !trustedCustomerName &&
-      !objectiveCustomerQuestionThisTurn &&
-      !isInitialQualificationClarificationMessage(trimmed)
-    ) {
-      console.log('[ANA_MISSING_RAG_FALLBACK_BLOCKED_AFTER_NAME_QUESTION]', {
-        conversationId,
-        reason: 'name_question_non_name_reply',
-        userMessagePreview: trimmed.slice(0, 120),
-        lastAssistantMessage: (lastAssistantPlain || '').slice(0, 220),
-      });
-      console.log('[ANA_MISSING_RAG_FALLBACK_BLOCKED_FOR_CONVERSATION_STATE]', {
-        conversationId,
-        reason: 'name_question_non_name_reply',
-        userMessagePreview: trimmed.slice(0, 120),
-      });
-      const committedNameQuestionRepair = commitTurnResponse({
-        handler: 'lead_qualification_policy',
-        reason: 'name_question_non_name_reply',
-        parts: [ANA_NAME_QUESTION_REPAIR_REPLY],
-        stage: 'lead_qualification_name_repair',
-        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
-        commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
-        shouldCallQwen: false,
-      });
-      if (!committedNameQuestionRepair.committed || !committedNameQuestionRepair.text.trim()) {
-        anaTurnAuditOutcome = 'blocked';
-        anaTurnAuditBlockedReason = 'lead_qualification_name_repair_commit_blocked';
-        return;
-      }
-      if (isPipelineStale(conversationId, replyPipelineToken)) {
-        anaTurnAuditOutcome = 'silent';
-        anaTurnAuditBlockedReason = 'pipeline_stale_before_lead_qualification_name_repair_send';
-        return;
-      }
-      const nameQuestionRepairSend = await sendAnaOutboundMessages({
-        conversationId,
-        toPhoneNumber,
-        text: committedNameQuestionRepair.text,
-        phase: 'lead_qualification_policy',
-        replyPipelineToken,
-      });
-      if (!nameQuestionRepairSend.success || nameQuestionRepairSend.metaMessageIds.length === 0) {
-        anaTurnAuditOutcome = 'send_failed';
-        anaTurnAuditBlockedReason = 'lead_qualification_name_repair_send_failed';
-        return;
-      }
-      flowStateParsed = markLeadQualificationQuestionAsked(flowStateParsed, {
-        key: 'name',
-        question: ANA_NAME_QUESTION_REPAIR_REPLY,
-      });
-      const committedNameRepairState = updateConversationStateFromCommittedReply({
-        conversationId,
-        flowState: flowStateParsed,
-        finalReplyParts: committedNameQuestionRepair.parts,
-        finalReplyText: committedNameQuestionRepair.text,
-        handler: 'lead_qualification_policy',
-        currentTopic: anaTurnContextResolved?.currentTopic ?? null,
-        requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
-        commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
-      });
-      flowStateParsed = committedNameRepairState.nextState;
-      await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
-      await markAnaAskedForCustomerName(conversationId);
-      anaTurnAuditOutcome = 'sent';
-      anaTurnAuditBlockedReason = null;
-      anaTurnAuditLlmStatus = 'skipped';
-      anaTurnAuditModel = 'lead_qualification_policy';
-      anaTurnDiagnostics.finalResponse.replySource = 'lead_qualification_policy';
-      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
       return;
     }
 
@@ -8134,7 +8346,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
     if (evoraLocationClarificationIntent) {
       const locationClarificationMessages = dedupeMessageParts([
         'Sem problema. O Évora fica em Atibaia, na região da Pedreira, bairro Rio Abaixo, com acesso pela Rodovia Dom Pedro I.',
-        'Para ter uma referência simples: é uma região mais tranquila e com bastante contato com a natureza, a cerca de 50 minutos de São Paulo. A proposta é ficar perto do acesso principal, mas com clima mais reservado para morar.',
+        'O acesso é pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, dependendo do ponto de saída.',
         buildEvoraSafeNextTopicQuestion('localizacao')
       ], {
         conversationId,
@@ -8666,28 +8878,13 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
           key: nextQualificationQuestion.key,
           question: nextQualificationQuestion.question,
         });
-        if (nextQualificationQuestion.key === 'name') {
-          console.log('[ANA_LEAD_QUALIFICATION_NAME_ASKED]', {
-            conversationId,
-            source: 'qualification_continuation',
-          });
-        }
       } else {
         console.log('[ANA_LEAD_QUALIFICATION_QUESTION_SKIPPED_ALREADY_ASKED]', {
           conversationId,
           askedQualificationKeys: getLeadQualificationState(flowStateParsed).askedQualificationKeys,
         });
       }
-      if (leadQualificationNameCollectedThisTurn) {
-        console.log('[ANA_NAME_CAPTURED_LLM_FIRST_BYPASS]', {
-          conversationId,
-          customerName: getLeadQualificationState(flowStateParsed).name ?? getLeadQualificationState(flowStateParsed).customerName ?? null,
-        });
-        console.log('[ANA_INITIAL_QUALIFICATION_CONTINUED_AFTER_NAME]', {
-          conversationId,
-          nextQuestionKey: nextQualificationQuestion?.key ?? null,
-        });
-      } else if (ANA_LLM_FIRST_COMMERCIAL_REPLIES) {
+      if (ANA_LLM_FIRST_COMMERCIAL_REPLIES) {
         console.log('[ANA_MISSING_RAG_FALLBACK_BLOCKED_FOR_CONVERSATION_STATE]', {
           conversationId,
           reason: 'lead_qualification_signal',
@@ -8936,12 +9133,6 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         return;
       }
 
-      const knownNameFromConversation = toFirstName(effectiveConv.customer_name || null);
-      const knownNameFromCurrentTurn = toFirstName(trustedCustomerName || null);
-      const hasKnownCustomerName = Boolean(
-        knownNameFromConversation || knownNameFromCurrentTurn
-      );
-
       const recentAssistantForCtaPolicy = [...rows]
         .filter((m) => m.role === 'assistant')
         .map((m) => (m.content || '').trim())
@@ -8982,7 +9173,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
         if (evoraCommercialExplicitRegionRequest && evoraCommercialRuleConflictsWithExplicitRegion) {
           commercialMessagesToSend.length = 0;
           commercialMessagesToSend.push(
-            'Claro. A região da Pedreira/Rio Abaixo, em Atibaia, tem um perfil mais tranquilo, com bastante verde e contato com a natureza. O acesso é pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, então a proposta é ter um clima mais reservado sem ficar isolado.'
+            'A região da Pedreira/Rio Abaixo fica em Atibaia, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo.'
           );
           commercialMessagesToSend.push(
             'Quer que eu te explique melhor o acesso pela Dom Pedro I ou prefere falar de valores/formas de pagamento?'
@@ -9003,7 +9194,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
           enterpriseName: ent?.name ?? null,
           hintedTopic: 'entrega_prazo',
         });
-        const fallbackEntrega = '';
+        const fallbackEntrega = buildEvoraDeliveryUnavailableReply();
         const fallbackEntregaBrokerAsk =
           'Quer que eu encaminhe para um corretor te passar essa informação certinho?';
         let resolvedEntrega = operational?.dataFound ? operational.answer : fallbackEntrega;
@@ -9018,75 +9209,6 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
       }
       if (
         isEvoraEnterpriseName(ent?.name ?? null) &&
-        effectiveCommercialRule.ruleId === 'areas_lazer' &&
-        commercialMessagesToSend.length > 0
-      ) {
-        const leisureContextText = `${trimmed}\n${lastAssistantPlain ?? ''}`;
-        const leisureLifestyleContext =
-          /\b(lazer|calmaria|calma|tranquilidade|tranquilo|paz|sossego|natureza|verde|família|familia|qualidade de vida|descanso)\b/i.test(
-            leisureContextText
-          ) ||
-          /chamaria aten[cç][aã]o|lugar como esse|dia a dia|perfil/i.test(leisureContextText);
-
-        if (leisureLifestyleContext && !/^Faz sentido/i.test(commercialMessagesToSend[0] ?? '')) {
-          const firstName =
-            toFirstName(
-              trustedCustomerName ||
-                effectiveConv.customer_name ||
-                getLeadQualificationState(flowStateParsed).name ||
-                null
-            );
-
-          const leisureLeadIn = firstName
-            ? `Faz sentido, ${firstName}. Para quem busca lazer com tranquilidade, o Évora conversa bem com esse perfil.`
-            : 'Faz sentido. Para quem busca lazer com tranquilidade, o Évora conversa bem com esse perfil.';
-
-          commercialMessagesToSend[0] = `${leisureLeadIn}\n\n${commercialMessagesToSend[0]}`.trim();
-
-          console.log('[ANA_LEISURE_LIFESTYLE_LEAD_IN_APPLIED]', {
-            conversationId,
-            enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
-            firstName: firstName ?? null,
-          });
-        }
-      }
-
-      if (
-        isEvoraEnterpriseName(ent?.name ?? null) &&
-        effectiveCommercialRule.ruleId === 'seguranca_portaria' &&
-        commercialMessagesToSend.length > 0
-      ) {
-        const securityContextText = `${trimmed}\n${lastAssistantPlain ?? ''}`;
-        const securityLifestyleContext =
-          /\b(seguran[cç]a|tranquilidade|tranquilo|calma|calmaria|família|familia|morar|moradia|prote[cç][aã]o|portaria|controle de acesso)\b/i.test(
-            securityContextText
-          );
-
-        if (securityLifestyleContext && !/^Esse ponto é importante/i.test(commercialMessagesToSend[0] ?? '')) {
-          const firstName =
-            toFirstName(
-              trustedCustomerName ||
-                effectiveConv.customer_name ||
-                getLeadQualificationState(flowStateParsed).name ||
-                null
-            );
-
-          const securityLeadIn = firstName
-            ? `Esse ponto é importante, ${firstName}. Para quem pensa em morar, segurança não é só portaria: é previsibilidade na rotina, tranquilidade para a família e controle de acesso no dia a dia.`
-            : 'Esse ponto é importante. Para quem pensa em morar, segurança não é só portaria: é previsibilidade na rotina, tranquilidade para a família e controle de acesso no dia a dia.';
-
-          commercialMessagesToSend[0] = `${securityLeadIn}\n\n${commercialMessagesToSend[0]}`.trim();
-
-          console.log('[ANA_SECURITY_LIFESTYLE_LEAD_IN_APPLIED]', {
-            conversationId,
-            enterpriseId: ent?.id ?? effectiveConv.enterprise_id ?? null,
-            firstName: firstName ?? null,
-          });
-        }
-      }
-
-      if (
-        isEvoraEnterpriseName(ent?.name ?? null) &&
         (effectiveCommercialRule.ruleId === 'areas_lazer' || effectiveCommercialRule.ruleId === 'seguranca_portaria') &&
         commercialMessagesToSend.length > 0
       ) {
@@ -9099,9 +9221,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
           /\b(beach\s*tennis|tenis|tênis|piscina|academia|society|campo|quadra|playground|portaria|controle de acesso)\b/i.test(trimmed);
 
         if (!alreadyRescuesTopics && userAskedSpecificSubtopic) {
-          commercialMessagesToSend.push(
-            'Além desse ponto, quer que eu te explique também sobre segurança, região/acesso ou os lotes?'
-          );
+          commercialMessagesToSend.push('Deseja consultar também a localização e o acesso?');
 
           console.log('[ANA_TOPIC_RESCUE_QUESTION_APPENDED]', {
             conversationId,
@@ -9162,126 +9282,8 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
         messagePartsCount: commercialMessagesToSend.length,
       });
 
-      if (isFirstContactRule && isFirstAnaReply) {
-        const firstContactQuestionHistory = collectRecentAssistantQuestionsForFinalCheck({
-          flowState: flowStateParsed,
-          recentMessages: rows.map((message) => ({
-            role: message.role,
-            content: message.content,
-          })),
-        });
-        const shouldAskName = shouldAskNameFirst({
-          isFirstAnaReply,
-          isEvora: isEvoraEnterpriseName(ent?.name ?? null),
-          hasKnownCustomerName,
-          state: getLeadQualificationState(flowStateParsed),
-          userMessage: trimmed,
-        });
-        const nonNameFirstContactQuestion = selectNextLeadQualificationQuestion({
-          state: getLeadQualificationState(flowStateParsed),
-          userMessage: trimmed,
-          customerName: trustedCustomerName || effectiveConv.customer_name || null,
-          recentQuestions: firstContactQuestionHistory,
-        });
-        const firstContactQuestionSelection: LeadQualificationQuestionSelection = shouldAskName
-          ? { key: 'name', question: buildLeadQualificationNameQuestion() }
-          : nonNameFirstContactQuestion ?? {
-              key: 'purpose',
-              question: 'Voce esta olhando o Evora mais pensando em morar, investir ou ainda esta conhecendo as possibilidades?',
-            };
-        const firstContactQuestion = firstContactQuestionSelection.question;
-        flowStateParsed = markLeadQualificationQuestionAsked(flowStateParsed, firstContactQuestionSelection);
-        if (shouldAskName) {
-          console.log('[ANA_LEAD_QUALIFICATION_NAME_ASKED]', {
-            conversationId,
-            source: 'first_contact',
-          });
-        }
-        const firstContactIntro =
-          !shouldAskName && firstContactQuestionSelection.key === 'purpose'
-            ? buildEvoraShortPresentationAfterName(
-                trustedCustomerName ||
-                  effectiveConv.customer_name ||
-                  getLeadQualificationState(flowStateParsed).name ||
-                  null
-              )
-            : null;
-        const firstContactMessages = dedupeMessageParts(
-          [firstContactIntro, firstContactQuestion].filter((part): part is string => Boolean(part && part.trim())),
-          {
-            conversationId,
-            stage: 'evora_first_contact_split',
-          }
-        ).filter(Boolean);
-        console.log('[ANA_FIRST_CONTACT_RESPONSE_SPLIT]', {
-          conversationId,
-          messageCount: firstContactMessages.length,
-        });
-        const committedFirstContact = commitTurnResponse({
-          handler: 'deterministic_commercial_rule_first_contact',
-          reason: 'rule_first_contact_split',
-          parts: firstContactMessages,
-          stage: 'commercial_rule_first_contact_split',
-          requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
-          commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
-          shouldCallQwen: false,
-        });
-        if (!committedFirstContact.committed || !committedFirstContact.text.trim()) {
-          anaTurnAuditOutcome = 'blocked';
-          anaTurnAuditBlockedReason = 'first_contact_commit_blocked';
-          return;
-        }
-        if (isPipelineStale(conversationId, replyPipelineToken)) {
-          anaTurnAuditOutcome = 'silent';
-          anaTurnAuditBlockedReason = 'pipeline_stale_before_first_contact_send';
-          return;
-        }
-        const firstContactSend = await sendAnaOutboundMessages({
-          conversationId,
-          toPhoneNumber,
-          text: committedFirstContact.text,
-          phase: 'commercial_rules',
-          replyPipelineToken,
-        });
-        if (!firstContactSend.success || firstContactSend.metaMessageIds.length === 0) {
-          anaTurnAuditOutcome = 'send_failed';
-          anaTurnAuditBlockedReason = 'first_contact_send_failed';
-          return;
-        }
-        if (replyExplicitlyAsksCustomerName(committedFirstContact.text)) {
-          await markAnaAskedForCustomerName(conversationId);
-        }
-        const committedFirstContactState = updateConversationStateFromCommittedReply({
-          conversationId,
-          flowState: flowStateParsed,
-          finalReplyParts: committedFirstContact.parts,
-          finalReplyText: committedFirstContact.text,
-          handler: 'deterministic_commercial_rule_first_contact',
-          currentTopic: anaTurnContextResolved?.currentTopic ?? null,
-          requestedTopic: anaTurnContextResolved?.requestedTopic ?? null,
-          commercialAxis: anaTurnContextResolved?.commercialAxis ?? currentAxisForRepetition,
-        });
-        flowStateParsed = committedFirstContactState.nextState;
-        await mergeConversationCommercialFlowState(conversationId, flowStateParsed);
-        await applyAnaConversationUpdate(conversationId, {
-          classification: 'Qualificado',
-          lead_temperature: maxLeadTemperature(effectiveConv.lead_temperature, 'quente'),
-          handoff: false,
-        });
-        console.log('[ANA_CANONICAL_TURN_SHORT_CIRCUITED]', {
-          conversationId,
-          intent: 'first_contact',
-        });
-        anaTurnAuditOutcome = 'sent';
-        anaTurnAuditBlockedReason = null;
-        anaTurnAuditLlmStatus = 'skipped';
-        anaTurnAuditModel = 'commercial_rules';
-        anaTurnDiagnostics.finalResponse.replySource = effectiveCommercialRule.replySource;
-        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
-        return;
-      }
-
       const leadQualificationTopicByRule = (() => {
+        if (effectiveCommercialRule.ruleId === 'first_contact') return 'lotes';
         if (effectiveCommercialRule.ruleId === 'preco_valor_lote' || effectiveCommercialRule.ruleId === 'parcela_simulacao') return 'valores';
         if (effectiveCommercialRule.ruleId === 'localizacao_endereco' || effectiveCommercialRule.ruleId === 'endereco') return 'localizacao';
         if (effectiveCommercialRule.ruleId === 'areas_lazer') return 'lazer';
@@ -9329,12 +9331,6 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
             key: nextQualificationQuestion.key,
             question: nextQualificationQuestion.question,
           });
-          if (nextQualificationQuestion.key === 'name') {
-            console.log('[ANA_LEAD_QUALIFICATION_NAME_ASKED]', {
-              conversationId,
-              source: 'commercial_rule_followup',
-            });
-          }
         } else {
           console.log('[ANA_LEAD_QUALIFICATION_QUESTION_SKIPPED_ALREADY_ASKED]', {
             conversationId,
@@ -9342,23 +9338,6 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
             askedQualificationKeys: getLeadQualificationState(flowStateParsed).askedQualificationKeys,
           });
         }
-      }
-
-      const shouldAskNameAfterCommercialReply =
-        !evoraLeadQualificationEnabled &&
-        !hasKnownCustomerName &&
-        effectiveCommercialRule.ruleId !== 'visita_agendamento' &&
-        effectiveCommercialRule.ruleId !== 'localizacao_endereco' &&
-        effectiveCommercialRule.ruleId !== 'endereco' &&
-        effectiveCommercialRule.ruleId !== 'quantidade_lotes_info_gap' &&
-        effectiveCommercialRule.ruleId !== 'metragem_faixa' &&
-        effectiveCommercialRule.ruleId !== 'metragem_especifica' &&
-        effectiveCommercialRule.ruleId !== 'preco_valor_lote' &&
-        effectiveCommercialRule.ruleId !== 'parcela_simulacao' &&
-        effectiveCommercialRule.ruleId !== 'entrada' &&
-        effectiveCommercialRule.ruleId !== 'formas_pagamento';
-      if (shouldAskNameAfterCommercialReply) {
-        commercialMessagesToSend.push(ANA_COMMERCIAL_RULES.askNameMessage);
       }
 
       let lastCommercialRuleMetaMessageId: string | null = null;
@@ -9998,10 +9977,10 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
           ? 'No eixo de lazer, liste todos os itens encontrados na fonte confiavel, sem limitar quantidade, sem truncar, sem resumir e sem usar "entre outros". Mantenha bullets e quebras de linha.'
           : 'Responda em formato estruturado quando fizer sentido (linhas curtas/lista objetiva), entre 5 e 7 itens e sem misturar varios temas.'
         : isEvoraEnterpriseName(ent?.name ?? null)
-          ? 'Responda de forma natural, consultiva e menos seca. Use 2 a 4 frases quando o assunto pedir contexto. Pode separar em até 2 mensagens curtas. Conecte o interesse do cliente ao Évora, cite 2 ou 3 pontos relevantes e finalize com UMA pergunta objetiva de avanço. Nao antecipe visita logo apos o cliente dizer que ainda nao visitou; nesse caso, pergunte qual tema ele quer entender primeiro: lazer, segurança, região/acesso, lotes ou valores. Ao aprofundar um assunto especifico, como beach tennis, piscina ou seguranca, finalize resgatando outros temas importantes em vez de ficar apenas no mesmo assunto.'
+          ? 'Responda de forma profissional, objetiva e direta. Use 2 a 4 frases quando o assunto pedir contexto. Pode separar em até 2 mensagens curtas. Responda primeiro à dúvida, cite apenas pontos confirmados e finalize com UMA pergunta objetiva de qualificação ou avanço. Nao antecipe visita logo apos o cliente dizer que ainda nao visitou; nesse caso, escolha o tema comercial mais relevante para a próxima pergunta. Ao aprofundar um assunto específico, como beach tennis, piscina ou segurança, avance para um único tema comercial relacionado.'
           : 'Responda de forma curta e objetiva, com no maximo 3 linhas e no maximo 1 pergunta.',
       anaDecision.shouldSuggestVisit
-        ? 'O cliente demonstrou interesse comercial direto ou oportunidade clara de avanço. Nao responda apenas com localizacao ou uma frase vaga como "Que mais?". Responda com acolhimento e contexto suficiente, conectando o interesse do cliente ao empreendimento. Traga 2 pontos relevantes quando fizer sentido e conduza com UMA pergunta concreta de avanço. Regra importante: nao ofereca agendamento de visita cedo demais, especialmente quando o cliente apenas respondeu "ainda nao" sobre ja ter visitado. Antes de pedir dia/horario de visita, responda as duvidas do cliente e resgate temas relevantes como lazer, seguranca, regiao/acesso, lotes/tamanho e formas de pagamento. Ofereca visita apenas quando o cliente pedir, demonstrar clara prontidao, ou depois de pelo menos alguns temas principais terem sido esclarecidos. Se falar de visita, use tom humano: "O corretor pode te passar tudo certinho. Que tal marcarmos uma visita?". Evite perguntas abstratas como "como voce imagina seu dia começando?".'
+        ? 'O cliente demonstrou interesse comercial direto ou oportunidade clara de avanço. Nao responda apenas com localizacao ou uma frase vaga como "Que mais?". Responda primeiro a duvida apresentada e, depois, conduza com UMA pergunta concreta de qualificacao ou avanço. Regra importante: nao ofereca agendamento de visita cedo demais, especialmente quando o cliente apenas respondeu "ainda nao" sobre ja ter visitado. Antes de pedir dia/horario de visita, responda as duvidas do cliente e escolha um tema relevante para a próxima pergunta, como lazer, seguranca, regiao/acesso, lotes/tamanho ou formas de pagamento. Ofereca visita apenas quando o cliente pedir, demonstrar clara prontidao, ou depois de pelo menos alguns temas principais terem sido esclarecidos. Se falar de visita, pergunte objetivamente se o cliente deseja agendar. Evite perguntas abstratas como "como voce imagina seu dia começando?". Nao use perguntas subjetivas ou emocionais sobre imaginar o dia no local, viver momentos especiais, o sonho da familia ou se apaixonar pelo empreendimento.'
         : null,
       !anaDecision.canMentionExactLocation
         ? 'Nao passe endereco/localizacao exata como se estivesse confirmado.'
@@ -10010,13 +9989,13 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
         ? 'Nao simule pagamento, entrada, parcela, prazo, juros ou desconto.'
         : null,
       ANA_LLM_FIRST_COMMERCIAL_REPLIES && isEvoraEnterpriseName(ent?.name ?? null)
-        ? 'Responda perguntas comerciais com base no RAG/evidencias autorizadas. Nao invente. Se faltar informacao ou depender de disponibilidade/condicao atualizada, ofereca corretor ou visita naturalmente, mas nao antes de tirar as duvidas principais. Seja natural e comercial. Nao mencione NETIV, sistema, RAG, base, regra ou instrucao interna. No Évora, evite ficar preso em um único detalhe por muitas respostas seguidas: conecte o tema atual a uma visão mais ampla de rotina, natureza, lazer, segurança, localização, família e visita. Depois que o cliente disser morar, investir ou conhecer, avance a descoberta com perguntas concretas. Quando concluir ou aprofundar um tema, resgate outros temas úteis em forma de escolha simples, por exemplo: "Quer que eu te explique também sobre segurança, região/acesso ou os lotes?". Nao conduza tudo para visita antes de responder lazer, seguranca, regiao/localizacao ou tamanho dos lotes, salvo se o cliente pedir visita diretamente.'
+        ? 'Responda perguntas comerciais com base no RAG/evidencias autorizadas. Nao invente. Se faltar informacao ou depender de disponibilidade/condicao atualizada, informe o limite e ofereca corretor ou visita somente quando for o proximo passo adequado. Seja direto, profissional e comercial. Nao mencione NETIV, sistema, RAG, base, regra ou instrucao interna. No Évora, responda o tema atual e qualifique com no maximo UMA pergunta objetiva sobre finalidade, regiao, tipo de imovel, tamanho, valor, pagamento, prazo ou visita. Nao conduza tudo para visita antes de responder a duvida, salvo se o cliente pedir visita diretamente.'
         : null,
       isLocalQwenRuntime
         ? 'Não copie instruções internas. Responda apenas ao cliente com fatos autorizados.'
         : null,
       isEvoraEnterpriseName(ent?.name ?? null)
-        ? 'No Évora, trate sempre como loteamento fechado (nunca apartamento), com lotes a partir de 360 m² em Atibaia, região da Pedreira, acesso pela Rodovia Dom Pedro I, cerca de 50 minutos de São Paulo, lazer completo e segurança com portaria 24h. Nunca invente valor específico.'
+        ? 'No Évora, trate sempre como loteamento fechado (nunca apartamento), com lotes a partir de 360 m² em Atibaia, região da Pedreira, acesso pela Rodovia Dom Pedro I, cerca de 50 minutos de São Paulo, itens de lazer cadastrados e portaria 24h. Nunca invente valor específico.'
         : null,
     ]
       .filter((line): line is string => Boolean(line))
@@ -10048,18 +10027,16 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
     const initialDiscoveryGuidanceContext = buildInitialDiscoveryGuidanceContext({
       isEvora: isEvoraEnterpriseName(ent?.name ?? null),
       state: getLeadQualificationState(flowStateParsed),
-      customerName: trustedCustomerName || effectiveConv.customer_name || null,
-      nameCapturedThisTurn: Boolean(trustedCustomerName && lastAssistantAskedCustomerNameThisTurn),
       userMessage: trimmed,
       recentAssistantCount: recentAssistantPlainTexts.length,
     });
     if (initialDiscoveryGuidanceContext) {
       console.log('[ANA_INITIAL_DISCOVERY_GUIDANCE_INJECTED]', {
         conversationId,
-        nameCapturedThisTurn: Boolean(trustedCustomerName && lastAssistantAskedCustomerNameThisTurn),
         recentAssistantCount: recentAssistantPlainTexts.length,
-        purpose: getLeadQualificationState(flowStateParsed).purpose,
-        productFit: getLeadQualificationState(flowStateParsed).productFit,
+        purchaseIntent: getLeadQualificationState(flowStateParsed).purchaseIntent,
+        desiredRegion: getLeadQualificationState(flowStateParsed).desiredRegion,
+        propertyType: getLeadQualificationState(flowStateParsed).propertyType,
         objectiveCustomerQuestion: isObjectiveCustomerQuestion(trimmed),
       });
     }
@@ -10103,7 +10080,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
       isKnowledgeGapTurn
         ? [
             '[CONTEXTO OPERACIONAL - NAO MOSTRAR AO CLIENTE]',
-            'A pergunta do cliente exige uma informacao que nao esta disponivel com seguranca na base autorizada ou depende de validacao humana.',
+            'A pergunta do cliente exige uma informacao que nao esta disponivel com seguranca na base autorizada ou depende de validacao da equipe comercial.',
             'Nao invente resposta.',
             'Nao tente compensar com informacoes genericas.',
             'Nao diga "o que posso te adiantar".',
@@ -10116,7 +10093,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
               : 'Ofereca explicitamente a proxima acao segura para o cliente:',
             knowledgeGapRequiresBrokerForPrompt ? '1. encaminhar para o corretor responsavel;' : null,
             knowledgeGapRequiresVisitForPrompt ? '2. agendar uma visita.' : null,
-            'A resposta deve soar humana, curta e consultiva.',
+            'A resposta deve ser curta, direta e profissional.',
             `Instrucao adicional: ${knowledgeGapMeta.instructionForModel}`,
             '[/CONTEXTO OPERACIONAL]',
           ].filter(Boolean).join('\n')
@@ -11459,7 +11436,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
       // Saudações simples (oi, olá, bom dia, etc.) NUNCA devem receber a
       // mensagem de erro técnico "Não consegui continuar daqui agora...".
       // Se o pipeline falhou por qualquer razão técnica mas a mensagem atual
-      // é apenas uma saudação, substituímos por uma resposta neutra e humana.
+      // é apenas uma saudação, substituímos por uma resposta neutra e profissional.
       if (isGreetingForFallback && !isProviderFailureClassifiedError(providerFailure?.classifiedError)) {
         const safeReply = buildGreetingSafeFallback(effectiveConv.customer_name);
         structured = { ...structured, reply: safeReply };
@@ -11708,6 +11685,11 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
           await cancelAnaVisitFollowupForConversation({
             conversationId,
             reason: 'visit_scheduled',
+          });
+          await cancelAnaGeneralFollowupForConversation({
+            conversationId,
+            reason: 'visit_scheduled',
+            source: 'structured_appointment_registered',
           });
         }
       } catch (e) {
@@ -12054,8 +12036,15 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
       });
     }
 
+    let shouldAttemptDocSendForTextGuards = shouldAttemptDocSend;
     let replyText: string;
-    if (shouldAttemptDocSend) {
+    if (
+      shouldBlockAnaTextReplyForDocMediaFailure({
+        shouldAttemptDocSend,
+        explicitMaterialRequestThisTurn,
+        docMediaFirstSkipReason,
+      })
+    ) {
       const branch =
         mediaOutcome != null && !mediaOutcome.ok
           ? 'meta_send_failed'
@@ -12075,6 +12064,14 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
       });
       return;
     } else {
+      if (shouldAttemptDocSend) {
+        shouldAttemptDocSendForTextGuards = false;
+        console.log('[ANA_DOC_MEDIA_FIRST_TEXT_CONTINUED]', {
+          conversationId,
+          skipReason: docMediaFirstSkipReason,
+          explicitMaterialRequestThisTurn,
+        });
+      }
       replyText =
         anaDecision.responseMode === 'structured'
           ? normalizeStructuredReplyCandidate(replyBody, {
@@ -12297,7 +12294,7 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
         });
       }
     }
-    const shouldRunEmptyFallbackGuard = !shouldAttemptDocSend && !operationalResolverFired;
+    const shouldRunEmptyFallbackGuard = !shouldAttemptDocSendForTextGuards && !operationalResolverFired;
     let skipPostPolicyEmptyFallbackBlock = false;
     let finalEmptyFallbackGuard = shouldRunEmptyFallbackGuard
       ? evaluateAnaEmptyFallbackGuard({
@@ -12900,7 +12897,7 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
           evoraReplyNormForConversion
         );
 
-      const evoraLifestyleClosingQuestion =
+      const evoraSubjectiveClosingQuestion =
         /\b(voce ja imaginou|você já imaginou|e se esse|e se esse espaço|e se esse espaco|como seria seu dia|como esse ambiente|silencio e a luz natural|silêncio e a luz natural|muda seu ritmo|rotina da sua familia|rotina de sua familia|estilo de vida que busca|o que mais te chama atencao|o que mais te chama atenção)\b[^?]*\?\s*$/i.test(
           replyText
         );
@@ -12949,14 +12946,14 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
           conversationId,
           userMessagePreview: trimmed.slice(0, 180),
         });
-      } else if (evoraRepeatsPurposeQuestion || evoraLifestyleClosingQuestion || evoraFinalQuestionRepeatsAnsweredTopic) {
+      } else if (evoraRepeatsPurposeQuestion || evoraSubjectiveClosingQuestion || evoraFinalQuestionRepeatsAnsweredTopic) {
         const nextQuestion = evoraPickConcreteNextQuestion();
         replyText = evoraReplaceOrAppendFinalQuestion(replyText, nextQuestion);
 
         console.log('[ANA_EVORA_CONCRETE_NEXT_TOPIC_GUARD]', {
           conversationId,
           repeatsPurposeQuestion: evoraRepeatsPurposeQuestion,
-          lifestyleClosingQuestion: evoraLifestyleClosingQuestion,
+          subjectiveClosingQuestion: evoraSubjectiveClosingQuestion,
           repeatsAnsweredTopic: evoraFinalQuestionRepeatsAnsweredTopic,
           nextQuestion,
           userMessagePreview: trimmed.slice(0, 180),
@@ -13010,7 +13007,7 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
           lastAssistantPreview: (lastAssistantPlain ?? '').slice(0, 220),
         });
       } else if (evoraLastOfferedLeisureSubtopics) {
-        replyText = 'Claro. Você prefere que eu fale dos espaços para família, esportes ou convivência?';
+        replyText = 'Claro. Você deseja detalhes sobre piscinas, quadras ou demais espaços de lazer?';
 
         console.log('[ANA_EVORA_SHORT_CHOICE_DISAMBIGUATION_GUARD]', {
           conversationId,
@@ -13457,7 +13454,7 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
         !visitFlowSuppressedByConfirmationContext &&
         (schedulingGuardHandled || appointmentPreflight.active || flowStateParsed.pendingVisitScheduling === true),
       isHandoff: Boolean(structured.handoff || effectiveConv.handoff),
-      isMaterialOnlyFlow: Boolean(shouldAttemptDocSend),
+      isMaterialOnlyFlow: Boolean(shouldAttemptDocSendForTextGuards),
     });
     if (visitOfferGuardResult.changed) {
       replyText = visitOfferGuardResult.text;
@@ -13698,7 +13695,7 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
           : null,
       now: lastUserMessageAt,
       disableFollowupQuestion:
-        shouldAttemptDocSend ||
+        shouldAttemptDocSendForTextGuards ||
         (!visitFlowSuppressedByConfirmationContext &&
           (appointmentPreflight.active ||
             flowStateParsed.pendingVisitScheduling === true ||
@@ -13780,8 +13777,8 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
             role: 'user',
             content:
               knowledgeGapRequiresBroker && knowledgeGapRequiresVisit
-                ? 'Reescreva a resposta mantendo tom humano e consultivo, cumprindo exatamente a regra de oferecer as duas opcoes.'
-                : 'Reescreva a resposta mantendo tom humano e consultivo, cumprindo exatamente a regra de oferecer o corretor para confirmar.',
+                ? 'Reescreva a resposta mantendo tom cordial, profissional e consultivo, cumprindo exatamente a regra de oferecer as duas opcoes.'
+                : 'Reescreva a resposta mantendo tom cordial, profissional e consultivo, cumprindo exatamente a regra de oferecer o corretor para confirmar.',
           },
         ];
         const knowledgeGapRetryResult = await generateChatCompletion({
@@ -13937,6 +13934,8 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
         'Evite formulacoes de triagem repetitivas sem contexto do turno.',
         'Evite formula de desambiguacao robotica em tom de erro.',
         'Nao use menu fixo generico.',
+        'Use somente pergunta objetiva com finalidade comercial clara, como perfil, regiao, valor, tamanho, quartos, tipo de imovel, pagamento, prazo de compra, disponibilidade, simulacao ou visita.',
+        'Nao use pergunta subjetiva ou emocional sobre imaginar o dia, momentos especiais, sonho da familia, estilo de vida ou se apaixonar pelo empreendimento.',
         'A resposta final precisa terminar com uma pergunta real.',
         '[/CONTEXTO OPERACIONAL]',
       ].join('\n');
@@ -14208,6 +14207,11 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
           conversationId,
           reason: 'visit_scheduled',
         });
+        await cancelAnaGeneralFollowupForConversation({
+          conversationId,
+          reason: 'visit_scheduled',
+          source: 'structured_appointment_post_send',
+        });
       } else {
         await startAnaVisitFollowupIfEligible({
           conversationId,
@@ -14254,7 +14258,7 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
         conversationPhase,
         replyLen: replyText.length,
       });
-      anaTurnAuditOutcome = shouldAttemptDocSend ? 'material_failed' : 'sent';
+      anaTurnAuditOutcome = shouldAttemptDocSendForTextGuards ? 'material_failed' : 'sent';
       anaTurnAuditBlockedReason = null;
       anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
       markAnaTurnStage(anaTurnDiagnostics, 'final_response', 'passed', {
@@ -14488,7 +14492,7 @@ function isFirstReplyGreetingOnlyMessage(text: string): boolean {
 
 function buildFirstGreetingSafeFallback(text: string): string {
   void text;
-  return buildLeadQualificationNameQuestion();
+  return buildEvoraFirstReplySafeFallback();
 }
 
 function isGenericInterestFollowup(text: string): boolean {
@@ -14521,7 +14525,7 @@ function buildConversationalCanonicalContext(lastAxis: string | null): string {
     '- Valor inicial a partir de R$279.000,00.',
     '- Metro quadrado a partir de R$775,00.',
     '- Região da Pedreira / bairro Rio Abaixo.',
-    '- Acesso pela Rodovia Dom Pedro I, cerca de 50 minutos de São Paulo, com qualidade de vida e contato com a natureza.',
+    '- Acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo.',
     '- Lazer: Piscina adulto, Academia, Salão de festas, Playground, Coworking, Espaço zen, Fireplace, Quadra de beach tennis, Campo society, Estação para carros elétricos.',
     '- Portaria 24h com controle de acesso.',
     '- Formas de pagamento: planos estendidos em até 120x, parcelamento sem juros em até 48x, financiamento direto com a construtora, menos burocracia e mais facilidade.',
@@ -14542,7 +14546,7 @@ function hasUnauthorizedPriceClaimInConversationalReply(text: string): boolean {
 function buildConversationalCanonicalFallback(lastAxis: string | null): string {
   if (lastAxis === 'lazer' || lastAxis === 'areas_lazer') return buildCanonicalLazerFullReply();
   if (lastAxis === 'localizacao' || lastAxis === 'localizacao_endereco') {
-    return 'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo, em uma região com qualidade de vida e contato com a natureza.';
+    return 'O Évora fica em Atibaia, na região da Pedreira/Rio Abaixo, com acesso pela Rodovia Dom Pedro I, a cerca de 50 minutos de São Paulo.';
   }
   if (lastAxis === 'preco' || lastAxis === 'preco_valor_lote') {
     return 'O Évora tem lotes a partir de R$279.000,00, com metro quadrado a partir de R$775,00. O valor final depende da unidade e das condições escolhidas.';

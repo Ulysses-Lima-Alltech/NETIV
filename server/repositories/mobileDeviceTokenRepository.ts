@@ -1,4 +1,5 @@
 import { query } from '../db/pg.js';
+import { canReceiveBrokerOperationalNotification } from '../config/managerNotificationPolicy.js';
 
 export interface MobileUserDeviceTokenRow {
   id: number;
@@ -52,15 +53,22 @@ export async function upsertMobileUserDeviceToken(args: {
 export async function listActiveMobileDeviceTokensByBrokerId(
   brokerId: number
 ): Promise<string[]> {
+  // Resolve the recipient role before the push payload is assembled. Managers
+  // are excluded by default, even if a legacy account is linked to corretor_id.
+  const managerNotificationsEnabled = canReceiveBrokerOperationalNotification('GESTOR');
   const { rows } = await query<{ token: string }>(
     `SELECT dt.token
      FROM mobile_user_device_tokens dt
      INNER JOIN mobile_users mu ON mu.id = dt.user_id
      WHERE mu.corretor_id = $1
+       AND (
+         mu.role = 'CORRETOR'
+         OR ($2::boolean = true AND mu.role = 'GESTOR')
+       )
        AND mu.is_active = true
        AND dt.active = true
      ORDER BY dt.updated_at DESC, dt.id DESC`,
-    [brokerId]
+    [brokerId, managerNotificationsEnabled]
   );
   return rows.map((row) => row.token).filter((token) => token.trim().length > 0);
 }
