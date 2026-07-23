@@ -50,17 +50,18 @@ export function useAppNav(): NavItem[] {
     if (hasElevatedAccess) {
       items.push({ to: '/settings/empreendimentos', label: 'Empreendimentos', icon: 'empreendimentos', section: 'main' });
       items.push({ to: '/settings/corretores', label: 'Corretores', icon: 'corretores', section: 'main' });
-      items.push({ to: '/users', label: 'Usuarios', icon: 'users', section: 'main' });
+      items.push({ to: '/users', label: 'Acessos', icon: 'users', section: 'main' });
     }
 
+    items.push({ to: '/contatos', label: 'Leads', icon: 'contatos', section: 'main' });
+
     if (isAdmin) {
-      items.push({ to: '/contatos', label: 'Leads', icon: 'contatos', section: 'main' });
       items.push({ to: '/contatos/disparo-template-lote', label: 'Disparo em lote', icon: 'batch', section: 'main' });
       items.push({ to: '/settings/integrations/whatsapp', label: 'Configuracoes', icon: 'settings', section: 'footer' });
     }
 
     if (isDev) {
-      items.push({ to: '/lead-simulator', label: 'Dev / Bypass', icon: 'lab', section: 'footer' });
+      items.push({ to: '/lead-simulator', label: 'Simulador (dev)', icon: 'lab', section: 'footer' });
     }
 
     return items;

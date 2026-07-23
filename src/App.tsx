@@ -12,6 +12,7 @@ import { CorretoresPage } from './pages/CorretoresPage';
 import { AgendaPage } from './pages/AgendaPage';
 import { UsersPage } from './pages/UsersPage';
 import { LoginPage } from './pages/LoginPage';
+import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import { ContatosPage } from './pages/ContatosPage';
 import { WhatsAppBatchTemplatePage } from './pages/WhatsAppBatchTemplatePage';
 import { AppShell } from './components/layout/AppShell';
@@ -91,10 +92,11 @@ function App() {
               </ProtectedShellRoute>
             }
           />
+          <Route path="/acessos" element={<Navigate to="/users" replace />} />
           <Route
             path="/contatos"
             element={
-              <ProtectedShellRoute roles={[...ROLES_SETTINGS_ADMIN]}>
+              <ProtectedShellRoute>
                 <ContatosPage />
               </ProtectedShellRoute>
             }
@@ -118,6 +120,7 @@ function App() {
             }
           />
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/change-password" element={<ProtectedRoute><ChangePasswordPage /></ProtectedRoute>} />
           <Route path="/" element={<Navigate to="/inbox" replace />} />
           <Route path="*" element={<Navigate to="/inbox" replace />} />
         </Routes>

@@ -1,5 +1,13 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import { AUTH_BYPASS_MOCK_USER, setStoredAuthToken, authApi, type AuthUser } from '../api/client';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  AUTH_UNAUTHORIZED_EVENT,
+  authApi,
+  getStoredAuthToken,
+  setStoredAuthToken,
+  type AuthUser,
+} from '../api/client';
+import { disconnectInboxSocket, reconnectInboxSocket } from '../realtime/socketClient';
 
 export interface SessionScope {
   scopeKind: string | null;
@@ -7,98 +15,129 @@ export interface SessionScope {
   scopeTotal: number | null;
 }
 
-interface AuthState {
+interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   error: string | null;
   sessionScope: SessionScope | null;
-}
-
-interface AuthContextValue extends AuthState {
-  /** Apenas ADMIN: acesso total, inclusive configurações (integrações/IA). */
   isAdmin: boolean;
-  /** ADMIN ou MANAGERIAL: telas administrativas (exceto configurações sensíveis). */
   hasElevatedAccess: boolean;
-  /** Verdadeiro se o usuário tem escopo de carteira de broker (broker_portfolio). */
   isBrokerScoped: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<AuthUser>;
+  changePassword: (currentPassword: string, newPassword: string, confirmPassword: string) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function allowedSsoOrigins(): Set<string> {
+  return new Set(
+    String(import.meta.env.VITE_SSO_ALLOWED_ORIGINS ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean)
+  );
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sessionScope, setSessionScope] = useState<SessionScope | null>(null);
 
-  // Função para carregar usuário real via API
-  const loadRealUser = useCallback(async () => {
+  const clearSession = useCallback((redirect = true) => {
+    setStoredAuthToken(null);
+    setUser(null);
+    setSessionScope(null);
+    disconnectInboxSocket();
+    if (redirect) navigate('/login', { replace: true });
+  }, [navigate]);
+
+  const restoreSession = useCallback(async () => {
+    const token = getStoredAuthToken();
+    if (!token) {
+      setUser(null);
+      setSessionScope(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     try {
       const response = await authApi.me();
       setUser(response.user);
       setSessionScope(response.session ?? null);
       setError(null);
-    } catch (err) {
-      console.error('[Auth] Falha ao carregar usuário:', err);
-      setError('Falha ao autenticar via SSO');
+      reconnectInboxSocket();
+    } catch {
+      clearSession(false);
+    } finally {
+      setLoading(false);
+    }
+  }, [clearSession]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => void restoreSession(), 0);
+    return () => window.clearTimeout(timeout);
+  }, [restoreSession]);
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setError(null);
+      clearSession(true);
+      setLoading(false);
+    };
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized);
+    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized);
+  }, [clearSession]);
+
+  useEffect(() => {
+    const origins = allowedSsoOrigins();
+    const handleMessage = (event: MessageEvent) => {
+      if (window.parent === window || event.source !== window.parent) return;
+      if (!origins.has(event.origin)) return;
+      const payload = event.data as { type?: unknown; token?: unknown } | null;
+      if (payload?.type !== 'sso_token' || typeof payload.token !== 'string' || !payload.token.trim()) return;
+      setStoredAuthToken(payload.token.trim());
+      void restoreSession();
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [restoreSession]);
+
+  const login = useCallback(async (identifier: string, password: string): Promise<AuthUser> => {
+    setError(null);
+    setLoading(true);
+    try {
+      const response = await authApi.login(identifier, password);
+      setStoredAuthToken(response.token);
+      setUser(response.user);
+      setSessionScope(null);
+      reconnectInboxSocket();
+      return response.user;
+    } catch (loginError) {
+      const message = loginError instanceof Error ? loginError.message : 'Erro ao fazer login';
+      setError(message);
+      throw loginError;
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Função para ativar bypass (fallback temporário)
-  const activateBypass = useCallback(() => {
-    console.log('[Auth] Ativando bypass mock user');
-    setStoredAuthToken(null);
-    setUser(AUTH_BYPASS_MOCK_USER);
-    setSessionScope(null);
-    setError(null);
-    setLoading(false);
-  }, []);
-
-  // Listener para postMessage com token SSO
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      // Verificar se é um evento SSO válido
-      if (event.data && event.data.type === 'sso_token' && event.data.token) {
-        console.log('[Auth] Recebido token SSO via postMessage');
-        
-        // Salvar o token e carregar usuário real
-        setStoredAuthToken(event.data.token);
-        void loadRealUser();
-      }
-    };
-
-    // Adicionar listener
-    window.addEventListener('message', handleMessage);
-
-    // Timeout para fallback (se não receber SSO em 3 segundos)
-    const timeoutId = setTimeout(() => {
-      if (!user && loading) {
-        activateBypass();
-      }
-    }, 3000);
-
-    return () => {
-      window.removeEventListener('message', handleMessage);
-      clearTimeout(timeoutId);
-    };
-  }, [user, loading, loadRealUser, activateBypass]);
-
-  // Login normal (formulário)
-  const login = useCallback(async (email: string, password: string) => {
+  const changePassword = useCallback(async (currentPassword: string, newPassword: string, confirmPassword: string) => {
     setError(null);
     setLoading(true);
     try {
-      const response = await authApi.login(email, password);
+      const response = await authApi.changePassword({ currentPassword, newPassword, confirmPassword });
       setStoredAuthToken(response.token);
       setUser(response.user);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao fazer login');
-      throw err;
+      setSessionScope(null);
+      reconnectInboxSocket();
+    } catch (changeError) {
+      const message = changeError instanceof Error ? changeError.message : 'Erro ao alterar senha';
+      setError(message);
+      throw changeError;
     } finally {
       setLoading(false);
     }
@@ -106,22 +145,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     setError(null);
-    setLoading(true);
     try {
       await authApi.logout();
-    } catch (err) {
-      console.error('[Auth] Erro no logout:', err);
+    } catch {
+      // A limpeza local é obrigatória mesmo se a sessão já tiver expirado.
     } finally {
-      setStoredAuthToken(null);
-      setUser(null);
-      setSessionScope(null);
+      clearSession(true);
       setLoading(false);
     }
-  }, []);
+  }, [clearSession]);
 
-  const clearError = useCallback(() => setError(null), []);
-
-  const value: AuthContextValue = {
+  const value = useMemo<AuthContextValue>(() => ({
     user,
     loading,
     error,
@@ -130,15 +164,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     hasElevatedAccess: user?.role === 'ADMIN' || user?.role === 'MANAGERIAL',
     isBrokerScoped: sessionScope?.scopeKind === 'broker_portfolio',
     login,
+    changePassword,
     logout,
-    clearError,
-  };
+    clearError: () => setError(null),
+  }), [user, loading, error, sessionScope, login, changePassword, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
+  const context = useContext(AuthContext);
+  if (!context) throw new Error('useAuth must be used within AuthProvider');
+  return context;
 }

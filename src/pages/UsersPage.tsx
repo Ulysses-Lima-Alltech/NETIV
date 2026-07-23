@@ -1,356 +1,158 @@
-﻿import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import {
+  userRoleLabel,
+  usersApi,
+  type AssignableResources,
+  type UserListItem,
+  type UserRole,
+  type UserScopeInput,
+} from '../api/client';
 import { AppNav } from '../components/AppNav';
-import { usersApi, userRoleLabel, type UserListItem, type UserRole } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 
-const field =
-  'w-full border border-[#E5E7EB] rounded-[10px] px-3.5 py-[10px] text-[14px] text-[#111827] placeholder:text-[#9CA3AF] bg-white transition focus:border-[#3B82F6] focus:ring-[3px] focus:ring-[rgba(59,130,246,0.15)] focus:outline-none';
-const card = 'bg-white rounded-[12px] border border-[#E5E7EB] p-6 shadow-[0_1px_2px_rgba(0,0,0,0.04)]';
-const label = 'block text-[13px] font-medium text-[#6B7280] mb-1.5';
-const btnPrimary =
-  'inline-flex items-center justify-center text-[14px] font-semibold bg-[#F97316] text-white rounded-[10px] px-6 py-[10px] hover:bg-[#EA580C] disabled:opacity-40 transition-colors shadow-sm';
-const btnSecondary =
-  'inline-flex items-center justify-center text-[14px] font-medium text-[#374151] bg-white border border-[#E5E7EB] rounded-[10px] px-5 py-[10px] hover:bg-[#F9FAFB] disabled:opacity-40 transition-colors';
+const field = 'w-full rounded-[9px] border border-[#D1D5DB] bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100';
+const emptyScope = (): UserScopeInput => ({ managerId: null, enterpriseIds: [], brokerIds: [], conversationIds: [], contactIds: [], appointmentIds: [] });
 
-const ROLE_OPTIONS_FULL: { value: UserRole; label: string }[] = [
-  { value: 'COLLABORATOR', label: 'Colaborador' },
-  { value: 'MANAGERIAL', label: 'Gerencial' },
-  { value: 'ADMIN', label: 'Administrador' },
-];
-
-/** Perfil gerencial só cria/edita colaboradores (alinhado ao backend). */
-const ROLE_OPTIONS_MANAGERIAL: { value: UserRole; label: string }[] = [
-  { value: 'COLLABORATOR', label: 'Colaborador' },
-];
-
-function profileAccentClass(role: UserRole): string {
-  if (role === 'ADMIN') return 'text-[#F97316] font-medium';
-  if (role === 'MANAGERIAL') return 'text-[#2563EB] font-medium';
-  return 'text-[#6B7280]';
+function toggleId(ids: number[], id: number): number[] {
+  return ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id];
 }
 
 export function UsersPage() {
-  const { user: currentUser } = useAuth();
-  const isManagerial = currentUser?.role === 'MANAGERIAL';
-  const createRoleOptions = isManagerial ? ROLE_OPTIONS_MANAGERIAL : ROLE_OPTIONS_FULL;
-  const editRoleOptions = isManagerial ? ROLE_OPTIONS_MANAGERIAL : ROLE_OPTIONS_FULL;
-
-  const canManageUserRow = (u: UserListItem): boolean => {
-    if (!isManagerial) return true;
-    return u.role === 'COLLABORATOR';
-  };
-
+  const { user: actor } = useAuth();
+  const isAdmin = actor?.role === 'ADMIN';
   const [users, setUsers] = useState<UserListItem[]>([]);
+  const [resources, setResources] = useState<AssignableResources>({ enterprises: [], brokers: [] });
   const [loading, setLoading] = useState(true);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
-  const [passwordOpen, setPasswordOpen] = useState(false);
-  const [editingUser, setEditingUser] = useState<UserListItem | null>(null);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<UserListItem | 'new' | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState<UserRole>('COLLABORATOR');
+  const [active, setActive] = useState(true);
+  const [scope, setScope] = useState<UserScopeInput>(emptyScope());
 
-  const [formName, setFormName] = useState('');
-  const [formEmail, setFormEmail] = useState('');
-  const [formPassword, setFormPassword] = useState('');
-  const [formRole, setFormRole] = useState<UserRole>('COLLABORATOR');
-  const [formActive, setFormActive] = useState(true);
-  const [newPassword, setNewPassword] = useState('');
-
-  const loadList = useCallback(() => {
+  const load = useCallback(async () => {
     setLoading(true);
-    usersApi
-      .list()
-      .then((d) => setUsers(d.users))
-      .catch(() => setUsers([]))
-      .finally(() => setLoading(false));
+    setError(null);
+    try {
+      const [userResult, resourceResult] = await Promise.all([usersApi.list(), usersApi.resources()]);
+      setUsers(userResult.users);
+      setResources(resourceResult);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Erro ao carregar acessos.');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    loadList();
-  }, [loadList]);
+    const timeout = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timeout);
+  }, [load]);
+
+  const managers = useMemo(() => users.filter((item) => item.role === 'MANAGERIAL' && item.active), [users]);
 
   const openCreate = () => {
-    setEditingUser(null);
-    setFormName('');
-    setFormEmail('');
-    setFormPassword('');
-    setFormRole('COLLABORATOR');
-    setFormActive(true);
-    setError(null);
-    setCreateOpen(true);
+    setEditing('new');
+    setName(''); setUsername(''); setEmail(''); setPassword(''); setRole('COLLABORATOR'); setActive(true); setScope(emptyScope()); setError(null);
   };
 
-  const openEdit = (u: UserListItem) => {
-    if (!canManageUserRow(u)) return;
-    setEditingUser(u);
-    setFormName(u.name);
-    setFormEmail(u.email);
-    setFormRole(u.role);
-    setFormActive(u.active);
+  const openEdit = (item: UserListItem) => {
+    setEditing(item);
+    setName(item.name); setUsername(item.username ?? ''); setEmail(item.email ?? ''); setPassword(''); setRole(item.role); setActive(item.active);
+    setScope({
+      managerId: item.scope.managerId,
+      enterpriseIds: item.scope.enterpriseIds,
+      brokerIds: item.scope.brokerIds,
+      conversationIds: item.scope.conversationIds,
+      contactIds: item.scope.contactIds,
+      appointmentIds: item.scope.appointmentIds,
+    });
     setError(null);
-    setEditOpen(true);
   };
 
-  const openPassword = (u: UserListItem) => {
-    if (!canManageUserRow(u)) return;
-    setEditingUser(u);
-    setNewPassword('');
-    setError(null);
-    setPasswordOpen(true);
-  };
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!editing) return;
     setSaving(true);
+    setError(null);
     try {
-      await usersApi.create({
-        name: formName.trim(),
-        email: formEmail.trim(),
-        password: formPassword,
-        role: formRole,
-        active: formActive,
-      });
-      setCreateOpen(false);
-      loadList();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao criar usuário.');
+      if (editing === 'new') {
+        const submittedScope = role === 'COLLABORATOR' ? scope : { ...scope, managerId: null };
+        await usersApi.create({
+          name, username, email: email || null, password, role, active, ...submittedScope,
+          allowDirectAssignment: role === 'COLLABORATOR' && submittedScope.managerId == null,
+        });
+      } else {
+        const submittedScope = role === 'COLLABORATOR' ? scope : { ...scope, managerId: null };
+        await usersApi.update(editing.id, isAdmin
+          ? { name, username, email: email || null, role, active }
+          : { name, email: email || null });
+        if (role !== 'ADMIN') await usersApi.updateScope(editing.id, submittedScope);
+      }
+      setEditing(null);
+      await load();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Erro ao salvar acesso.');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingUser) return;
-    setError(null);
-    setSaving(true);
+  const resetPassword = async (item: UserListItem) => {
+    const nextPassword = window.prompt(`Defina uma senha temporária para ${item.username ?? item.name} (mínimo 8 caracteres):`);
+    if (!nextPassword) return;
     try {
-      await usersApi.update(editingUser.id, {
-        name: formName.trim(),
-        email: formEmail.trim(),
-        role: formRole,
-        active: formActive,
-      });
-      setEditOpen(false);
-      loadList();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao atualizar.');
-    } finally {
-      setSaving(false);
+      await usersApi.updatePassword(item.id, nextPassword);
+      await load();
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : 'Erro ao redefinir senha.');
     }
   };
 
-  const handlePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingUser) return;
-    setError(null);
-    setSaving(true);
+  const revokeSessions = async (item: UserListItem) => {
     try {
-      await usersApi.updatePassword(editingUser.id, newPassword);
-      setPasswordOpen(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao alterar senha.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const toggleActive = async (u: UserListItem) => {
-    if (!canManageUserRow(u)) return;
-    try {
-      await usersApi.update(u.id, { active: !u.active });
-      loadList();
-    } catch {
-      // ignore
+      await usersApi.revokeSessions(item.id);
+      setError(null);
+    } catch (revokeError) {
+      setError(revokeError instanceof Error ? revokeError.message : 'Erro ao encerrar sessões.');
     }
   };
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
-      <header className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
-        <div className="w-full max-w-none flex items-center gap-4 px-6 lg:px-8 h-14">
-          <AppNav />
-          <h1 className="text-[15px] font-semibold text-[#111827]">Usuários</h1>
-        </div>
+      <header className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white/90 backdrop-blur">
+        <div className="flex h-14 items-center gap-4 px-6 lg:px-8"><AppNav /><h1 className="text-[15px] font-semibold text-[#111827]">Acessos</h1></div>
       </header>
-
-      <div className="w-full max-w-none px-6 lg:px-8 py-8">
-        <p className="text-[13px] text-[#6B7280] mb-6">
-          {isManagerial
-            ? 'Como perfil gerencial, você pode criar e administrar apenas colaboradores. Administradores e perfis gerenciais não podem ser alterados por aqui.'
-            : 'Gerencie usuários e perfis de acesso (Administrador, Gerencial e Colaborador).'}
-        </p>
-        <div className="flex justify-end mb-4">
-          <button type="button" onClick={openCreate} className={btnPrimary}>
-            Novo usuário
-          </button>
+      <main className="px-6 py-8 lg:px-8">
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div><p className="text-sm text-[#4B5563]">{isAdmin ? 'Gerencie identidades, perfis, escopos e sessões.' : 'Gerencie dados operacionais e escopos dos seus colaboradores.'}</p>{error && <p role="alert" className="mt-2 text-sm text-red-600">{error}</p>}</div>
+          {isAdmin && <button onClick={openCreate} className="rounded-[9px] bg-[#F97316] px-4 py-2 text-sm font-semibold text-white">Novo acesso</button>}
         </div>
-
-        <div className={card}>
-          {loading ? (
-            <div className="py-8 text-center text-[13px] text-[#6B7280]">Carregando…</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-[13px]">
-                <thead>
-                  <tr className="border-b border-[#E5E7EB]">
-                    <th className="py-3 pr-4 font-semibold text-[#111827]">Nome</th>
-                    <th className="py-3 pr-4 font-semibold text-[#111827]">E-mail</th>
-                    <th className="py-3 pr-4 font-semibold text-[#111827]">Perfil</th>
-                    <th className="py-3 pr-4 font-semibold text-[#111827]">Ativo</th>
-                    <th className="py-3 font-semibold text-[#111827]">Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((u) => (
-                    <tr key={u.id} className="border-b border-[#E5E7EB]/60">
-                      <td className="py-3 pr-4 text-[#111827]">{u.name}</td>
-                      <td className="py-3 pr-4 text-[#6B7280]">{u.email}</td>
-                      <td className="py-3 pr-4">
-                        <span className={profileAccentClass(u.role)}>{userRoleLabel(u.role)}</span>
-                      </td>
-                      <td className="py-3 pr-4">{u.active ? 'Sim' : 'Não'}</td>
-                      <td className="py-3 flex items-center gap-2">
-                        {canManageUserRow(u) ? (
-                          <>
-                            <button type="button" onClick={() => openEdit(u)} className="text-[#3B82F6] hover:underline text-[13px]">
-                              Editar
-                            </button>
-                            <button type="button" onClick={() => openPassword(u)} className="text-[#3B82F6] hover:underline text-[13px]">
-                              Senha
-                            </button>
-                            {currentUser?.id !== u.id && (
-                              <button
-                                type="button"
-                                onClick={() => toggleActive(u)}
-                                className="text-[#6B7280] hover:underline text-[13px]"
-                              >
-                                {u.active ? 'Desativar' : 'Ativar'}
-                              </button>
-                            )}
-                          </>
-                        ) : (
-                          <span className="text-[#9CA3AF]">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {users.length === 0 && (
-                <p className="py-6 text-center text-[13px] text-[#9CA3AF]">Nenhum usuário cadastrado.</p>
-              )}
-            </div>
-          )}
+        <div className="overflow-x-auto rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
+          <table className="min-w-[1000px] w-full text-left text-[13px]">
+            <thead className="border-b bg-[#F9FAFB] text-[#4B5563]"><tr><th className="p-3">Nome</th><th className="p-3">Username</th><th className="p-3">E-mail</th><th className="p-3">Perfil</th><th className="p-3">Gestor</th><th className="p-3">Escopo</th><th className="p-3">Status</th><th className="p-3">Criado</th><th className="p-3">Atualizado</th><th className="p-3">Ações</th></tr></thead>
+            <tbody>
+              {users.map((item) => {
+                const manager = users.find((candidate) => candidate.id === item.managerId);
+                const scopeCount = item.scope.enterpriseIds.length + item.scope.brokerIds.length + item.scope.conversationIds.length + item.scope.contactIds.length + item.scope.appointmentIds.length;
+                return <tr key={item.id} className="border-b last:border-0"><td className="p-3 font-medium">{item.name}</td><td className="p-3">{item.username ?? '—'}</td><td className="p-3 text-[#6B7280]">{item.email ?? '—'}</td><td className="p-3">{userRoleLabel(item.role)}</td><td className="p-3">{manager?.name ?? (item.managerId === actor?.id ? actor.name : '—')}</td><td className="p-3">{item.scope.accessAll ? 'Global' : `${scopeCount} atribuição(ões)`}</td><td className="p-3"><span className={item.active ? 'text-emerald-700' : 'text-red-600'}>{item.active ? 'Ativo' : 'Inativo'}</span>{item.mustChangePassword && <span className="ml-2 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700">Troca pendente</span>}</td><td className="p-3 text-[#6B7280]">{new Date(item.createdAt).toLocaleDateString('pt-BR')}</td><td className="p-3 text-[#6B7280]">{new Date(item.updatedAt).toLocaleDateString('pt-BR')}</td><td className="p-3"><div className="flex flex-wrap gap-2"><button onClick={() => openEdit(item)} className="text-blue-600 hover:underline">Editar</button>{isAdmin && <button onClick={() => void resetPassword(item)} className="text-blue-600 hover:underline">Redefinir senha</button>}{isAdmin && <button onClick={() => void revokeSessions(item)} className="text-[#6B7280] hover:underline">Encerrar sessões</button>}</div></td></tr>;
+              })}
+            </tbody>
+          </table>
+          {!loading && users.length === 0 && <p className="p-8 text-center text-sm text-[#6B7280]">Nenhum acesso disponível.</p>}
+          {loading && <p className="p-8 text-center text-sm text-[#6B7280]">Carregando…</p>}
         </div>
-      </div>
+      </main>
 
-      {createOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setCreateOpen(false)}>
-          <div className="bg-white rounded-[12px] border border-[#E5E7EB] shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-[18px] font-semibold text-[#111827] mb-4">Novo usuário</h2>
-            <form onSubmit={handleCreate} className="space-y-4">
-              {error && <p className="text-[13px] text-red-600">{error}</p>}
-              <div>
-                <label className={label}>Nome</label>
-                <input type="text" value={formName} onChange={(e) => setFormName(e.target.value)} className={field} required />
-              </div>
-              <div>
-                <label className={label}>E-mail</label>
-                <input type="email" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} className={field} required />
-              </div>
-              <div>
-                <label className={label}>Senha</label>
-                <input type="password" value={formPassword} onChange={(e) => setFormPassword(e.target.value)} className={field} required minLength={8} placeholder="Mín. 8 caracteres" />
-              </div>
-              <div>
-                <label className={label}>Perfil</label>
-                <select value={formRole} onChange={(e) => setFormRole(e.target.value as UserRole)} className={field}>
-                  {createRoleOptions.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="create-active" checked={formActive} onChange={(e) => setFormActive(e.target.checked)} />
-                <label htmlFor="create-active" className="text-[13px] text-[#6B7280]">Ativo</label>
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button type="submit" disabled={saving} className={btnPrimary}>{saving ? 'Salvando…' : 'Criar'}</button>
-                <button type="button" onClick={() => setCreateOpen(false)} className={btnSecondary}>Cancelar</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {editOpen && editingUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setEditOpen(false)}>
-          <div className="bg-white rounded-[12px] border border-[#E5E7EB] shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-[18px] font-semibold text-[#111827] mb-4">Editar usuário</h2>
-            <form onSubmit={handleUpdate} className="space-y-4">
-              {error && <p className="text-[13px] text-red-600">{error}</p>}
-              <div>
-                <label className={label}>Nome</label>
-                <input type="text" value={formName} onChange={(e) => setFormName(e.target.value)} className={field} required />
-              </div>
-              <div>
-                <label className={label}>E-mail</label>
-                <input type="email" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} className={field} required />
-              </div>
-              <div>
-                <label className={label}>Perfil</label>
-                <select
-                  value={formRole}
-                  onChange={(e) => setFormRole(e.target.value as UserRole)}
-                  className={field}
-                  disabled={currentUser?.id === editingUser.id || isManagerial}
-                >
-                  {editRoleOptions.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-                {currentUser?.id === editingUser.id && <p className="text-[12px] text-[#6B7280] mt-1">Você não pode alterar seu próprio perfil.</p>}
-              </div>
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="edit-active" checked={formActive} onChange={(e) => setFormActive(e.target.checked)} disabled={currentUser?.id === editingUser.id} />
-                <label htmlFor="edit-active" className="text-[13px] text-[#6B7280]">Ativo</label>
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button type="submit" disabled={saving} className={btnPrimary}>{saving ? 'Salvando…' : 'Salvar'}</button>
-                <button type="button" onClick={() => setEditOpen(false)} className={btnSecondary}>Cancelar</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {passwordOpen && editingUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setPasswordOpen(false)}>
-          <div className="bg-white rounded-[12px] border border-[#E5E7EB] shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-[18px] font-semibold text-[#111827] mb-4">Alterar senha — {editingUser.email}</h2>
-            <form onSubmit={handlePassword} className="space-y-4">
-              {error && <p className="text-[13px] text-red-600">{error}</p>}
-              <div>
-                <label className={label}>Nova senha</label>
-                <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className={field} required minLength={8} placeholder="Mín. 8 caracteres" />
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button type="submit" disabled={saving} className={btnPrimary}>{saving ? 'Salvando…' : 'Alterar senha'}</button>
-                <button type="button" onClick={() => setPasswordOpen(false)} className={btnSecondary}>Cancelar</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {editing && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={() => setEditing(null)}><div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl" onMouseDown={(e) => e.stopPropagation()}><h2 className="mb-4 text-lg font-semibold">{editing === 'new' ? 'Novo acesso' : `Editar ${editing.name}`}</h2>{error && <p className="mb-3 text-sm text-red-600">{error}</p>}<form onSubmit={save} className="space-y-5">
+        <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm">Nome<input className={`${field} mt-1`} value={name} onChange={(e) => setName(e.target.value)} required /></label><label className="text-sm">Username<input className={`${field} mt-1`} value={username} onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/\s/g, ''))} required disabled={!isAdmin && editing !== 'new'} /></label><label className="text-sm">E-mail opcional<input className={`${field} mt-1`} type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>{editing === 'new' && <label className="text-sm">Senha temporária<input className={`${field} mt-1`} type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} required /></label>}<label className="text-sm">Perfil<select className={`${field} mt-1`} value={role} onChange={(e) => setRole(e.target.value as UserRole)} disabled={!isAdmin}><option value="COLLABORATOR">Colaborador</option><option value="MANAGERIAL">Gestor</option><option value="ADMIN">Administrador</option></select></label>{role === 'COLLABORATOR' && <label className="text-sm">Gestor responsável<select className={`${field} mt-1`} value={scope.managerId ?? ''} onChange={(e) => setScope((current) => ({ ...current, managerId: e.target.value ? Number(e.target.value) : null }))} disabled={!isAdmin}><option value="">Atribuição direta por ADMIN</option>{managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select></label>}{isAdmin && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />Acesso ativo</label>}</div>
+        {role !== 'ADMIN' && <div className="grid gap-5 sm:grid-cols-2"><fieldset><legend className="mb-2 text-sm font-semibold">Empreendimentos</legend><div className="max-h-40 space-y-2 overflow-y-auto rounded-lg border p-3">{resources.enterprises.map((resource) => <label key={resource.id} className="flex gap-2 text-sm"><input type="checkbox" checked={scope.enterpriseIds.includes(resource.id)} onChange={() => setScope((current) => ({ ...current, enterpriseIds: toggleId(current.enterpriseIds, resource.id) }))} />{resource.name}</label>)}{resources.enterprises.length === 0 && <span className="text-xs text-[#6B7280]">Nenhum disponível.</span>}</div></fieldset><fieldset><legend className="mb-2 text-sm font-semibold">Corretores</legend><div className="max-h-40 space-y-2 overflow-y-auto rounded-lg border p-3">{resources.brokers.map((resource) => <label key={resource.id} className="flex gap-2 text-sm"><input type="checkbox" checked={scope.brokerIds.includes(resource.id)} onChange={() => setScope((current) => ({ ...current, brokerIds: toggleId(current.brokerIds, resource.id) }))} />{resource.name}{!resource.active && ' (inativo)'}</label>)}{resources.brokers.length === 0 && <span className="text-xs text-[#6B7280]">Nenhum disponível.</span>}</div></fieldset></div>}
+        <p className="text-xs text-[#6B7280]">Conversas, contatos e visitas atribuídos diretamente continuam preservados. Empreendimentos e corretores também derivam o escopo operacional relacionado.</p><div className="flex justify-end gap-2"><button type="button" onClick={() => setEditing(null)} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button><button disabled={saving} className="rounded-lg bg-[#F97316] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Salvando…' : 'Salvar'}</button></div>
+      </form></div></div>}
     </div>
   );
 }
-
-
-
