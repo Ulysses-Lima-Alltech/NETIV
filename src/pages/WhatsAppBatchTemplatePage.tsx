@@ -691,10 +691,10 @@ export function WhatsAppBatchTemplatePage() {
       form.append('file', fileToUpload);
       form.append('language', selectedTemplate.languageCode || 'pt_BR');
       await whatsappBatchApi.uploadTemplateHeaderImage(selectedTemplate.key, form);
-      setHeaderImageFeedback('Imagem anexada com sucesso.');
+      setHeaderImageFeedback('M?dia anexada com sucesso.');
       await loadBatchTemplates({ refresh: true });
     } catch (e) {
-      setHeaderImageFeedback(e instanceof Error ? e.message : 'Erro ao anexar imagem.');
+      setHeaderImageFeedback(e instanceof Error ? e.message : 'Erro ao anexar m?dia.');
     } finally {
       setHeaderImageUploading(false);
       if (headerImageFileInputRef.current) headerImageFileInputRef.current.value = '';
@@ -707,10 +707,10 @@ export function WhatsAppBatchTemplatePage() {
     setHeaderImageFeedback(null);
     try {
       await whatsappBatchApi.deleteTemplateHeaderImage(selectedTemplate.key, selectedTemplate.languageCode || 'pt_BR');
-      setHeaderImageFeedback('Imagem removida com sucesso.');
+      setHeaderImageFeedback('M?dia removida com sucesso.');
       await loadBatchTemplates({ refresh: true });
     } catch (e) {
-      setHeaderImageFeedback(e instanceof Error ? e.message : 'Erro ao remover imagem.');
+      setHeaderImageFeedback(e instanceof Error ? e.message : 'Erro ao remover m?dia.');
     } finally {
       setHeaderImageRemoving(false);
     }
@@ -1135,23 +1135,27 @@ export function WhatsAppBatchTemplatePage() {
                     <div className="flex items-center gap-2">
                       {selectedTemplate.hasConfiguredHeaderMedia || selectedTemplate.headerMediaId || selectedTemplate.headerImageUrl ? (
                         <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">
-                          Imagem anexada
+                          Mídia anexada
                         </span>
                       ) : (
                         <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800">
-                          Requer imagem
+                          Requer mídia
                         </span>
                       )}
                     </div>
                     <div>
-                      <p className="text-[12px] font-medium text-[#374151] mb-2">Imagem do cabeçalho</p>
+                      <p className="text-[12px] font-medium text-[#374151] mb-2">Mídia do cabeçalho</p>
                       {selectedTemplate.headerMediaFilename ? (
-                        <p className="text-[12px] text-[#4B5563] mb-2">Imagem atual: {selectedTemplate.headerMediaFilename}</p>
+                        <p className="text-[12px] text-[#4B5563] mb-2">Mídia atual: {selectedTemplate.headerMediaFilename}</p>
                       ) : null}
                       <input
                         ref={headerImageFileInputRef}
                         type="file"
-                        accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
+                        accept={selectedTemplate.hasHeaderVideo
+                          ? 'video/mp4,video/3gpp,.mp4,.3gp'
+                          : selectedTemplate.hasHeaderDocument
+                            ? '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,application/pdf'
+                            : '.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp'}
                         className="hidden"
                         onChange={(e) => {
                           const nextFile = e.target.files?.[0];
@@ -1166,10 +1170,10 @@ export function WhatsAppBatchTemplatePage() {
                           className="px-4 py-2 rounded-[10px] bg-[#0EA5E9] text-white text-[13px] font-semibold hover:bg-[#0284C7] disabled:opacity-60"
                         >
                           {headerImageUploading
-                            ? 'Enviando imagem...'
+                            ? 'Enviando m?dia...'
                             : selectedTemplate.headerMediaFilename
-                              ? 'Substituir imagem'
-                              : 'Anexar imagem'}
+                              ? 'Substituir m?dia'
+                              : 'Anexar m?dia'}
                         </button>
                         {(selectedTemplate.headerMediaId || selectedTemplate.headerImageUrl) && (
                           <button
@@ -1178,7 +1182,7 @@ export function WhatsAppBatchTemplatePage() {
                             disabled={headerImageUploading || headerImageRemoving}
                             className="px-4 py-2 rounded-[10px] border border-red-200 text-red-700 bg-red-50 text-[13px] font-semibold hover:bg-red-100 disabled:opacity-60"
                           >
-                            {headerImageRemoving ? 'Removendo...' : 'Remover imagem'}
+                            {headerImageRemoving ? 'Removendo...' : 'Remover m?dia'}
                           </button>
                         )}
                       </div>
