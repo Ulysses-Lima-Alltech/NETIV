@@ -19,11 +19,23 @@ import type { AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
-const imageUpload = multer({
+const mediaUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 64 * 1024 * 1024 },
 });
 const ALLOWED_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
+const ALLOWED_HEADER_MEDIA_MIME_TYPES = new Set([
+  ...ALLOWED_IMAGE_MIME_TYPES,
+  'video/mp4',
+  'video/3gpp',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+]);
 
 router.get('/templates', async (req, res) => {
   try {
@@ -44,7 +56,7 @@ router.get('/templates', async (req, res) => {
   }
 });
 
-router.post('/templates/:templateName/header-image', imageUpload.single('file'), async (req, res) => {
+router.post(['/templates/:templateName/header-image', '/templates/:templateName/header-media'], mediaUpload.single('file'), async (req, res) => {
   try {
     const templateName = String(req.params.templateName ?? '').trim();
     if (!templateName) {
@@ -54,11 +66,12 @@ router.post('/templates/:templateName/header-image', imageUpload.single('file'),
     if (!req.file) {
       return res.status(400).json({ error: 'Arquivo de imagem é obrigatório.' });
     }
-    if (!ALLOWED_IMAGE_MIME_TYPES.has(req.file.mimetype)) {
-      return res.status(400).json({ error: 'Formato inválido. Use PNG, JPG, JPEG ou WEBP.' });
+    if (!ALLOWED_HEADER_MEDIA_MIME_TYPES.has(req.file.mimetype)) {
+      return res.status(400).json({ error: 'Formato de mídia não permitido para cabeçalho.' });
     }
-    if (req.file.size > 5 * 1024 * 1024) {
-      return res.status(400).json({ error: 'Imagem excede 5MB.' });
+    const maxBytes = req.file.mimetype.startsWith('image/') ? 5 * 1024 * 1024 : 64 * 1024 * 1024;
+    if (req.file.size > maxBytes) {
+      return res.status(400).json({ error: 'Mídia excede o limite permitido.' });
     }
 
     const uploadResult = await uploadWhatsAppMedia({
@@ -95,8 +108,8 @@ router.post('/templates/:templateName/header-image', imageUpload.single('file'),
       sizeBytes: req.file.size,
     });
   } catch (e) {
-    console.error('[WHATSAPP_BATCH_HEADER_IMAGE_UPLOAD_ERROR]', e);
-    return res.status(500).json({ error: 'Erro ao anexar imagem do cabeçalho.' });
+    console.error('[WHATSAPP_BATCH_HEADER_MEDIA_UPLOAD_ERROR]', e);
+    return res.status(500).json({ error: 'Erro ao anexar mídia do cabeçalho.' });
   }
 });
 

@@ -1,7 +1,6 @@
 import { getPool, query } from '../db/pg.js';
 import {
   getWhatsAppTemplateByKey,
-  renderTemplateTextForInbox,
   type WhatsAppTemplateCatalogItem,
 } from '../catalogs/whatsappTemplates.js';
 import { detectBatchColumns, type BatchColumnSuggestions } from '../utils/columnDetection.js';
@@ -18,11 +17,25 @@ import {
   updateClassification,
   updateConversationType,
 } from '../repositories/conversationRepository.js';
-import { insertMessage } from '../repositories/messageRepository.js';
+import {
+  upsertBatchTemplateMessage,
+  type MessageAttachmentPayload,
+  type MessageFailurePayload,
+} from '../repositories/messageRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { sendTemplateMessage } from './whatsappMetaService.js';
 import { getCorretorById } from '../repositories/corretorRepository.js';
 import { findOrCreateContactByPhone, updateContactType } from '../repositories/contactsRepository.js';
+import {
+  isAnaAutomationBlockedByHandoff,
+  logAnaAutomationBlockedByHandoff,
+} from '../utils/anaHandoffPolicy.js';
+import { getMediaSetting } from '../repositories/whatsappTemplateMediaSettingsRepository.js';
+import {
+  renderWhatsAppTemplateMessage,
+  type RenderedWhatsAppTemplateMessage,
+  type WhatsAppTemplateMediaReference,
+} from '../utils/whatsappTemplateMessage.js';
 
 export interface BatchPreviewRow {
   rowIndex: number;
@@ -44,6 +57,7 @@ export interface BatchPreviewRow {
 }
 
 export interface BatchExecutionResult {
+  batchId?: number;
   total: number;
   success: number;
   failed: number;
@@ -58,6 +72,8 @@ export interface BatchExecutionResult {
     httpStatus?: number;
     templateKey: string;
     metaMessageId?: string;
+    messageId?: number;
+    recipientId?: number;
   }>;
 }
 
@@ -111,6 +127,7 @@ interface ScheduledBatchRow {
   post_send_mode: NormalizedBatchPostSendMode;
   scheduled_at: Date;
   status: 'PENDING' | 'PROCESSING' | 'SENT' | 'PARTIAL_FAILED' | 'FAILED' | 'CANCELED';
+  send_mode?: 'IMMEDIATE' | 'SCHEDULED';
 }
 
 interface ScheduledBatchRecipientRow {
@@ -525,6 +542,49 @@ async function applyBatchConversationRouting(params: {
   });
 }
 
+async function buildCanonicalTemplateHistory(params: {
+  template: WhatsAppTemplateCatalogItem;
+  parameterValues: string[];
+}): Promise<{ rendered: RenderedWhatsAppTemplateMessage; attachment: MessageAttachmentPayload | null }> {
+  const setting = await getMediaSetting(params.template.key, params.template.languageCode);
+  const headerNeedsMedia = params.template.hasHeaderImage || params.template.hasHeaderVideo || params.template.hasHeaderDocument;
+  const media: WhatsAppTemplateMediaReference | null = headerNeedsMedia
+    ? {
+        settingId: setting?.id ?? null,
+        mediaId: setting?.headerMediaId ?? params.template.headerMediaId ?? null,
+        fileName: setting?.headerMediaFilename ?? params.template.headerMediaFilename ?? null,
+        mimeType: setting?.headerMediaMimeType ?? null,
+        sizeBytes: setting?.headerMediaSizeBytes ?? null,
+        storageFolder: setting?.storageFolder ?? null,
+        configuredLink: Boolean(setting?.headerImageUrl || params.template.headerImageUrl),
+      }
+    : null;
+  const rendered = renderWhatsAppTemplateMessage({
+    template: params.template,
+    parameterValues: params.parameterValues,
+    media,
+  });
+  const attachment: MessageAttachmentPayload | null = rendered.header.media
+    ? {
+        fileName: rendered.header.media.fileName ?? `template-${rendered.templateName}`,
+        mimeType: rendered.header.media.mimeType ?? (
+          rendered.header.type === 'video'
+            ? 'video/mp4'
+            : rendered.header.type === 'document'
+              ? 'application/octet-stream'
+              : 'image/jpeg'
+        ),
+        sizeBytes: rendered.header.media.sizeBytes ?? undefined,
+        whatsappMediaId: rendered.header.media.mediaId,
+        caption: null,
+        templateMediaSettingId: rendered.header.media.settingId,
+        storageFolder: rendered.header.media.storageFolder,
+        mediaType: rendered.header.type === 'none' || rendered.header.type === 'text' ? null : rendered.header.type,
+      }
+    : null;
+  return { rendered, attachment };
+}
+
 async function sendBatchCandidateNow(params: {
   template: WhatsAppTemplateCatalogItem;
   candidate: PreparedBatchCandidate;
@@ -533,24 +593,58 @@ async function sendBatchCandidateNow(params: {
   conversationType: NormalizedBatchConversationType;
   postSendMode: NormalizedBatchPostSendMode;
   sourceKeyPrefix: string;
+  batchId: number;
+  recipientId: number;
 }): Promise<BatchExecutionResult['details'][number]> {
-  const result = await sendTemplateMessage(params.candidate.phoneNormalized, params.template.key, {
-    parameters: params.candidate.resolvedValues,
-  });
-  if (!result.success) {
-    return {
-      rowNumber: params.candidate.rowNumber,
-      phoneOriginal: params.candidate.phoneOriginal,
-      phoneNormalized: params.candidate.phoneNormalized,
-      status: 'error',
-      error: result.error ?? 'Falha no envio.',
-      errorCode: result.metaErrorCode ?? result.code,
-      errorType: result.metaErrorType,
-      httpStatus: result.httpStatus,
-      templateKey: params.template.key,
-    };
+  // Este envio ? o template inicial solicitado por um operador, inclusive no
+  // worker agendado. A consulta pr?-envio torna expl?cita a distin??o entre
+  // essa a??o humana e qualquer automa??o posterior da Ana, que passa sempre
+  // pelo bloqueio can?nico/final de outbound.
+  const existingConversationResult = await query<{
+    id: number;
+    contact_id: number | null;
+    handoff: boolean | null;
+    classification: string | null;
+  }>(
+    `SELECT id, contact_id, handoff, classification
+       FROM conversations
+      WHERE regexp_replace(COALESCE(contact_phone, external_contact_id, ''), '\\D', '', 'g') = $1
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1`,
+    [params.candidate.phoneNormalized]
+  );
+  const existingConversation = existingConversationResult.rows[0] ?? null;
+  if (isAnaAutomationBlockedByHandoff(existingConversation)) {
+    if (params.postSendMode !== 'HANDOFF') {
+      logAnaAutomationBlockedByHandoff(existingConversation!, {
+        conversationId: existingConversation!.id,
+        automationType: 'batch_template_non_handoff',
+        blockedAt: 'before_send',
+        source: params.sourceKeyPrefix.startsWith('scheduled_batch:')
+          ? 'scheduled_batch'
+          : 'immediate_batch',
+      });
+      return {
+        rowNumber: params.candidate.rowNumber,
+        phoneOriginal: params.candidate.phoneOriginal,
+        phoneNormalized: params.candidate.phoneNormalized,
+        status: 'blocked',
+        error: 'Conversa em HANDOFF; somente o template inicial com postSendMode=HANDOFF pode ser enviado.',
+        templateKey: params.template.key,
+      };
+    }
+    console.log('[WHATSAPP_BATCH_INITIAL_TEMPLATE_HANDOFF_ALLOWED]', {
+      conversationId: existingConversation!.id,
+      contactId: existingConversation!.contact_id ?? null,
+      deliveryKind: 'operator_requested_initial_batch',
+      postSendMode: params.postSendMode,
+      source: params.sourceKeyPrefix.startsWith('scheduled_batch:') ? 'scheduled_batch' : 'immediate_batch',
+    });
   }
-
+  const canonical = await buildCanonicalTemplateHistory({
+    template: params.template,
+    parameterValues: params.candidate.resolvedValues,
+  });
   const contact = await findOrCreateContactByPhone({
     phoneE164: params.candidate.phoneNormalized,
     phoneDisplay: params.candidate.phoneNormalized,
@@ -565,6 +659,55 @@ async function sendBatchCandidateNow(params: {
     null,
     null
   );
+  const result = await sendTemplateMessage(params.candidate.phoneNormalized, params.template.key, {
+    parameters: params.candidate.resolvedValues,
+  });
+  if (!result.success) {
+    const failure: MessageFailurePayload = {
+      code: result.metaErrorCode ?? result.code ?? null,
+      title: result.metaErrorType ?? null,
+      message: (result.error ?? 'Falha no envio.').slice(0, 1000),
+    };
+    const failedMessage = await upsertBatchTemplateMessage({
+      conversationId: conversation.id,
+      rendered: canonical.rendered,
+      attachment: canonical.attachment,
+      metaMessageId: result.metaMessageId ?? null,
+      status: 'failed',
+      failure,
+      batchId: params.batchId,
+      recipientId: params.recipientId,
+      rowNumber: params.candidate.rowNumber,
+      enterpriseId: params.enterpriseId,
+      sentAt: null,
+    });
+    return {
+      rowNumber: params.candidate.rowNumber,
+      phoneOriginal: params.candidate.phoneOriginal,
+      phoneNormalized: params.candidate.phoneNormalized,
+      status: 'error',
+      error: failure.message,
+      errorCode: failure.code ?? undefined,
+      errorType: result.metaErrorType,
+      httpStatus: result.httpStatus,
+      templateKey: params.template.key,
+      messageId: failedMessage.id,
+      recipientId: params.recipientId,
+    };
+  }
+
+  const persistedMessage = await upsertBatchTemplateMessage({
+    conversationId: conversation.id,
+    rendered: canonical.rendered,
+    attachment: canonical.attachment,
+    metaMessageId: result.metaMessageId ?? null,
+    status: 'sent',
+    batchId: params.batchId,
+    recipientId: params.recipientId,
+    rowNumber: params.candidate.rowNumber,
+    enterpriseId: params.enterpriseId,
+    sentAt: new Date(),
+  });
   await applyBatchConversationRouting({
     conversationId: conversation.id,
     contactId: contact.id,
@@ -572,11 +715,6 @@ async function sendBatchCandidateNow(params: {
     postSendMode: params.postSendMode,
     brokerId: params.candidate.assignedBrokerId,
   });
-
-  if (result.metaMessageId) {
-    const inboxContent = renderTemplateTextForInbox(params.template, params.candidate.resolvedValues);
-    await insertMessage(conversation.id, 'assistant', inboxContent, result.metaMessageId);
-  }
 
   await applyBatchOwnershipAndContextByPhone({
     phoneE164: params.candidate.phoneNormalized,
@@ -594,7 +732,77 @@ async function sendBatchCandidateNow(params: {
     error: null,
     templateKey: params.template.key,
     metaMessageId: result.metaMessageId,
+    messageId: persistedMessage.id,
+    recipientId: params.recipientId,
   };
+}
+
+async function createImmediateBatchExecution(params: {
+  template: WhatsAppTemplateCatalogItem;
+  mapping: BatchMappingDto;
+  candidates: PreparedBatchCandidate[];
+  totalRows: number;
+  invalidRecipients: number;
+  enterpriseId: number | null;
+  conversationType: NormalizedBatchConversationType;
+  postSendMode: NormalizedBatchPostSendMode;
+  createdByUserId: number | null;
+}): Promise<{ batchId: number; recipients: Array<{ recipientId: number; candidate: PreparedBatchCandidate }> }> {
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const insertedBatch = await client.query<{ id: number }>(
+      `INSERT INTO whatsapp_batch_scheduled_sends (
+         enterprise_id, template_key, payload_json, conversation_type, post_send_mode,
+         scheduled_at, status, created_by, created_at, updated_at, started_at, send_mode
+       ) VALUES ($1, $2, $3::jsonb, $4, $5, NOW(), 'PROCESSING', $6, NOW(), NOW(), NOW(), 'IMMEDIATE')
+       RETURNING id`,
+      [
+        params.enterpriseId,
+        params.template.key,
+        JSON.stringify({
+          mapping: params.mapping,
+          rowsCount: params.totalRows,
+          validRecipients: params.candidates.length,
+          invalidRecipients: params.invalidRecipients,
+          sendMode: 'IMMEDIATE',
+        }),
+        params.conversationType,
+        params.postSendMode,
+        params.createdByUserId,
+      ]
+    );
+    const batchId = insertedBatch.rows[0]?.id;
+    if (!batchId) throw new Error('Falha ao criar rastreabilidade do lote imediato.');
+    const recipients: Array<{ recipientId: number; candidate: PreparedBatchCandidate }> = [];
+    for (const candidate of params.candidates) {
+      const insertedRecipient = await client.query<{ id: number }>(
+        `INSERT INTO whatsapp_batch_scheduled_send_recipients (
+           batch_id, row_number, phone, name, variables_json, assigned_broker_id,
+           status, created_at, updated_at
+         ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, 'PENDING', NOW(), NOW())
+         RETURNING id`,
+        [
+          batchId,
+          candidate.rowNumber,
+          candidate.phoneNormalized,
+          candidate.assignedBrokerName,
+          JSON.stringify(candidate.resolvedValues),
+          candidate.assignedBrokerId,
+        ]
+      );
+      const recipientId = insertedRecipient.rows[0]?.id;
+      if (!recipientId) throw new Error('Falha ao criar recipient do lote imediato.');
+      recipients.push({ recipientId, candidate });
+    }
+    await client.query('COMMIT');
+    return { batchId, recipients };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function sendBatchTemplate(params: {
@@ -642,23 +850,68 @@ export async function sendBatchTemplate(params: {
   const details: BatchExecutionResult['details'] = [...prepared.blockedDetails];
   let success = 0;
   let failed = prepared.blockedDetails.length;
+  const execution = await createImmediateBatchExecution({
+    template,
+    mapping: params.mapping,
+    candidates: prepared.candidates,
+    totalRows: params.rows.length,
+    invalidRecipients: prepared.blockedDetails.length,
+    enterpriseId: enterprise?.id ?? null,
+    conversationType,
+    postSendMode,
+    createdByUserId: params.createdByUserId ?? null,
+  });
 
-  for (const candidate of prepared.candidates) {
+  for (const item of execution.recipients) {
+    await query(
+      `UPDATE whatsapp_batch_scheduled_send_recipients
+          SET status = 'PROCESSING', updated_at = NOW()
+        WHERE id = $1 AND status = 'PENDING'`,
+      [item.recipientId]
+    );
     const detail = await sendBatchCandidateNow({
       template,
-      candidate,
+      candidate: item.candidate,
       configPhoneNumberId: config?.whatsappPhoneNumberId ?? null,
       enterpriseId: enterprise?.id ?? null,
       conversationType,
       postSendMode,
       sourceKeyPrefix: 'batch',
+      batchId: execution.batchId,
+      recipientId: item.recipientId,
     });
     details.push(detail);
-    if (detail.status === 'sent') success++;
+    const sent = detail.status === 'sent';
+    if (sent) success++;
     else failed++;
+    await query(
+      `UPDATE whatsapp_batch_scheduled_send_recipients
+          SET status = $2,
+              sent_at = CASE WHEN $2 = 'SENT' THEN NOW() ELSE sent_at END,
+              error_message = CASE WHEN $2 = 'FAILED' THEN LEFT($3, 1000) ELSE NULL END,
+              message_id = $4,
+              meta_message_id = $5,
+              conversation_id = (
+                SELECT id FROM conversations
+                 WHERE regexp_replace(COALESCE(contact_phone, external_contact_id, ''), '\\D', '', 'g') = $6
+                 ORDER BY updated_at DESC, id DESC LIMIT 1
+              ),
+              updated_at = NOW()
+        WHERE id = $1`,
+      [
+        item.recipientId,
+        sent ? 'SENT' : 'FAILED',
+        detail.error ?? null,
+        detail.messageId ?? null,
+        detail.metaMessageId ?? null,
+        item.candidate.phoneNormalized,
+      ]
+    );
   }
+  await finalizeScheduledBatch(execution.batchId);
 
   return {
+    batchId: execution.batchId,
     total: params.rows.length,
     success,
     failed,
@@ -859,6 +1112,8 @@ async function processClaimedScheduledBatch(batch: ScheduledBatchRow): Promise<v
         conversationType: normalizeConversationType(batch.conversation_type),
         postSendMode: normalizePostSendMode(batch.post_send_mode),
         sourceKeyPrefix: `scheduled_batch:${batch.id}`,
+        batchId: batch.id,
+        recipientId: claimed.id,
       });
 
       if (detail.status === 'sent') {
@@ -868,6 +1123,8 @@ async function processClaimedScheduledBatch(batch: ScheduledBatchRow): Promise<v
                sent_at = NOW(),
                updated_at = NOW(),
                error_message = NULL,
+               message_id = $3,
+               meta_message_id = $4,
                conversation_id = (
                  SELECT id
                  FROM conversations
@@ -876,16 +1133,23 @@ async function processClaimedScheduledBatch(batch: ScheduledBatchRow): Promise<v
                  LIMIT 1
                )
            WHERE id = $2`,
-          [claimed.phone, claimed.id]
+          [claimed.phone, claimed.id, detail.messageId ?? null, detail.metaMessageId ?? null]
         );
       } else {
         await query(
           `UPDATE whatsapp_batch_scheduled_send_recipients
            SET status = 'FAILED',
                updated_at = NOW(),
-               error_message = LEFT($1, 1000)
+               error_message = LEFT($1, 1000),
+               message_id = $3,
+               meta_message_id = $4
            WHERE id = $2`,
-          [detail.error ?? 'Falha no envio do destinatário agendado.', claimed.id]
+          [
+            detail.error ?? 'Falha no envio do destinatário agendado.',
+            claimed.id,
+            detail.messageId ?? null,
+            detail.metaMessageId ?? null,
+          ]
         );
       }
     }

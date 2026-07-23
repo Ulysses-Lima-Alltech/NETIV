@@ -52,6 +52,7 @@ export interface WebhookStatus {
   status: 'sent' | 'delivered' | 'read' | 'failed';
   timestamp: string;
   recipient_id: string;
+  errors?: Array<{ code?: number; title?: string; message?: string }>;
 }
 
 export interface WebhookPayload {

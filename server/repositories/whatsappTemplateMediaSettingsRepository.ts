@@ -68,6 +68,19 @@ export async function getMediaSetting(templateName: string, language: string): P
   return rows[0] ? mapRow(rows[0]) : null;
 }
 
+export async function getMediaSettingById(id: number): Promise<WhatsAppTemplateMediaSetting | null> {
+  const { rows } = await query<MediaSettingRow>(
+    `SELECT id, template_name, language, header_image_url, header_media_id, header_media_filename,
+            header_media_mime_type, header_media_size_bytes, header_media_uploaded_at, storage_folder,
+            file_bytes, created_at, updated_at
+       FROM whatsapp_template_media_settings
+      WHERE id = $1
+      LIMIT 1`,
+    [id]
+  );
+  return rows[0] ? mapRow(rows[0]) : null;
+}
+
 export async function listMediaSettings(): Promise<WhatsAppTemplateMediaSetting[]> {
   const { rows } = await query<MediaSettingRow>(
     `SELECT id, template_name, language, header_image_url, header_media_id, header_media_filename,
@@ -136,4 +149,3 @@ export async function clearHeaderMedia(templateName: string, language: string): 
     [templateName.trim(), normalizeLanguage(language)]
   );
 }
-

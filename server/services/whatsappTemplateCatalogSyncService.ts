@@ -126,6 +126,7 @@ function mapMetaTemplateToCatalogItem(
   const status = String(template.status ?? 'UNKNOWN').toUpperCase() || 'UNKNOWN';
   const components = Array.isArray(template.components) ? template.components : [];
   const header = components.find((component) => String(component.type ?? '').toUpperCase() === 'HEADER');
+  const body = components.find((component) => String(component.type ?? '').toUpperCase() === 'BODY');
   const headerFormat = String(header?.format ?? '').toUpperCase();
   const hasHeaderImage = headerFormat === 'IMAGE';
   const hasHeaderVideo = headerFormat === 'VIDEO';
@@ -159,6 +160,7 @@ function mapMetaTemplateToCatalogItem(
     headerMediaId,
     headerMediaFilename,
     hasConfiguredHeaderMedia: Boolean(headerMediaId || headerImageUrl),
+    messageBodyTemplate: typeof body?.text === 'string' ? body.text : undefined,
     variables,
   };
 }

@@ -50,6 +50,9 @@ interface ManualTemplateDef {
   headerImageUrl?: string | null;
   headerMediaId?: string | null;
   requiresHeaderMedia?: boolean;
+  headerType?: 'none' | 'text' | 'image' | 'video' | 'document';
+  headerText?: string | null;
+  components?: Array<Record<string, unknown>>;
 }
 
 export function isMetaWindowClosedError(params: { code?: number; message?: string }): boolean {
@@ -65,6 +68,12 @@ export function isMetaWindowClosedError(params: { code?: number; message?: strin
 export function resolveManualTemplate(templateKey: string): ManualTemplateDef | null {
   const catalogTemplate = getWhatsAppTemplateByKey(templateKey);
   if (!catalogTemplate) return null;
+  const components = Array.isArray(catalogTemplate.components) ? catalogTemplate.components : [];
+  const header = components.find((component) => String(component.type ?? '').toUpperCase() === 'HEADER');
+  const rawHeaderType = String(header?.format ?? '').toLowerCase();
+  const headerType = rawHeaderType === 'text' || rawHeaderType === 'image' || rawHeaderType === 'video' || rawHeaderType === 'document'
+    ? rawHeaderType
+    : 'none';
   return {
     key: catalogTemplate.key,
     name: catalogTemplate.name,
@@ -73,6 +82,9 @@ export function resolveManualTemplate(templateKey: string): ManualTemplateDef | 
     headerImageUrl: catalogTemplate.headerImageUrl ?? null,
     headerMediaId: catalogTemplate.headerMediaId ?? null,
     requiresHeaderMedia: catalogTemplate.requiresHeaderMedia ?? false,
+    headerType,
+    headerText: typeof header?.text === 'string' ? header.text : null,
+    components,
   };
 }
 
@@ -291,6 +303,9 @@ export async function sendTemplateMessage(
   const persisted = await getMediaSetting(template.key, template.languageCode);
   const headerMediaId = (persisted?.headerMediaId ?? template.headerMediaId ?? '').trim();
   const headerImageUrl = (persisted?.headerImageUrl ?? template.headerImageUrl ?? '').trim();
+  const headerMediaType = template.headerType === 'video' || template.headerType === 'document'
+    ? template.headerType
+    : 'image';
 
   if (template.requiresHeaderMedia) {
     if (headerMediaId) {
@@ -298,8 +313,8 @@ export async function sendTemplateMessage(
         type: 'header',
         parameters: [
           {
-            type: 'image',
-            image: { id: headerMediaId },
+            type: headerMediaType,
+            [headerMediaType]: { id: headerMediaId },
           },
         ],
       });
@@ -308,15 +323,15 @@ export async function sendTemplateMessage(
         type: 'header',
         parameters: [
           {
-            type: 'image',
-            image: { link: headerImageUrl },
+            type: headerMediaType,
+            [headerMediaType]: { link: headerImageUrl },
           },
         ],
       });
     } else {
       return {
         success: false,
-        error: 'Este template exige imagem de cabeçalho. Anexe uma imagem antes de enviar.',
+        error: 'Este template exige mídia de cabeçalho. Anexe a mídia antes de enviar.',
       };
     }
   } else if (headerMediaId) {
@@ -339,6 +354,16 @@ export async function sendTemplateMessage(
         },
       ],
     });
+  } else if (template.headerType === 'text' && template.headerText) {
+    const positions = [...template.headerText.matchAll(/\{\{\s*(\d+)\s*\}\}/g)]
+      .map((match) => Number(match[1]));
+    if (positions.length > 0) {
+      const headerParams = positions.map((position) => bodyParams[position - 1]).filter(Boolean);
+      if (headerParams.length !== positions.length) {
+        return { success: false, error: 'Par?metro obrigat?rio do cabe?alho n?o resolvido.' };
+      }
+      components.push({ type: 'header', parameters: headerParams });
+    }
   }
 
   if (bodyParams.length > 0) {
@@ -347,6 +372,21 @@ export async function sendTemplateMessage(
       parameters: bodyParams,
     });
   }
+
+  const buttonsComponent = template.components?.find(
+    (component) => String(component.type ?? '').toUpperCase() === 'BUTTONS'
+  );
+  const templateButtons = Array.isArray(buttonsComponent?.buttons)
+    ? (buttonsComponent.buttons as Array<Record<string, unknown>>)
+    : [];
+  templateButtons.forEach((button, index) => {
+    if (String(button.type ?? '').toUpperCase() !== 'URL' || typeof button.url !== 'string') return;
+    const positions = [...button.url.matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map((match) => Number(match[1]));
+    if (positions.length === 0) return;
+    const buttonParams = positions.map((position) => bodyParams[position - 1]).filter(Boolean);
+    if (buttonParams.length !== positions.length) return;
+    components.push({ type: 'button', sub_type: 'url', index: String(index), parameters: buttonParams });
+  });
 
   const requestBody = {
     messaging_product: 'whatsapp',

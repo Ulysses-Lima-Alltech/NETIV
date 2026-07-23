@@ -46,16 +46,30 @@ export interface RealtimeMessagePayload {
   id: string;
   conversationId: number;
   role: 'user' | 'assistant';
+  direction?: 'inbound' | 'outbound';
   content: string | null;
   metaMessageId: string | null;
+  externalMessageId?: string | null;
   messageKind: 'text' | 'document' | 'image' | 'video';
+  type?: 'text' | 'document' | 'image' | 'video';
   attachment: unknown | null;
+  status?: 'pending' | 'accepted' | 'sent' | 'delivered' | 'read' | 'failed';
+  template?: unknown | null;
+  failure?: unknown | null;
+  origin?: string | null;
+  batch?: { batchId: number | null; recipientId: number | null; rowNumber: number | null } | null;
+  enterpriseId?: number | null;
+  sentAt?: string | null;
+  deliveredAt?: string | null;
+  readAt?: string | null;
+  failedAt?: string | null;
   createdAt: string;
   deleted: boolean;
   deletedAt: string | null;
+  deleteScope?: string | null;
 }
 
-interface ConversationRealtimeRow {
+export interface ConversationRealtimeRow {
   id: number;
   channel: string;
   external_contact_id: string;
@@ -97,6 +111,54 @@ function toLeadStage(value: string | null): 'HOT' | 'WARM' | 'COLD' | null {
   if (normalized === 'morno') return 'WARM';
   if (normalized === 'frio') return 'COLD';
   return null;
+}
+
+export function mapConversationRealtimeRow(row: ConversationRealtimeRow): RealtimeConversationPayload {
+  const isHandoff = row.handoff === true || row.classification === 'Handoff';
+  return {
+    id: String(row.id),
+    channel: row.channel,
+    externalContactId: row.external_contact_id,
+    contactPhone: row.contact_phone,
+    contactName:
+      row.whatsapp_display_name?.trim() ||
+      row.customer_name?.trim() ||
+      row.contact_phone ||
+      row.external_contact_id,
+    whatsappDisplayName: row.whatsapp_display_name ?? null,
+    customerName: row.customer_name ?? null,
+    status: 'open',
+    lastMessageAt: row.last_message_at?.toISOString() ?? null,
+    lastMessagePreview: row.last_message_preview ?? null,
+    projectId: row.enterprise_id,
+    projectName: row.enterprise_name,
+    enterpriseId: row.enterprise_id,
+    enterpriseName: row.enterprise_name,
+    classificationStatus: isHandoff ? 'Handoff' : (row.classification ?? 'Novo'),
+    handoff: isHandoff,
+    attendanceMode: isHandoff ? 'handoff' : 'ana',
+    leadStage: toLeadStage(row.lead_temperature),
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+    reserveReason: row.reserve_reason ?? null,
+    reserveDesiredCity: row.reserve_desired_city ?? null,
+    reservePriceMin: row.reserve_price_min ?? null,
+    reservePriceMax: row.reserve_price_max ?? null,
+    reservePropertyType: row.reserve_property_type ?? null,
+    reserveBedrooms: row.reserve_bedrooms ?? null,
+    reserveInterestType: row.reserve_interest_type ?? null,
+    reserveFollowUpMoment: row.reserve_follow_up_moment ?? null,
+    reserveCommercialNotes: row.reserve_commercial_notes ?? null,
+    assignedBrokerId: row.assigned_broker_id ?? null,
+    assignedBrokerName: row.assigned_broker_name ?? null,
+    brokerNotificationStatus: row.broker_notification_status ?? null,
+    brokerPushNotificationStatus: row.broker_push_notification_status ?? null,
+    conversationType: row.conversation_type ?? 'CLIENT',
+    manualClosedAt: row.manual_closed_at?.toISOString() ?? null,
+    manualClosedByUserId: row.manual_closed_by_user_id ?? null,
+    manualClosedReason: row.manual_closed_reason ?? null,
+    reengagementCount: row.reengagement_count ?? 0,
+  };
 }
 
 async function buildConversationPayload(conversationId: number): Promise<RealtimeConversationPayload | null> {
@@ -151,51 +213,7 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
   );
   const row = rows[0];
   if (!row) return null;
-  const isHandoff = row.handoff === true || row.classification === 'Handoff';
-  return {
-    id: String(row.id),
-    channel: row.channel,
-    externalContactId: row.external_contact_id,
-    contactPhone: row.contact_phone,
-    contactName:
-      row.whatsapp_display_name?.trim() ||
-      row.customer_name?.trim() ||
-      row.contact_phone ||
-      row.external_contact_id,
-    whatsappDisplayName: row.whatsapp_display_name ?? null,
-    customerName: row.customer_name ?? null,
-    status: 'open',
-    lastMessageAt: row.last_message_at?.toISOString() ?? null,
-    lastMessagePreview: row.last_message_preview ?? null,
-    projectId: row.enterprise_id,
-    projectName: row.enterprise_name,
-    enterpriseId: row.enterprise_id,
-    enterpriseName: row.enterprise_name,
-    classificationStatus: isHandoff ? 'Handoff' : (row.classification ?? 'Novo'),
-    handoff: isHandoff,
-    attendanceMode: isHandoff ? 'handoff' : 'ana',
-    leadStage: toLeadStage(row.lead_temperature),
-    createdAt: row.created_at.toISOString(),
-    updatedAt: row.updated_at.toISOString(),
-    reserveReason: row.reserve_reason ?? null,
-    reserveDesiredCity: row.reserve_desired_city ?? null,
-    reservePriceMin: row.reserve_price_min ?? null,
-    reservePriceMax: row.reserve_price_max ?? null,
-    reservePropertyType: row.reserve_property_type ?? null,
-    reserveBedrooms: row.reserve_bedrooms ?? null,
-    reserveInterestType: row.reserve_interest_type ?? null,
-    reserveFollowUpMoment: row.reserve_follow_up_moment ?? null,
-    reserveCommercialNotes: row.reserve_commercial_notes ?? null,
-    assignedBrokerId: row.assigned_broker_id ?? null,
-    assignedBrokerName: row.assigned_broker_name ?? null,
-    brokerNotificationStatus: row.broker_notification_status ?? null,
-    brokerPushNotificationStatus: row.broker_push_notification_status ?? null,
-    conversationType: row.conversation_type ?? 'CLIENT',
-    manualClosedAt: row.manual_closed_at?.toISOString() ?? null,
-    manualClosedByUserId: row.manual_closed_by_user_id ?? null,
-    manualClosedReason: row.manual_closed_reason ?? null,
-    reengagementCount: row.reengagement_count ?? 0,
-  };
+  return mapConversationRealtimeRow(row);
 }
 
 function emitSocketEvent<T>(event: string, payload: T, conversationId?: number): void {
@@ -277,14 +295,11 @@ export function publishMessageCreated(message: RealtimeMessagePayload): void {
   }
 }
 
-export function publishMessageUpdated(payload: {
-  id: string;
-  conversationId: number;
-  deleted?: boolean;
-  deletedAt?: string | null;
-}): void {
+export function publishMessageUpdated(
+  payload: Pick<RealtimeMessagePayload, 'id' | 'conversationId'> & Partial<RealtimeMessagePayload>
+): void {
   try {
-    emitSocketEvent('message.updated', payload);
+    emitSocketEvent('message.updated', payload, payload.conversationId);
   } catch (error) {
     console.warn('[Realtime] publishMessageUpdated_failed', {
       conversationId: payload.conversationId,

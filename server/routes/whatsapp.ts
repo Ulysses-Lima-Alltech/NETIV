@@ -63,10 +63,12 @@ import { findContactById, updateContactType } from '../repositories/contactsRepo
 import {
   insertMessage,
   getMessagesByConversationId,
+  getMessageByIdForConversation,
   softDeleteMessage,
   getLastUserMessageRow,
   type MessageAttachmentPayload,
 } from '../repositories/messageRepository.js';
+import { getMediaSettingById } from '../repositories/whatsappTemplateMediaSettingsRepository.js';
 import { scheduleAnaRetry } from '../services/anaRetrySchedulerService.js';
 import { getCorretorById } from '../repositories/corretorRepository.js';
 import {
@@ -354,7 +356,11 @@ router.post('/templates/batch/send', batchUpload.single('file'), async (req, res
       return res.status(400).json({ success: false, error: msg });
     }
     const parsed = parseSpreadsheet(file.buffer, file.originalname, file.mimetype);
-    const result = await sendBatchTemplate({ rows: parsed.rows, mapping: parsedBody.data.mapping });
+    const result = await sendBatchTemplate({
+      rows: parsed.rows,
+      mapping: parsedBody.data.mapping,
+      createdByUserId: (req as AuthenticatedRequest).user?.id ?? null,
+    });
     res.json(result);
   } catch (e) {
     console.error('[WhatsApp] POST /templates/batch/send:', e);
@@ -918,6 +924,10 @@ router.get('/conversations/:id/messages', async (req, res) => {
         const kind = (m.message_kind as string | undefined) || 'text';
         const hasAtt = kind === 'document' || kind === 'image' || kind === 'video';
         const isDeleted = m.deleted_at != null;
+        const rawAttachment = m.attachment_json && typeof m.attachment_json === 'object'
+          ? (m.attachment_json as Record<string, unknown>)
+          : null;
+        const templateMediaSettingId = Number(rawAttachment?.templateMediaSettingId ?? 0) || null;
         return {
           id: String(m.id),
           conversationId: id,
@@ -925,10 +935,28 @@ router.get('/conversations/:id/messages', async (req, res) => {
           type: hasAtt && !isDeleted ? kind : 'text',
           // Mensagens apagadas não expõem conteúdo nem anexo
           content: isDeleted ? null : m.content,
-          status: 'sent',
+          status: m.delivery_status ?? 'sent',
           externalMessageId: m.meta_message_id,
           createdAt: m.created_at.toISOString(),
-          attachment: hasAtt && !isDeleted ? m.attachment_json : null,
+          attachment: hasAtt && !isDeleted && rawAttachment
+            ? {
+                ...rawAttachment,
+                downloadUrl: templateMediaSettingId
+                  ? `/whatsapp/conversations/${id}/messages/${m.id}/attachment`
+                  : null,
+              }
+            : null,
+          template: isDeleted ? null : m.template_json ?? null,
+          failure: isDeleted ? null : m.failure_json ?? null,
+          origin: m.message_origin ?? null,
+          batch: m.batch_id != null || m.batch_recipient_id != null
+            ? { batchId: m.batch_id ?? null, recipientId: m.batch_recipient_id ?? null, rowNumber: m.batch_row_number ?? null }
+            : null,
+          enterpriseId: m.enterprise_id ?? null,
+          sentAt: m.sent_at?.toISOString?.() ?? null,
+          deliveredAt: m.delivered_at?.toISOString?.() ?? null,
+          readAt: m.read_at?.toISOString?.() ?? null,
+          failedAt: m.failed_at?.toISOString?.() ?? null,
           deleted: isDeleted,
           deletedAt: m.deleted_at ? m.deleted_at.toISOString() : null,
           deleteScope: m.delete_scope ?? null,
@@ -945,6 +973,33 @@ router.get('/conversations/:id/messages', async (req, res) => {
     });
     res.status(500).json({ error: 'Erro ao listar mensagens.' });
   }
+});
+
+router.get('/conversations/:id/messages/:messageId/attachment', async (req, res) => {
+  const conversationId = Number(req.params.id);
+  const messageId = Number(req.params.messageId);
+  if (!Number.isInteger(conversationId) || !Number.isInteger(messageId)) {
+    return res.status(400).json({ error: 'ID inválido.' });
+  }
+  if (!(await assertCanAccessConversation(req as AuthenticatedRequest, res, conversationId))) return;
+  const message = await getMessageByIdForConversation(messageId, conversationId);
+  if (!message || message.deleted_at) return res.status(404).json({ error: 'Mídia não encontrada.' });
+  const attachment = message.attachment_json && typeof message.attachment_json === 'object'
+    ? (message.attachment_json as Record<string, unknown>) : null;
+  const settingId = Number(attachment?.templateMediaSettingId ?? 0);
+  if (!Number.isInteger(settingId) || settingId <= 0) {
+    return res.status(404).json({ error: 'Referência de mídia não encontrada.' });
+  }
+  const setting = await getMediaSettingById(settingId);
+  if (!setting?.fileBytes) return res.status(404).json({ error: 'Arquivo de mídia não está mais armazenado.' });
+  const mimeType = setting.headerMediaMimeType || 'application/octet-stream';
+  const fileName = (setting.headerMediaFilename || `template-media-${setting.id}`).replace(/[\r\n"]/g, '_');
+  const disposition = mimeType.startsWith('image/') || mimeType.startsWith('video/') ? 'inline' : 'attachment';
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  res.setHeader('Content-Type', mimeType);
+  res.setHeader('Content-Length', String(setting.fileBytes.length));
+  res.setHeader('Content-Disposition', `${disposition}; filename="${fileName}"`);
+  return res.send(setting.fileBytes);
 });
 
 /** Encerrar conversa manualmente — bloqueia reengajamento automático. */

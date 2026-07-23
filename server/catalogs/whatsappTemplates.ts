@@ -55,7 +55,10 @@ export function renderTemplateTextForInbox(
   template: WhatsAppTemplateCatalogItem,
   parameterValues: string[]
 ): string {
-  const raw = template.messageBodyTemplate?.trim();
+  const bodyComponent = template.components?.find(
+    (component) => String(component.type ?? '').toUpperCase() === 'BODY'
+  );
+  const raw = (template.messageBodyTemplate ?? (typeof bodyComponent?.text === 'string' ? bodyComponent.text : '')).trim();
 
   if (raw) {
     let out = raw;

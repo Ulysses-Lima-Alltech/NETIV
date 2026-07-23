@@ -17,12 +17,12 @@ import {
   insertMessage,
   findMessageByMetaId,
   getRecentConversationMessages,
+  updateMessageDeliveryStatusByMetaId,
 } from '../repositories/messageRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { scheduleWhatsAppAiAfterUserMessage } from './whatsappAiDebounce.js';
 import { handleIncomingMessage } from './conversationEngine.js';
 import { leadOriginFromMetaWhatsAppMessage } from './leadOriginResolver.js';
-import { sendTextMessage } from './whatsappMetaService.js';
 import { sendAnaTextMessageWithQuota } from './anaOutboundQuotaService.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
 import { mergeContactNameIfMissing } from '../repositories/contactsRepository.js';
@@ -33,6 +33,10 @@ import {
   isAnaEmergencyHandoffEnabled,
   sendAnaEmergencyHandoff,
 } from '../utils/anaEmergencyHandoff.js';
+import {
+  isAnaAutomationBlockedByHandoff,
+  logAnaAutomationBlockedByHandoff,
+} from '../utils/anaHandoffPolicy.js';
 
 import {
   extractCustomerNameFromUserUtterance,
@@ -54,6 +58,25 @@ function getMessageBody(msg: WebhookMessage): string | null {
   if (msg.text?.body) return msg.text.body;
   if (msg.image?.caption) return msg.image.caption;
   return null;
+}
+
+function getNonTextInboxContent(msg: WebhookMessage): string {
+  const caption = getMessageBody(msg)?.trim();
+  if (caption) return caption;
+  switch (msg.type) {
+    case 'image':
+      return '[Imagem recebida]';
+    case 'video':
+      return '[V?deo recebido]';
+    case 'audio':
+      return '[?udio recebido]';
+    case 'document':
+      return msg.document?.filename?.trim()
+        ? `[Documento recebido: ${msg.document.filename.trim()}]`
+        : '[Documento recebido]';
+    default:
+      return `[Mensagem ${msg.type || 'n?o textual'} recebida]`;
+  }
 }
 
 function normalizeInboundEnterpriseText(value: string | null | undefined): string {
@@ -128,6 +151,22 @@ async function resolveAnaEnterpriseBeforeEngine(params: {
 
 function anaWebhookTrace(tag: string, payload: Record<string, unknown>): void {
   console.log(`[ANA_WEBHOOK_TRACE] ${tag}`, payload);
+}
+
+async function shouldBlockAnaWebhookAutomation(params: {
+  conversationId: number;
+  automationType: string;
+  blockedAt: 'inbound_entry' | 'before_ai';
+}): Promise<boolean> {
+  const conversation = await getConversationById(params.conversationId);
+  if (!isAnaAutomationBlockedByHandoff(conversation)) return false;
+  logAnaAutomationBlockedByHandoff(conversation!, {
+    conversationId: params.conversationId,
+    automationType: params.automationType,
+    blockedAt: params.blockedAt,
+    source: 'whatsapp_webhook',
+  });
+  return true;
 }
 
 function errorStackShort(e: unknown): string | null {
@@ -329,6 +368,23 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           console.log('[WHATSAPP_STATUS_WEBHOOK] recipient_id', st.recipient_id ?? null);
           console.log('[WHATSAPP_STATUS_WEBHOOK] timestamp', st.timestamp ?? null);
           console.log('[WHATSAPP_STATUS_WEBHOOK] errors', value.errors ?? null);
+          const rawErrors = Array.isArray(st.errors) && st.errors.length > 0 ? st.errors : value.errors ?? [];
+          const firstError = rawErrors[0] ?? null;
+          const occurredAt = /^\d+$/.test(String(st.timestamp ?? ''))
+            ? new Date(Number(st.timestamp) * 1000)
+            : new Date();
+          await updateMessageDeliveryStatusByMetaId({
+            metaMessageId: String(st.id),
+            status: st.status,
+            occurredAt: Number.isNaN(occurredAt.getTime()) ? new Date() : occurredAt,
+            failure: st.status === 'failed'
+              ? {
+                  code: typeof firstError?.code === 'number' ? firstError.code : null,
+                  title: typeof firstError?.title === 'string' ? firstError.title.slice(0, 300) : null,
+                  message: String(firstError?.message ?? firstError?.title ?? 'Falha informada pela Meta.').slice(0, 1000),
+                }
+              : null,
+          });
         }
       }
       const metaMessageIdFromMessages = inboundMessages[0]?.id ?? null;
@@ -440,11 +496,30 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
 
           if (type !== 'text' || !bodyText?.trim()) {
             console.log('[ANA_PIPELINE] non_text_branch', { conversationId: conv.id, metaMessageId: mid, type });
+            // Mensagens n?o textuais tamb?m precisam chegar ao inbox. insertMessage
+            // publica message.created e conversation.updated pelo mesmo caminho do texto.
+            await insertMessage(conv.id, 'user', getNonTextInboxContent(msg), mid);
+            await applyInboundUserMessageResets(conv.id);
+            if (
+              await shouldBlockAnaWebhookAutomation({
+                conversationId: conv.id,
+                automationType: 'webhook_non_text_reply',
+                blockedAt: 'inbound_entry',
+              })
+            ) {
+              continue;
+            }
             if (anaEmergencyHandoffActive) {
               const emergencyResult = await sendAnaEmergencyHandoff({
                 conversationId: conv.id,
                 toPhoneNumber: String(msg.from),
-                sendTextMessage,
+                sendTextMessage: (to, text) =>
+                  sendAnaTextMessageWithQuota({
+                    conversationId: conv.id,
+                    to,
+                    text,
+                    phase: 'ana_webhook_emergency_handoff',
+                  }),
                 insertAssistantMessage: (conversationId, text, metaMessageId) =>
                   insertMessage(conversationId, 'assistant', text, metaMessageId),
               });
@@ -480,13 +555,6 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           }
 
           const text = bodyText.trim();
-
-          conv = await resolveAnaEnterpriseBeforeEngine({
-            conversation: conv,
-            userMessage: text,
-            phoneNumberId,
-            metaMessageId: mid,
-          });
 
           anaWebhookTrace('insert_message_start', {
             conversationId: conv.id,
@@ -529,6 +597,30 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
             });
             throw e;
           }
+
+          // O inbound j? foi persistido e publicado por insertMessage. A partir
+          // daqui nenhum classificador, debounce, IA, job ou resposta autom?tica
+          // pode rodar se o estado atual da conversa estiver em HANDOFF.
+          if (
+            await shouldBlockAnaWebhookAutomation({
+              conversationId: conv.id,
+              automationType: 'inbound_message',
+              blockedAt: 'inbound_entry',
+            })
+          ) {
+            console.log('[ANA_PIPELINE] inbound_automation_stopped_handoff', {
+              conversationId: conv.id,
+              metaMessageId: mid,
+            });
+            continue;
+          }
+
+          conv = await resolveAnaEnterpriseBeforeEngine({
+            conversation: conv,
+            userMessage: text,
+            phoneNumberId,
+            metaMessageId: mid,
+          });
 
           console.log('[ANA_PIPELINE] message_persisted', {
             conversationId: conv.id,
@@ -806,7 +898,7 @@ const shouldFastScheduleAnaBeforeClassifier =
 
           if (ANA_DIAGNOSTIC_FIXED_REPLY) {
             const live = await getConversationById(conv.id);
-            const inHandoff = live?.handoff === true || live?.classification === 'Handoff';
+            const inHandoff = isAnaAutomationBlockedByHandoff(live);
             console.log('[ANA_DIAGNOSTIC_FIXED_REPLY] received_inbound', {
               conversationId: conv.id,
               metaMessageId: mid,
