@@ -597,9 +597,9 @@ async function sendBatchCandidateNow(params: {
   recipientId: number;
 }): Promise<BatchExecutionResult['details'][number]> {
   // Este envio ? o template inicial solicitado por um operador, inclusive no
-  // worker agendado. A consulta pr?-envio torna expl?cita a distin??o entre
+  // worker agendado. A consulta pré-envio torna explícita a distinção entre
   // essa a??o humana e qualquer automa??o posterior da Ana, que passa sempre
-  // pelo bloqueio can?nico/final de outbound.
+  // pelo bloqueio canônico/final de outbound.
   const existingConversationResult = await query<{
     id: number;
     contact_id: number | null;

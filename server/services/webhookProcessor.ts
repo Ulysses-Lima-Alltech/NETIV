@@ -67,7 +67,7 @@ function getNonTextInboxContent(msg: WebhookMessage): string {
     case 'image':
       return '[Imagem recebida]';
     case 'video':
-      return '[V?deo recebido]';
+      return '[Vídeo recebido]';
     case 'audio':
       return '[?udio recebido]';
     case 'document':
@@ -75,7 +75,7 @@ function getNonTextInboxContent(msg: WebhookMessage): string {
         ? `[Documento recebido: ${msg.document.filename.trim()}]`
         : '[Documento recebido]';
     default:
-      return `[Mensagem ${msg.type || 'n?o textual'} recebida]`;
+      return `[Mensagem ${msg.type || 'não textual'} recebida]`;
   }
 }
 
@@ -496,7 +496,7 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
 
           if (type !== 'text' || !bodyText?.trim()) {
             console.log('[ANA_PIPELINE] non_text_branch', { conversationId: conv.id, metaMessageId: mid, type });
-            // Mensagens n?o textuais tamb?m precisam chegar ao inbox. insertMessage
+            // Mensagens não textuais também precisam chegar ao inbox. insertMessage
             // publica message.created e conversation.updated pelo mesmo caminho do texto.
             await insertMessage(conv.id, 'user', getNonTextInboxContent(msg), mid);
             await applyInboundUserMessageResets(conv.id);
@@ -599,7 +599,7 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           }
 
           // O inbound j? foi persistido e publicado por insertMessage. A partir
-          // daqui nenhum classificador, debounce, IA, job ou resposta autom?tica
+          // daqui nenhum classificador, debounce, IA, job ou resposta automática
           // pode rodar se o estado atual da conversa estiver em HANDOFF.
           if (
             await shouldBlockAnaWebhookAutomation({

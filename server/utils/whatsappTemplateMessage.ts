@@ -56,12 +56,12 @@ function replacePositionalPlaceholders(raw: string, values: string[], context: s
   });
   if (missing.size > 0) {
     throw new Error(
-      `${context}: par?metro(s) obrigat?rio(s) ausente(s): ${[...missing].sort((a, b) => a - b).join(', ')}.`
+      `${context}: parâmetro(s) obrigatório(s) ausente(s): ${[...missing].sort((a, b) => a - b).join(', ')}.`
     );
   }
   const unresolved = [...rendered.matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map((match) => Number(match[1]));
   if (unresolved.length > 0) {
-    throw new Error(`${context}: placeholder(s) n?o resolvido(s): ${unresolved.join(', ')}.`);
+    throw new Error(`${context}: placeholder(s) não resolvido(s): ${unresolved.join(', ')}.`);
   }
   return rendered;
 }
@@ -92,7 +92,7 @@ export function renderWhatsAppTemplateMessage(params: {
   const bodyComponent = components.find((component) => componentType(component) === 'BODY');
   const bodyOriginal = String(bodyComponent?.text ?? params.template.messageBodyTemplate ?? '').trim();
   if (!bodyOriginal) {
-    throw new Error(`Template ${params.template.key}: BODY n?o dispon?vel; envio bloqueado para n?o persistir conte?do inventado.`);
+    throw new Error(`Template ${params.template.key}: BODY não disponível; envio bloqueado para não persistir conteúdo inventado.`);
   }
 
   const parameterValues = params.parameterValues.map((value) => String(value ?? ''));
@@ -114,13 +114,13 @@ export function renderWhatsAppTemplateMessage(params: {
     return {
       type,
       text: String(button.text ?? '').trim(),
-      url: rawUrl ? replacePositionalPlaceholders(rawUrl, parameterValues, `Bot?o do template ${params.template.key}`) : null,
+      url: rawUrl ? replacePositionalPlaceholders(rawUrl, parameterValues, `Botão do template ${params.template.key}`) : null,
       payload: typeof button.payload === 'string' ? button.payload : type === 'quick_reply' ? String(button.text ?? '') : null,
     };
   });
 
   if ((headerType === 'image' || headerType === 'video' || headerType === 'document') && !params.media?.mediaId && !params.media?.configuredLink) {
-    throw new Error(`Template ${params.template.key}: m?dia obrigat?ria do HEADER n?o configurada.`);
+    throw new Error(`Template ${params.template.key}: mídia obrigatória do HEADER não configurada.`);
   }
 
   return {

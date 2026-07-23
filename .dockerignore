@@ -4,14 +4,14 @@
 **/dist
 **/*.log
 
-# Worktrees, relat?rios e dumps locais nunca entram no contexto de build.
+# Worktrees, relatórios e dumps locais nunca entram no contexto de build.
 inbox-app-manager-fix
 test-full-output.txt
 tmp*
 *taskdef*.json
 ecs-*.json
 
-# Testes e utilit?rios administrativos n?o pertencem ? imagem de runtime.
+# Testes e utilitários administrativos não pertencem à imagem de runtime.
 server/tests
 server/tmp-test-*.ts
 server/scripts/backfillWhatsAppTemplateHistory.ts

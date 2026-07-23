@@ -360,7 +360,7 @@ export async function sendTemplateMessage(
     if (positions.length > 0) {
       const headerParams = positions.map((position) => bodyParams[position - 1]).filter(Boolean);
       if (headerParams.length !== positions.length) {
-        return { success: false, error: 'Par?metro obrigat?rio do cabe?alho n?o resolvido.' };
+        return { success: false, error: 'Parâmetro obrigatório do cabeçalho não resolvido.' };
       }
       components.push({ type: 'header', parameters: headerParams });
     }

@@ -60,7 +60,7 @@ function SecureAttachment({ message, isAgent }: { message: Message; isAgent: boo
         <img src={objectUrl} alt={attachment.fileName || 'Imagem do template'} className="max-h-72 w-full rounded-xl object-contain" />
       )}
       {objectUrl && message.messageType === 'video' && (
-        <video src={objectUrl} controls className="max-h-72 w-full rounded-xl" aria-label={attachment.fileName || 'V?deo do template'} />
+        <video src={objectUrl} controls className="max-h-72 w-full rounded-xl" aria-label={attachment.fileName || 'Vídeo do template'} />
       )}
       <button
         type="button"
@@ -70,7 +70,7 @@ function SecureAttachment({ message, isAgent }: { message: Message; isAgent: boo
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
         <span className="break-all">
-          {message.messageType === 'image' ? 'Imagem: ' : message.messageType === 'video' ? 'V?deo: ' : 'Arquivo: '}
+          {message.messageType === 'image' ? 'Imagem: ' : message.messageType === 'video' ? 'Vídeo: ' : 'Arquivo: '}
           {attachment.fileName}
         </span>
         {attachment.sizeBytes != null && (
@@ -79,7 +79,7 @@ function SecureAttachment({ message, isAgent }: { message: Message; isAgent: boo
           </span>
         )}
       </button>
-      {loadError && <p className="text-[11px] opacity-75">Pr?via indispon?vel; os metadados do arquivo foram preservados.</p>}
+      {loadError && <p className="text-[11px] opacity-75">Prévia indisponível; os metadados do arquivo foram preservados.</p>}
       {attachment.caption && attachment.caption !== message.text && (
         <p className="whitespace-pre-wrap text-[12px] opacity-90">{attachment.caption}</p>
       )}
@@ -199,7 +199,7 @@ export function MessageBubble({ message, onDeleteMessage, isLast = false }: Mess
                   </a>
                 ) : (
                   <div key={`${button.text}-${index}`} className={`rounded-lg px-3 py-1.5 text-center text-[12px] font-semibold ${isAgent ? 'bg-white/15' : 'bg-[#eff6ff] text-[#1d4ed8]'}`}>
-                    {button.text || button.payload || 'Resposta r?pida'}
+                    {button.text || button.payload || 'Resposta rápida'}
                   </div>
                 )
               )}
@@ -208,7 +208,7 @@ export function MessageBubble({ message, onDeleteMessage, isLast = false }: Mess
           {message.status === 'failed' && (
             <p className={`mt-2 rounded-md px-2 py-1 text-[11px] ${isAgent ? 'bg-red-950/25 text-red-50' : 'bg-red-50 text-red-700'}`}>
               {message.failure?.message || 'A Meta informou que esta mensagem falhou.'}
-              {message.failure?.code != null ? ` (c?digo ${message.failure.code})` : ''}
+              {message.failure?.code != null ? ` (código ${message.failure.code})` : ''}
             </p>
           )}
           <p className={`mt-1.5 text-[10px] font-medium ${isAgent ? 'text-white/70' : 'text-[#94a3b8]'}`}>

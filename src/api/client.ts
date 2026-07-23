@@ -123,7 +123,7 @@ export interface AuthUser {
   scope?: UserScopeSummary;
 }
 
-/** Busca bin?rio protegido sem colocar o bearer token na URL. */
+/** Busca binário protegido sem colocar o bearer token na URL. */
 export async function fetchAuthenticatedBlob(path: string): Promise<Blob> {
   const token = getStoredAuthToken();
   const res = await fetch(`${API_BASE}${path}`, {
@@ -131,9 +131,9 @@ export async function fetchAuthenticatedBlob(path: string): Promise<Blob> {
   });
   if (res.status === 401) {
     handleUnauthorized();
-    throw new Error('Sess?o expirada. Fa?a login novamente.');
+    throw new Error('Sessão expirada. Faça login novamente.');
   }
-  if (!res.ok) throw new Error(`N?o foi poss?vel carregar a m?dia (${res.status}).`);
+  if (!res.ok) throw new Error(`Não foi possível carregar a mídia (${res.status}).`);
   return res.blob();
 }
 
