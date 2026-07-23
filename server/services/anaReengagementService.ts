@@ -300,6 +300,7 @@ export async function processAnaReengagementScan(): Promise<void> {
       `SELECT id FROM conversations
        WHERE channel = 'whatsapp'
          AND COALESCE(handoff, false) = false
+         AND COALESCE(classification, '') NOT IN ('Handoff', 'Carteira')
          AND lower(trim(COALESCE(classification, ''))) NOT IN ('handoff', 'carteira')
          AND manual_closed_at IS NULL
          AND COALESCE(ana_followup_status, 'idle') IN ('idle', 'active')

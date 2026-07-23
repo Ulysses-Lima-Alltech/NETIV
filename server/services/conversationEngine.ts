@@ -3728,6 +3728,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
       channel === 'whatsapp' &&
       enterpriseId == null &&
       !handoff &&
+      classification !== 'Handoff' &&
       normalizeAnaHandoffClassification(classification) !== 'handoff' &&
       classification !== 'Carteira' &&
       !manualClosedAt;
@@ -4214,6 +4215,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
     activeWhatsAppNoEnterpriseForTurn =
       String(effectiveConv.channel ?? '').trim().toLowerCase() === 'whatsapp' &&
       effectiveConv.enterprise_id == null &&
+      effectiveConv.classification !== 'Handoff' &&
       !isAnaAutomationBlockedByHandoff(effectiveConv) &&
       effectiveConv.classification !== 'Carteira' &&
       effectiveConv.manual_closed_at == null;

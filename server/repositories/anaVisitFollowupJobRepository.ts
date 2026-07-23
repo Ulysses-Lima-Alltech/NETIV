@@ -440,7 +440,7 @@ export async function revalidateAnaVisitFollowupJobForSend(params: {
          WHEN conversation_id <> $3 THEN 'conversation_mismatch'
          WHEN next_attempt_index <> $4 THEN 'attempt_index_changed'
          WHEN conv_id IS NULL THEN 'conversation_not_found'
-         WHEN COALESCE(conv_handoff, false) = true OR lower(trim(COALESCE(conv_classification, ''))) = 'handoff' THEN 'handoff'
+         WHEN COALESCE(conv_handoff, false) = true OR conv_classification = 'Handoff' OR lower(trim(COALESCE(conv_classification, ''))) = 'handoff' THEN 'handoff'
          WHEN conv_classification = 'Carteira' THEN 'carteira'
          WHEN conv_manual_closed_at IS NOT NULL THEN 'manual_closed'
          WHEN COALESCE(conv_conversation_type, 'CLIENT') <> 'CLIENT' THEN 'non_client_conversation'
