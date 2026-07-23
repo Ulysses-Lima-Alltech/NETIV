@@ -1,5 +1,5 @@
+import { readServerSourceFile } from './helpers/serverSourceResolver.js';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { processAnaRetryJobsTick } from '../services/anaRetryWorkerService.js';
@@ -43,7 +43,7 @@ test('retry worker pula imediatamente com ANA_EMERGENCY_HANDOFF=true', async () 
 });
 
 test('retry worker checa kill switch antes de pickNextAnaRetryJob', () => {
-  const workerSource = readFileSync(path.resolve(process.cwd(), 'services/anaRetryWorkerService.ts'), 'utf8');
+  const workerSource = readServerSourceFile('services/anaRetryWorkerService.ts');
   const tickIndex = workerSource.indexOf('export async function processAnaRetryJobsTick');
   const killSwitchIndex = workerSource.indexOf('getAnaAutomationPauseReason()', tickIndex);
   const pickIndex = workerSource.indexOf('pickNextAnaRetryJob', tickIndex);
@@ -55,14 +55,14 @@ test('retry worker checa kill switch antes de pickNextAnaRetryJob', () => {
 });
 
 test('retry worker compara ids bigint como string', () => {
-  const workerSource = readFileSync(path.resolve(process.cwd(), 'services/anaRetryWorkerService.ts'), 'utf8');
+  const workerSource = readServerSourceFile('services/anaRetryWorkerService.ts');
   assert.match(workerSource, /function sameDbId/);
   assert.match(workerSource, /String\(a\) === String\(b\)/);
   assert.doesNotMatch(workerSource, /lastInbound\.id !== job\.trigger_message_id/);
 });
 
 test('follow-up geral cancela tentativa 21 e cliente que respondeu depois do candidato', () => {
-  const source = readFileSync(path.resolve(process.cwd(), 'services/anaReengagementService.ts'), 'utf8');
+  const source = readServerSourceFile('services/anaReengagementService.ts');
 
   assert.match(source, /attemptIndex > ANA_FOLLOWUP_MAX_ATTEMPTS/);
   assert.match(source, /reason: 'followup_cycle_exhausted'/);

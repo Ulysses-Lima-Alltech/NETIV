@@ -1,5 +1,5 @@
+import { readServerSourceFile } from './helpers/serverSourceResolver.js';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { sendAnaTextMessageWithQuota } from '../services/anaOutboundQuotaService.js';
@@ -141,7 +141,7 @@ test('inbound engine direto nao e bloqueado por ANA_AUTOMATION_DISABLED quando f
 });
 
 test('handleIncomingMessage escopa outbound direto como ana_inbound_engine', () => {
-  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  const source = readServerSourceFile('services/conversationEngine.ts');
   assert.match(source, /runWithAnaAutomationOutboundSource\('ana_inbound_engine'/);
   assert.match(source, /getAnaAutomationPauseReason\(\{\s*source: 'ana_inbound_engine',\s*conversationId,/s);
 });
@@ -344,7 +344,7 @@ test('textos outbound principais da Ana nao possuem mojibake', () => {
     'services/conversationEngine.ts',
   ];
   for (const file of files) {
-    const source = readFileSync(path.resolve(process.cwd(), file), 'utf8');
+    const source = readServerSourceFile(file);
     assert.doesNotMatch(source, /Ãƒ|Ã‚|ï¿½/, file);
   }
 });
