@@ -19,6 +19,10 @@ import { getActiveEnterpriseById } from '../repositories/enterpriseRepository.js
 import { resolveAiSettingsForEnterprise } from './enterpriseAiSettingsService.js';
 import { resolveAnaCommercialFollowupMessage } from './anaCommercialRulesService.js';
 import { parseCommercialFlowState } from '../utils/commercialFlowState.js';
+import {
+  isAnaAutomationBlockedByHandoff,
+  logAnaAutomationBlockedByHandoff,
+} from '../utils/anaAutomationEligibility.js';
 
 const SCAN_LIMIT = 150;
 const ANA_FOLLOWUP_MIN_GAP_AFTER_SEND_MS = 60_000;
@@ -253,8 +257,7 @@ async function resolveFollowupCycleState(params: {
 }
 
 function getAutomationBlockedReason(conv: ConversationRow): string | null {
-  if (conv.handoff === true) return 'handoff';
-  if ((conv.classification || '').trim() === 'Handoff') return 'handoff';
+  if (isAnaAutomationBlockedByHandoff(conv)) return 'handoff';
   if ((conv.classification || '').trim() === 'Carteira') return 'carteira';
   if (conv.assigned_broker_id != null) return 'assigned_broker';
   if (conv.manual_closed_at != null) return 'manual_closed';
@@ -342,6 +345,14 @@ async function trySendReengagementForConversation(conversationId: number): Promi
 
   const automationBlockedReason = getAutomationBlockedReason(conv);
   if (automationBlockedReason) {
+    if (automationBlockedReason === 'handoff') {
+      logAnaAutomationBlockedByHandoff(conv, {
+        conversationId,
+        automationType: 'reengagement',
+        blockedAt: 'worker_start',
+        source: 'ana_reengagement_worker_start',
+      });
+    }
     await cancelAndLogFollowup({
       conversationId,
       enterpriseId: conv.enterprise_id ?? null,
@@ -510,6 +521,14 @@ async function sendReengagementAfterFinalValidation(params: {
     const blockedReason = getAutomationBlockedReason(locked);
     if (blockedReason) {
       await client.query('ROLLBACK');
+      if (blockedReason === 'handoff') {
+        logAnaAutomationBlockedByHandoff(locked, {
+          conversationId: params.conversationId,
+          automationType: 'reengagement',
+          blockedAt: 'before_send',
+          source: 'ana_reengagement_final_validation',
+        });
+      }
       await cancelAndLogFollowup({
         conversationId: params.conversationId,
         enterpriseId: locked.enterprise_id ?? null,
@@ -646,6 +665,35 @@ async function sendReengagementAfterFinalValidation(params: {
       text: outboundText,
       phase: commercialFollowupText ? 'ana_commercial_followup' : 'ana_followup',
     });
+    if (!sendRes.success && (sendRes.error === 'handoff_active' || sendRes.code === 423)) {
+      await client.query('ROLLBACK');
+      const latestConversation = await getConversationById(params.conversationId);
+      if (isAnaAutomationBlockedByHandoff(latestConversation)) {
+        logAnaAutomationBlockedByHandoff(latestConversation!, {
+          conversationId: params.conversationId,
+          automationType: 'reengagement',
+          blockedAt: 'before_send',
+          source: 'ana_reengagement_final_send_guard',
+        });
+        await cancelAndLogFollowup({
+          conversationId: params.conversationId,
+          enterpriseId: latestConversation?.enterprise_id ?? null,
+          attemptIndex: state.attemptIndex,
+          nextFollowupAt: state.nextFollowupAt,
+          reason: 'handoff',
+        });
+        return;
+      }
+      console.log('[ANA_FOLLOWUP_ERROR]', {
+        conversationId: params.conversationId,
+        enterpriseId: locked.enterprise_id ?? null,
+        attemptIndex: state.attemptIndex,
+        nextFollowupAt: state.nextFollowupAt.toISOString(),
+        error: sendRes.error ?? 'send_failed',
+        code: sendRes.code ?? null,
+      });
+      return;
+    }
     if (!sendRes.success || !sendRes.metaMessageId) {
       await client.query('ROLLBACK');
       console.log('[ANA_FOLLOWUP_ERROR]', {
