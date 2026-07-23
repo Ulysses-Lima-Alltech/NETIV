@@ -41,7 +41,7 @@ test('handoff manual continua funcionando', () => {
 });
 
 test('updateClassification limpa estados de handoff ao voltar para ANA', () => {
-  const source = readFileSync(new URL('../repositories/conversationRepository.js', import.meta.url), 'utf8');
+  const source = readFileSync('repositories/conversationRepository.ts', 'utf8');
   assert.match(source, /handoff_deferred_until\s*=\s*\$\d+/);
   assert.match(source, /handoff_deferred_broker_id\s*=\s*\$\d+/);
   assert.match(source, /manual_closed_at\s*=\s*\$\d+/);

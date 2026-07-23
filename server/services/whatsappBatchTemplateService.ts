@@ -23,6 +23,7 @@ import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { sendTemplateMessage } from './whatsappMetaService.js';
 import { getCorretorById } from '../repositories/corretorRepository.js';
 import { findOrCreateContactByPhone, updateContactType } from '../repositories/contactsRepository.js';
+import { isAnaAutomationBlockedByHandoff } from '../utils/anaAutomationEligibility.js';
 
 export interface BatchPreviewRow {
   rowIndex: number;
@@ -565,11 +566,23 @@ async function sendBatchCandidateNow(params: {
     null,
     null
   );
+  const conversationInHandoff = isAnaAutomationBlockedByHandoff(conversation);
+  const effectivePostSendMode = conversationInHandoff ? 'HANDOFF' : params.postSendMode;
+  if (conversationInHandoff) {
+    console.log('[WHATSAPP_BATCH_OPERATOR_SEND_HANDOFF_PRESERVED]', {
+      conversationId: conversation.id,
+      phoneTail: params.candidate.phoneNormalized.slice(-4),
+      requestedPostSendMode: params.postSendMode,
+      effectivePostSendMode,
+      handoff: conversation.handoff === true,
+      classification: conversation.classification ?? null,
+    });
+  }
   await applyBatchConversationRouting({
     conversationId: conversation.id,
     contactId: contact.id,
     conversationType: params.conversationType,
-    postSendMode: params.postSendMode,
+    postSendMode: effectivePostSendMode,
     brokerId: params.candidate.assignedBrokerId,
   });
 

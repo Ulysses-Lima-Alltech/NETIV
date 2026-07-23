@@ -15,8 +15,41 @@ import {
   logAnaAutomationBlock,
   shouldBlockAnaAutomationOutbound,
 } from '../utils/anaAutomationKillSwitch.js';
+import { getConversationById } from '../repositories/conversationRepository.js';
+import {
+  isAnaAutomationBlockedByHandoff,
+  logAnaAutomationBlockedByHandoff,
+} from '../utils/anaAutomationEligibility.js';
 
 export type AnaQuotaSendResult = SendTextResult;
+
+type AnaOutboundConversationLoader = typeof getConversationById;
+
+let anaOutboundConversationLoader: AnaOutboundConversationLoader = getConversationById;
+
+export function __setAnaOutboundConversationLoaderForTest(loader: AnaOutboundConversationLoader | null): void {
+  anaOutboundConversationLoader = loader ?? getConversationById;
+}
+
+async function blockIfConversationInHandoff(params: {
+  conversationId: number;
+  phase: string;
+  automationType: string;
+}): Promise<AnaQuotaSendResult | null> {
+  const latestConversation = await anaOutboundConversationLoader(params.conversationId);
+  if (!isAnaAutomationBlockedByHandoff(latestConversation)) return null;
+  logAnaAutomationBlockedByHandoff(latestConversation!, {
+    conversationId: params.conversationId,
+    automationType: params.automationType,
+    blockedAt: 'before_send',
+    source: params.phase,
+  });
+  return {
+    success: false,
+    error: 'handoff_active',
+    code: 423,
+  };
+}
 
 export async function sendAnaTextMessageWithQuota(params: {
   conversationId: number;
@@ -36,6 +69,12 @@ export async function sendAnaTextMessageWithQuota(params: {
       code: 423,
     };
   }
+  const handoffBlock = await blockIfConversationInHandoff({
+    conversationId: params.conversationId,
+    phase: params.phase,
+    automationType: 'text',
+  });
+  if (handoffBlock) return handoffBlock;
   return sendTextMessage(params.to, params.text);
 }
 
@@ -60,6 +99,12 @@ export async function sendAnaLocalMediaToWhatsAppWithQuota(params: {
       code: 423,
     };
   }
+  const handoffBlock = await blockIfConversationInHandoff({
+    conversationId: params.conversationId,
+    phase: params.phase,
+    automationType: 'media',
+  });
+  if (handoffBlock) return handoffBlock;
   let fileSize = 0;
   try {
     fileSize = statSync(params.filePath).size;

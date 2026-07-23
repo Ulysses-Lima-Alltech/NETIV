@@ -28,6 +28,10 @@ import {
 } from '../utils/anaVisitFollowupCadence.js';
 import { sendAnaTextMessageWithQuota } from './anaOutboundQuotaService.js';
 import { getAnaAutomationPauseReason } from '../utils/anaAutomationKillSwitch.js';
+import {
+  isAnaAutomationBlockedByHandoff,
+  logAnaAutomationBlockedByHandoff,
+} from '../utils/anaAutomationEligibility.js';
 
 const WORKER_ID = `ana-visit-followup-${process.pid}`;
 let visitFollowupWorkerRunning = false;
@@ -40,7 +44,7 @@ function phoneForConversation(conv: Awaited<ReturnType<typeof getConversationByI
 
 function automationBlockedReason(conv: Awaited<ReturnType<typeof getConversationById>>): string | null {
   if (!conv) return 'conversation_not_found';
-  if (conv.handoff === true || conv.classification === 'Handoff') return 'handoff';
+  if (isAnaAutomationBlockedByHandoff(conv)) return 'handoff';
   if (conv.classification === 'Carteira') return 'carteira';
   if (conv.manual_closed_at != null) return 'manual_closed';
   if ((conv.conversation_type ?? 'CLIENT') !== 'CLIENT') return 'non_client_conversation';
@@ -106,6 +110,16 @@ export async function startAnaVisitFollowupIfEligible(params: {
   ) {
     return;
   }
+  const conversation = await getConversationById(params.conversationId);
+  if (isAnaAutomationBlockedByHandoff(conversation)) {
+    logAnaAutomationBlockedByHandoff(conversation!, {
+      conversationId: params.conversationId,
+      automationType: 'visit_followup',
+      blockedAt: 'before_enqueue',
+      source: 'ana_visit_followup_start',
+    });
+    return;
+  }
   const anchorCreatedAt =
     params.now == null && params.anchorAssistantMessageId != null
       ? await getMessageCreatedAtById(params.anchorAssistantMessageId)
@@ -129,6 +143,18 @@ export async function startAnaVisitFollowupIfEligible(params: {
     timezone: params.flowState?.suggestedVisitTimezone ?? null,
     suggestionStatus: params.flowState?.suggestedVisitStatus ?? null,
   });
+  if (!job) {
+    const latestConversation = await getConversationById(params.conversationId);
+    if (isAnaAutomationBlockedByHandoff(latestConversation)) {
+      logAnaAutomationBlockedByHandoff(latestConversation!, {
+        conversationId: params.conversationId,
+        automationType: 'visit_followup',
+        blockedAt: 'before_enqueue',
+        source: 'ana_visit_followup_start_atomic_guard',
+      });
+    }
+    return;
+  }
   console.log('[ANA_VISIT_FOLLOWUP] started_or_kept_active', {
     conversationId: params.conversationId,
     jobId: job.id,
@@ -222,6 +248,15 @@ async function processOneAnaVisitFollowupJob(job: AnaVisitFollowupJobRow): Promi
   const conv = await getConversationById(job.conversation_id);
   const blockedReason = automationBlockedReason(conv);
   if (blockedReason) {
+    if (blockedReason === 'handoff' && conv) {
+      logAnaAutomationBlockedByHandoff(conv, {
+        conversationId: job.conversation_id,
+        automationType: 'visit_followup',
+        blockedAt: 'worker_start',
+        source: 'ana_visit_followup_worker_start',
+        jobId: job.id,
+      });
+    }
     await cancelJob(job, blockedReason);
     return;
   }
@@ -325,6 +360,27 @@ async function processOneAnaVisitFollowupJob(job: AnaVisitFollowupJobRow): Promi
         text: messageText,
         phase: 'ana_visit_scheduling_followup',
       });
+      if (!send.success && (send.error === 'handoff_active' || send.code === 423)) {
+        const latestConversation = await getConversationById(job.conversation_id);
+        if (isAnaAutomationBlockedByHandoff(latestConversation)) {
+          logAnaAutomationBlockedByHandoff(latestConversation!, {
+            conversationId: job.conversation_id,
+            automationType: 'visit_followup',
+            blockedAt: 'before_send',
+            source: 'ana_visit_followup_final_send_guard',
+            jobId: job.id,
+          });
+          await markAnaVisitFollowupAttemptSkipped({
+            attemptId: claim.attempt.id,
+            reason: 'handoff',
+          });
+          await markAnaVisitFollowupJobCancelled({
+            jobId: job.id,
+            reason: 'handoff',
+          });
+          return;
+        }
+      }
       if (!send.success || !send.metaMessageId) {
         await markAnaVisitFollowupAttemptFailed({
           attemptId: claim.attempt.id,

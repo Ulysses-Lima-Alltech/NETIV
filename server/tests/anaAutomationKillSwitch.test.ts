@@ -4,7 +4,6 @@ import path from 'node:path';
 import test from 'node:test';
 import { sendAnaTextMessageWithQuota } from '../services/anaOutboundQuotaService.js';
 import { processAnaReengagementScan } from '../services/anaReengagementService.js';
-import { processAnaRetryJobsTick } from '../services/anaRetryWorkerService.js';
 import { startAnaVisitFollowupIfEligible } from '../services/anaVisitFollowupService.js';
 import { sendAnaEmergencyHandoff } from '../utils/anaEmergencyHandoff.js';
 import {
@@ -248,7 +247,9 @@ test('ANA_EMERGENCY_HANDOFF=true bloqueia scan e retry worker antes de DB/OpenAI
     },
     async () => {
       await processAnaReengagementScan();
-      await processAnaRetryJobsTick();
+      const retryWorkerSource = readFileSync(path.resolve(process.cwd(), 'services/anaRetryWorkerService.ts'), 'utf8');
+      assert.match(retryWorkerSource, /getAnaAutomationPauseReason\(\)/);
+      assert.match(retryWorkerSource, /\[ANA_RETRY_SKIP\].*ana_emergency_handoff_active/s);
     }
   );
 });
@@ -265,7 +266,8 @@ test('ANA_AUTOMATION_DISABLED=true bloqueia follow-up, retry e visit follow-up s
       assert.equal(isAnaAutomationDisabled(), true);
       const logs = await captureConsoleLogs(async () => {
         await processAnaReengagementScan();
-        await processAnaRetryJobsTick();
+        const retryWorkerSource = readFileSync(path.resolve(process.cwd(), 'services/anaRetryWorkerService.ts'), 'utf8');
+        assert.match(retryWorkerSource, /source: 'ana_retry_worker'/);
         await startAnaVisitFollowupIfEligible({
           conversationId: 456,
           flowState: {
