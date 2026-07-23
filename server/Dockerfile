@@ -16,7 +16,11 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 COPY server/package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev \
+  && find node_modules -type d \( -name test -o -name tests -o -name __tests__ \) \
+    -prune -exec rm -rf '{}' + \
+  && find node_modules -type f \( -name '*.test.js' -o -name '*.test.ts' \
+    -o -name '*.spec.js' -o -name '*.spec.ts' \) -delete
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/db ./db
