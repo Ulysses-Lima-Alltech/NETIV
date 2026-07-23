@@ -5,6 +5,10 @@ const env = process.env;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, '..');
 
+export function isExplicitlyEnabled(value: string | undefined): boolean {
+  return String(value ?? 'false').trim().toLowerCase() === 'true';
+}
+
 const defaultOpenAIBaseUrl = 'https://api.openai.com/v1';
 const defaultOpenAIModel = 'gpt-4.1';
 const defaultMetaApiVersion = 'v23.0';
@@ -23,6 +27,8 @@ export const config = {
     model: env.OPENAI_MODEL ?? defaultOpenAIModel,
   },
   meta: {
+    appSecret: env.META_APP_SECRET ?? '',
+    allowUnsignedWebhook: isExplicitlyEnabled(env.META_WEBHOOK_ALLOW_UNSIGNED),
     verifyToken: env.META_VERIFY_TOKEN ?? '',
     whatsappToken: env.META_WHATSAPP_TOKEN ?? '',
     phoneNumberId: env.META_PHONE_NUMBER_ID ?? '',

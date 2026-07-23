@@ -31,7 +31,12 @@ const realtimeEnabled = String(process.env.REALTIME_ENABLED ?? '').trim().toLowe
 const autoWalletInactiveEnabled = process.env.AUTO_WALLET_INACTIVE_ENABLED === 'true';
 setRealtimeEnabled(realtimeEnabled);
 app.use(cors({ origin: true }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+  limit: '10mb',
+  verify(req, _res, buffer) {
+    (req as express.Request).rawBody = Buffer.from(buffer);
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.use('/webhook', webhookMetaRouter);

@@ -11,6 +11,8 @@ declare global {
       user?: AppUser;
       /** Set by `requireMobileAuth` (mobile auth endpoints). */
       mobileUser?: MobileAuthUser;
+      /** Exact payload bytes used for Meta webhook HMAC validation. */
+      rawBody?: Buffer;
     }
   }
 }
