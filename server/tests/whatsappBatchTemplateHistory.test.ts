@@ -26,7 +26,6 @@ test('conteúdo canônico é criado antes da chamada Meta e falha também é per
   assert.ok(failedAt > sendAt && sentAt > failedAt);
   assert.doesNotMatch(batch.slice(canonicalAt, sentAt), /renderTemplateTextForInbox/);
 });
-
 test('persistência de outbound não chama pipeline automático da Ana e mantém guarda HANDOFF', () => {
   const sendCandidate = batch.slice(batch.indexOf('async function sendBatchCandidateNow'), batch.indexOf('async function createImmediateBatchExecution'));
   assert.match(sendCandidate, /isAnaAutomationBlockedByHandoff/);
