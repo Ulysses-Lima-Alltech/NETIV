@@ -100,6 +100,7 @@ export interface BatchPreviewResponse {
 }
 
 export interface BatchSendResult {
+  batchId?: number;
   total: number;
   success: number;
   failed: number;
@@ -114,6 +115,8 @@ export interface BatchSendResult {
     httpStatus?: number;
     templateKey: string;
     metaMessageId?: string;
+    messageId?: number;
+    recipientId?: number;
   }>;
 }
 

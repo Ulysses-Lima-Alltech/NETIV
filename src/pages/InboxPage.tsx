@@ -156,13 +156,14 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
 
 function mapApiMessageToMessage(m: MessageListItem, conversationId: string): Message {
   const att = m.attachment;
+  const canonicalText = m.template?.renderedText?.trim() || m.content || '';
   return {
     id: String(m.id),
     conversationId,
     sender: m.direction === 'inbound' ? 'LEAD' : 'AGENT',
-    text: m.deleted ? '' : (m.content || ''),
+    text: m.deleted ? '' : canonicalText,
     createdAt: m.createdAt,
-    messageType: m.type === 'document' || m.type === 'image' ? m.type : 'text',
+    messageType: m.type === 'document' || m.type === 'image' || m.type === 'video' ? m.type : 'text',
     attachment: m.deleted
       ? null
       : att?.fileName
@@ -173,8 +174,24 @@ function mapApiMessageToMessage(m: MessageListItem, conversationId: string): Mes
             whatsappMediaId: att.whatsappMediaId ?? null,
             caption: att.caption ?? null,
             enterpriseFileId: att.enterpriseFileId ?? null,
+            templateMediaSettingId: att.templateMediaSettingId ?? null,
+            storageFolder: att.storageFolder ?? null,
+            mediaType: att.mediaType ?? null,
+            downloadUrl: att.downloadUrl ?? null,
           }
         : null,
+    status: m.status === 'pending' || m.status === 'accepted' || m.status === 'delivered' || m.status === 'read' || m.status === 'failed'
+      ? m.status
+      : 'sent',
+    template: m.template ?? null,
+    failure: m.failure ?? null,
+    origin: m.origin ?? null,
+    batch: m.batch ?? null,
+    enterpriseId: m.enterpriseId ?? null,
+    sentAt: m.sentAt ?? null,
+    deliveredAt: m.deliveredAt ?? null,
+    readAt: m.readAt ?? null,
+    failedAt: m.failedAt ?? null,
     deleted: m.deleted ?? false,
     deletedAt: m.deletedAt ?? null,
   };
@@ -574,8 +591,18 @@ export function InboxPage() {
         conversationId: number;
         role: 'user' | 'assistant';
         content: string | null;
-        messageKind?: 'text' | 'document' | 'image';
+        messageKind?: 'text' | 'document' | 'image' | 'video';
         attachment?: unknown;
+        status?: Message['status'];
+        template?: Message['template'];
+        failure?: Message['failure'];
+        origin?: string | null;
+        batch?: Message['batch'];
+        enterpriseId?: number | null;
+        sentAt?: string | null;
+        deliveredAt?: string | null;
+        readAt?: string | null;
+        failedAt?: string | null;
         createdAt: string;
         deleted?: boolean;
         deletedAt?: string | null;
@@ -602,9 +629,9 @@ export function InboxPage() {
         id: String(p.id),
         conversationId: convId,
         sender: p.role === 'user' ? 'LEAD' : 'AGENT',
-        text: p.deleted ? '' : (p.content ?? ''),
+        text: p.deleted ? '' : (p.template?.renderedText?.trim() || p.content || ''),
         createdAt: p.createdAt,
-        messageType: p.messageKind === 'document' || p.messageKind === 'image' ? p.messageKind : 'text',
+        messageType: p.messageKind === 'document' || p.messageKind === 'image' || p.messageKind === 'video' ? p.messageKind : 'text',
         attachment:
           p.deleted || !p.attachment || typeof p.attachment !== 'object'
             ? null
@@ -615,7 +642,21 @@ export function InboxPage() {
                 whatsappMediaId: (p.attachment as { whatsappMediaId?: string | null }).whatsappMediaId ?? null,
                 caption: (p.attachment as { caption?: string | null }).caption ?? null,
                 enterpriseFileId: (p.attachment as { enterpriseFileId?: number | null }).enterpriseFileId ?? null,
+                templateMediaSettingId: (p.attachment as { templateMediaSettingId?: number | null }).templateMediaSettingId ?? null,
+                storageFolder: (p.attachment as { storageFolder?: string | null }).storageFolder ?? null,
+                mediaType: (p.attachment as { mediaType?: 'image' | 'video' | 'document' | null }).mediaType ?? null,
+                downloadUrl: (p.attachment as { downloadUrl?: string | null }).downloadUrl ?? null,
               }),
+        status: p.status ?? 'sent',
+        template: p.template ?? null,
+        failure: p.failure ?? null,
+        origin: p.origin ?? null,
+        batch: p.batch ?? null,
+        enterpriseId: p.enterpriseId ?? null,
+        sentAt: p.sentAt ?? null,
+        deliveredAt: p.deliveredAt ?? null,
+        readAt: p.readAt ?? null,
+        failedAt: p.failedAt ?? null,
         deleted: p.deleted ?? false,
         deletedAt: p.deletedAt ?? null,
       };
@@ -670,13 +711,53 @@ export function InboxPage() {
     },
     onMessageUpdated: (payload) => {
       if (!payload || typeof payload !== 'object') return;
-      const parsed = payload as { id: string; conversationId: number; deleted?: boolean; deletedAt?: string | null };
+      const parsed = payload as {
+        id: string;
+        conversationId: number;
+        content?: string | null;
+        messageKind?: Message['messageType'];
+        attachment?: Message['attachment'];
+        status?: Message['status'];
+        template?: Message['template'];
+        failure?: Message['failure'];
+        origin?: string | null;
+        batch?: Message['batch'];
+        enterpriseId?: number | null;
+        sentAt?: string | null;
+        deliveredAt?: string | null;
+        readAt?: string | null;
+        failedAt?: string | null;
+        deleted?: boolean;
+        deletedAt?: string | null;
+      };
       const convId = String(parsed.conversationId);
       if (String(selectedIdRef.current) !== String(convId)) return;
       setMessages((prev) =>
         prev.map((m) =>
           m.id === String(parsed.id)
-            ? { ...m, deleted: parsed.deleted ?? true, deletedAt: parsed.deletedAt ?? null, text: '', attachment: null }
+            ? {
+                ...m,
+                ...(parsed.content !== undefined ? { text: parsed.template?.renderedText || parsed.content || '' } : {}),
+                ...(parsed.messageKind !== undefined ? { messageType: parsed.messageKind } : {}),
+                ...(parsed.attachment !== undefined ? { attachment: parsed.attachment } : {}),
+                ...(parsed.status !== undefined ? { status: parsed.status } : {}),
+                ...(parsed.template !== undefined ? { template: parsed.template } : {}),
+                ...(parsed.failure !== undefined ? { failure: parsed.failure } : {}),
+                ...(parsed.origin !== undefined ? { origin: parsed.origin } : {}),
+                ...(parsed.batch !== undefined ? { batch: parsed.batch } : {}),
+                ...(parsed.enterpriseId !== undefined ? { enterpriseId: parsed.enterpriseId } : {}),
+                ...(parsed.sentAt !== undefined ? { sentAt: parsed.sentAt } : {}),
+                ...(parsed.deliveredAt !== undefined ? { deliveredAt: parsed.deliveredAt } : {}),
+                ...(parsed.readAt !== undefined ? { readAt: parsed.readAt } : {}),
+                ...(parsed.failedAt !== undefined ? { failedAt: parsed.failedAt } : {}),
+                ...(parsed.deleted !== undefined
+                  ? {
+                      deleted: parsed.deleted,
+                      deletedAt: parsed.deletedAt ?? null,
+                      ...(parsed.deleted ? { text: '', attachment: null } : {}),
+                    }
+                  : {}),
+              }
             : m
         )
       );
