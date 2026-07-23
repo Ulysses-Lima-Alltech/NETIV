@@ -6,7 +6,8 @@ COPY server/package*.json ./
 RUN npm ci
 
 COPY server/ ./
-RUN npm run build
+RUN npm run build \
+  && rm -rf dist/tests dist/scripts
 
 FROM node:22-alpine
 WORKDIR /app
@@ -19,7 +20,6 @@ RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/db ./db
-COPY --from=builder /app/scripts ./scripts
 COPY public/data ./public/data
 
 EXPOSE 3000

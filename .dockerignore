@@ -1,0 +1,19 @@
+.git
+.gitignore
+**/node_modules
+**/dist
+**/*.log
+
+# Worktrees, relat?rios e dumps locais nunca entram no contexto de build.
+inbox-app-manager-fix
+test-full-output.txt
+tmp*
+*taskdef*.json
+ecs-*.json
+
+# Testes e utilit?rios administrativos n?o pertencem ? imagem de runtime.
+server/tests
+server/tmp-test-*.ts
+server/scripts/backfillWhatsAppTemplateHistory.ts
+server/scripts/fixBatchEnterprise20260718.ts
+server/scripts/clean-compiled-tests.cjs
