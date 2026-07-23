@@ -22,7 +22,6 @@ import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { scheduleWhatsAppAiAfterUserMessage } from './whatsappAiDebounce.js';
 import { handleIncomingMessage } from './conversationEngine.js';
 import { leadOriginFromMetaWhatsAppMessage } from './leadOriginResolver.js';
-import { sendTextMessage } from './whatsappMetaService.js';
 import { sendAnaTextMessageWithQuota } from './anaOutboundQuotaService.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
 import { mergeContactNameIfMissing } from '../repositories/contactsRepository.js';
@@ -33,6 +32,10 @@ import {
   isAnaEmergencyHandoffEnabled,
   sendAnaEmergencyHandoff,
 } from '../utils/anaEmergencyHandoff.js';
+import {
+  isAnaAutomationBlockedByHandoff,
+  logAnaAutomationBlockedByHandoff,
+} from '../utils/anaAutomationEligibility.js';
 
 import {
   extractCustomerNameFromUserUtterance,
@@ -54,6 +57,29 @@ function getMessageBody(msg: WebhookMessage): string | null {
   if (msg.text?.body) return msg.text.body;
   if (msg.image?.caption) return msg.image.caption;
   return null;
+}
+
+function getInboundInboxContent(msg: WebhookMessage): string {
+  const body = getMessageBody(msg)?.trim();
+  if (body) return body;
+  return `[Mensagem ${String(msg.type ?? 'nao_texto')}]`;
+}
+
+async function shouldBlockAnaWebhookAutomation(params: {
+  conversationId: number;
+  metaMessageId: string;
+  blockedAt: 'inbound_entry' | 'before_ai';
+}): Promise<boolean> {
+  const latestConversation = await getConversationById(params.conversationId);
+  if (!isAnaAutomationBlockedByHandoff(latestConversation)) return false;
+  logAnaAutomationBlockedByHandoff(latestConversation!, {
+    conversationId: params.conversationId,
+    automationType: 'webhook',
+    blockedAt: params.blockedAt,
+    source: 'webhook_processor_after_inbound_persist',
+    metaMessageId: params.metaMessageId,
+  });
+  return true;
 }
 
 function normalizeInboundEnterpriseText(value: string | null | undefined): string {
@@ -440,11 +466,35 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
 
           if (type !== 'text' || !bodyText?.trim()) {
             console.log('[ANA_PIPELINE] non_text_branch', { conversationId: conv.id, metaMessageId: mid, type });
+            await insertMessage(conv.id, 'user', getInboundInboxContent(msg), mid);
+            await applyInboundUserMessageResets(conv.id);
+            console.log('[ANA_PIPELINE] message_persisted', {
+              conversationId: conv.id,
+              metaMessageId: mid,
+              textLen: 0,
+              from: msg.from ?? null,
+              fromTail: phoneDigitsTail(msg.from, 4),
+              externalContactIdTail: phoneDigitsTail(conv.external_contact_id, 4),
+              contactPhoneTail: phoneDigitsTail(conv.contact_phone, 4),
+            });
+            if (await shouldBlockAnaWebhookAutomation({
+              conversationId: conv.id,
+              metaMessageId: mid,
+              blockedAt: 'inbound_entry',
+            })) {
+              continue;
+            }
             if (anaEmergencyHandoffActive) {
               const emergencyResult = await sendAnaEmergencyHandoff({
                 conversationId: conv.id,
                 toPhoneNumber: String(msg.from),
-                sendTextMessage,
+                sendTextMessage: (to, text) =>
+                  sendAnaTextMessageWithQuota({
+                    conversationId: conv.id,
+                    to,
+                    text,
+                    phase: 'ana_webhook_emergency_handoff',
+                  }),
                 insertAssistantMessage: (conversationId, text, metaMessageId) =>
                   insertMessage(conversationId, 'assistant', text, metaMessageId),
               });
@@ -480,13 +530,6 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           }
 
           const text = bodyText.trim();
-
-          conv = await resolveAnaEnterpriseBeforeEngine({
-            conversation: conv,
-            userMessage: text,
-            phoneNumberId,
-            metaMessageId: mid,
-          });
 
           anaWebhookTrace('insert_message_start', {
             conversationId: conv.id,
@@ -540,6 +583,20 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
             contactPhoneTail: phoneDigitsTail(conv.contact_phone, 4),
           });
 
+          if (await shouldBlockAnaWebhookAutomation({
+            conversationId: conv.id,
+            metaMessageId: mid,
+            blockedAt: 'inbound_entry',
+          })) {
+            continue;
+          }
+
+          conv = await resolveAnaEnterpriseBeforeEngine({
+            conversation: conv,
+            userMessage: text,
+            phoneNumberId,
+            metaMessageId: mid,
+          });
 
           // HOTFIX: resposta curta de nome não pode depender do lead classifier.
           // Fluxo correto: pediu nome -> cliente respondeu nome -> salva nome -> responde qualificação -> continue.
@@ -806,7 +863,7 @@ const shouldFastScheduleAnaBeforeClassifier =
 
           if (ANA_DIAGNOSTIC_FIXED_REPLY) {
             const live = await getConversationById(conv.id);
-            const inHandoff = live?.handoff === true || live?.classification === 'Handoff';
+            const inHandoff = isAnaAutomationBlockedByHandoff(live);
             console.log('[ANA_DIAGNOSTIC_FIXED_REPLY] received_inbound', {
               conversationId: conv.id,
               metaMessageId: mid,

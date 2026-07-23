@@ -1,5 +1,6 @@
 ﻿
 import { upsertAnaRetryJob } from '../repositories/anaRetryJobRepository.js';
+import { getConversationById } from '../repositories/conversationRepository.js';
 import {
   computeRetryDelayMs,
   extractRetryAfterMs,
@@ -7,6 +8,10 @@ import {
   sanitizeRetryErrorMessage,
 } from '../utils/llmRetry.js';
 import { getAnaAutomationPauseReason } from '../utils/anaAutomationKillSwitch.js';
+import {
+  isAnaAutomationBlockedByHandoff,
+  logAnaAutomationBlockedByHandoff,
+} from '../utils/anaAutomationEligibility.js';
 
 export async function scheduleAnaRetry(params: {
   conversationId: number;
@@ -39,6 +44,18 @@ export async function scheduleAnaRetry(params: {
     return;
   }
 
+  const conversation = await getConversationById(params.conversationId);
+  if (isAnaAutomationBlockedByHandoff(conversation)) {
+    logAnaAutomationBlockedByHandoff(conversation!, {
+      conversationId: params.conversationId,
+      automationType: 'retry',
+      blockedAt: 'before_enqueue',
+      source: 'ana_retry_scheduler',
+      metaMessageId: params.triggerMessageId != null ? String(params.triggerMessageId) : null,
+    });
+    return;
+  }
+
   const retryAfterMsRaw = extractRetryAfterMs(params.error);
   const retryAfterMs = computeRetryDelayMs({
     attemptCount: params.attemptCount ?? 0,
@@ -49,7 +66,7 @@ export async function scheduleAnaRetry(params: {
   const nextRunAt = new Date(Date.now() + retryAfterMs + 500);
   const reason = params.reasonOverride ?? mapRetryReason(params.error);
 
-  await upsertAnaRetryJob({
+  const job = await upsertAnaRetryJob({
     conversationId: params.conversationId,
     triggerMessageId: params.triggerMessageId,
     reason,
@@ -57,6 +74,19 @@ export async function scheduleAnaRetry(params: {
     lastError: sanitizeRetryErrorMessage(params.error),
     lastErrorCode: null,
   });
+  if (!job) {
+    const latestConversation = await getConversationById(params.conversationId);
+    if (isAnaAutomationBlockedByHandoff(latestConversation)) {
+      logAnaAutomationBlockedByHandoff(latestConversation!, {
+        conversationId: params.conversationId,
+        automationType: 'retry',
+        blockedAt: 'before_enqueue',
+        source: 'ana_retry_scheduler_atomic_guard',
+        metaMessageId: params.triggerMessageId != null ? String(params.triggerMessageId) : null,
+      });
+    }
+    return;
+  }
 
   console.log('[ANA_RETRY] scheduled', {
     conversationId: params.conversationId,

@@ -78,7 +78,7 @@ test('revalidacao final confere automacao, visita, inbound e lock do worker', ()
   assert.match(revalidationSource, /locked_by IS DISTINCT FROM \$2/);
   assert.match(revalidationSource, /conv_manual_closed_at IS NOT NULL/);
   assert.match(revalidationSource, /COALESCE\(conv_conversation_type, 'CLIENT'\) <> 'CLIENT'/);
-  assert.match(revalidationSource, /conv_classification = 'Handoff'/);
+  assert.match(revalidationSource, /lower\(trim\(COALESCE\(conv_classification, ''\)\)\) = 'handoff'/);
   assert.match(revalidationSource, /visitScheduling,status/);
   assert.match(revalidationSource, /visit_flow_inactive/);
   assert.match(revalidationSource, /has_open_appointment/);

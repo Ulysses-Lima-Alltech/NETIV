@@ -22,10 +22,17 @@ test('conversationEngine não dispara handoff automático', () => {
   assert.doesNotMatch(source, /handoff:\s*structured\.handoff/);
 });
 
-test('applyAnaConversationUpdate ignora handoff automático e mantém handoff=false', () => {
+test('applyAnaConversationUpdate nao ativa handoff automatico', () => {
   const source = readFileSync(path.resolve(process.cwd(), 'repositories/conversationRepository.ts'), 'utf8');
-  assert.match(source, /const handoff = false/);
+  assert.match(source, /const handoff = handoffAlreadyActive/);
   assert.match(source, /ana_automatic_handoff_removed/);
+  assert.match(source, /updates automáticos da Ana nunca podem ativar handoff/i);
+});
+
+test('applyAnaConversationUpdate preserva handoff manual existente', () => {
+  const source = readFileSync(path.resolve(process.cwd(), 'repositories/conversationRepository.ts'), 'utf8');
+  assert.match(source, /const handoffAlreadyActive = isAnaAutomationBlockedByHandoff\(conv\)/);
+  assert.match(source, /if \(handoff\) \{\s*classification = 'Handoff';/);
 });
 
 test('handoff manual permanece via updateClassification', () => {
