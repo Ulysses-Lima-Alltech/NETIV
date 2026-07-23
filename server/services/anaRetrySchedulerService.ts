@@ -7,6 +7,11 @@ import {
   sanitizeRetryErrorMessage,
 } from '../utils/llmRetry.js';
 import { getAnaAutomationPauseReason } from '../utils/anaAutomationKillSwitch.js';
+import { getConversationById } from '../repositories/conversationRepository.js';
+import {
+  isAnaAutomationBlockedByHandoff,
+  logAnaAutomationBlockedByHandoff,
+} from '../utils/anaHandoffPolicy.js';
 
 export async function scheduleAnaRetry(params: {
   conversationId: number;
@@ -15,6 +20,16 @@ export async function scheduleAnaRetry(params: {
   attemptCount?: number;
   reasonOverride?: string;
 }): Promise<void> {
+  const conversation = await getConversationById(params.conversationId);
+  if (isAnaAutomationBlockedByHandoff(conversation)) {
+    logAnaAutomationBlockedByHandoff(conversation!, {
+      conversationId: params.conversationId,
+      automationType: 'retry',
+      blockedAt: 'before_enqueue',
+      source: 'ana_retry_scheduler',
+    });
+    return;
+  }
   const killSwitchReason = getAnaAutomationPauseReason();
   if (killSwitchReason) {
     if (killSwitchReason === 'ana_emergency_handoff_active') {
@@ -49,7 +64,7 @@ export async function scheduleAnaRetry(params: {
   const nextRunAt = new Date(Date.now() + retryAfterMs + 500);
   const reason = params.reasonOverride ?? mapRetryReason(params.error);
 
-  await upsertAnaRetryJob({
+  const job = await upsertAnaRetryJob({
     conversationId: params.conversationId,
     triggerMessageId: params.triggerMessageId,
     reason,
@@ -57,6 +72,19 @@ export async function scheduleAnaRetry(params: {
     lastError: sanitizeRetryErrorMessage(params.error),
     lastErrorCode: null,
   });
+
+  if (!job) {
+    const latestConversation = await getConversationById(params.conversationId);
+    if (isAnaAutomationBlockedByHandoff(latestConversation)) {
+      logAnaAutomationBlockedByHandoff(latestConversation!, {
+        conversationId: params.conversationId,
+        automationType: 'retry',
+        blockedAt: 'before_enqueue',
+        source: 'ana_retry_scheduler_atomic_guard',
+      });
+    }
+    return;
+  }
 
   console.log('[ANA_RETRY] scheduled', {
     conversationId: params.conversationId,

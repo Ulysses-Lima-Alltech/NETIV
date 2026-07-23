@@ -15,8 +15,39 @@ import {
   logAnaAutomationBlock,
   shouldBlockAnaAutomationOutbound,
 } from '../utils/anaAutomationKillSwitch.js';
+import { getConversationById } from '../repositories/conversationRepository.js';
+import {
+  isAnaAutomationBlockedByHandoff,
+  logAnaAutomationBlockedByHandoff,
+} from '../utils/anaHandoffPolicy.js';
 
 export type AnaQuotaSendResult = SendTextResult;
+
+type AnaHandoffConversationLoader = typeof getConversationById;
+let anaHandoffConversationLoader: AnaHandoffConversationLoader = getConversationById;
+
+export function __setAnaHandoffConversationLoaderForTest(
+  loader: AnaHandoffConversationLoader
+): () => void {
+  const previous = anaHandoffConversationLoader;
+  anaHandoffConversationLoader = loader;
+  return () => { anaHandoffConversationLoader = previous; };
+}
+
+async function blockAutomaticSendForCurrentHandoff(params: {
+  conversationId: number;
+  phase: string;
+}): Promise<boolean> {
+  const conversation = await anaHandoffConversationLoader(params.conversationId);
+  if (!isAnaAutomationBlockedByHandoff(conversation)) return false;
+  logAnaAutomationBlockedByHandoff(conversation!, {
+    conversationId: params.conversationId,
+    automationType: params.phase,
+    blockedAt: 'before_send',
+    source: 'ana_outbound_quota',
+  });
+  return true;
+}
 
 export async function sendAnaTextMessageWithQuota(params: {
   conversationId: number;
@@ -35,6 +66,9 @@ export async function sendAnaTextMessageWithQuota(params: {
       error: blocked.reason,
       code: 423,
     };
+  }
+  if (await blockAutomaticSendForCurrentHandoff(params)) {
+    return { success: false, error: 'handoff_active', code: 423 };
   }
   return sendTextMessage(params.to, params.text);
 }
@@ -59,6 +93,9 @@ export async function sendAnaLocalMediaToWhatsAppWithQuota(params: {
       error: blocked.reason,
       code: 423,
     };
+  }
+  if (await blockAutomaticSendForCurrentHandoff(params)) {
+    return { success: false, error: 'handoff_active', code: 423 };
   }
   let fileSize = 0;
   try {

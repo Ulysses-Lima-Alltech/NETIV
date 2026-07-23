@@ -19,6 +19,16 @@ export type MaterialSendStatus =
   | 'enterprise_not_resolved'
   | 'material_type_not_resolved';
 
+/** Tipagem do estado já persistido e consumido pelo fluxo de visita em produção. */
+export interface PendingAppointmentCandidate {
+  date: string;
+  time: string;
+  datetime: string;
+  sourceMessage: string;
+  confidence: number;
+  offeredAt: string;
+}
+
 export type LeadQualificationPurpose = 'moradia' | 'investimento' | 'construcao' | 'familia' | 'pesquisa';
 export type LeadQualificationProductFit = 'loteamento' | 'casa' | 'apartamento' | 'indefinido';
 
@@ -94,6 +104,7 @@ export interface CommercialFlowState {
   pendingVisitCustomerName?: string | null;
   /** Marca quando a Ana já perguntou confirmacao final da visita e aguarda resposta curta. */
   pendingVisitConfirmationAsked?: boolean;
+  pendingAppointmentCandidate?: PendingAppointmentCandidate | null;
   suggestedVisitStartAt?: string | null;
   suggestedVisitEndAt?: string | null;
   suggestedVisitBrokerId?: number | null;
