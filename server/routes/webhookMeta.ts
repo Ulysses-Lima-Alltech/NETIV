@@ -39,9 +39,38 @@ router.post('/', (req: Request, res: Response) => {
   const validSignature = Boolean(signature && expected) &&
     Buffer.byteLength(signature) === Buffer.byteLength(expected) &&
     timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-  if (!validSignature) {
-    res.status(appSecret ? 401 : 503).send(appSecret ? 'Invalid signature' : 'Webhook signature not configured');
+
+  const temporaryUnsignedUntilRaw = String(
+    process.env.META_WEBHOOK_ALLOW_UNSIGNED_UNTIL ?? ''
+  ).trim();
+
+  const temporaryUnsignedUntilMs = Date.parse(
+    temporaryUnsignedUntilRaw
+  );
+
+  const temporaryUnsignedWindowActive =
+    !appSecret &&
+    Number.isFinite(temporaryUnsignedUntilMs) &&
+    Date.now() < temporaryUnsignedUntilMs;
+
+  if (!validSignature && !temporaryUnsignedWindowActive) {
+    res.status(appSecret ? 401 : 503).send(
+      appSecret
+        ? 'Invalid signature'
+        : 'Webhook signature not configured'
+    );
     return;
+  }
+
+  if (!validSignature && temporaryUnsignedWindowActive) {
+    console.warn(
+      '[WEBHOOK_SECURITY] unsigned webhook temporarily accepted',
+      {
+        expiresAt: new Date(
+          temporaryUnsignedUntilMs
+        ).toISOString(),
+      }
+    );
   }
   res.status(200).send('OK');
   const payload = req.body as WebhookPayload;
