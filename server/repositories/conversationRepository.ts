@@ -8,6 +8,7 @@ import type { LeadOriginInput } from '../services/leadOriginResolver.js';
 import { resolveEnterpriseFromLeadSource } from '../services/leadOriginResolver.js';
 import { parseCommercialFlowState, type CommercialFlowState } from '../utils/commercialFlowState.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
+import { INBOX_DATE_TIME_ZONE } from '../utils/inboxDateFilter.js';
 import {
   cancelActiveAnaVisitFollowupJobs,
   withAnaVisitFollowupConversationLock,
@@ -918,6 +919,9 @@ export interface ListConversationsFilters {
   status?: string;
   enterpriseId?: number;
   search?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  dateReference?: 'last_message' | 'conversation_started';
   brokerId?: number;  // NOVO — filtra por assigned_broker_id
   conversationTypeFilter?: 'CLIENT' | 'INTERNO';
   scopeConvIds?: number[];  // NOVO — filtra por whitelist de IDs de conversa (broker scope)
@@ -926,7 +930,8 @@ export interface ListConversationsFilters {
 export async function listConversationsWithPreview(
   channel: string = 'whatsapp',
   limit: number = 100,
-  filters?: ListConversationsFilters
+  filters?: ListConversationsFilters,
+  queryExecutor: typeof query = query
 ): Promise<ConversationWithPreview[]> {
   const conditions: string[] = ['c.channel = $1'];
   const params: unknown[] = [channel];
@@ -971,6 +976,18 @@ export async function listConversationsWithPreview(
     paramIndex += 1;
   }
 
+  const dateColumn = filters?.dateReference === 'conversation_started' ? 'c.created_at' : 'c.last_message_at';
+  if (filters?.dateFrom) {
+    conditions.push(`${dateColumn} >= ($${paramIndex}::date::timestamp AT TIME ZONE '${INBOX_DATE_TIME_ZONE}')`);
+    params.push(filters.dateFrom);
+    paramIndex += 1;
+  }
+  if (filters?.dateTo) {
+    conditions.push(`${dateColumn} < (($${paramIndex}::date + INTERVAL '1 day')::timestamp AT TIME ZONE '${INBOX_DATE_TIME_ZONE}')`);
+    params.push(filters.dateTo);
+    paramIndex += 1;
+  }
+
   if (filters?.brokerId != null) {
     conditions.push(`c.assigned_broker_id = $${paramIndex}`);
     params.push(filters.brokerId);
@@ -1000,7 +1017,7 @@ export async function listConversationsWithPreview(
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   params.push(limit);
 
-  const { rows } = await query<ConversationWithPreview>(
+  const { rows } = await queryExecutor<ConversationWithPreview>(
     `SELECT c.*,
       (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_preview,
       e.name AS enterprise_name,

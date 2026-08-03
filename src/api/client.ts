@@ -529,6 +529,9 @@ export const whatsappApi = {
     status?: string;
     enterpriseId?: number;
     search?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    dateReference?: 'last_message' | 'conversation_started';
     type?: 'CLIENT' | 'INTERNO';
   }) => {
     const q = new URLSearchParams();
@@ -538,6 +541,9 @@ export const whatsappApi = {
     if (params?.status && params.status !== 'all') q.set('status', params.status);
     if (params?.enterpriseId != null) q.set('enterpriseId', String(params.enterpriseId));
     if (params?.search?.trim()) q.set('search', params.search.trim());
+    if (params?.dateFrom) q.set('dateFrom', params.dateFrom);
+    if (params?.dateTo) q.set('dateTo', params.dateTo);
+    if (params?.dateReference && (params.dateFrom || params.dateTo)) q.set('dateReference', params.dateReference);
     if (params?.type) q.set('type', params.type);
     const query = q.toString();
     return request<{ conversations: ConversationListItem[] }>(`/whatsapp/conversations${query ? `?${query}` : ''}`);

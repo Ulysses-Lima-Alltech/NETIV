@@ -1,5 +1,5 @@
 ﻿import { useMemo, useState } from 'react';
-import type { InboxFilters, InboxMode } from './inboxFilters';
+import { getInboxDateRangeError, type InboxFilters, type InboxMode } from './inboxFilters';
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'Todos' },
@@ -41,8 +41,11 @@ export function InboxFilterBar({ filters, onChange, projects, onClear, hasActive
     if (filters.status !== 'all') count += 1;
     if (filters.readState !== 'all') count += 1;
     if (filters.enterpriseId !== '') count += 1;
+    if (filters.dateFrom || filters.dateTo) count += 1;
     return count;
-  }, [filters.enterpriseId, filters.mode, filters.readState, filters.status]);
+  }, [filters.dateFrom, filters.dateTo, filters.enterpriseId, filters.mode, filters.readState, filters.status]);
+
+  const dateRangeError = getInboxDateRangeError(filters);
 
   return (
     <div className="space-y-3 border-b border-[#e2e8f0] bg-white px-3 pb-3 pt-2">
@@ -145,6 +148,60 @@ export function InboxFilterBar({ filters, onChange, projects, onClear, hasActive
               ))}
             </select>
           </label>
+
+          <fieldset className="min-w-0">
+            <legend className="mb-1 block text-[11px] font-medium text-[#64748b]">Período</legend>
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(132px,1fr))] gap-2">
+              <label className="block min-w-0">
+                <span className="mb-1 block text-[11px] font-medium text-[#64748b]">Data inicial</span>
+                <input
+                  type="date"
+                  value={filters.dateFrom ?? ''}
+                  max={filters.dateTo ?? undefined}
+                  aria-describedby={dateRangeError ? 'inbox-date-range-error' : undefined}
+                  onChange={(e) => onChange({ ...filters, dateFrom: e.target.value || null })}
+                  className={inputClass}
+                />
+              </label>
+              <label className="block min-w-0">
+                <span className="mb-1 block text-[11px] font-medium text-[#64748b]">Data final</span>
+                <input
+                  type="date"
+                  value={filters.dateTo ?? ''}
+                  min={filters.dateFrom ?? undefined}
+                  aria-describedby={dateRangeError ? 'inbox-date-range-error' : undefined}
+                  onChange={(e) => onChange({ ...filters, dateTo: e.target.value || null })}
+                  className={inputClass}
+                />
+              </label>
+            </div>
+            <label className="mt-2 flex cursor-pointer items-start gap-2 text-[12px] text-[#475569]">
+              <input
+                type="checkbox"
+                checked={filters.dateReference === 'conversation_started'}
+                onChange={(e) => onChange({
+                  ...filters,
+                  dateReference: e.target.checked ? 'conversation_started' : 'last_message',
+                })}
+                className="mt-0.5 h-3.5 w-3.5 rounded border-[#cbd5e1] text-[#2563eb] focus:ring-[#93c5fd]"
+              />
+              Usar data de início da conversa
+            </label>
+            {dateRangeError && (
+              <p id="inbox-date-range-error" role="alert" className="mt-1.5 text-[11px] text-[#b91c1c]">
+                {dateRangeError}
+              </p>
+            )}
+            {(filters.dateFrom || filters.dateTo) && (
+              <button
+                type="button"
+                onClick={() => onChange({ ...filters, dateFrom: null, dateTo: null })}
+                className="mt-2 text-[12px] font-medium text-[#475569] underline decoration-[#cbd5e1] underline-offset-2 hover:text-[#0f172a]"
+              >
+                Limpar período
+              </button>
+            )}
+          </fieldset>
 
           {hasActiveFilters && (
             <button
