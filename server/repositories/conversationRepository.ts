@@ -12,6 +12,7 @@ import {
   cancelActiveAnaVisitFollowupJobs,
   withAnaVisitFollowupConversationLock,
 } from './anaVisitFollowupJobRepository.js';
+import { cancelAnaPendingAutomationForHandoff } from './anaHandoffAutomationRepository.js';
 import {
   assignContactToConversation,
   findContactById,
@@ -1179,9 +1180,9 @@ export async function updateClassification(
         enterprise: manualEnterpriseOverrideRequested,
       });
       if (handoff) {
-        await cancelActiveAnaVisitFollowupJobs({
+        await cancelAnaPendingAutomationForHandoff({
           conversationId,
-          reason: 'handoff',
+          source: 'updateClassification',
         });
         const contact = row.contact_id != null ? await findContactById(row.contact_id) : null;
         notifyDjangoLead(row, {
@@ -1277,9 +1278,9 @@ export async function updateClassification(
       enterprise: manualEnterpriseOverrideRequested,
     });
     if (handoff) {
-      await cancelActiveAnaVisitFollowupJobs({
+      await cancelAnaPendingAutomationForHandoff({
         conversationId,
-        reason: 'handoff',
+        source: 'updateClassification',
       });
       const contact = row.contact_id != null ? await findContactById(row.contact_id) : null;
       notifyDjangoLead(row, {
@@ -1532,7 +1533,10 @@ export async function applyAnaConversationUpdate(
      END,
      classification_before_handoff = CASE WHEN $3 = true AND ($6::text) IS NOT NULL THEN $6::text ELSE
        (CASE WHEN $3 = false THEN NULL ELSE classification_before_handoff END) END,
-     updated_at = NOW() WHERE id = $5`,
+     updated_at = NOW()
+     WHERE id = $5
+       AND COALESCE(handoff, false) = false
+       AND lower(trim(COALESCE(classification, ''))) <> 'handoff'`,
     [classification, lead_temperature, handoff, cn ?? null, conversationId, saveBeforeHandoff ?? null]
   );
   // Sem ações automáticas de handoff neste fluxo.
@@ -1543,10 +1547,15 @@ export async function mergeConversationCommercialFlowState(
   conversationId: number,
   nextState: CommercialFlowState
 ): Promise<void> {
-  await query(`UPDATE conversations SET commercial_flow_state = $1::jsonb, updated_at = NOW() WHERE id = $2`, [
-    JSON.stringify(nextState),
-    conversationId,
-  ]);
+  await query(
+    `UPDATE conversations
+        SET commercial_flow_state = $1::jsonb,
+            updated_at = NOW()
+      WHERE id = $2
+        AND COALESCE(handoff, false) = false
+        AND lower(trim(COALESCE(classification, ''))) <> 'handoff'`,
+    [JSON.stringify(nextState), conversationId]
+  );
 }
 
 /**
@@ -1646,9 +1655,9 @@ export async function markAnaAskedForCustomerName(conversationId: number): Promi
 export async function applyInboundUserMessageResets(conversationId: number): Promise<void> {
   await query(
     `UPDATE conversations SET
-       manual_closed_at = CASE WHEN classification = 'Carteira' THEN manual_closed_at ELSE NULL END,
-       manual_closed_by_user_id = CASE WHEN classification = 'Carteira' THEN manual_closed_by_user_id ELSE NULL END,
-       manual_closed_reason = CASE WHEN classification = 'Carteira' THEN manual_closed_reason ELSE NULL END,
+       manual_closed_at = CASE WHEN classification = 'Carteira' OR handoff = true OR lower(trim(COALESCE(classification, ''))) = 'handoff' THEN manual_closed_at ELSE NULL END,
+       manual_closed_by_user_id = CASE WHEN classification = 'Carteira' OR handoff = true OR lower(trim(COALESCE(classification, ''))) = 'handoff' THEN manual_closed_by_user_id ELSE NULL END,
+       manual_closed_reason = CASE WHEN classification = 'Carteira' OR handoff = true OR lower(trim(COALESCE(classification, ''))) = 'handoff' THEN manual_closed_reason ELSE NULL END,
        reengagement_sent_at = NULL,
        reengagement_for_user_message_id = NULL,
        reengagement_count = 0,
@@ -1659,9 +1668,15 @@ export async function applyInboundUserMessageResets(conversationId: number): Pro
        ana_followup_last_attempt_at = NULL,
        ana_followup_last_sent_message_id = NULL,
        ana_followup_next_at = NULL,
-       ana_followup_status = CASE WHEN classification = 'Carteira' THEN 'cancelled' ELSE 'idle' END,
+       ana_followup_status = CASE
+         WHEN classification = 'Carteira' OR handoff = true OR lower(trim(COALESCE(classification, ''))) = 'handoff'
+         THEN 'cancelled'
+         ELSE 'idle'
+       END,
        ana_followup_cancel_reason = CASE
          WHEN classification = 'Carteira' THEN COALESCE(ana_followup_cancel_reason, 'auto_wallet_after_5_days_inactive')
+         WHEN handoff = true OR lower(trim(COALESCE(classification, ''))) = 'handoff'
+         THEN COALESCE(ana_followup_cancel_reason, 'handoff')
          ELSE NULL
        END,
        updated_at = NOW()
@@ -1671,6 +1686,11 @@ export async function applyInboundUserMessageResets(conversationId: number): Pro
   console.log('[ANA_FOLLOWUP_RESET]', {
     conversationId,
     reason: 'customer_replied',
+  });
+  console.log('[ANA_GENERAL_FOLLOWUP] cancelled', {
+    conversationId,
+    reason: 'customer_replied',
+    source: 'inbound_user_message',
   });
   await cancelActiveAnaVisitFollowupJobs({
     conversationId,

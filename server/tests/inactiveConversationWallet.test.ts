@@ -79,16 +79,34 @@ test('apply automatico move para Carteira, arquiva e cancela workers pendentes',
   assert.match(source, new RegExp(AUTO_WALLET_INACTIVE_REASON));
 });
 
-test('Ana reengagement nao processa Carteira nem idle sem proxima data', () => {
+test('scan de reengagement seleciona somente ciclo geral ativo e revalida Carteira/handoff antes do envio', () => {
   const source = readFileSync(path.resolve(process.cwd(), 'services/anaReengagementService.ts'), 'utf8');
   const scanIndex = source.indexOf('export async function processAnaReengagementScan');
   const scanSource = source.slice(scanIndex, source.indexOf('async function trySendReengagementForConversation'));
+  const blockedReasonIndex = source.indexOf('function getAutomationBlockedReason');
+  const blockedReasonSource = source.slice(blockedReasonIndex, source.indexOf('async function cancelAndLogFollowup'));
+  const finalValidationIndex = source.indexOf('async function sendReengagementAfterFinalValidation');
+  const finalValidationSource = source.slice(finalValidationIndex);
 
-  assert.match(scanSource, /COALESCE\(classification, ''\) NOT IN \('Handoff', 'Carteira'\)/);
-  assert.match(scanSource, /manual_closed_at IS NULL/);
+  assert.match(scanSource, /ana_followup_status = 'active'/);
+  assert.match(scanSource, /ana_followup_anchor_assistant_message_id IS NOT NULL/);
+  assert.match(scanSource, /ana_followup_anchor_assistant_created_at IS NOT NULL/);
   assert.match(scanSource, /ana_followup_next_at IS NOT NULL/);
   assert.match(scanSource, /ana_followup_next_at <= NOW\(\)/);
+  assert.match(scanSource, /COALESCE\(handoff, false\) = false/);
+  assert.match(scanSource, /lower\(trim\(COALESCE\(classification, ''\)\)\) <> 'handoff'/);
+  assert.match(scanSource, /lower\(trim\(COALESCE\(classification, ''\)\)\) <> 'carteira'/);
+  assert.match(scanSource, /ana_followup_anchor_assistant_created_at >= \$2/);
   assert.doesNotMatch(scanSource, /ana_followup_next_at IS NULL OR/);
+  assert.doesNotMatch(scanSource, /COALESCE\(ana_followup_status, 'idle'\)/);
+
+  assert.match(blockedReasonSource, /isAnaAutomationBlockedByHandoff\(conv\)/);
+  assert.match(blockedReasonSource, /String\(conv\.classification \?\? ''\)\.trim\(\)\.toLowerCase\(\) === 'carteira'/);
+  assert.match(finalValidationSource, /SELECT \* FROM conversations WHERE id = \$1 FOR UPDATE/);
+  const blockedIndex = finalValidationSource.indexOf('const blockedReason = getAutomationBlockedReason(locked)');
+  const cancelIndex = finalValidationSource.indexOf('await cancelAndLogFollowup({', blockedIndex);
+  const sendIndex = finalValidationSource.indexOf('const sendRes = await sendAnaTextMessageWithQuota');
+  assert.ok(blockedIndex >= 0 && cancelIndex > blockedIndex && sendIndex > cancelIndex);
 });
 
 test('workers da Ana bloqueiam Carteira e arquivadas antes de enviar', () => {

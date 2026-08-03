@@ -15,8 +15,41 @@ import {
   logAnaAutomationBlock,
   shouldBlockAnaAutomationOutbound,
 } from '../utils/anaAutomationKillSwitch.js';
+import { getConversationById } from '../repositories/conversationRepository.js';
+import {
+  isAnaAutomationBlockedByHandoff,
+  logAnaAutomationBlockedByHandoff,
+} from '../utils/anaAutomationEligibility.js';
 
 export type AnaQuotaSendResult = SendTextResult;
+
+type AnaHandoffConversationLoader = typeof getConversationById;
+let anaHandoffConversationLoader: AnaHandoffConversationLoader = getConversationById;
+
+export function __setAnaHandoffConversationLoaderForTest(
+  loader: AnaHandoffConversationLoader
+): () => void {
+  const previous = anaHandoffConversationLoader;
+  anaHandoffConversationLoader = loader;
+  return () => {
+    anaHandoffConversationLoader = previous;
+  };
+}
+
+async function blockAutomaticSendForCurrentHandoff(params: {
+  conversationId: number;
+  phase: string;
+}): Promise<boolean> {
+  const conversation = await anaHandoffConversationLoader(params.conversationId);
+  if (!isAnaAutomationBlockedByHandoff(conversation)) return false;
+  logAnaAutomationBlockedByHandoff(conversation!, {
+    conversationId: params.conversationId,
+    automationType: params.phase,
+    blockedAt: 'before_send',
+    source: 'ana_outbound_quota',
+  });
+  return true;
+}
 
 export async function sendAnaTextMessageWithQuota(params: {
   conversationId: number;
@@ -33,6 +66,13 @@ export async function sendAnaTextMessageWithQuota(params: {
     return {
       success: false,
       error: blocked.reason,
+      code: 423,
+    };
+  }
+  if (await blockAutomaticSendForCurrentHandoff(params)) {
+    return {
+      success: false,
+      error: 'handoff_active',
       code: 423,
     };
   }
@@ -57,6 +97,13 @@ export async function sendAnaLocalMediaToWhatsAppWithQuota(params: {
     return {
       success: false,
       error: blocked.reason,
+      code: 423,
+    };
+  }
+  if (await blockAutomaticSendForCurrentHandoff(params)) {
+    return {
+      success: false,
+      error: 'handoff_active',
       code: 423,
     };
   }

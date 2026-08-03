@@ -13,15 +13,29 @@ import { publishConversationUpdated, publishMessageCreated } from '../realtime/r
 import {
   sendAnaTextMessageWithQuota,
 } from './anaOutboundQuotaService.js';
-import { ANA_FOLLOWUP_MAX_ATTEMPTS, computeAnaFollowupAtUtc } from '../utils/anaFollowupCadence.js';
+import {
+  ANA_FOLLOWUP_MAX_ATTEMPTS,
+  computeAnaFollowupAtUtc,
+  getAnaFollowupDelayMs,
+  isAnaFollowupForbiddenNightWindowSp,
+} from '../utils/anaFollowupCadence.js';
 import { getAnaAutomationPauseReason } from '../utils/anaAutomationKillSwitch.js';
 import { getActiveEnterpriseById } from '../repositories/enterpriseRepository.js';
 import { resolveAiSettingsForEnterprise } from './enterpriseAiSettingsService.js';
 import { resolveAnaCommercialFollowupMessage } from './anaCommercialRulesService.js';
 import { parseCommercialFlowState } from '../utils/commercialFlowState.js';
+import {
+  isAnaAutomationBlockedByHandoff,
+  logAnaAutomationBlockedByHandoff,
+} from '../utils/anaAutomationEligibility.js';
+import {
+  getAnaGeneralFollowupCutoverAtFromEnv,
+  isAnaGeneralFollowupBeforeCutover,
+} from './anaGeneralFollowupService.js';
 
 const SCAN_LIMIT = 150;
 const ANA_FOLLOWUP_MIN_GAP_AFTER_SEND_MS = 60_000;
+export const ANA_GENERAL_FOLLOWUP_MAX_OVERDUE_MS = 15 * 60_000;
 let anaFollowupScanRunning = false;
 
 const BODY_WITH_NAME = [
@@ -71,6 +85,8 @@ interface FollowupCycleState {
   attemptCount: number;
   attemptIndex: number;
   nextFollowupAt: Date;
+  rawFollowupAt: Date;
+  quietHoursAdjusted: boolean;
   continuedStoredCycle: boolean;
 }
 
@@ -155,6 +171,34 @@ async function markConversationFollowupCancelled(params: {
       WHERE id = $1`,
     [params.conversationId, params.reason]
   );
+  console.log('[ANA_GENERAL_FOLLOWUP] cancelled', {
+    conversationId: params.conversationId,
+    reason: params.reason,
+    source: 'ana_followup_worker',
+  });
+}
+
+async function markConversationFollowupStaleDueCancelled(params: {
+  conversationId: number;
+  enterpriseId?: number | null;
+  nextFollowupAt?: Date | null;
+  anchorAssistantMessageId?: number | null;
+  anchorAssistantCreatedAt?: Date | null;
+  source: string;
+}): Promise<void> {
+  await markConversationFollowupCancelled({
+    conversationId: params.conversationId,
+    reason: 'stale_due_followup',
+  });
+  console.log('[ANA_GENERAL_FOLLOWUP] stale_due_cancelled', {
+    conversationId: params.conversationId,
+    enterpriseId: params.enterpriseId ?? null,
+    nextFollowupAt: params.nextFollowupAt?.toISOString() ?? null,
+    anchorAssistantMessageId: params.anchorAssistantMessageId ?? null,
+    anchorAssistantCreatedAt: params.anchorAssistantCreatedAt?.toISOString() ?? null,
+    maxOverdueMs: ANA_GENERAL_FOLLOWUP_MAX_OVERDUE_MS,
+    source: params.source,
+  });
 }
 
 function persistFollowupStateSql(state: FollowupCycleState): { text: string; params: unknown[] } {
@@ -240,6 +284,10 @@ async function resolveFollowupCycleState(params: {
     attemptIndex,
     notBefore: params.notBefore ?? null,
   });
+  const scheduledByAnchor = new Date(anchorAssistantCreatedAt.getTime() + getAnaFollowupDelayMs(attemptIndex));
+  const notBefore = params.notBefore ?? null;
+  const rawFollowupAt =
+    notBefore && scheduledByAnchor.getTime() < notBefore.getTime() ? notBefore : scheduledByAnchor;
 
   return {
     anchorAssistantMessageId,
@@ -248,14 +296,29 @@ async function resolveFollowupCycleState(params: {
     attemptCount,
     attemptIndex,
     nextFollowupAt,
+    rawFollowupAt,
+    quietHoursAdjusted:
+      nextFollowupAt.getTime() > rawFollowupAt.getTime() &&
+      isAnaFollowupForbiddenNightWindowSp(rawFollowupAt.getTime()),
     continuedStoredCycle: canContinueStoredCycle,
   };
 }
 
+export function isAnaGeneralFollowupStaleDue(params: {
+  nextAt: Date | null | undefined;
+  now?: Date;
+}): boolean {
+  const nextAt = params.nextAt;
+  if (!(nextAt instanceof Date) || Number.isNaN(nextAt.getTime())) return false;
+  const now = params.now ?? new Date();
+  return now.getTime() - nextAt.getTime() > ANA_GENERAL_FOLLOWUP_MAX_OVERDUE_MS;
+}
+
 function getAutomationBlockedReason(conv: ConversationRow): string | null {
-  if (conv.handoff === true) return 'handoff';
-  if ((conv.classification || '').trim() === 'Handoff') return 'handoff';
-  if ((conv.classification || '').trim() === 'Carteira') return 'carteira';
+  if (String(conv.channel ?? '').trim().toLowerCase() !== 'whatsapp') return 'non_whatsapp_conversation';
+  if (String(conv.conversation_type ?? 'CLIENT').trim().toUpperCase() !== 'CLIENT') return 'internal_conversation';
+  if (isAnaAutomationBlockedByHandoff(conv)) return 'handoff';
+  if (String(conv.classification ?? '').trim().toLowerCase() === 'carteira') return 'carteira';
   if (conv.assigned_broker_id != null) return 'assigned_broker';
   if (conv.manual_closed_at != null) return 'manual_closed';
   return null;
@@ -293,27 +356,32 @@ export async function processAnaReengagementScan(): Promise<void> {
 
   anaFollowupScanRunning = true;
   try {
+    const cutoverAt = getAnaGeneralFollowupCutoverAtFromEnv();
+    const params: unknown[] = [SCAN_LIMIT];
+    const cutoverClause = cutoverAt != null
+      ? `AND ana_followup_anchor_assistant_created_at >= $2`
+      : '';
+    if (cutoverAt != null) params.push(cutoverAt);
     const { rows } = await query<{ id: number }>(
       `SELECT id FROM conversations
-       WHERE channel = 'whatsapp'
-         AND COALESCE(handoff, false) = false
-         AND COALESCE(classification, '') NOT IN ('Handoff', 'Carteira')
-         AND manual_closed_at IS NULL
-         AND COALESCE(ana_followup_status, 'idle') IN ('idle', 'active')
+       WHERE ana_followup_status = 'active'
+         AND ana_followup_anchor_assistant_message_id IS NOT NULL
+         AND ana_followup_anchor_assistant_created_at IS NOT NULL
          AND ana_followup_next_at IS NOT NULL
          AND ana_followup_next_at <= NOW()
-         AND EXISTS (
-           SELECT 1 FROM messages m
-            WHERE m.conversation_id = conversations.id
-              AND m.role = 'assistant'
-              AND m.deleted_at IS NULL
-         )
+         AND COALESCE(handoff, false) = false
+         AND lower(trim(COALESCE(classification, ''))) <> 'handoff'
+         AND lower(trim(COALESCE(classification, ''))) <> 'carteira'
+         ${cutoverClause}
        ORDER BY ana_followup_next_at ASC, updated_at ASC, id ASC
        LIMIT $1`,
-      [SCAN_LIMIT]
+      params
     );
 
-    console.log('[ANA_FOLLOWUP_SCAN]', { candidates: rows.length });
+    console.log('[ANA_FOLLOWUP_SCAN]', {
+      candidates: rows.length,
+      cutoverAt: cutoverAt?.toISOString() ?? null,
+    });
 
     for (const r of rows) {
       try {
@@ -342,10 +410,43 @@ async function trySendReengagementForConversation(conversationId: number): Promi
 
   const automationBlockedReason = getAutomationBlockedReason(conv);
   if (automationBlockedReason) {
+    if (automationBlockedReason === 'handoff') {
+      logAnaAutomationBlockedByHandoff(conv, {
+        conversationId,
+        automationType: 'general_followup',
+        blockedAt: 'worker_start',
+        source: 'ana_followup_worker',
+      });
+    }
     await cancelAndLogFollowup({
       conversationId,
       enterpriseId: conv.enterprise_id ?? null,
       reason: automationBlockedReason,
+    });
+    return;
+  }
+
+  if (
+    isAnaGeneralFollowupBeforeCutover({
+      assistantCreatedAt: toDateOrNull(conv.ana_followup_anchor_assistant_created_at) ?? new Date(0),
+    })
+  ) {
+    logFollowupSkip({
+      conversationId,
+      enterpriseId: conv.enterprise_id ?? null,
+      reason: 'before_cutover',
+    });
+    return;
+  }
+
+  if (isAnaGeneralFollowupStaleDue({ nextAt: toDateOrNull(conv.ana_followup_next_at) })) {
+    await markConversationFollowupStaleDueCancelled({
+      conversationId,
+      enterpriseId: conv.enterprise_id ?? null,
+      nextFollowupAt: toDateOrNull(conv.ana_followup_next_at),
+      anchorAssistantMessageId: conv.ana_followup_anchor_assistant_message_id ?? null,
+      anchorAssistantCreatedAt: toDateOrNull(conv.ana_followup_anchor_assistant_created_at),
+      source: 'candidate_validation',
     });
     return;
   }
@@ -421,6 +522,16 @@ async function trySendReengagementForConversation(conversationId: number): Promi
   if (!followupState) {
     logFollowupSkip({ conversationId, enterpriseId: conv.enterprise_id ?? null, reason: 'missing_anchor' });
     return;
+  }
+  if (followupState.quietHoursAdjusted) {
+    console.log('[ANA_GENERAL_FOLLOWUP] blocked_quiet_hours', {
+      conversationId,
+      enterpriseId: conv.enterprise_id ?? null,
+      attemptIndex: followupState.attemptIndex,
+      rawNextAt: followupState.rawFollowupAt.toISOString(),
+      nextFollowupAt: followupState.nextFollowupAt.toISOString(),
+      source: 'ana_followup_scan',
+    });
   }
 
   const enterprise = conv.enterprise_id ? await getActiveEnterpriseById(conv.enterprise_id) : null;
@@ -510,10 +621,47 @@ async function sendReengagementAfterFinalValidation(params: {
     const blockedReason = getAutomationBlockedReason(locked);
     if (blockedReason) {
       await client.query('ROLLBACK');
+      if (blockedReason === 'handoff') {
+        logAnaAutomationBlockedByHandoff(locked, {
+          conversationId: params.conversationId,
+          automationType: 'general_followup',
+          blockedAt: 'before_send',
+          source: 'ana_followup_worker',
+        });
+      }
       await cancelAndLogFollowup({
         conversationId: params.conversationId,
         enterpriseId: locked.enterprise_id ?? null,
         reason: blockedReason,
+      });
+      return;
+    }
+
+    const lockedAnchorCreatedAt = toDateOrNull(locked.ana_followup_anchor_assistant_created_at);
+    if (
+      isAnaGeneralFollowupBeforeCutover({
+        assistantCreatedAt: lockedAnchorCreatedAt ?? new Date(0),
+      })
+    ) {
+      await client.query('ROLLBACK');
+      logFollowupSkip({
+        conversationId: params.conversationId,
+        enterpriseId: locked.enterprise_id ?? null,
+        reason: 'before_cutover',
+      });
+      return;
+    }
+
+    const lockedNextAt = toDateOrNull(locked.ana_followup_next_at);
+    if (isAnaGeneralFollowupStaleDue({ nextAt: lockedNextAt })) {
+      await client.query('ROLLBACK');
+      await markConversationFollowupStaleDueCancelled({
+        conversationId: params.conversationId,
+        enterpriseId: locked.enterprise_id ?? null,
+        nextFollowupAt: lockedNextAt,
+        anchorAssistantMessageId: locked.ana_followup_anchor_assistant_message_id ?? null,
+        anchorAssistantCreatedAt: lockedAnchorCreatedAt,
+        source: 'final_validation',
       });
       return;
     }
@@ -584,6 +732,16 @@ async function sendReengagementAfterFinalValidation(params: {
       });
       return;
     }
+    if (state.quietHoursAdjusted) {
+      console.log('[ANA_GENERAL_FOLLOWUP] blocked_quiet_hours', {
+        conversationId: params.conversationId,
+        enterpriseId: locked.enterprise_id ?? null,
+        attemptIndex: state.attemptIndex,
+        rawNextAt: state.rawFollowupAt.toISOString(),
+        nextFollowupAt: state.nextFollowupAt.toISOString(),
+        source: 'ana_followup_final_validation',
+      });
+    }
 
     const now = new Date();
     if (now.getTime() < state.nextFollowupAt.getTime()) {
@@ -634,6 +792,25 @@ async function sendReengagementAfterFinalValidation(params: {
             notBefore: new Date(Date.now() + ANA_FOLLOWUP_MIN_GAP_AFTER_SEND_MS),
           })
         : null;
+    if (nextFollowupAt) {
+      const scheduledByAnchor = new Date(state.anchorAssistantCreatedAt.getTime() + getAnaFollowupDelayMs(nextAttemptIndex));
+      const notBeforeAfterSend = new Date(Date.now() + ANA_FOLLOWUP_MIN_GAP_AFTER_SEND_MS);
+      const rawNextFollowupAt =
+        scheduledByAnchor.getTime() < notBeforeAfterSend.getTime() ? notBeforeAfterSend : scheduledByAnchor;
+      if (
+        nextFollowupAt.getTime() > rawNextFollowupAt.getTime() &&
+        isAnaFollowupForbiddenNightWindowSp(rawNextFollowupAt.getTime())
+      ) {
+        console.log('[ANA_GENERAL_FOLLOWUP] blocked_quiet_hours', {
+          conversationId: params.conversationId,
+          enterpriseId: locked.enterprise_id ?? null,
+          attemptIndex: nextAttemptIndex,
+          rawNextAt: rawNextFollowupAt.toISOString(),
+          nextFollowupAt: nextFollowupAt.toISOString(),
+          source: 'ana_followup_after_send',
+        });
+      }
+    }
 
     const commercialFollowupText = resolveAnaCommercialFollowupMessage({
       enterpriseName: lockedEnterprise?.name ?? null,
@@ -734,6 +911,17 @@ async function sendReengagementAfterFinalValidation(params: {
       nextFollowupAt: nextFollowupAt?.toISOString() ?? null,
       metaMessageId: sendRes.metaMessageId,
       textLen: outboundText.length,
+      kind: commercialFollowupText ? 'commercial_followup' : 'generic_followup',
+    });
+    console.log('[ANA_GENERAL_FOLLOWUP] sent', {
+      conversationId: params.conversationId,
+      enterpriseId: locked.enterprise_id ?? null,
+      userMessageId: u.id,
+      anchorAssistantMessageId: state.anchorAssistantMessageId,
+      sentMessageId: inserted.id,
+      attemptIndex: state.attemptIndex,
+      nextFollowupAt: nextFollowupAt?.toISOString() ?? null,
+      metaMessageId: sendRes.metaMessageId,
       kind: commercialFollowupText ? 'commercial_followup' : 'generic_followup',
     });
   } catch (e) {

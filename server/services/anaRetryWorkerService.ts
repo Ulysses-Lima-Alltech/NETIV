@@ -20,13 +20,17 @@ import {
   sanitizeRetryErrorMessage,
 } from '../utils/llmRetry.js';
 import { getAnaAutomationPauseReason } from '../utils/anaAutomationKillSwitch.js';
+import {
+  isAnaAutomationBlockedByHandoff,
+  logAnaAutomationBlockedByHandoff,
+} from '../utils/anaAutomationEligibility.js';
 
 const WORKER_ID = `ana-retry-${process.pid}`;
 let workerRunning = false;
 
 function automationBlockedReason(conv: Awaited<ReturnType<typeof getConversationById>>): string | null {
   if (!conv) return 'conversation_not_found';
-  if (conv.handoff === true || conv.classification === 'Handoff') return 'handoff';
+  if (isAnaAutomationBlockedByHandoff(conv)) return 'handoff';
   if (conv.classification === 'Carteira') return 'carteira';
   if (conv.manual_closed_at != null) return 'manual_closed';
   return null;
@@ -84,6 +88,14 @@ async function processOneJob(job: AnaRetryJobRow): Promise<void> {
 
   const blockedReason = automationBlockedReason(conv);
   if (blockedReason) {
+    if (blockedReason === 'handoff') {
+      logAnaAutomationBlockedByHandoff(conv, {
+        conversationId: job.conversation_id,
+        automationType: 'retry',
+        blockedAt: 'worker_start',
+        source: 'ana_retry_worker',
+      });
+    }
     console.log('[ANA_RETRY] skipped_automation_blocked', {
       jobId: job.id,
       conversationId: job.conversation_id,
@@ -126,6 +138,21 @@ async function processOneJob(job: AnaRetryJobRow): Promise<void> {
     });
   } catch (error) {
     if (isRetryableLlmError(error)) {
+      const latestConversation = await getConversationById(job.conversation_id);
+      if (isAnaAutomationBlockedByHandoff(latestConversation)) {
+        logAnaAutomationBlockedByHandoff(latestConversation!, {
+          conversationId: job.conversation_id,
+          automationType: 'retry',
+          blockedAt: 'before_enqueue',
+          source: 'ana_retry_worker',
+        });
+        await markAnaRetryJobFailedNonRetryable({
+          jobId: job.id,
+          errorMessage: 'handoff',
+          errorCode: 'handoff',
+        });
+        return;
+      }
       const retryAfterMsRaw = extractRetryAfterMs(error);
       const retryAfterMs = computeRetryDelayMs({
         attemptCount: job.attempt_count,
