@@ -93,8 +93,7 @@ async function processOneJob(job: AnaRetryJobRow): Promise<void> {
         conversationId: job.conversation_id,
         automationType: 'retry',
         blockedAt: 'worker_start',
-        source: 'ana_retry_worker_start',
-        jobId: job.id,
+        source: 'ana_retry_worker',
       });
     }
     console.log('[ANA_RETRY] skipped_automation_blocked', {
@@ -144,9 +143,8 @@ async function processOneJob(job: AnaRetryJobRow): Promise<void> {
         logAnaAutomationBlockedByHandoff(latestConversation!, {
           conversationId: job.conversation_id,
           automationType: 'retry',
-          blockedAt: 'before_reschedule',
-          source: 'ana_retry_worker_reschedule_guard',
-          jobId: job.id,
+          blockedAt: 'before_enqueue',
+          source: 'ana_retry_worker',
         });
         await markAnaRetryJobFailedNonRetryable({
           jobId: job.id,

@@ -59,7 +59,7 @@ function getMessageBody(msg: WebhookMessage): string | null {
   return null;
 }
 
-function getInboundInboxContent(msg: WebhookMessage): string {
+function getNonTextInboxContent(msg: WebhookMessage): string {
   const body = getMessageBody(msg)?.trim();
   if (body) return body;
   return `[Mensagem ${String(msg.type ?? 'nao_texto')}]`;
@@ -77,7 +77,7 @@ async function shouldBlockAnaWebhookAutomation(params: {
     automationType: 'webhook',
     blockedAt: params.blockedAt,
     source: 'webhook_processor_after_inbound_persist',
-    metaMessageId: params.metaMessageId,
+    messageId: params.metaMessageId,
   });
   return true;
 }
@@ -466,7 +466,7 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
 
           if (type !== 'text' || !bodyText?.trim()) {
             console.log('[ANA_PIPELINE] non_text_branch', { conversationId: conv.id, metaMessageId: mid, type });
-            await insertMessage(conv.id, 'user', getInboundInboxContent(msg), mid);
+            await insertMessage(conv.id, 'user', getNonTextInboxContent(msg), mid);
             await applyInboundUserMessageResets(conv.id);
             console.log('[ANA_PIPELINE] message_persisted', {
               conversationId: conv.id,

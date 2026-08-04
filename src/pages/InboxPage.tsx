@@ -16,6 +16,7 @@ import { InboxFilterBar } from '../components/InboxFilterBar';
 import { ScopeBanner } from '../components/ScopeBanner';
 import {
   DEFAULT_INBOX_FILTERS,
+  getInboxDateRangeError,
   hasActiveInboxFilters,
   inboxFiltersToApiParams,
   type InboxFilters,
@@ -231,6 +232,7 @@ export function InboxPage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedConversationSnapshot, setSelectedConversationSnapshot] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [messagesError, setMessagesError] = useState<string | null>(null);
@@ -262,6 +264,8 @@ export function InboxPage() {
   const [hasPendingRealtimeUpdates, setHasPendingRealtimeUpdates] = useState(false);
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const realtimeFetchDebounceTimersRef = useRef<Map<string, number>>(new Map());
+  const periodRealtimeReloadTimerRef = useRef<number | null>(null);
+  const isInboxPageMountedRef = useRef(true);
 
   const rawConversationParam = searchParams.get('conversationId')?.trim() ?? '';
   const parsedConversationId = useMemo(() => {
@@ -284,6 +288,34 @@ export function InboxPage() {
     const t = setTimeout(() => setSearchDebounced(filters.search), 400);
     return () => clearTimeout(t);
   }, [filters.search]);
+
+  const dateRangeError = getInboxDateRangeError(filters);
+  const hasDateFilter = filters.dateFrom !== null || filters.dateTo !== null;
+  const periodFilterKey = `${filters.dateFrom ?? ''}|${filters.dateTo ?? ''}|${filters.dateReference}`;
+  const periodFilterKeyRef = useRef(periodFilterKey);
+
+  useEffect(() => {
+    isInboxPageMountedRef.current = true;
+    return () => {
+      isInboxPageMountedRef.current = false;
+      if (periodRealtimeReloadTimerRef.current != null) {
+        window.clearTimeout(periodRealtimeReloadTimerRef.current);
+        periodRealtimeReloadTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (periodFilterKeyRef.current === periodFilterKey) return;
+    periodFilterKeyRef.current = periodFilterKey;
+    conversationsRequestIdRef.current += 1;
+    if (periodRealtimeReloadTimerRef.current != null) {
+      window.clearTimeout(periodRealtimeReloadTimerRef.current);
+      periodRealtimeReloadTimerRef.current = null;
+    }
+    setConversations([]);
+    setConversationsLoading(!dateRangeError);
+  }, [dateRangeError, periodFilterKey]);
 
   const isUserAtBottom = useCallback(() => {
     const el = chatScrollRef.current;
@@ -409,8 +441,11 @@ export function InboxPage() {
     realtimeFetchDebounceTimersRef.current.set(conversationId, timerId);
   }, [fetchAndMergeConversationById]);
 
-  const selectedConversation = selectedId
+  const selectedConversationInList = selectedId
     ? conversations.find((c) => c.id === selectedId) ?? null
+    : null;
+  const selectedConversation = selectedId
+    ? selectedConversationInList ?? selectedConversationSnapshot
     : null;
   const selectedWindow = selectedConversation?.whatsappWindow ?? null;
 
@@ -447,19 +482,28 @@ export function InboxPage() {
   }, [filters.readState]);
 
   const loadConversations = useCallback((silent?: boolean) => {
-    if (!silent) setConversationsLoading(true);
     const requestId = ++conversationsRequestIdRef.current;
+    if (dateRangeError) {
+      setConversations([]);
+      if (!silent) setConversationsLoading(false);
+      return Promise.resolve();
+    }
+    if (!silent) setConversationsLoading(true);
     const params = inboxFiltersToApiParams({ ...filters, search: searchDebounced });
     return whatsappApi
       .getConversations({ ...params, limit: 200, type: activeTab })
       .then((data) => {
-        if (requestId !== conversationsRequestIdRef.current) return;
+        if (!isInboxPageMountedRef.current || requestId !== conversationsRequestIdRef.current) return;
         const mappedRaw = data.conversations.map(mapApiConversationToConversation);
         const mappedWithUnread = mappedRaw.map((c) => ({
           ...c,
           unreadCount: c.id === selectedIdRef.current ? 0 : computeUnreadCountFromReadState(c, readStateMapRef.current),
         }));
         const mapped = applyReadFilter(mappedWithUnread);
+        if (hasDateFilter) {
+          setConversations(mapped);
+          return;
+        }
         setConversations((prev) => {
           const sid = selectedIdRef.current;
           if (!sid) return mapped;
@@ -472,14 +516,23 @@ export function InboxPage() {
         });
       })
       .catch(() => {
-        if (requestId !== conversationsRequestIdRef.current) return;
+        if (!isInboxPageMountedRef.current || requestId !== conversationsRequestIdRef.current) return;
         // Mantém lista atual para não perder seleção/conversa ativa em falha transitória.
       })
       .finally(() => {
-        if (requestId !== conversationsRequestIdRef.current) return;
+        if (!isInboxPageMountedRef.current || requestId !== conversationsRequestIdRef.current) return;
         if (!silent) setConversationsLoading(false);
       });
-  }, [activeTab, filters, searchDebounced, applyReadFilter]);
+  }, [activeTab, dateRangeError, filters, hasDateFilter, searchDebounced, applyReadFilter]);
+
+  const schedulePeriodRealtimeReload = useCallback(() => {
+    if (!hasDateFilter || periodRealtimeReloadTimerRef.current != null) return;
+    periodRealtimeReloadTimerRef.current = window.setTimeout(() => {
+      periodRealtimeReloadTimerRef.current = null;
+      if (!isInboxPageMountedRef.current) return;
+      void loadConversations(true);
+    }, 400);
+  }, [hasDateFilter, loadConversations]);
 
   const loadMessages = useCallback((convId: string, silent?: boolean) => {
     const id = parseInt(convId, 10);
@@ -570,10 +623,18 @@ export function InboxPage() {
   useRealtimeInbox({
     onConversationCreated: (payload) => {
       if (!payload || typeof payload !== 'object') return;
+      if (hasDateFilter) {
+        schedulePeriodRealtimeReload();
+        return;
+      }
       mergeConversation(mapApiConversationToConversation(payload as ApiConversation));
     },
     onConversationUpdated: (payload) => {
       if (!payload || typeof payload !== 'object') return;
+      if (hasDateFilter) {
+        schedulePeriodRealtimeReload();
+        return;
+      }
       const mapped = mapApiConversationToConversation(payload as ApiConversation);
       mergeConversation(mapped);
       console.info('[RealtimeInbox] conversation.updated merged', {
@@ -681,6 +742,11 @@ export function InboxPage() {
           conversationId: convId,
           selectedConversationId,
         });
+      }
+
+      if (hasDateFilter) {
+        schedulePeriodRealtimeReload();
+        return;
       }
 
       let conversationKnown = true;
@@ -815,6 +881,7 @@ export function InboxPage() {
           return [mapped, ...prev];
         });
         setSelectedId(mapped.id);
+        setSelectedConversationSnapshot(mapped);
         deepLinkConsumedParamRef.current = rawConversationParam;
       } catch (e) {
         if (cancelled) return;
@@ -1253,6 +1320,7 @@ export function InboxPage() {
             onSelect={(id) => {
               const conv = conversations.find((c) => c.id === id);
               markConversationAsRead(id, conv?.updatedAt ?? null);
+              setSelectedConversationSnapshot(conv ?? null);
               setSelectedId(id);
               if (window.matchMedia('(max-width: 767px)').matches) {
                 setSidebarOpen(false);

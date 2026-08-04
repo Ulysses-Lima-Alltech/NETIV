@@ -27,14 +27,33 @@ export type MaterialSendStatus =
   | 'enterprise_not_resolved'
   | 'material_type_not_resolved';
 
+
+export interface PendingAssistantContinuation {
+  reason: 'split_interrupted_by_new_inbound';
+  topic: string | null;
+  lastSentAssistantMessageId: number | null;
+  lastSentText: string;
+  createdAt: string;
+}
+
 export type LeadQualificationPurpose = 'moradia' | 'investimento' | 'construcao' | 'familia' | 'pesquisa';
 export type LeadQualificationProductFit = 'loteamento' | 'casa' | 'apartamento' | 'indefinido';
+export type LeadQualificationPurchaseIntent = 'MORAR' | 'INVESTIR';
 
 export interface LeadQualificationState {
   name: string | null;
   nameAsked: boolean;
   nameCollected: boolean;
   customerName: string | null;
+  purchaseIntent?: LeadQualificationPurchaseIntent | null;
+  desiredRegion?: string | null;
+  propertyType?: string | null;
+  desiredSize?: string | null;
+  bedrooms?: number | null;
+  priceMin?: number | null;
+  priceMax?: number | null;
+  paymentMethod?: string | null;
+  purchaseTimeline?: string | null;
   purpose: LeadQualificationPurpose | null;
   productFit: LeadQualificationProductFit | null;
   knowsAtibaia: boolean | null;
@@ -76,6 +95,7 @@ export interface CommercialFlowState {
   last_requested_material_type?: FileCategory | null;
   /** Timestamp ISO da última solicitação de material. */
   last_material_request_at?: string;
+  pendingAssistantContinuation?: PendingAssistantContinuation | null;
   /** Último arquivo efetivamente enviado. */
   last_material_sent_id?: number | null;
   /** Último status de envio de material no fluxo determinístico. */

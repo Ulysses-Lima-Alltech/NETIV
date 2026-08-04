@@ -101,15 +101,6 @@ export async function startAnaVisitFollowupIfEligible(params: {
     return;
   }
 
-  if (
-    !shouldStartAnaVisitFollowup({
-      flowState: params.flowState,
-      replyText: params.replyText,
-      missingSlot: params.missingSlot ?? null,
-    })
-  ) {
-    return;
-  }
   const conversation = await getConversationById(params.conversationId);
   if (isAnaAutomationBlockedByHandoff(conversation)) {
     logAnaAutomationBlockedByHandoff(conversation!, {
@@ -118,6 +109,16 @@ export async function startAnaVisitFollowupIfEligible(params: {
       blockedAt: 'before_enqueue',
       source: 'ana_visit_followup_start',
     });
+    return;
+  }
+
+  if (
+    !shouldStartAnaVisitFollowup({
+      flowState: params.flowState,
+      replyText: params.replyText,
+      missingSlot: params.missingSlot ?? null,
+    })
+  ) {
     return;
   }
   const anchorCreatedAt =
@@ -150,7 +151,7 @@ export async function startAnaVisitFollowupIfEligible(params: {
         conversationId: params.conversationId,
         automationType: 'visit_followup',
         blockedAt: 'before_enqueue',
-        source: 'ana_visit_followup_start_atomic_guard',
+        source: 'ana_visit_followup_atomic_guard',
       });
     }
     return;
@@ -253,8 +254,7 @@ async function processOneAnaVisitFollowupJob(job: AnaVisitFollowupJobRow): Promi
         conversationId: job.conversation_id,
         automationType: 'visit_followup',
         blockedAt: 'worker_start',
-        source: 'ana_visit_followup_worker_start',
-        jobId: job.id,
+        source: 'ana_visit_followup_worker',
       });
     }
     await cancelJob(job, blockedReason);
@@ -360,27 +360,6 @@ async function processOneAnaVisitFollowupJob(job: AnaVisitFollowupJobRow): Promi
         text: messageText,
         phase: 'ana_visit_scheduling_followup',
       });
-      if (!send.success && (send.error === 'handoff_active' || send.code === 423)) {
-        const latestConversation = await getConversationById(job.conversation_id);
-        if (isAnaAutomationBlockedByHandoff(latestConversation)) {
-          logAnaAutomationBlockedByHandoff(latestConversation!, {
-            conversationId: job.conversation_id,
-            automationType: 'visit_followup',
-            blockedAt: 'before_send',
-            source: 'ana_visit_followup_final_send_guard',
-            jobId: job.id,
-          });
-          await markAnaVisitFollowupAttemptSkipped({
-            attemptId: claim.attempt.id,
-            reason: 'handoff',
-          });
-          await markAnaVisitFollowupJobCancelled({
-            jobId: job.id,
-            reason: 'handoff',
-          });
-          return;
-        }
-      }
       if (!send.success || !send.metaMessageId) {
         await markAnaVisitFollowupAttemptFailed({
           attemptId: claim.attempt.id,

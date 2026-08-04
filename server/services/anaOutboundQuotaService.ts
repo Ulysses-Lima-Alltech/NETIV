@@ -23,32 +23,32 @@ import {
 
 export type AnaQuotaSendResult = SendTextResult;
 
-type AnaOutboundConversationLoader = typeof getConversationById;
+type AnaHandoffConversationLoader = typeof getConversationById;
+let anaHandoffConversationLoader: AnaHandoffConversationLoader = getConversationById;
 
-let anaOutboundConversationLoader: AnaOutboundConversationLoader = getConversationById;
-
-export function __setAnaOutboundConversationLoaderForTest(loader: AnaOutboundConversationLoader | null): void {
-  anaOutboundConversationLoader = loader ?? getConversationById;
+export function __setAnaHandoffConversationLoaderForTest(
+  loader: AnaHandoffConversationLoader
+): () => void {
+  const previous = anaHandoffConversationLoader;
+  anaHandoffConversationLoader = loader;
+  return () => {
+    anaHandoffConversationLoader = previous;
+  };
 }
 
-async function blockIfConversationInHandoff(params: {
+async function blockAutomaticSendForCurrentHandoff(params: {
   conversationId: number;
   phase: string;
-  automationType: string;
-}): Promise<AnaQuotaSendResult | null> {
-  const latestConversation = await anaOutboundConversationLoader(params.conversationId);
-  if (!isAnaAutomationBlockedByHandoff(latestConversation)) return null;
-  logAnaAutomationBlockedByHandoff(latestConversation!, {
+}): Promise<boolean> {
+  const conversation = await anaHandoffConversationLoader(params.conversationId);
+  if (!isAnaAutomationBlockedByHandoff(conversation)) return false;
+  logAnaAutomationBlockedByHandoff(conversation!, {
     conversationId: params.conversationId,
-    automationType: params.automationType,
+    automationType: params.phase,
     blockedAt: 'before_send',
-    source: params.phase,
+    source: 'ana_outbound_quota',
   });
-  return {
-    success: false,
-    error: 'handoff_active',
-    code: 423,
-  };
+  return true;
 }
 
 export async function sendAnaTextMessageWithQuota(params: {
@@ -69,12 +69,13 @@ export async function sendAnaTextMessageWithQuota(params: {
       code: 423,
     };
   }
-  const handoffBlock = await blockIfConversationInHandoff({
-    conversationId: params.conversationId,
-    phase: params.phase,
-    automationType: 'text',
-  });
-  if (handoffBlock) return handoffBlock;
+  if (await blockAutomaticSendForCurrentHandoff(params)) {
+    return {
+      success: false,
+      error: 'handoff_active',
+      code: 423,
+    };
+  }
   return sendTextMessage(params.to, params.text);
 }
 
@@ -99,12 +100,13 @@ export async function sendAnaLocalMediaToWhatsAppWithQuota(params: {
       code: 423,
     };
   }
-  const handoffBlock = await blockIfConversationInHandoff({
-    conversationId: params.conversationId,
-    phase: params.phase,
-    automationType: 'media',
-  });
-  if (handoffBlock) return handoffBlock;
+  if (await blockAutomaticSendForCurrentHandoff(params)) {
+    return {
+      success: false,
+      error: 'handoff_active',
+      code: 423,
+    };
+  }
   let fileSize = 0;
   try {
     fileSize = statSync(params.filePath).size;

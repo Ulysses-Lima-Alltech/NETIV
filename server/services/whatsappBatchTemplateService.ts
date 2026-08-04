@@ -62,6 +62,13 @@ export interface BatchExecutionResult {
   }>;
 }
 
+export interface BatchPersistedConversationState {
+  id: number;
+  contact_id: number | null;
+  handoff: boolean | null;
+  classification: string | null;
+}
+
 export interface BatchScheduleResult {
   scheduled: true;
   batchId: number;
@@ -80,6 +87,10 @@ export type BatchSendResult = BatchExecutionResult | BatchScheduleResult;
 type NormalizedBatchSendMode = BatchSendMode;
 type NormalizedBatchConversationType = BatchConversationType;
 type NormalizedBatchPostSendMode = BatchPostSendMode;
+
+export type BatchHandoffDeliveryDecision =
+  | { allowed: true; effectivePostSendMode: NormalizedBatchPostSendMode }
+  | { allowed: false; reason: 'handoff' | 'carteira' };
 
 interface BatchSendPreferences {
   conversationType?: BatchConversationType;
@@ -123,6 +134,30 @@ interface ScheduledBatchRecipientRow {
   variables_json: unknown;
   assigned_broker_id: number | null;
   status: 'PENDING' | 'PROCESSING' | 'SENT' | 'FAILED' | 'CANCELED';
+}
+
+function normalizeBatchClassification(value: string | null | undefined): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+export function resolveBatchHandoffDeliveryDecision(params: {
+  sourceKeyPrefix: string;
+  requestedPostSendMode: NormalizedBatchPostSendMode;
+  conversation: BatchPersistedConversationState | null;
+}): BatchHandoffDeliveryDecision {
+  const isScheduledAutomation = params.sourceKeyPrefix.startsWith('scheduled_batch:');
+  const inHandoff = isAnaAutomationBlockedByHandoff(params.conversation);
+  const inCarteira = normalizeBatchClassification(params.conversation?.classification) === 'carteira';
+
+  if (isScheduledAutomation) {
+    if (inHandoff) return { allowed: false, reason: 'handoff' };
+    if (inCarteira) return { allowed: false, reason: 'carteira' };
+  }
+
+  return {
+    allowed: true,
+    effectivePostSendMode: inHandoff ? 'HANDOFF' : params.requestedPostSendMode,
+  };
 }
 
 function normalizePhoneStrict(phoneRaw: string | null | undefined): { phoneNormalized: string | null; error: string | null } {
@@ -535,6 +570,63 @@ async function sendBatchCandidateNow(params: {
   postSendMode: NormalizedBatchPostSendMode;
   sourceKeyPrefix: string;
 }): Promise<BatchExecutionResult['details'][number]> {
+  // O template inicial foi solicitado por um operador. Ele pode ser entregue
+  // mesmo em handoff, mas nunca pode reativar automações posteriores da Ana.
+  const existingConversationResult = await query<BatchPersistedConversationState>(
+    `SELECT id, contact_id, handoff, classification
+       FROM conversations
+      WHERE regexp_replace(COALESCE(contact_phone, external_contact_id, ''), '\\D', '', 'g') = $1
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1`,
+    [params.candidate.phoneNormalized]
+  );
+  const existingConversation = existingConversationResult.rows[0] ?? null;
+  const source = params.sourceKeyPrefix.startsWith('scheduled_batch:')
+    ? 'scheduled_batch'
+    : 'immediate_batch';
+  const deliveryDecision = resolveBatchHandoffDeliveryDecision({
+    sourceKeyPrefix: params.sourceKeyPrefix,
+    requestedPostSendMode: params.postSendMode,
+    conversation: existingConversation,
+  });
+  if (!deliveryDecision.allowed) {
+    console.log('[WHATSAPP_BATCH_SCHEDULED_AUTOMATION_BLOCKED]', {
+      conversationId: existingConversation?.id ?? null,
+      contactId: existingConversation?.contact_id ?? null,
+      source,
+      reason: deliveryDecision.reason,
+    });
+    return {
+      rowNumber: params.candidate.rowNumber,
+      phoneOriginal: params.candidate.phoneOriginal,
+      phoneNormalized: params.candidate.phoneNormalized,
+      status: 'blocked',
+      error: `Envio agendado bloqueado: conversa em ${deliveryDecision.reason}.`,
+      templateKey: params.template.key,
+    };
+  }
+
+  const existingConversationInHandoff = isAnaAutomationBlockedByHandoff(existingConversation);
+  const effectivePostSendMode = deliveryDecision.effectivePostSendMode;
+  if (existingConversationInHandoff) {
+    if (params.postSendMode !== 'HANDOFF') {
+      console.log('[WHATSAPP_BATCH_OPERATOR_SEND_HANDOFF_PRESERVED]', {
+        conversationId: existingConversation!.id,
+        contactId: existingConversation!.contact_id ?? null,
+        requestedPostSendMode: params.postSendMode,
+        effectivePostSendMode: 'HANDOFF',
+        source,
+        reason: 'OPERATOR_SEND_ALLOWED_HANDOFF_PRESERVED',
+      });
+    }
+    console.log('[WHATSAPP_BATCH_INITIAL_TEMPLATE_HANDOFF_ALLOWED]', {
+      conversationId: existingConversation!.id,
+      contactId: existingConversation!.contact_id ?? null,
+      deliveryKind: 'operator_requested_initial_batch',
+      postSendMode: params.postSendMode,
+      source,
+    });
+  }
   const result = await sendTemplateMessage(params.candidate.phoneNormalized, params.template.key, {
     parameters: params.candidate.resolvedValues,
   });
@@ -566,23 +658,32 @@ async function sendBatchCandidateNow(params: {
     null,
     null
   );
-  const conversationInHandoff = isAnaAutomationBlockedByHandoff(conversation);
-  const effectivePostSendMode = conversationInHandoff ? 'HANDOFF' : params.postSendMode;
-  if (conversationInHandoff) {
+  const conversationInHandoffAfterSend =
+    isAnaAutomationBlockedByHandoff(conversation);
+
+  const routingPostSendMode = conversationInHandoffAfterSend
+    ? 'HANDOFF'
+    : effectivePostSendMode;
+
+  if (
+    conversationInHandoffAfterSend &&
+    routingPostSendMode !== effectivePostSendMode
+  ) {
     console.log('[WHATSAPP_BATCH_OPERATOR_SEND_HANDOFF_PRESERVED]', {
       conversationId: conversation.id,
       phoneTail: params.candidate.phoneNormalized.slice(-4),
       requestedPostSendMode: params.postSendMode,
-      effectivePostSendMode,
+      effectivePostSendMode: routingPostSendMode,
       handoff: conversation.handoff === true,
       classification: conversation.classification ?? null,
     });
   }
+
   await applyBatchConversationRouting({
     conversationId: conversation.id,
     contactId: contact.id,
     conversationType: params.conversationType,
-    postSendMode: effectivePostSendMode,
+    postSendMode: routingPostSendMode,
     brokerId: params.candidate.assignedBrokerId,
   });
 
@@ -803,7 +904,7 @@ async function finalizeScheduledBatch(batchId: number): Promise<void> {
     `SELECT
        COUNT(*)::text AS total,
        COUNT(*) FILTER (WHERE status = 'SENT')::text AS sent_count,
-       COUNT(*) FILTER (WHERE status = 'FAILED')::text AS failed_count
+       COUNT(*) FILTER (WHERE status IN ('FAILED', 'CANCELED'))::text AS failed_count
      FROM whatsapp_batch_scheduled_send_recipients
      WHERE batch_id = $1`,
     [batchId]
@@ -894,11 +995,15 @@ async function processClaimedScheduledBatch(batch: ScheduledBatchRow): Promise<v
       } else {
         await query(
           `UPDATE whatsapp_batch_scheduled_send_recipients
-           SET status = 'FAILED',
+           SET status = $1,
                updated_at = NOW(),
-               error_message = LEFT($1, 1000)
-           WHERE id = $2`,
-          [detail.error ?? 'Falha no envio do destinatário agendado.', claimed.id]
+               error_message = LEFT($2, 1000)
+           WHERE id = $3`,
+          [
+            detail.status === 'blocked' ? 'CANCELED' : 'FAILED',
+            detail.error ?? 'Falha no envio do destinatário agendado.',
+            claimed.id,
+          ]
         );
       }
     }

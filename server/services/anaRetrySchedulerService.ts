@@ -1,6 +1,5 @@
 ﻿
 import { upsertAnaRetryJob } from '../repositories/anaRetryJobRepository.js';
-import { getConversationById } from '../repositories/conversationRepository.js';
 import {
   computeRetryDelayMs,
   extractRetryAfterMs,
@@ -8,6 +7,7 @@ import {
   sanitizeRetryErrorMessage,
 } from '../utils/llmRetry.js';
 import { getAnaAutomationPauseReason } from '../utils/anaAutomationKillSwitch.js';
+import { getConversationById } from '../repositories/conversationRepository.js';
 import {
   isAnaAutomationBlockedByHandoff,
   logAnaAutomationBlockedByHandoff,
@@ -20,6 +20,16 @@ export async function scheduleAnaRetry(params: {
   attemptCount?: number;
   reasonOverride?: string;
 }): Promise<void> {
+  const conversation = await getConversationById(params.conversationId);
+  if (isAnaAutomationBlockedByHandoff(conversation)) {
+    logAnaAutomationBlockedByHandoff(conversation!, {
+      conversationId: params.conversationId,
+      automationType: 'retry',
+      blockedAt: 'before_enqueue',
+      source: 'ana_retry_scheduler',
+    });
+    return;
+  }
   const killSwitchReason = getAnaAutomationPauseReason();
   if (killSwitchReason) {
     if (killSwitchReason === 'ana_emergency_handoff_active') {
@@ -44,18 +54,6 @@ export async function scheduleAnaRetry(params: {
     return;
   }
 
-  const conversation = await getConversationById(params.conversationId);
-  if (isAnaAutomationBlockedByHandoff(conversation)) {
-    logAnaAutomationBlockedByHandoff(conversation!, {
-      conversationId: params.conversationId,
-      automationType: 'retry',
-      blockedAt: 'before_enqueue',
-      source: 'ana_retry_scheduler',
-      metaMessageId: params.triggerMessageId != null ? String(params.triggerMessageId) : null,
-    });
-    return;
-  }
-
   const retryAfterMsRaw = extractRetryAfterMs(params.error);
   const retryAfterMs = computeRetryDelayMs({
     attemptCount: params.attemptCount ?? 0,
@@ -74,6 +72,7 @@ export async function scheduleAnaRetry(params: {
     lastError: sanitizeRetryErrorMessage(params.error),
     lastErrorCode: null,
   });
+
   if (!job) {
     const latestConversation = await getConversationById(params.conversationId);
     if (isAnaAutomationBlockedByHandoff(latestConversation)) {
@@ -82,7 +81,6 @@ export async function scheduleAnaRetry(params: {
         automationType: 'retry',
         blockedAt: 'before_enqueue',
         source: 'ana_retry_scheduler_atomic_guard',
-        metaMessageId: params.triggerMessageId != null ? String(params.triggerMessageId) : null,
       });
     }
     return;

@@ -120,11 +120,11 @@ export async function upsertActiveAnaVisitFollowupJob(params: {
        suggestion_status,
        updated_at
      )
-     SELECT c.id, 'active', $2, $3, 1, 0, $4, $5, $6, $7, $8, $9, $10, NOW()
-       FROM conversations c
-      WHERE c.id = $1
-        AND COALESCE(c.handoff, false) = false
-        AND lower(trim(COALESCE(c.classification, ''))) <> 'handoff'
+     SELECT $1, 'active', $2, $3, 1, 0, $4, $5, $6, $7, $8, $9, $10, NOW()
+     FROM conversations c
+     WHERE c.id = $1
+       AND COALESCE(c.handoff, false) = false
+       AND lower(trim(COALESCE(c.classification, ''))) <> 'handoff'
      ON CONFLICT (conversation_id)
        WHERE status IN ('active', 'processing')
      DO UPDATE SET
@@ -440,8 +440,7 @@ export async function revalidateAnaVisitFollowupJobForSend(params: {
          WHEN conversation_id <> $3 THEN 'conversation_mismatch'
          WHEN next_attempt_index <> $4 THEN 'attempt_index_changed'
          WHEN conv_id IS NULL THEN 'conversation_not_found'
-         WHEN COALESCE(conv_handoff, false) = true
-           OR lower(trim(COALESCE(conv_classification, ''))) = 'handoff' THEN 'handoff'
+         WHEN COALESCE(conv_handoff, false) = true OR lower(trim(COALESCE(conv_classification, ''))) = 'handoff' THEN 'handoff'
          WHEN conv_classification = 'Carteira' THEN 'carteira'
          WHEN conv_manual_closed_at IS NOT NULL THEN 'manual_closed'
          WHEN COALESCE(conv_conversation_type, 'CLIENT') <> 'CLIENT' THEN 'non_client_conversation'

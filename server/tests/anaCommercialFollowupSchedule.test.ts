@@ -98,7 +98,10 @@ test('novo inbound reseta completamente o ciclo geral e cancela visita', () => {
   assert.match(resetSource, /ana_followup_for_user_message_id = NULL/);
   assert.match(resetSource, /ana_followup_attempt_count = 0/);
   assert.match(resetSource, /ana_followup_next_at = NULL/);
-  assert.match(resetSource, /ana_followup_status = CASE WHEN classification = 'Carteira' THEN 'cancelled' ELSE 'idle' END/);
+  assert.match(
+    resetSource,
+    /ana_followup_status = CASE[\s\S]*WHEN classification = 'Carteira' OR handoff = true[\s\S]*THEN 'cancelled'[\s\S]*ELSE 'idle'/
+  );
   assert.match(resetSource, /ANA_FOLLOWUP_RESET/);
   assert.match(resetSource, /reason: 'customer_replied'/);
 });
