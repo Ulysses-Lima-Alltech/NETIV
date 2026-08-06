@@ -1,5 +1,4 @@
 import { ANA_COMMERCIAL_RULES, type AnaCommercialIntent } from '../config/anaCommercialRules.js';
-import { computeAnaFollowupAtUtc } from '../utils/anaFollowupCadence.js';
 
 export type AnaCommercialAxis =
   | 'price'
@@ -303,24 +302,6 @@ export function resolveAnaCommercialRule(params: {
     inheritedIntent: null,
     financialIntentType: financialIntentTypeFromIntent(intent),
   };
-}
-
-export function resolveAnaCommercialFollowupMessage(params: {
-  enterpriseName: string | null | undefined;
-  cycleCount: number;
-}): string | null {
-  if (!isEvoraEnterpriseName(params.enterpriseName)) return null;
-  if (!Number.isInteger(params.cycleCount) || params.cycleCount < 0) return null;
-  const message = ANA_COMMERCIAL_RULES.followupWhileNoResponseMessages[params.cycleCount] ?? null;
-  return message && message.trim() ? message : null;
-}
-
-export function computeCommercialFollowupEligibleAtUtc(lastAnaMessageAt: Date, cycleCount: number): Date | null {
-  if (!Number.isInteger(cycleCount) || cycleCount < 0) return null;
-  return computeAnaFollowupAtUtc({
-    anchor: lastAnaMessageAt,
-    attemptIndex: cycleCount + 1,
-  });
 }
 
 

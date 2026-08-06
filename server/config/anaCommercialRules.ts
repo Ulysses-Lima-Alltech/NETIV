@@ -78,11 +78,5 @@ export const ANA_COMMERCIAL_RULES = {
       'Não tenho esse material liberado para envio por aqui. Posso te encaminhar para o corretor responsável ou, se preferir, te ajudar a agendar uma visita.',
     ],
   } satisfies Record<Exclude<AnaCommercialIntent, 'first_contact'>, string[]>,
-  followupWhileNoResponseMessages: [
-    'Se quiser, eu te explico opções de tamanho de lote, localização e condições de pagamento.',
-    'Também posso te mostrar os diferenciais de lazer e infraestrutura para você comparar com calma.',
-    'Se preferir, já te explico as condições gerais de pagamento para facilitar sua análise.',
-    'Você deu uma sumida. Se quiser posso te enviar o Book pra você analisar, o que acha?',
-  ],
 } as const;
 

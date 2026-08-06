@@ -244,10 +244,6 @@ import {
   startAnaVisitFollowupIfEligible,
 } from './anaVisitFollowupService.js';
 import {
-  cancelAnaGeneralFollowupForConversation,
-  startAnaGeneralFollowupIfEligible,
-} from './anaGeneralFollowupService.js';
-import {
   extractAnaVisitSlotPreferenceFromText,
   findNextAvailableVisitSlot,
   formatAnaVisitSlotLabel,
@@ -2006,39 +2002,6 @@ export function shouldBlockAnaTextReplyForDocMediaFailure(params: {
   return true;
 }
 
-async function startAnaGeneralFollowupAfterSuccessfulAnaSend(params: {
-  conversationId: number;
-  sourcePhase: string;
-  finalReplyText: string;
-  assistantMessageId: number;
-  assistantCreatedAt: Date;
-}): Promise<void> {
-  try {
-    const [conversation, lastUserMessage] = await Promise.all([
-      getConversationById(params.conversationId),
-      getLastUserMessageRow(params.conversationId),
-    ]);
-    await startAnaGeneralFollowupIfEligible({
-      conversationId: params.conversationId,
-      enterpriseId: conversation?.enterprise_id ?? null,
-      assistantMessageId: params.assistantMessageId,
-      assistantCreatedAt: params.assistantCreatedAt,
-      lastUserMessageId: lastUserMessage?.id ?? null,
-      finalReplyText: params.finalReplyText,
-      commercialFlowState: conversation?.commercial_flow_state ?? null,
-      sourcePhase: params.sourcePhase,
-      conversation,
-    });
-  } catch (error) {
-    console.error('[ANA_GENERAL_FOLLOWUP] start_error', {
-      conversationId: params.conversationId,
-      sourcePhase: params.sourcePhase,
-      assistantMessageId: params.assistantMessageId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
 async function persistPendingAssistantContinuationFromSplitStale(params: {
   conversationId: number;
   sentParts: string[];
@@ -2177,16 +2140,6 @@ async function sendAnaOutboundMessages(params: {
     partsSent: sentParts.length,
     outboundMetaMessageIds: metaMessageIds,
   });
-  const anchorAssistantMessage = insertedMessages[insertedMessages.length - 1] ?? null;
-  if (anchorAssistantMessage) {
-    await startAnaGeneralFollowupAfterSuccessfulAnaSend({
-      conversationId: params.conversationId,
-      sourcePhase: params.phase,
-      finalReplyText: sentParts.join('\n\n').trim() || params.text,
-      assistantMessageId: anchorAssistantMessage.id,
-      assistantCreatedAt: anchorAssistantMessage.created_at,
-    });
-  }
   return { success: true, metaMessageIds, messageIds, sentParts };
 }
 
@@ -4472,11 +4425,6 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         conversationId,
         reason: blockedReason,
       });
-      await cancelAnaGeneralFollowupForConversation({
-        conversationId,
-        reason: blockedReason,
-        source: 'engine_blocked_inactive_wallet_or_closed',
-      });
       return;
     }
 
@@ -4517,11 +4465,6 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
       await cancelAnaVisitFollowupForConversation({
         conversationId,
         reason: 'handoff',
-      });
-      await cancelAnaGeneralFollowupForConversation({
-        conversationId,
-        reason: 'handoff',
-        source: 'engine_blocked_handoff',
       });
       return;
     }
@@ -4728,11 +4671,6 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         await cancelAnaVisitFollowupForConversation({
           conversationId,
           reason: 'handoff',
-        });
-        await cancelAnaGeneralFollowupForConversation({
-          conversationId,
-          reason: 'handoff',
-          source: 'broker_assignment',
         });
         if (assignment.assignedBrokerId != null) {
           const enterpriseNameForNotification = assignment.enterpriseName ?? 'empreendimento';
@@ -6937,11 +6875,6 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
                 conversationId,
                 reason: 'handoff',
               });
-              await cancelAnaGeneralFollowupForConversation({
-                conversationId,
-                reason: 'handoff',
-                source: 'pending_resolution_broker_assignment',
-              });
 
               if (assignment.assignedBrokerId != null) {
                 const enterpriseNameForNotification =
@@ -7704,11 +7637,6 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
             conversationId,
             reason: 'visit_scheduled',
           });
-          await cancelAnaGeneralFollowupForConversation({
-            conversationId,
-            reason: 'visit_scheduled',
-            source: 'direct_visit_confirmed_before_send',
-          });
           console.log('[ANA_VISIT_STATE_SAVED]', {
             conversationId,
             source: 'direct_visit_confirmed',
@@ -7945,11 +7873,6 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         await cancelAnaVisitFollowupForConversation({
           conversationId,
           reason: 'visit_scheduled',
-        });
-        await cancelAnaGeneralFollowupForConversation({
-          conversationId,
-          reason: 'visit_scheduled',
-          source: 'direct_visit_confirmed_after_send',
         });
       } else if (directVisitDeclinedSuggestedSlot) {
         await cancelAnaVisitFollowupForConversation({
@@ -11686,11 +11609,6 @@ if (effectiveCommercialRule.ruleId === 'localizacao_endereco' && commercialMessa
             conversationId,
             reason: 'visit_scheduled',
           });
-          await cancelAnaGeneralFollowupForConversation({
-            conversationId,
-            reason: 'visit_scheduled',
-            source: 'structured_appointment_registered',
-          });
         }
       } catch (e) {
         console.error('[ANA APPT]', e);
@@ -14206,11 +14124,6 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
         await cancelAnaVisitFollowupForConversation({
           conversationId,
           reason: 'visit_scheduled',
-        });
-        await cancelAnaGeneralFollowupForConversation({
-          conversationId,
-          reason: 'visit_scheduled',
-          source: 'structured_appointment_post_send',
         });
       } else {
         await startAnaVisitFollowupIfEligible({

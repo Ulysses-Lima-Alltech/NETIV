@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { sendAnaTextMessageWithQuota } from '../services/anaOutboundQuotaService.js';
-import { processAnaReengagementScan } from '../services/anaReengagementService.js';
 import { processAnaRetryJobsTick } from '../services/anaRetryWorkerService.js';
 import { startAnaVisitFollowupIfEligible } from '../services/anaVisitFollowupService.js';
 import { sendAnaEmergencyHandoff } from '../utils/anaEmergencyHandoff.js';
@@ -156,10 +155,8 @@ test('background sources continuam bloqueados com ANA_AUTOMATION_DISABLED=true m
     },
     () => {
       const sources = [
-        'ana_followup_scan',
         'ana_retry_worker',
         'ana_visit_followup',
-        'ana_reengagement_followup',
         'scheduled_batch',
         'ana_retry_scheduler',
         'ana_reprocess',
@@ -238,7 +235,7 @@ test('ANA_OUTBOUND_DISABLED=true bloqueia tambem inbound direto autorizado', asy
   );
 });
 
-test('ANA_EMERGENCY_HANDOFF=true bloqueia scan e retry worker antes de DB/OpenAI/Meta', async () => {
+test('ANA_EMERGENCY_HANDOFF=true bloqueia retry worker antes de DB/OpenAI/Meta', async () => {
   await withEnv(
     {
       ANA_EMERGENCY_HANDOFF: 'true',
@@ -247,13 +244,12 @@ test('ANA_EMERGENCY_HANDOFF=true bloqueia scan e retry worker antes de DB/OpenAI
       ANA_DIRECT_INBOUND_REPLY_ENABLED: undefined,
     },
     async () => {
-      await processAnaReengagementScan();
       await processAnaRetryJobsTick();
     }
   );
 });
 
-test('ANA_AUTOMATION_DISABLED=true bloqueia follow-up, retry e visit follow-up sem buscar jobs', async () => {
+test('ANA_AUTOMATION_DISABLED=true bloqueia retry e visit follow-up sem buscar jobs', async () => {
   await withEnv(
     {
       ANA_AUTOMATION_DISABLED: 'true',
@@ -264,7 +260,6 @@ test('ANA_AUTOMATION_DISABLED=true bloqueia follow-up, retry e visit follow-up s
     async () => {
       assert.equal(isAnaAutomationDisabled(), true);
       const logs = await captureConsoleLogs(async () => {
-        await processAnaReengagementScan();
         await processAnaRetryJobsTick();
         await startAnaVisitFollowupIfEligible({
           conversationId: 456,
@@ -279,7 +274,6 @@ test('ANA_AUTOMATION_DISABLED=true bloqueia follow-up, retry e visit follow-up s
       });
       const joinedLogs = logs.join('\n');
       assert.match(joinedLogs, /ANA_AUTOMATION_SKIP/);
-      assert.doesNotMatch(joinedLogs, /ANA_FOLLOWUP_SENT/);
       assert.doesNotMatch(joinedLogs, /outboundMetaMessageId/);
     }
   );
@@ -338,7 +332,6 @@ test('kill switch util interpreta flags e retorna decisao com source/conversatio
 
 test('textos outbound principais da Ana nao possuem mojibake', () => {
   const files = [
-    'services/anaReengagementService.ts',
     'utils/anaVisitFollowupCadence.ts',
     'config/anaCommercialRules.ts',
     'services/conversationEngine.ts',

@@ -1045,42 +1045,6 @@ export interface ApplyAnaConversationPolicyResult {
   changed: boolean;
 }
 
-export interface AnaReengagementPolicyInput {
-  lastInboundAt: Date | null;
-  lastOutboundAt: Date | null;
-  now?: Date;
-  minIdleMinutes?: number;
-}
-
-export interface AnaReengagementPolicyResult {
-  allowed: boolean;
-  reason: 'ok' | 'recent_inbound' | 'recent_outbound' | 'active_conversation';
-  activeConversation: boolean;
-}
-
-export function evaluateAnaReengagementPolicy(
-  input: AnaReengagementPolicyInput
-): AnaReengagementPolicyResult {
-  const now = input.now ?? new Date();
-  const minIdleMinutes = Number.isFinite(input.minIdleMinutes ?? NaN)
-    ? Math.max(1, Number(input.minIdleMinutes))
-    : 60;
-  const minIdleMs = minIdleMinutes * 60_000;
-  const lastInboundMs = input.lastInboundAt ? input.lastInboundAt.getTime() : NaN;
-  const lastOutboundMs = input.lastOutboundAt ? input.lastOutboundAt.getTime() : NaN;
-  const inboundRecent = Number.isFinite(lastInboundMs) && now.getTime() - lastInboundMs < minIdleMs;
-  const outboundRecent = Number.isFinite(lastOutboundMs) && now.getTime() - lastOutboundMs < minIdleMs;
-  if (inboundRecent) return { allowed: false, reason: 'recent_inbound', activeConversation: true };
-  if (outboundRecent) return { allowed: false, reason: 'recent_outbound', activeConversation: true };
-  const closeExchange =
-    Number.isFinite(lastInboundMs) &&
-    Number.isFinite(lastOutboundMs) &&
-    Math.abs(lastInboundMs - lastOutboundMs) < minIdleMs &&
-    now.getTime() - Math.max(lastInboundMs, lastOutboundMs) < minIdleMs;
-  if (closeExchange) return { allowed: false, reason: 'active_conversation', activeConversation: true };
-  return { allowed: true, reason: 'ok', activeConversation: false };
-}
-
 export function applyAnaConversationPolicy(
   input: ApplyAnaConversationPolicyInput
 ): ApplyAnaConversationPolicyResult {

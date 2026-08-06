@@ -227,7 +227,6 @@ export interface ConversationListItem {
   manualClosedAt?: string | null;
   manualClosedByUserId?: number | null;
   manualClosedReason?: string | null;
-  reengagementCount?: number;
   conversationType?: 'CLIENT' | 'INTERNO' | string;
 }
 
@@ -1414,10 +1413,4 @@ export const knowledgeApi = {
     const qs = q.toString();
     return request<{ success: boolean; files: any[] }>(`/knowledge/files${qs ? `?${qs}` : ''}`);
   },
-};
-
-// Reengagement API
-export const reengagementApi = {
-  getStatus: () => request<{ active: boolean; service: string; timestamp: string }>('/reengagement/status'),
-  triggerScan: () => request<{ success: boolean; message: string; timestamp: string }>('/reengagement/scan', { method: 'POST' }),
 };

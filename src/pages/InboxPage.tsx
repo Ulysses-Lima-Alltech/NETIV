@@ -149,7 +149,6 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     manualClosedAt: c.manualClosedAt ?? null,
     manualClosedByUserId: c.manualClosedByUserId ?? null,
     manualClosedReason: c.manualClosedReason ?? null,
-    reengagementCount: c.reengagementCount ?? 0,
     conversationType: c.conversationType ?? 'CLIENT',
   };
 }

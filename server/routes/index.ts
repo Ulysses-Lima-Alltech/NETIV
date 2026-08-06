@@ -23,7 +23,6 @@ import dashboardRouter from './dashboard.js';
 import contactsRouter from './contacts.js';
 import apiDjangoRouter from './apiDjango.js';
 import whatsappBatchRouter from './whatsappBatch.js';
-import reengagementRouter from './reengagement.js';
 import knowledgeRouter from './knowledge.js';
 import realtimeRouter from './realtime.js';
 import { requireAuth, requirePasswordChangeComplete, requireRole } from '../middleware/auth.js';
@@ -65,7 +64,6 @@ router.use('/openai', requireRole(...ROLES_SETTINGS_ADMIN), openaiTestRouter);
 router.use('/ai', requireRole(...ROLES_SETTINGS_ADMIN), aiChatRouter);
 router.use('/contacts', contactsRouter);
 router.use('/whatsapp-batch', requireRole(...ROLES_SETTINGS_ADMIN), whatsappBatchRouter);
-router.use('/reengagement', requireRole(...ROLES_SETTINGS_ADMIN), reengagementRouter);
 router.use('/knowledge', requireRole(...ROLES_SETTINGS_ADMIN), knowledgeRouter);
 
 export default router;

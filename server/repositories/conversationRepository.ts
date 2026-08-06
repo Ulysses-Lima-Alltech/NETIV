@@ -77,22 +77,10 @@ export interface ConversationRow {
   handoff_deferred_broker_id?: number | null;
   /** JSON: etapa comercial, última listagem, inferência de foco (continuidade em mensagens curtas). */
   commercial_flow_state?: unknown;
-  /** Campos de reengajamento manual e automático */
+  /** Encerramento manual da conversa. */
   manual_closed_at?: Date | null;
   manual_closed_by_user_id?: number | null;
   manual_closed_reason?: string | null;
-  reengagement_sent_at?: Date | null;
-  reengagement_for_user_message_id?: number | null;
-  reengagement_count?: number;
-  ana_followup_anchor_assistant_message_id?: number | null;
-  ana_followup_anchor_assistant_created_at?: Date | null;
-  ana_followup_for_user_message_id?: number | null;
-  ana_followup_attempt_count?: number;
-  ana_followup_last_attempt_at?: Date | null;
-  ana_followup_last_sent_message_id?: number | null;
-  ana_followup_next_at?: Date | null;
-  ana_followup_status?: 'idle' | 'active' | 'cancelled' | string | null;
-  ana_followup_cancel_reason?: string | null;
   pending_resolution_choice?: boolean;
   pending_resolution_reason?: string | null;
   pending_resolution_intent?: string | null;
@@ -544,18 +532,6 @@ async function resetConversationCommercialStateForDelete(
        manual_closed_at = NULL,
        manual_closed_by_user_id = NULL,
        manual_closed_reason = NULL,
-       reengagement_sent_at = NULL,
-       reengagement_for_user_message_id = NULL,
-       reengagement_count = 0,
-       ana_followup_anchor_assistant_message_id = NULL,
-       ana_followup_anchor_assistant_created_at = NULL,
-       ana_followup_for_user_message_id = NULL,
-       ana_followup_attempt_count = 0,
-       ana_followup_last_attempt_at = NULL,
-       ana_followup_last_sent_message_id = NULL,
-       ana_followup_next_at = NULL,
-       ana_followup_status = 'idle',
-       ana_followup_cancel_reason = NULL,
        updated_at = NOW()
      WHERE id = $1`,
     [conversationId]
@@ -737,18 +713,6 @@ export async function resetConversationState(id: number): Promise<boolean> {
        manual_closed_at = NULL,
        manual_closed_by_user_id = NULL,
        manual_closed_reason = NULL,
-       reengagement_sent_at = NULL,
-       reengagement_for_user_message_id = NULL,
-       reengagement_count = 0,
-       ana_followup_anchor_assistant_message_id = NULL,
-       ana_followup_anchor_assistant_created_at = NULL,
-       ana_followup_for_user_message_id = NULL,
-       ana_followup_attempt_count = 0,
-       ana_followup_last_attempt_at = NULL,
-       ana_followup_last_sent_message_id = NULL,
-       ana_followup_next_at = NULL,
-       ana_followup_status = 'idle',
-       ana_followup_cancel_reason = NULL,
        updated_at = NOW()
      WHERE id = $1`,
     [id]
@@ -1641,7 +1605,7 @@ export async function markAnaAskedForCustomerName(conversationId: number): Promi
 }
 
 /**
- * Novo inbound do cliente: reabre conversa encerrada manualmente e inicia novo ciclo de reengajamento.
+ * Novo inbound do cliente: reabre conversa encerrada manualmente.
  */
 export async function applyInboundUserMessageResets(conversationId: number): Promise<void> {
   await query(
@@ -1649,29 +1613,10 @@ export async function applyInboundUserMessageResets(conversationId: number): Pro
        manual_closed_at = CASE WHEN classification = 'Carteira' THEN manual_closed_at ELSE NULL END,
        manual_closed_by_user_id = CASE WHEN classification = 'Carteira' THEN manual_closed_by_user_id ELSE NULL END,
        manual_closed_reason = CASE WHEN classification = 'Carteira' THEN manual_closed_reason ELSE NULL END,
-       reengagement_sent_at = NULL,
-       reengagement_for_user_message_id = NULL,
-       reengagement_count = 0,
-       ana_followup_anchor_assistant_message_id = NULL,
-       ana_followup_anchor_assistant_created_at = NULL,
-       ana_followup_for_user_message_id = NULL,
-       ana_followup_attempt_count = 0,
-       ana_followup_last_attempt_at = NULL,
-       ana_followup_last_sent_message_id = NULL,
-       ana_followup_next_at = NULL,
-       ana_followup_status = CASE WHEN classification = 'Carteira' THEN 'cancelled' ELSE 'idle' END,
-       ana_followup_cancel_reason = CASE
-         WHEN classification = 'Carteira' THEN COALESCE(ana_followup_cancel_reason, 'auto_wallet_after_5_days_inactive')
-         ELSE NULL
-       END,
        updated_at = NOW()
      WHERE id = $1`,
     [conversationId]
   );
-  console.log('[ANA_FOLLOWUP_RESET]', {
-    conversationId,
-    reason: 'customer_replied',
-  });
   await cancelActiveAnaVisitFollowupJobs({
     conversationId,
     reason: 'customer_replied',
