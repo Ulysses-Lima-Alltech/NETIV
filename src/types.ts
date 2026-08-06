@@ -67,6 +67,42 @@ export interface MessageAttachment {
   whatsappMediaId?: string | null;
   caption?: string | null;
   enterpriseFileId?: number | null;
+  templateMediaSettingId?: number | null;
+  storageFolder?: string | null;
+  mediaType?: 'image' | 'video' | 'document' | null;
+  downloadUrl?: string | null;
+}
+
+export type MessageDeliveryStatus = 'pending' | 'accepted' | 'sent' | 'delivered' | 'read' | 'failed';
+
+export interface MessageTemplateButton {
+  type: 'url' | 'quick_reply' | 'phone_number' | 'unknown';
+  text: string;
+  url: string | null;
+  payload: string | null;
+}
+
+export interface MessageTemplateMetadata {
+  messageType: 'template';
+  templateName: string;
+  templateId: string | null;
+  templateLanguage: string;
+  category: string | null;
+  bodyOriginal: string;
+  parameters: Array<{ position: number; value: string }>;
+  renderedText: string;
+  header: {
+    type: 'none' | 'text' | 'image' | 'video' | 'document';
+    text: string | null;
+    media: Record<string, unknown> | null;
+  };
+  buttons: MessageTemplateButton[];
+}
+
+export interface MessageFailure {
+  code: number | null;
+  title: string | null;
+  message: string;
 }
 
 export interface Message {
@@ -76,8 +112,18 @@ export interface Message {
   text: string;
   createdAt: string; // ISO date
   /** document | image quando envio com arquivo */
-  messageType?: 'text' | 'document' | 'image';
+  messageType?: 'text' | 'document' | 'image' | 'video';
   attachment?: MessageAttachment | null;
+  status?: MessageDeliveryStatus;
+  template?: MessageTemplateMetadata | null;
+  failure?: MessageFailure | null;
+  origin?: string | null;
+  batch?: { batchId: number | null; recipientId: number | null; rowNumber: number | null } | null;
+  enterpriseId?: number | null;
+  sentAt?: string | null;
+  deliveredAt?: string | null;
+  readAt?: string | null;
+  failedAt?: string | null;
   /** true quando a mensagem foi apagada internamente (soft delete NETIV) */
   deleted?: boolean;
   deletedAt?: string | null;

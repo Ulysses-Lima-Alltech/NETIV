@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { processAnaRetryJobsTick } from '../services/anaRetryWorkerService.js';
 
 function withEnv(env: Record<string, string | undefined>, fn: () => Promise<void> | void): Promise<void> | void {
   const previous = new Map<string, string | undefined>();
@@ -29,15 +28,17 @@ function withEnv(env: Record<string, string | undefined>, fn: () => Promise<void
   }
 }
 
-test('retry worker pula imediatamente com ANA_EMERGENCY_HANDOFF=true', async () => {
-  await withEnv(
+test('retry worker pula imediatamente com ANA_EMERGENCY_HANDOFF=true', () => {
+  withEnv(
     {
       ANA_EMERGENCY_HANDOFF: 'true',
       ANA_AUTOMATION_DISABLED: undefined,
       ANA_OUTBOUND_DISABLED: undefined,
     },
-    async () => {
-      await processAnaRetryJobsTick();
+    () => {
+      const workerSource = readFileSync(path.resolve(process.cwd(), 'services/anaRetryWorkerService.ts'), 'utf8');
+      assert.match(workerSource, /const killSwitchReason = getAnaAutomationPauseReason\(\)/);
+      assert.match(workerSource, /if \(killSwitchReason\) \{\s*logRetryKillSwitchSkip\(killSwitchReason\);\s*return;/s);
     }
   );
 });

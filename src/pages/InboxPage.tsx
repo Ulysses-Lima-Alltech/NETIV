@@ -16,6 +16,7 @@ import { InboxFilterBar } from '../components/InboxFilterBar';
 import { ScopeBanner } from '../components/ScopeBanner';
 import {
   DEFAULT_INBOX_FILTERS,
+  getInboxDateRangeError,
   hasActiveInboxFilters,
   inboxFiltersToApiParams,
   type InboxFilters,
@@ -155,13 +156,14 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
 
 function mapApiMessageToMessage(m: MessageListItem, conversationId: string): Message {
   const att = m.attachment;
+  const canonicalText = m.template?.renderedText?.trim() || m.content || '';
   return {
     id: String(m.id),
     conversationId,
     sender: m.direction === 'inbound' ? 'LEAD' : 'AGENT',
-    text: m.deleted ? '' : (m.content || ''),
+    text: m.deleted ? '' : canonicalText,
     createdAt: m.createdAt,
-    messageType: m.type === 'document' || m.type === 'image' ? m.type : 'text',
+    messageType: m.type === 'document' || m.type === 'image' || m.type === 'video' ? m.type : 'text',
     attachment: m.deleted
       ? null
       : att?.fileName
@@ -172,8 +174,24 @@ function mapApiMessageToMessage(m: MessageListItem, conversationId: string): Mes
             whatsappMediaId: att.whatsappMediaId ?? null,
             caption: att.caption ?? null,
             enterpriseFileId: att.enterpriseFileId ?? null,
+            templateMediaSettingId: att.templateMediaSettingId ?? null,
+            storageFolder: att.storageFolder ?? null,
+            mediaType: att.mediaType ?? null,
+            downloadUrl: att.downloadUrl ?? null,
           }
         : null,
+    status: m.status === 'pending' || m.status === 'accepted' || m.status === 'delivered' || m.status === 'read' || m.status === 'failed'
+      ? m.status
+      : 'sent',
+    template: m.template ?? null,
+    failure: m.failure ?? null,
+    origin: m.origin ?? null,
+    batch: m.batch ?? null,
+    enterpriseId: m.enterpriseId ?? null,
+    sentAt: m.sentAt ?? null,
+    deliveredAt: m.deliveredAt ?? null,
+    readAt: m.readAt ?? null,
+    failedAt: m.failedAt ?? null,
     deleted: m.deleted ?? false,
     deletedAt: m.deletedAt ?? null,
   };
@@ -213,6 +231,7 @@ export function InboxPage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedConversationSnapshot, setSelectedConversationSnapshot] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [messagesError, setMessagesError] = useState<string | null>(null);
@@ -244,6 +263,8 @@ export function InboxPage() {
   const [hasPendingRealtimeUpdates, setHasPendingRealtimeUpdates] = useState(false);
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const realtimeFetchDebounceTimersRef = useRef<Map<string, number>>(new Map());
+  const periodRealtimeReloadTimerRef = useRef<number | null>(null);
+  const isInboxPageMountedRef = useRef(true);
 
   const rawConversationParam = searchParams.get('conversationId')?.trim() ?? '';
   const parsedConversationId = useMemo(() => {
@@ -266,6 +287,34 @@ export function InboxPage() {
     const t = setTimeout(() => setSearchDebounced(filters.search), 400);
     return () => clearTimeout(t);
   }, [filters.search]);
+
+  const dateRangeError = getInboxDateRangeError(filters);
+  const hasDateFilter = filters.dateFrom !== null || filters.dateTo !== null;
+  const periodFilterKey = `${filters.dateFrom ?? ''}|${filters.dateTo ?? ''}|${filters.dateReference}`;
+  const periodFilterKeyRef = useRef(periodFilterKey);
+
+  useEffect(() => {
+    isInboxPageMountedRef.current = true;
+    return () => {
+      isInboxPageMountedRef.current = false;
+      if (periodRealtimeReloadTimerRef.current != null) {
+        window.clearTimeout(periodRealtimeReloadTimerRef.current);
+        periodRealtimeReloadTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (periodFilterKeyRef.current === periodFilterKey) return;
+    periodFilterKeyRef.current = periodFilterKey;
+    conversationsRequestIdRef.current += 1;
+    if (periodRealtimeReloadTimerRef.current != null) {
+      window.clearTimeout(periodRealtimeReloadTimerRef.current);
+      periodRealtimeReloadTimerRef.current = null;
+    }
+    setConversations([]);
+    setConversationsLoading(!dateRangeError);
+  }, [dateRangeError, periodFilterKey]);
 
   const isUserAtBottom = useCallback(() => {
     const el = chatScrollRef.current;
@@ -391,8 +440,11 @@ export function InboxPage() {
     realtimeFetchDebounceTimersRef.current.set(conversationId, timerId);
   }, [fetchAndMergeConversationById]);
 
-  const selectedConversation = selectedId
+  const selectedConversationInList = selectedId
     ? conversations.find((c) => c.id === selectedId) ?? null
+    : null;
+  const selectedConversation = selectedId
+    ? selectedConversationInList ?? selectedConversationSnapshot
     : null;
   const selectedWindow = selectedConversation?.whatsappWindow ?? null;
 
@@ -429,19 +481,28 @@ export function InboxPage() {
   }, [filters.readState]);
 
   const loadConversations = useCallback((silent?: boolean) => {
-    if (!silent) setConversationsLoading(true);
     const requestId = ++conversationsRequestIdRef.current;
+    if (dateRangeError) {
+      setConversations([]);
+      if (!silent) setConversationsLoading(false);
+      return Promise.resolve();
+    }
+    if (!silent) setConversationsLoading(true);
     const params = inboxFiltersToApiParams({ ...filters, search: searchDebounced });
     return whatsappApi
       .getConversations({ ...params, limit: 200, type: activeTab })
       .then((data) => {
-        if (requestId !== conversationsRequestIdRef.current) return;
+        if (!isInboxPageMountedRef.current || requestId !== conversationsRequestIdRef.current) return;
         const mappedRaw = data.conversations.map(mapApiConversationToConversation);
         const mappedWithUnread = mappedRaw.map((c) => ({
           ...c,
           unreadCount: c.id === selectedIdRef.current ? 0 : computeUnreadCountFromReadState(c, readStateMapRef.current),
         }));
         const mapped = applyReadFilter(mappedWithUnread);
+        if (hasDateFilter) {
+          setConversations(mapped);
+          return;
+        }
         setConversations((prev) => {
           const sid = selectedIdRef.current;
           if (!sid) return mapped;
@@ -454,14 +515,23 @@ export function InboxPage() {
         });
       })
       .catch(() => {
-        if (requestId !== conversationsRequestIdRef.current) return;
+        if (!isInboxPageMountedRef.current || requestId !== conversationsRequestIdRef.current) return;
         // Mantém lista atual para não perder seleção/conversa ativa em falha transitória.
       })
       .finally(() => {
-        if (requestId !== conversationsRequestIdRef.current) return;
+        if (!isInboxPageMountedRef.current || requestId !== conversationsRequestIdRef.current) return;
         if (!silent) setConversationsLoading(false);
       });
-  }, [activeTab, filters, searchDebounced, applyReadFilter]);
+  }, [activeTab, dateRangeError, filters, hasDateFilter, searchDebounced, applyReadFilter]);
+
+  const schedulePeriodRealtimeReload = useCallback(() => {
+    if (!hasDateFilter || periodRealtimeReloadTimerRef.current != null) return;
+    periodRealtimeReloadTimerRef.current = window.setTimeout(() => {
+      periodRealtimeReloadTimerRef.current = null;
+      if (!isInboxPageMountedRef.current) return;
+      void loadConversations(true);
+    }, 400);
+  }, [hasDateFilter, loadConversations]);
 
   const loadMessages = useCallback((convId: string, silent?: boolean) => {
     const id = parseInt(convId, 10);
@@ -552,10 +622,18 @@ export function InboxPage() {
   useRealtimeInbox({
     onConversationCreated: (payload) => {
       if (!payload || typeof payload !== 'object') return;
+      if (hasDateFilter) {
+        schedulePeriodRealtimeReload();
+        return;
+      }
       mergeConversation(mapApiConversationToConversation(payload as ApiConversation));
     },
     onConversationUpdated: (payload) => {
       if (!payload || typeof payload !== 'object') return;
+      if (hasDateFilter) {
+        schedulePeriodRealtimeReload();
+        return;
+      }
       const mapped = mapApiConversationToConversation(payload as ApiConversation);
       mergeConversation(mapped);
       console.info('[RealtimeInbox] conversation.updated merged', {
@@ -573,8 +651,18 @@ export function InboxPage() {
         conversationId: number;
         role: 'user' | 'assistant';
         content: string | null;
-        messageKind?: 'text' | 'document' | 'image';
+        messageKind?: 'text' | 'document' | 'image' | 'video';
         attachment?: unknown;
+        status?: Message['status'];
+        template?: Message['template'];
+        failure?: Message['failure'];
+        origin?: string | null;
+        batch?: Message['batch'];
+        enterpriseId?: number | null;
+        sentAt?: string | null;
+        deliveredAt?: string | null;
+        readAt?: string | null;
+        failedAt?: string | null;
         createdAt: string;
         deleted?: boolean;
         deletedAt?: string | null;
@@ -601,9 +689,9 @@ export function InboxPage() {
         id: String(p.id),
         conversationId: convId,
         sender: p.role === 'user' ? 'LEAD' : 'AGENT',
-        text: p.deleted ? '' : (p.content ?? ''),
+        text: p.deleted ? '' : (p.template?.renderedText?.trim() || p.content || ''),
         createdAt: p.createdAt,
-        messageType: p.messageKind === 'document' || p.messageKind === 'image' ? p.messageKind : 'text',
+        messageType: p.messageKind === 'document' || p.messageKind === 'image' || p.messageKind === 'video' ? p.messageKind : 'text',
         attachment:
           p.deleted || !p.attachment || typeof p.attachment !== 'object'
             ? null
@@ -614,7 +702,21 @@ export function InboxPage() {
                 whatsappMediaId: (p.attachment as { whatsappMediaId?: string | null }).whatsappMediaId ?? null,
                 caption: (p.attachment as { caption?: string | null }).caption ?? null,
                 enterpriseFileId: (p.attachment as { enterpriseFileId?: number | null }).enterpriseFileId ?? null,
+                templateMediaSettingId: (p.attachment as { templateMediaSettingId?: number | null }).templateMediaSettingId ?? null,
+                storageFolder: (p.attachment as { storageFolder?: string | null }).storageFolder ?? null,
+                mediaType: (p.attachment as { mediaType?: 'image' | 'video' | 'document' | null }).mediaType ?? null,
+                downloadUrl: (p.attachment as { downloadUrl?: string | null }).downloadUrl ?? null,
               }),
+        status: p.status ?? 'sent',
+        template: p.template ?? null,
+        failure: p.failure ?? null,
+        origin: p.origin ?? null,
+        batch: p.batch ?? null,
+        enterpriseId: p.enterpriseId ?? null,
+        sentAt: p.sentAt ?? null,
+        deliveredAt: p.deliveredAt ?? null,
+        readAt: p.readAt ?? null,
+        failedAt: p.failedAt ?? null,
         deleted: p.deleted ?? false,
         deletedAt: p.deletedAt ?? null,
       };
@@ -639,6 +741,11 @@ export function InboxPage() {
           conversationId: convId,
           selectedConversationId,
         });
+      }
+
+      if (hasDateFilter) {
+        schedulePeriodRealtimeReload();
+        return;
       }
 
       let conversationKnown = true;
@@ -669,13 +776,53 @@ export function InboxPage() {
     },
     onMessageUpdated: (payload) => {
       if (!payload || typeof payload !== 'object') return;
-      const parsed = payload as { id: string; conversationId: number; deleted?: boolean; deletedAt?: string | null };
+      const parsed = payload as {
+        id: string;
+        conversationId: number;
+        content?: string | null;
+        messageKind?: Message['messageType'];
+        attachment?: Message['attachment'];
+        status?: Message['status'];
+        template?: Message['template'];
+        failure?: Message['failure'];
+        origin?: string | null;
+        batch?: Message['batch'];
+        enterpriseId?: number | null;
+        sentAt?: string | null;
+        deliveredAt?: string | null;
+        readAt?: string | null;
+        failedAt?: string | null;
+        deleted?: boolean;
+        deletedAt?: string | null;
+      };
       const convId = String(parsed.conversationId);
       if (String(selectedIdRef.current) !== String(convId)) return;
       setMessages((prev) =>
         prev.map((m) =>
           m.id === String(parsed.id)
-            ? { ...m, deleted: parsed.deleted ?? true, deletedAt: parsed.deletedAt ?? null, text: '', attachment: null }
+            ? {
+                ...m,
+                ...(parsed.content !== undefined ? { text: parsed.template?.renderedText || parsed.content || '' } : {}),
+                ...(parsed.messageKind !== undefined ? { messageType: parsed.messageKind } : {}),
+                ...(parsed.attachment !== undefined ? { attachment: parsed.attachment } : {}),
+                ...(parsed.status !== undefined ? { status: parsed.status } : {}),
+                ...(parsed.template !== undefined ? { template: parsed.template } : {}),
+                ...(parsed.failure !== undefined ? { failure: parsed.failure } : {}),
+                ...(parsed.origin !== undefined ? { origin: parsed.origin } : {}),
+                ...(parsed.batch !== undefined ? { batch: parsed.batch } : {}),
+                ...(parsed.enterpriseId !== undefined ? { enterpriseId: parsed.enterpriseId } : {}),
+                ...(parsed.sentAt !== undefined ? { sentAt: parsed.sentAt } : {}),
+                ...(parsed.deliveredAt !== undefined ? { deliveredAt: parsed.deliveredAt } : {}),
+                ...(parsed.readAt !== undefined ? { readAt: parsed.readAt } : {}),
+                ...(parsed.failedAt !== undefined ? { failedAt: parsed.failedAt } : {}),
+                ...(parsed.deleted !== undefined
+                  ? {
+                      deleted: parsed.deleted,
+                      deletedAt: parsed.deletedAt ?? null,
+                      ...(parsed.deleted ? { text: '', attachment: null } : {}),
+                    }
+                  : {}),
+              }
             : m
         )
       );
@@ -733,6 +880,7 @@ export function InboxPage() {
           return [mapped, ...prev];
         });
         setSelectedId(mapped.id);
+        setSelectedConversationSnapshot(mapped);
         deepLinkConsumedParamRef.current = rawConversationParam;
       } catch (e) {
         if (cancelled) return;
@@ -1171,6 +1319,7 @@ export function InboxPage() {
             onSelect={(id) => {
               const conv = conversations.find((c) => c.id === id);
               markConversationAsRead(id, conv?.updatedAt ?? null);
+              setSelectedConversationSnapshot(conv ?? null);
               setSelectedId(id);
               if (window.matchMedia('(max-width: 767px)').matches) {
                 setSidebarOpen(false);

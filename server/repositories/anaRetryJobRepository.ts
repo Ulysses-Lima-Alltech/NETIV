@@ -25,12 +25,17 @@ export async function upsertAnaRetryJob(params: {
   nextRunAt: Date;
   lastError?: string | null;
   lastErrorCode?: string | null;
-}): Promise<AnaRetryJobRow> {
+}): Promise<AnaRetryJobRow | null> {
   if (params.triggerMessageId != null) {
     const { rows } = await query<AnaRetryJobRow>(
       `INSERT INTO ana_retry_jobs (
          conversation_id, trigger_message_id, status, reason, next_run_at, last_error, last_error_code, updated_at
-       ) VALUES ($1, $2, 'pending', $3, $4, $5, $6, NOW())
+       )
+       SELECT $1, $2, 'pending', $3, $4, $5, $6, NOW()
+       FROM conversations c
+       WHERE c.id = $1
+         AND COALESCE(c.handoff, false) = false
+         AND lower(trim(COALESCE(c.classification, ''))) <> 'handoff'
        ON CONFLICT (conversation_id, trigger_message_id)
          WHERE trigger_message_id IS NOT NULL AND status IN ('pending', 'processing')
        DO UPDATE SET
@@ -49,17 +54,22 @@ export async function upsertAnaRetryJob(params: {
         params.lastErrorCode ?? null,
       ]
     );
-    return rows[0]!;
+    return rows[0] ?? null;
   }
 
   const { rows } = await query<AnaRetryJobRow>(
     `INSERT INTO ana_retry_jobs (
        conversation_id, trigger_message_id, status, reason, next_run_at, last_error, last_error_code, updated_at
-     ) VALUES ($1, NULL, 'pending', $2, $3, $4, $5, NOW())
+     )
+     SELECT $1, NULL, 'pending', $2, $3, $4, $5, NOW()
+     FROM conversations c
+     WHERE c.id = $1
+       AND COALESCE(c.handoff, false) = false
+       AND lower(trim(COALESCE(c.classification, ''))) <> 'handoff'
      RETURNING *`,
     [params.conversationId, params.reason, params.nextRunAt, params.lastError ?? null, params.lastErrorCode ?? null]
   );
-  return rows[0]!;
+  return rows[0] ?? null;
 }
 
 export async function pickNextAnaRetryJob(workerId: string): Promise<AnaRetryJobRow | null> {

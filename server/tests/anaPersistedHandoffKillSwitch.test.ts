@@ -361,7 +361,7 @@ test('env antiga nao mascara mais estado persistido e envio manual nao usa wrapp
   assert.doesNotMatch(mobile, /sendAnaTextMessageWithQuota/);
 });
 
-test('batch permite template de operador em HANDOFF e preserva HANDOFF no roteamento posterior', () => {
+test('batch permite template manual em HANDOFF, mas bloqueia processamento agendado', () => {
   const source = readServerSourceFile('services/whatsappBatchTemplateService.ts');
   const existingConversationLookup = source.indexOf('existingConversationResult = await query');
   const effectiveMode = source.indexOf('const effectivePostSendMode', existingConversationLookup);
@@ -369,7 +369,11 @@ test('batch permite template de operador em HANDOFF e preserva HANDOFF no roteam
   const routing = source.indexOf('await applyBatchConversationRouting', send);
   assert.ok(existingConversationLookup >= 0 && effectiveMode > existingConversationLookup && send > effectiveMode && routing > send);
   assert.match(source, /const existingConversationInHandoff = isAnaAutomationBlockedByHandoff\(existingConversation\)/);
-  assert.match(source, /existingConversationInHandoff\s*\?\s*'HANDOFF'\s*:\s*params\.postSendMode/);
+  assert.match(source, /resolveBatchHandoffDeliveryDecision/);
+  assert.match(source, /const isScheduledAutomation = params\.sourceKeyPrefix\.startsWith\('scheduled_batch:'\)/);
+  assert.match(source, /if \(inHandoff\) return \{ allowed: false, reason: 'handoff' \}/);
+  assert.match(source, /effectivePostSendMode: inHandoff \? 'HANDOFF' : params\.requestedPostSendMode/);
+  assert.match(source, /const effectivePostSendMode = deliveryDecision\.effectivePostSendMode/);
   assert.match(source, /WHATSAPP_BATCH_OPERATOR_SEND_HANDOFF_PRESERVED/);
   assert.match(source, /requestedPostSendMode: params\.postSendMode/);
   assert.match(source, /effectivePostSendMode: 'HANDOFF'/);
@@ -381,7 +385,11 @@ test('batch permite template de operador em HANDOFF e preserva HANDOFF no roteam
   const handoffBranch = source.slice(source.indexOf('if (existingConversationInHandoff)'), send);
   assert.doesNotMatch(handoffBranch, /status: 'blocked'/);
   const routingCall = source.slice(routing, source.indexOf('});', routing) + 3);
-  assert.match(routingCall, /postSendMode: effectivePostSendMode/);
+  assert.match(routingCall, /postSendMode: routingPostSendMode/);
+  assert.match(
+    source,
+    /const routingPostSendMode = conversationInHandoffAfterSend[\s\S]*\? 'HANDOFF'[\s\S]*: effectivePostSendMode/
+  );
   assert.match(source, /handoff:\s*params\.postSendMode === 'HANDOFF'/);
   assert.match(source, /source = params\.sourceKeyPrefix\.startsWith\('scheduled_batch:'\)/);
 });

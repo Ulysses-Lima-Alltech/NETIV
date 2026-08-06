@@ -16,6 +16,7 @@ const FETCH_TIMEOUT_MS = 8000;
 export interface DjangoNotifyResult {
   ok: boolean;
   status?: number;
+  error?: string;
 }
 
 /**
@@ -55,12 +56,13 @@ export async function notifyDjango(
     if (!resp.ok) {
       const body = await resp.text().catch(() => '');
       console.error(`[Django Webhook] ${fullUrl} → HTTP ${resp.status}: ${body}`);
-      return { ok: false, status: resp.status };
+      return { ok: false, status: resp.status, error: `HTTP ${resp.status}: ${body}`.slice(0, 500) };
     }
     return { ok: true, status: resp.status };
   } catch (e) {
-    console.error('[Django Webhook] Erro:', e instanceof Error ? e.message : e);
-    return { ok: false };
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[Django Webhook] Erro:', msg);
+    return { ok: false, error: msg.slice(0, 500) };
   }
 }
 

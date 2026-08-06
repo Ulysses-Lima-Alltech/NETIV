@@ -123,6 +123,20 @@ export interface AuthUser {
   scope?: UserScopeSummary;
 }
 
+/** Busca binário protegido sem colocar o bearer token na URL. */
+export async function fetchAuthenticatedBlob(path: string): Promise<Blob> {
+  const token = getStoredAuthToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error('Sessão expirada. Faça login novamente.');
+  }
+  if (!res.ok) throw new Error(`Não foi possível carregar a mídia (${res.status}).`);
+  return res.blob();
+}
+
 export interface UserScopeSummary {
   accessAll: boolean;
   managerId: number | null;
@@ -250,6 +264,10 @@ export interface MessageAttachmentDto {
   whatsappMediaId?: string | null;
   caption?: string | null;
   enterpriseFileId?: number | null;
+  templateMediaSettingId?: number | null;
+  storageFolder?: string | null;
+  mediaType?: 'image' | 'video' | 'document' | null;
+  downloadUrl?: string | null;
 }
 
 export interface MessageListItem {
@@ -262,6 +280,15 @@ export interface MessageListItem {
   externalMessageId: string | null;
   createdAt: string;
   attachment?: MessageAttachmentDto | null;
+  template?: import('../types').MessageTemplateMetadata | null;
+  failure?: import('../types').MessageFailure | null;
+  origin?: string | null;
+  batch?: { batchId: number | null; recipientId: number | null; rowNumber: number | null } | null;
+  enterpriseId?: number | null;
+  sentAt?: string | null;
+  deliveredAt?: string | null;
+  readAt?: string | null;
+  failedAt?: string | null;
   /** Soft delete interno NETIV */
   deleted?: boolean;
   deletedAt?: string | null;
@@ -528,6 +555,9 @@ export const whatsappApi = {
     status?: string;
     enterpriseId?: number;
     search?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    dateReference?: 'last_message' | 'conversation_started';
     type?: 'CLIENT' | 'INTERNO';
   }) => {
     const q = new URLSearchParams();
@@ -537,6 +567,9 @@ export const whatsappApi = {
     if (params?.status && params.status !== 'all') q.set('status', params.status);
     if (params?.enterpriseId != null) q.set('enterpriseId', String(params.enterpriseId));
     if (params?.search?.trim()) q.set('search', params.search.trim());
+    if (params?.dateFrom) q.set('dateFrom', params.dateFrom);
+    if (params?.dateTo) q.set('dateTo', params.dateTo);
+    if (params?.dateReference && (params.dateFrom || params.dateTo)) q.set('dateReference', params.dateReference);
     if (params?.type) q.set('type', params.type);
     const query = q.toString();
     return request<{ conversations: ConversationListItem[] }>(`/whatsapp/conversations${query ? `?${query}` : ''}`);
