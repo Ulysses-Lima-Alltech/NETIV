@@ -63,13 +63,6 @@ export async function cancelAnaPendingAutomationForHandoff(params: {
               pending_resolution_payload = NULL,
               handoff_deferred_until = NULL,
               handoff_deferred_broker_id = NULL,
-              reengagement_for_user_message_id = NULL,
-              ana_followup_anchor_assistant_message_id = NULL,
-              ana_followup_anchor_assistant_created_at = NULL,
-              ana_followup_for_user_message_id = NULL,
-              ana_followup_next_at = NULL,
-              ana_followup_status = 'cancelled',
-              ana_followup_cancel_reason = 'handoff',
               updated_at = NOW()
         WHERE id = $1
           AND (

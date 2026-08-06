@@ -171,7 +171,6 @@ function mapConversationWithPreviewRow(r: ConversationWithPreview) {
     manualClosedAt: (r as { manual_closed_at?: Date | null }).manual_closed_at?.toISOString() ?? null,
     manualClosedByUserId: (r as { manual_closed_by_user_id?: number | null }).manual_closed_by_user_id ?? null,
     manualClosedReason: (r as { manual_closed_reason?: string | null }).manual_closed_reason ?? null,
-    reengagementCount: (r as { reengagement_count?: number }).reengagement_count ?? 0,
     ...conversationReserveToPublic(r),
   };
 }
@@ -985,7 +984,7 @@ router.get('/conversations/:id/messages', async (req, res) => {
   }
 });
 
-/** Encerrar conversa manualmente — bloqueia reengajamento automático. */
+/** Encerrar conversa manualmente. */
 router.patch('/conversations/:id/close', async (req, res) => {
   try {
     const authReq = req as AuthenticatedRequest;

@@ -219,9 +219,6 @@ export async function markConversationAsHandoffAssigned(args: {
          pending_resolution_intent = NULL,
          pending_resolution_created_at = NULL,
          pending_resolution_payload = NULL,
-         ana_followup_status = 'cancelled',
-         ana_followup_next_at = NULL,
-         ana_followup_cancel_reason = $3,
          broker_notified_at = NULL,
          broker_notification_status = 'pending',
          broker_notification_error = NULL,
@@ -237,11 +234,6 @@ export async function markConversationAsHandoffAssigned(args: {
     conversationId: args.conversationId,
     source: 'markConversationAsHandoffAssigned',
     client: args.client,
-  });
-  console.log('[ANA_GENERAL_FOLLOWUP] cancelled', {
-    conversationId: args.conversationId,
-    reason: 'handoff',
-    source: 'markConversationAsHandoffAssigned',
   });
   await logEnforcedHandoffState({
     conversationId: args.conversationId,
@@ -272,9 +264,6 @@ export async function markConversationAsHandoffUnassigned(args: {
          pending_resolution_intent = NULL,
          pending_resolution_created_at = NULL,
          pending_resolution_payload = NULL,
-         ana_followup_status = 'cancelled',
-         ana_followup_next_at = NULL,
-         ana_followup_cancel_reason = $2,
          broker_notified_at = NULL,
          broker_notification_status = 'skipped_no_broker',
          broker_notification_error = NULL,
@@ -290,11 +279,6 @@ export async function markConversationAsHandoffUnassigned(args: {
     conversationId: args.conversationId,
     source: 'markConversationAsHandoffUnassigned',
     client: args.client,
-  });
-  console.log('[ANA_GENERAL_FOLLOWUP] cancelled', {
-    conversationId: args.conversationId,
-    reason: 'handoff',
-    source: 'markConversationAsHandoffUnassigned',
   });
   await logEnforcedHandoffState({
     conversationId: args.conversationId,

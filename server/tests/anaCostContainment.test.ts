@@ -19,7 +19,6 @@ import {
 import { resolveAnaOpenAIModel } from '../utils/resolveAnaOpenAIModel.js';
 import {
   applyAnaConversationPolicy,
-  evaluateAnaReengagementPolicy,
   resolveRequestedTopicAction,
 } from '../utils/anaConversationPolicy.js';
 import { selectAnaNextFollowupQuestion, selectSingleSafeNextTopic } from '../utils/anaFollowupQuestionService.js';
@@ -695,34 +694,6 @@ test('codigo produtivo nao contem frase fixa de qualificacao', () => {
   }
 
   assert.deepEqual(offenders, []);
-});
-
-test('reengagement bloqueia inbound e outbound recentes', () => {
-  const now = new Date('2026-05-25T15:00:00.000Z');
-  const inboundRecent = evaluateAnaReengagementPolicy({
-    now,
-    minIdleMinutes: 60,
-    lastInboundAt: new Date('2026-05-25T14:35:00.000Z'),
-    lastOutboundAt: new Date('2026-05-25T12:00:00.000Z'),
-  });
-  const outboundRecent = evaluateAnaReengagementPolicy({
-    now,
-    minIdleMinutes: 60,
-    lastInboundAt: new Date('2026-05-25T11:00:00.000Z'),
-    lastOutboundAt: new Date('2026-05-25T14:40:00.000Z'),
-  });
-  const idleEnough = evaluateAnaReengagementPolicy({
-    now,
-    minIdleMinutes: 60,
-    lastInboundAt: new Date('2026-05-25T11:00:00.000Z'),
-    lastOutboundAt: new Date('2026-05-25T12:10:00.000Z'),
-  });
-
-  assert.equal(inboundRecent.allowed, false);
-  assert.equal(inboundRecent.reason, 'recent_inbound');
-  assert.equal(outboundRecent.allowed, false);
-  assert.equal(outboundRecent.reason, 'recent_outbound');
-  assert.equal(idleEnough.allowed, true);
 });
 
 test('captura sabado de manha e pergunta apenas horario', () => {

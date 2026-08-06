@@ -41,7 +41,6 @@ export interface RealtimeConversationPayload {
   manualClosedAt: string | null;
   manualClosedByUserId: number | null;
   manualClosedReason: string | null;
-  reengagementCount: number;
 }
 
 export interface RealtimeMessagePayload {
@@ -90,7 +89,6 @@ interface ConversationRealtimeRow {
   manual_closed_at: Date | null;
   manual_closed_by_user_id: number | null;
   manual_closed_reason: string | null;
-  reengagement_count: number | null;
 }
 
 function toLeadStage(value: string | null): 'HOT' | 'WARM' | 'COLD' | null {
@@ -141,8 +139,7 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
        COALESCE(c.conversation_type, 'CLIENT') AS conversation_type,
        c.manual_closed_at,
        c.manual_closed_by_user_id,
-       c.manual_closed_reason,
-       c.reengagement_count
+       c.manual_closed_reason
      FROM conversations c
      LEFT JOIN enterprises e ON e.id = c.enterprise_id
      LEFT JOIN corretores b ON b.id = c.assigned_broker_id
@@ -196,7 +193,6 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
     manualClosedAt: row.manual_closed_at?.toISOString() ?? null,
     manualClosedByUserId: row.manual_closed_by_user_id ?? null,
     manualClosedReason: row.manual_closed_reason ?? null,
-    reengagementCount: row.reengagement_count ?? 0,
   };
 }
 

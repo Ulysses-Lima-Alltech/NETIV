@@ -428,9 +428,6 @@ export async function setMobileConversationHandoff(
              WHEN c.classification = 'Handoff' THEN 'Novo'
              ELSE c.classification
            END,
-           ana_followup_status = CASE WHEN $1 = true THEN 'cancelled' ELSE c.ana_followup_status END,
-           ana_followup_next_at = CASE WHEN $1 = true THEN NULL ELSE c.ana_followup_next_at END,
-           ana_followup_cancel_reason = CASE WHEN $1 = true THEN 'handoff' ELSE c.ana_followup_cancel_reason END,
            updated_at = NOW()
        FROM conversations c2
        LEFT JOIN corretores br ON br.id = c2.assigned_broker_id
@@ -444,11 +441,6 @@ export async function setMobileConversationHandoff(
     if (updated?.handoff === true) {
       await cancelAnaPendingAutomationForHandoff({
         conversationId,
-        source: 'setMobileConversationHandoff',
-      });
-      console.log('[ANA_GENERAL_FOLLOWUP] cancelled', {
-        conversationId,
-        reason: 'handoff',
         source: 'setMobileConversationHandoff',
       });
     }

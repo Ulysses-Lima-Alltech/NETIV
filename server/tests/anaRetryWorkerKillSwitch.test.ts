@@ -61,13 +61,3 @@ test('retry worker compara ids bigint como string', () => {
   assert.match(workerSource, /String\(a\) === String\(b\)/);
   assert.doesNotMatch(workerSource, /lastInbound\.id !== job\.trigger_message_id/);
 });
-
-test('follow-up geral cancela tentativa 21 e cliente que respondeu depois do candidato', () => {
-  const source = readFileSync(path.resolve(process.cwd(), 'services/anaReengagementService.ts'), 'utf8');
-
-  assert.match(source, /attemptIndex > ANA_FOLLOWUP_MAX_ATTEMPTS/);
-  assert.match(source, /reason: 'followup_cycle_exhausted'/);
-  assert.match(source, /ana_followup_status = CASE WHEN \$6::timestamptz IS NULL THEN 'cancelled' ELSE 'active' END/);
-  assert.match(source, /reason: 'customer_replied_after_candidate'/);
-  assert.match(source, /markConversationFollowupCancelled\(\{\s*conversationId: params\.conversationId,\s*reason: 'customer_replied_after_candidate'/s);
-});

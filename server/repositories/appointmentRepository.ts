@@ -222,17 +222,3 @@ export async function deleteAppointment(id: number): Promise<boolean> {
   const result = await query(`DELETE FROM appointments WHERE id = $1`, [id]);
   return (result.rowCount ?? 0) > 0;
 }
-
-/** Reengajamento automático inadequado quando há agendamento ativo na conversa. */
-export async function conversationHasActiveAppointmentForReengageBlock(conversationId: number): Promise<boolean> {
-  const { rows } = await query<{ exists: boolean }>(
-    `SELECT EXISTS(
-       SELECT 1 FROM appointments 
-       WHERE conversation_id = $1 
-         AND status IN ('CONFIRMADO', 'PENDENTE_CONFIRMACAO')
-         AND start_at > NOW()
-    ) AS exists`,
-    [conversationId]
-  );
-  return rows[0]?.exists ?? false;
-}

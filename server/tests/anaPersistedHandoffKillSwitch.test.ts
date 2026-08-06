@@ -243,11 +243,7 @@ test('retry e workers encerram HANDOFF sem reagendar e usam o guard final comum'
   const reschedule = retry.indexOf('rescheduleAnaRetryJob({', beforeReschedule);
   assert.ok(beforeReschedule >= 0 && nonRetryable > beforeReschedule && reschedule > nonRetryable);
 
-  for (const file of [
-    'services/anaReengagementService.ts',
-    'services/anaVisitFollowupService.ts',
-    'services/anaGeneralFollowupService.ts',
-  ]) {
+  for (const file of ['services/anaVisitFollowupService.ts']) {
     assert.match(readServerSourceFile(file), /utils\/anaAutomationEligibility\.js/);
     assert.match(readServerSourceFile(file), /isAnaAutomationBlockedByHandoff/);
   }
@@ -269,8 +265,6 @@ test('transicao para HANDOFF invalida estados e jobs automaticos sem apagar hist
   ]) {
     assert.match(cleanup, new RegExp(`'${key}'`));
   }
-  assert.match(cleanup, /ana_followup_status = 'cancelled'/);
-  assert.match(cleanup, /ana_followup_next_at = NULL/);
   assert.match(cleanup, /UPDATE ana_retry_jobs[\s\S]*status = 'failed_non_retryable'[\s\S]*status IN \('pending', 'processing'\)/);
   assert.match(cleanup, /UPDATE ana_visit_followup_jobs[\s\S]*status = 'cancelled'[\s\S]*status IN \('active', 'processing'\)/);
   assert.doesNotMatch(cleanup, /DELETE FROM messages|UPDATE messages/);
