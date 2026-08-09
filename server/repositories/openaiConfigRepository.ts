@@ -1,3 +1,4 @@
+/** Nome legado — resolve modelo/config para Bedrock hoje; API é a mesma usada quando o projeto ainda suportava OpenAI. */
 import type { OpenAIConfig, OpenAIConfigPublic, OpenAIConfigUpdate } from '../types/ai.js';
 import { query } from '../db/pg.js';
 import {

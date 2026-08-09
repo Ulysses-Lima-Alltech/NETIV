@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+/** Nomes de campo legados (openai*) — resolvem para Bedrock hoje; mantidos do tempo em que o projeto ainda suportava OpenAI. */
 export const openAISettingUpdateSchema = z.object({
   openaiApiKey: z.string().optional(),
   removeApiKey: z.boolean().optional(),

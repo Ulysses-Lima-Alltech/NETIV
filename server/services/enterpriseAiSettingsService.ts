@@ -1,3 +1,4 @@
+/** Campos openai_* legados — resolveRuntimeProvider() força Bedrock via ANA_PROVIDER; API é a mesma usada quando o projeto ainda suportava OpenAI. */
 import { query } from '../db/pg.js';
 import { generateChatCompletion } from './openaiService.js';
 import { sanitizeProviderErrorMessage } from '../utils/llmProviderDiagnostics.js';

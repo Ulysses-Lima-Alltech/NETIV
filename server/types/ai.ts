@@ -1,3 +1,4 @@
+/** Nomes de campo legados (openai_*) — resolvem para Bedrock hoje; mantidos do tempo em que o projeto ainda suportava OpenAI. */
 export interface OpenAIConfig {
   openaiApiKey: string;
   openaiApiKeyId?: string | null;

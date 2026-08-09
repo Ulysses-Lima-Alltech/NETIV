@@ -1,3 +1,4 @@
+/** Nome legado — catálogo hoje só é consultado no path Bedrock; mantido do tempo em que o projeto ainda suportava OpenAI. */
 export type OpenAiModelRecommendedFor = 'hot' | 'cold' | 'advanced' | 'realtime';
 export type AiModelProvider = 'openai' | 'openrouter' | 'local' | 'custom';
 

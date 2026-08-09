@@ -1,3 +1,4 @@
+/** Nome legado — diagnostica o provider efetivo (Bedrock hoje via detectLlmProvider); mantido do tempo em que o projeto ainda suportava OpenAI. */
 import { createAnaDiagnostic } from '../repositories/anaDiagnosticsRepository.js';
 import { getIntegrationModelStringsRaw, getOpenAIConfig } from '../repositories/openaiConfigRepository.js';
 import { generateChatCompletion } from './openaiService.js';

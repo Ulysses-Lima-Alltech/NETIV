@@ -1,3 +1,4 @@
+/** Nome legado — resolve modelo/config para Bedrock hoje; API é a mesma usada quando o projeto ainda suportava OpenAI. */
 import { isAllowedOpenAiModel } from '../catalogs/aiModels.js';
 
 export type AnaModelSlot = 'hot_lead' | 'cold_lead';
