@@ -1,33 +1,46 @@
+import { readServerSourceFile, readWorkspaceFile } from './helpers/serverSourceResolver.js';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { generateChatCompletion, usesMaxCompletionTokens } from '../services/openaiService.js';
 import type { LlmUsageEventInput } from '../repositories/llmUsageRepository.js';
 
-const originalFetch = globalThis.fetch;
+// generateChatCompletion sempre resolve para Bedrock hoje (branch HTTP direto para
+// api.openai.com foi removido — nenhuma empresa ativa dependia dele). Os testes
+// mockam BedrockRuntimeClient.send em vez de fetch para exercitar o caminho real.
+const originalSend = BedrockRuntimeClient.prototype.send;
 
-function mockChatCompletionResponse(body: unknown, status = 200): void {
-  globalThis.fetch = async () =>
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { 'content-type': 'application/json', 'x-request-id': 'req_test_123' },
-    });
+function mockBedrockConverseResponse(params: {
+  content?: string;
+  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+  requestId?: string;
+  httpStatusCode?: number;
+} = {}): void {
+  BedrockRuntimeClient.prototype.send = (async () => ({
+    output: { message: { content: [{ text: params.content ?? 'ok' }] } },
+    usage: params.usage,
+    $metadata: { requestId: params.requestId ?? 'req_test_123', httpStatusCode: params.httpStatusCode ?? 200 },
+  })) as typeof BedrockRuntimeClient.prototype.send;
+}
+
+function mockBedrockConverseError(error: { name?: string; message: string; httpStatusCode?: number }): void {
+  BedrockRuntimeClient.prototype.send = (async () => {
+    const e = new Error(error.message) as Error & { name: string; $metadata?: { httpStatusCode?: number } };
+    e.name = error.name ?? 'Error';
+    e.$metadata = { httpStatusCode: error.httpStatusCode };
+    throw e;
+  }) as typeof BedrockRuntimeClient.prototype.send;
 }
 
 test.afterEach(() => {
-  globalThis.fetch = originalFetch;
+  BedrockRuntimeClient.prototype.send = originalSend;
 });
 
 test('generateChatCompletion registra llm_usage_events quando usage vem na resposta', async () => {
   const events: LlmUsageEventInput[] = [];
-  mockChatCompletionResponse({
-    choices: [{ message: { content: '{"reply":"ok"}' } }],
-    usage: {
-      prompt_tokens: 1000,
-      completion_tokens: 250,
-      total_tokens: 1250,
-      prompt_tokens_details: { cached_tokens: 200 },
-    },
+  mockBedrockConverseResponse({
+    content: '{"reply":"ok"}',
+    usage: { inputTokens: 1000, outputTokens: 250, totalTokens: 1250 },
   });
 
   const result = await generateChatCompletion({
@@ -52,7 +65,7 @@ test('generateChatCompletion registra llm_usage_events quando usage vem na respo
 
   assert.equal(result.success, true);
   assert.equal(events.length, 1);
-  assert.equal(events[0]?.provider, 'openai');
+  assert.equal(events[0]?.provider, 'bedrock');
   assert.equal(events[0]?.model, 'gpt-4.1-mini');
   assert.equal(events[0]?.purpose, 'ana_main_reply');
   assert.equal(events[0]?.modelReason, 'unclassified_enterprise_low_cost_model');
@@ -61,7 +74,7 @@ test('generateChatCompletion registra llm_usage_events quando usage vem na respo
   assert.equal(events[0]?.enterpriseId, 30);
   assert.equal(events[0]?.inboundMessageId, 40);
   assert.equal(events[0]?.inputTokens, 1000);
-  assert.equal(events[0]?.cachedInputTokens, 200);
+  assert.equal(events[0]?.cachedInputTokens, 0);
   assert.equal(events[0]?.outputTokens, 250);
   assert.equal(events[0]?.totalTokens, 1250);
   assert.equal(events[0]?.success, true);
@@ -71,9 +84,7 @@ test('generateChatCompletion registra llm_usage_events quando usage vem na respo
 
 test('generateChatCompletion nao quebra se usage vier ausente', async () => {
   const events: LlmUsageEventInput[] = [];
-  mockChatCompletionResponse({
-    choices: [{ message: { content: 'ok' } }],
-  });
+  mockBedrockConverseResponse();
 
   const result = await generateChatCompletion({
     apiKey: 'sk-test',
@@ -102,10 +113,7 @@ test('generateChatCompletion nao quebra se usage vier ausente', async () => {
 
 test('chamada com enterprise_id null salva enterprise_id null', async () => {
   const events: LlmUsageEventInput[] = [];
-  mockChatCompletionResponse({
-    choices: [{ message: { content: 'ok' } }],
-    usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-  });
+  mockBedrockConverseResponse({ usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } });
 
   await generateChatCompletion({
     apiKey: 'sk-test',
@@ -129,10 +137,7 @@ test('chamada com enterprise_id null salva enterprise_id null', async () => {
 
 test('chamada com enterprise_id resolvido salva enterprise_id correto', async () => {
   const events: LlmUsageEventInput[] = [];
-  mockChatCompletionResponse({
-    choices: [{ message: { content: 'ok' } }],
-    usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-  });
+  mockBedrockConverseResponse({ usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } });
 
   await generateChatCompletion({
     apiKey: 'sk-test',
@@ -156,10 +161,7 @@ test('chamada com enterprise_id resolvido salva enterprise_id correto', async ()
 
 test('modelo sem preco cadastrado registra custo 0 e price_missing', async () => {
   const events: LlmUsageEventInput[] = [];
-  mockChatCompletionResponse({
-    choices: [{ message: { content: 'ok' } }],
-    usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
-  });
+  mockBedrockConverseResponse({ usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 } });
 
   await generateChatCompletion({
     apiKey: 'sk-test',
@@ -182,9 +184,7 @@ test('modelo sem preco cadastrado registra custo 0 e price_missing', async () =>
 
 test('erro da API tambem registra evento de uso sem mudar resposta', async () => {
   const events: LlmUsageEventInput[] = [];
-  mockChatCompletionResponse({
-    error: { message: 'rate limit', code: 'rate_limit_exceeded', type: 'rate_limit_error' },
-  }, 429);
+  mockBedrockConverseError({ name: 'ThrottlingException', message: 'rate limit', httpStatusCode: 429 });
 
   const result = await generateChatCompletion({
     apiKey: 'sk-test',
@@ -204,7 +204,7 @@ test('erro da API tambem registra evento de uso sem mudar resposta', async () =>
   assert.equal(result.success, false);
   assert.equal(events.length, 1);
   assert.equal(events[0]?.success, false);
-  assert.equal(events[0]?.errorCode, 'rate_limit_exceeded');
+  assert.equal(events[0]?.errorCode, 'ThrottlingException');
 });
 
 test('helper usesMaxCompletionTokens mapeia modelos corretamente', () => {
@@ -215,76 +215,8 @@ test('helper usesMaxCompletionTokens mapeia modelos corretamente', () => {
   assert.equal(usesMaxCompletionTokens('gpt-5.1'), true);
 });
 
-test('payload usa max_tokens para gpt-4.1 e gpt-4.1-mini', async () => {
-  const sentBodies: Array<Record<string, unknown>> = [];
-  globalThis.fetch = async (_input, init) => {
-    const parsed = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
-    sentBodies.push(parsed);
-    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
-  };
-
-  await generateChatCompletion({
-    apiKey: 'sk-test',
-    baseUrl: null,
-    model: 'gpt-4.1',
-    messages: [{ role: 'user', content: 'oi' }],
-    temperature: 0.2,
-    maxTokens: 123,
-  });
-  await generateChatCompletion({
-    apiKey: 'sk-test',
-    baseUrl: null,
-    model: 'gpt-4.1-mini',
-    messages: [{ role: 'user', content: 'oi' }],
-    temperature: 0.2,
-    maxTokens: 123,
-  });
-
-  assert.equal(typeof sentBodies[0]?.max_tokens, 'number');
-  assert.equal(sentBodies[0]?.max_completion_tokens, undefined);
-  assert.equal(typeof sentBodies[1]?.max_tokens, 'number');
-  assert.equal(sentBodies[1]?.max_completion_tokens, undefined);
-});
-
-test('payload usa max_completion_tokens para o4-mini e o3 sem enviar max_tokens', async () => {
-  const sentBodies: Array<Record<string, unknown>> = [];
-  globalThis.fetch = async (_input, init) => {
-    const parsed = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
-    sentBodies.push(parsed);
-    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
-  };
-
-  await generateChatCompletion({
-    apiKey: 'sk-test',
-    baseUrl: null,
-    model: 'o4-mini',
-    messages: [{ role: 'user', content: 'oi' }],
-    temperature: 0.2,
-    maxTokens: 321,
-  });
-  await generateChatCompletion({
-    apiKey: 'sk-test',
-    baseUrl: null,
-    model: 'o3',
-    messages: [{ role: 'user', content: 'oi' }],
-    temperature: 0.2,
-    maxTokens: 321,
-  });
-
-  assert.equal(typeof sentBodies[0]?.max_completion_tokens, 'number');
-  assert.equal(sentBodies[0]?.max_tokens, undefined);
-  assert.equal(typeof sentBodies[1]?.max_completion_tokens, 'number');
-  assert.equal(sentBodies[1]?.max_tokens, undefined);
-});
-
 test('dashboard agrega custo por empreendimento apenas no periodo e inclui grupo sem empreendimento', () => {
-  const source = readFileSync(new URL('../repositories/dashboardRepository.js', import.meta.url), 'utf8');
+  const source = readServerSourceFile('repositories/dashboardRepository.js');
 
   assert.match(source, /llm_usage_events/);
   assert.match(source, /llm_cost_backfills/);
@@ -304,7 +236,7 @@ test('dashboard agrega custo por empreendimento apenas no periodo e inclui grupo
 });
 
 test('dashboard query combina linhas apenas comerciais, apenas llm, apenas backfill, ambos e enterprise_id null via group_key', () => {
-  const source = readFileSync(new URL('../repositories/dashboardRepository.js', import.meta.url), 'utf8');
+  const source = readServerSourceFile('repositories/dashboardRepository.js');
 
   assert.match(source, /conv_groups AS \([\s\S]*0::bigint AS llm_calls/);
   assert.match(source, /usage_groups AS \([\s\S]*0::bigint AS total/);
@@ -322,7 +254,7 @@ test('dashboard query combina linhas apenas comerciais, apenas llm, apenas backf
 });
 
 test('dashboard nao aplica teto artificial e prepara mapeamento por openai_api_key_id', () => {
-  const source = readFileSync(new URL('../repositories/dashboardRepository.js', import.meta.url), 'utf8');
+  const source = readServerSourceFile('repositories/dashboardRepository.js');
   assert.match(source, /openai_api_key_id/);
   assert.match(source, /enterprise_ai_settings/);
   assert.doesNotMatch(source, /LEAST\([^)]*20/i);
@@ -330,7 +262,7 @@ test('dashboard nao aplica teto artificial e prepara mapeamento por openai_api_k
 });
 
 test('dashboard soma custo rastreado e estimado historico com rateio por esforco', () => {
-  const source = readFileSync(new URL('../repositories/dashboardRepository.js', import.meta.url), 'utf8');
+  const source = readServerSourceFile('repositories/dashboardRepository.js');
 
   assert.match(source, /eligible_backfills AS \(/);
   assert.match(source, /b\.is_active = TRUE/);
@@ -345,7 +277,7 @@ test('dashboard soma custo rastreado e estimado historico com rateio por esforco
 });
 
 test('dashboard prioriza snapshot oficial e faz fallback para custo local quando necessario', () => {
-  const source = readFileSync(new URL('../repositories/dashboardRepository.js', import.meta.url), 'utf8');
+  const source = readServerSourceFile('repositories/dashboardRepository.js');
 
   assert.match(source, /official_cost_allocations AS \(/);
   assert.match(source, /JOIN eligible_backfills|official_cost_groups/);
@@ -356,8 +288,8 @@ test('dashboard prioriza snapshot oficial e faz fallback para custo local quando
 });
 
 test('sync de custos usa upsert e mapeia api_key_id para enterprise_id sem vazar secret', () => {
-  const source = readFileSync(new URL('../services/openaiCostSyncService.js', import.meta.url), 'utf8');
-  const routeSource = readFileSync(new URL('../routes/settingsAi.js', import.meta.url), 'utf8');
+  const source = readServerSourceFile('services/openaiCostSyncService.js');
+  const routeSource = readServerSourceFile('routes/settingsAi.js');
 
   assert.match(source, /\/v1\/organization\/costs/);
   assert.match(source, /group_by/);
@@ -371,8 +303,8 @@ test('sync de custos usa upsert e mapeia api_key_id para enterprise_id sem vazar
 });
 
 test('migration e script de backfill existem sem seed automatico', () => {
-  const migration = readFileSync('db/migrations/pg/052_llm_cost_backfills.sql', 'utf8');
-  const script = readFileSync('scripts/addLlmCostBackfill.js', 'utf8');
+  const migration = readServerSourceFile('db/migrations/pg/052_llm_cost_backfills.sql');
+  const script = readServerSourceFile('scripts/addLlmCostBackfill.js');
 
   assert.match(migration, /CREATE TABLE IF NOT EXISTS llm_cost_backfills/);
   assert.match(migration, /tracked_cost_handling TEXT NOT NULL DEFAULT 'additive'/);
@@ -383,7 +315,7 @@ test('migration e script de backfill existem sem seed automatico', () => {
 });
 
 test('contrato do dashboard retorna campos novos sem remover os antigos', () => {
-  const source = readFileSync(new URL('../repositories/dashboardRepository.js', import.meta.url), 'utf8');
+  const source = readServerSourceFile('repositories/dashboardRepository.js');
 
   for (const field of ['total', 'qualified', 'handoffs', 'carteiras']) {
     assert.match(source, new RegExp(`${field}: parseInt`));
@@ -407,7 +339,7 @@ test('contrato do dashboard retorna campos novos sem remover os antigos', () => 
 });
 
 test('frontend renderiza Custo IA e Custo/contato', () => {
-  const source = readFileSync('../src/pages/DashboardPage.tsx', 'utf8');
+  const source = readWorkspaceFile('src/pages/DashboardPage.tsx');
 
   assert.match(source, /Custo IA/);
   assert.match(source, /Custo\/contato/);
