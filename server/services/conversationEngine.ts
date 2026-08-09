@@ -66,6 +66,14 @@ import {
   hasExplicitHandoffIntent,
 } from '../utils/anaInstructionLeakAndHandoffIntent.js';
 import {
+  buildNoEnterpriseResolvedReply,
+  buildAmbiguousEnterpriseReply,
+  normalizeEnterpriseMentionGuardText,
+  enterpriseMentionNeedles,
+  normalizedTextContainsNeedle,
+  findUnsupportedEnterpriseMentionInGlobalNoEnterpriseReply,
+} from '../utils/anaEnterpriseMentionGuard.js';
+import {
   getMessagesByConversationId,
   getLastUserMessageRow,
   getLastUserMessageNeedingReply,
@@ -2398,16 +2406,6 @@ function userExplicitlyAskedPriceInCurrentTurn(message: string): boolean {
   return explicitAskPatterns.some((re) => re.test(n));
 }
 
-function buildNoEnterpriseResolvedReply(userMessage: string): string {
-  void userMessage;
-  return '';
-}
-
-function buildAmbiguousEnterpriseReply(candidates: AnaEnterpriseResolution['candidates']): string {
-  void candidates;
-  return '';
-}
-
 function shouldUseAnaNoEnterpriseGlobalMode(params: {
   enterpriseIdForAi: number | null;
   conversationEnterpriseId: number | null;
@@ -2438,69 +2436,6 @@ type AnaGlobalNoEnterpriseMentionGuardResult =
       text: string;
       enterpriseName: string;
     };
-
-const ANA_ENTERPRISE_NAME_GENERIC_TOKENS = new Set([
-  'residencial',
-  'empreendimento',
-  'loteamento',
-  'loteamentos',
-  'condominio',
-  'condominios',
-  'edificio',
-  'parque',
-  'jardim',
-  'village',
-  'park',
-  'club',
-  'fase',
-  'torre',
-  'bloco',
-]);
-
-function normalizeEnterpriseMentionGuardText(value: string): string {
-  return normText(value)
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function enterpriseMentionNeedles(enterpriseName: string): string[] {
-  const normalizedName = normalizeEnterpriseMentionGuardText(enterpriseName);
-  const needles = new Set<string>();
-  if (normalizedName.length >= 4) needles.add(normalizedName);
-  for (const token of normalizedName.split(/\s+/).filter(Boolean)) {
-    if (token.length < 4) continue;
-    if (ANA_ENTERPRISE_NAME_GENERIC_TOKENS.has(token)) continue;
-    needles.add(token);
-  }
-  return Array.from(needles);
-}
-
-function normalizedTextContainsNeedle(text: string, needle: string): boolean {
-  if (!text || !needle) return false;
-  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|\\s)${escaped}(\\s|$)`).test(text);
-}
-
-function findUnsupportedEnterpriseMentionInGlobalNoEnterpriseReply(params: {
-  replyText: string;
-  userMessage: string;
-  activeEnterprises: EnterpriseRow[];
-}): EnterpriseRow | null {
-  const replyNorm = normalizeEnterpriseMentionGuardText(params.replyText);
-  const userNorm = normalizeEnterpriseMentionGuardText(params.userMessage);
-  if (!replyNorm) return null;
-  for (const enterprise of params.activeEnterprises) {
-    const needles = enterpriseMentionNeedles(enterprise.name);
-    if (needles.length === 0) continue;
-    const mentionedInReply = needles.some((needle) => normalizedTextContainsNeedle(replyNorm, needle));
-    if (!mentionedInReply) continue;
-    const mentionedByUser = needles.some((needle) => normalizedTextContainsNeedle(userNorm, needle));
-    if (mentionedByUser) continue;
-    return enterprise;
-  }
-  return null;
-}
 
 function applyGlobalNoEnterpriseUnsupportedEnterpriseMentionGuard(params: {
   globalNoEnterpriseMode: boolean;
