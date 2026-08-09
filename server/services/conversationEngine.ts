@@ -74,6 +74,12 @@ import {
   findUnsupportedEnterpriseMentionInGlobalNoEnterpriseReply,
 } from '../utils/anaEnterpriseMentionGuard.js';
 import {
+  axisHumanLabel,
+  isCommercialAxis,
+  hasLazerSignal,
+  inferAxisFromAssistantText,
+} from '../utils/anaCommercialAxisDetection.js';
+import {
   getMessagesByConversationId,
   getLastUserMessageRow,
   getLastUserMessageNeedingReply,
@@ -1381,18 +1387,6 @@ function buildInitialQualificationClarificationReply(params: {
     : 'Qual informação você quer consultar: valor, localização, metragem, pagamento ou disponibilidade?';
 }
 
-function axisHumanLabel(axis: CommercialAxis): string {
-  if (axis === 'metragem_tipologia') return 'metragem';
-  if (axis === 'financiamento') return 'formas de pagamento';
-  if (axis === 'preco') return 'preco';
-  if (axis === 'localizacao') return 'localizacao';
-  if (axis === 'lazer') return 'lazer';
-  if (axis === 'disponibilidade') return 'disponibilidade';
-  if (axis === 'visita_agendamento') return 'visita';
-  if (axis === 'intencao_compra') return 'intencao de compra';
-  return 'esse ponto';
-}
-
 function normalizeStructuredReplyCandidate(
   reply: string,
   opts?: { preserveAllItems?: boolean }
@@ -1429,17 +1423,6 @@ function normalizeStructuredReplyCandidate(
   return preserveAllItems ? sanitizeListPart(raw) : raw;
 }
 
-const COMMERCIAL_AXIS_SET: ReadonlySet<CommercialAxis> = new Set<CommercialAxis>([
-  'preco',
-  'metragem_tipologia',
-  'localizacao',
-  'lazer',
-  'financiamento',
-  'disponibilidade',
-  'visita_agendamento',
-  'intencao_compra',
-]);
-
 interface AnaAxisRepetitionAuditSnapshot {
   detectedIntent: string | null;
   lastAxis: CommercialAxis | null;
@@ -1448,32 +1431,6 @@ interface AnaAxisRepetitionAuditSnapshot {
   evidenceFound: boolean;
   responseMode: 'short' | 'structured' | null;
   reasonForNotRepeatingAnswer: string | null;
-}
-
-function isCommercialAxis(value: unknown): value is CommercialAxis {
-  return typeof value === 'string' && COMMERCIAL_AXIS_SET.has(value as CommercialAxis);
-}
-
-function hasLazerSignal(text: string | null | undefined): boolean {
-  const n = normText(text || '');
-  if (!n) return false;
-  return (
-    /\blazer\b/.test(n) ||
-    /\bamenidades?\b/.test(n) ||
-    /\b(area|areas)\s+(de\s+)?lazer\b/.test(n) ||
-    /\bareas?\s+comuns?\b/.test(n)
-  );
-}
-
-function inferAxisFromAssistantText(text: string | null | undefined): CommercialAxis | null {
-  const raw = (text || '').trim();
-  if (!raw) return null;
-  const detected = detectCommercialAxes(raw);
-  if (detected.length > 0) return detected[0] ?? null;
-  if (hasLazerSignal(raw) && /\n\s*(?:[-*•]|\d+[.)])\s+/u.test(raw)) {
-    return 'lazer';
-  }
-  return null;
 }
 
 function asksForMoreItems(message: string): boolean {
