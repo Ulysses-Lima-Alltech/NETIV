@@ -33,6 +33,7 @@ import {
   sendAnaEmergencyHandoff,
 } from '../utils/anaEmergencyHandoff.js';
 import { resolveAnaEnterpriseForTurn } from './anaGraph/nodes/resolveEnterprise.js';
+import { isAnaGraphShadowEnabled, runAnaGraphShadow } from './anaGraph/shadowRunner.js';
 
 import {
   extractCustomerNameFromUserUtterance,
@@ -810,6 +811,17 @@ const shouldFastScheduleAnaBeforeClassifier =
               inboundMetaMessageId: mid,
             });
             continue;
+          }
+
+          if (isAnaGraphShadowEnabled()) {
+            void runAnaGraphShadow({
+              conversationId: conv.id,
+              contactId: conv.contact_id ?? null,
+              enterpriseId: conv.enterprise_id ?? null,
+              userMessage: text,
+              metaMessageId: mid,
+              phoneNumberId,
+            });
           }
 
           anaWebhookTrace('schedule_call_start', { conversationId: conv.id, metaMessageId: mid });
