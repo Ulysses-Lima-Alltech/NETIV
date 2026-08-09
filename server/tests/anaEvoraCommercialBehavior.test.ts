@@ -66,7 +66,9 @@ test('endereco/localizacao exata envia texto e link separados no engine', () => 
 test('guard de deduplicacao de regiao bloqueia segunda mensagem de mesmo nucleo', () => {
   const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
   assert.match(source, /countEvoraRegionCoreSignals/);
-  assert.match(source, /\[ANA_REGION_DUPLICATE_MESSAGE_BLOCKED\]/);
+
+  const outboundSplittingSource = readFileSync(path.resolve(process.cwd(), 'utils/anaOutboundTextSplitting.ts'), 'utf8');
+  assert.match(outboundSplittingSource, /\[ANA_REGION_DUPLICATE_MESSAGE_BLOCKED\]/);
 });
 
 test('valor responde R$279.000,00 e R$775,00', () => {

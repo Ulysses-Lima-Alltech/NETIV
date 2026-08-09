@@ -2732,7 +2732,6 @@ test('logs de orquestracao de turno estao presentes', () => {
   assert.match(source, /\[ANA_TURN_DECISION_SELECTED\]/);
   assert.match(source, /\[ANA_TURN_RESPONSE_COMMITTED\]/);
   assert.match(source, /\[ANA_TURN_EXTRA_HANDLER_SUPPRESSED\]/);
-  assert.match(source, /\[ANA_DUPLICATE_RESPONSE_PART_SUPPRESSED\]/);
   assert.match(source, /\[ANA_CONTEXT_STALE_TOPIC_IGNORED\]/);
   assert.match(source, /\[ANA_COMMITTED_REPLY_STATE_EXTRACTED\]/);
   assert.match(source, /\[ANA_COMMITTED_REPLY_STATE_SAVED\]/);
@@ -2747,6 +2746,9 @@ test('logs de orquestracao de turno estao presentes', () => {
 
   const guardsSource = readFileSync(path.resolve(process.cwd(), 'utils/anaEvoraCommercialGuards.ts'), 'utf8');
   assert.match(guardsSource, /\[ANA_NO_REPEAT_MESSAGE_GUARD\]/);
+
+  const outboundSplittingSource = readFileSync(path.resolve(process.cwd(), 'utils/anaOutboundTextSplitting.ts'), 'utf8');
+  assert.match(outboundSplittingSource, /\[ANA_DUPLICATE_RESPONSE_PART_SUPPRESSED\]/);
 });
 
 test('qwen e deterministico passam pelo mesmo commit final sem envio extra', () => {
