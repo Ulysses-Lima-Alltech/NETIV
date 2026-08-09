@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { compileAnaGraph, type AnaGraphRuntimeDeps } from './graph.js';
-import { getOpenAIConfig } from '../../repositories/openaiConfigRepository.js';
+import { resolveAiSettingsForEnterprise } from '../enterpriseAiSettingsService.js';
 import type { AnaGraphState } from './state.js';
 import type { ConversationRow } from '../../repositories/conversationRepository.js';
 import type { DecisionPolicyNodeExternalInput } from './nodes/decisionPolicy.js';
@@ -52,11 +52,11 @@ function shadowDecisionPolicyExternalInput(): DecisionPolicyNodeExternalInput {
  * commercial_flow_state/appointments/corretores parte daqui.
  *
  * Exceção conhecida: classifyLeadTurnNode (classifyLeadConversation) e
- * ragAnswerNode (generateChatCompletion) fazem chamadas reais à API da
- * OpenAI com custo/rastreamento real — são funções já reaproveitadas sem
- * alteração desde as fases 3 e 5c, e não têm um modo "dry run" embutido.
- * Ativar a flag roda essas chamadas para cada turno processado. Ficar
- * ciente do custo antes de ligar a flag, mesmo em empresa piloto única.
+ * ragAnswerNode (generateChatCompletion) fazem chamadas reais ao Bedrock
+ * com custo/rastreamento real — são funções já reaproveitadas sem alteração
+ * desde as fases 3 e 5c, e não têm um modo "dry run" embutido. Ativar a
+ * flag roda essas chamadas para cada turno processado. Ficar ciente do
+ * custo antes de ligar a flag, mesmo em empresa piloto única.
  */
 /**
  * Exportado para reuso pelo harness de comparação (fase 10) — garante que
@@ -67,8 +67,11 @@ function shadowDecisionPolicyExternalInput(): DecisionPolicyNodeExternalInput {
 export function buildShadowDeps(runId: string): AnaGraphRuntimeDeps {
   return {
     decisionPolicyExternalInput: async () => shadowDecisionPolicyExternalInput(),
-    ragAnswerContext: async () => {
-      const aiConfig = await getOpenAIConfig();
+    ragAnswerContext: async (state: AnaGraphState) => {
+      // Mesma resolução usada pelo motor legado (enterpriseAiSettingsService.ts) —
+      // força Bedrock via ANA_PROVIDER, com fallback determinístico ao model/
+      // maxTokens do Bedrock em vez da config OpenAI global órfã.
+      const resolved = await resolveAiSettingsForEnterprise(state.enterpriseId);
       return {
         enterpriseEvidence: {
           hasSendableBook: false,
@@ -80,10 +83,10 @@ export function buildShadowDeps(runId: string): AnaGraphRuntimeDeps {
           hasUsableKnowledgeChunks: false,
         },
         aiConfig: {
-          apiKey: aiConfig?.openaiApiKey ?? '',
-          baseUrl: aiConfig?.openaiBaseUrl ?? null,
-          model: aiConfig?.modelColdLead || 'gpt-4.1-mini',
-          maxTokens: aiConfig?.maxTokens ?? 500,
+          apiKey: resolved.openaiApiKey ?? '',
+          baseUrl: resolved.openaiBaseUrl,
+          model: resolved.modelColdLead || resolved.modelHotLead,
+          maxTokens: resolved.maxTokens,
         },
       };
     },
