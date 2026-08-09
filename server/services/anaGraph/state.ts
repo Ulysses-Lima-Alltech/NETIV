@@ -1,5 +1,6 @@
 import { Annotation } from '@langchain/langgraph';
 import type { CommercialFlowState } from '../../utils/commercialFlowState.js';
+import type { AnaDecisionPolicyResult } from '../../utils/anaDecisionPolicy.js';
 
 /**
  * Espelha CommercialFlowState como um único campo (merge raso) em vez de achatar
@@ -34,6 +35,29 @@ export const AnaGraphStateAnnotation = Annotation.Root({
     default: () => null,
   }),
 
+  // Contexto do turno carregado uma vez por loadTurnContextNode (fase 8) e
+  // reaproveitado pelos nós seguintes — evita refetch repetido da conversa.
+  customerName: Annotation<string | null>({
+    reducer: (_current, update) => update,
+    default: () => null,
+  }),
+  customerPhone: Annotation<string | null>({
+    reducer: (_current, update) => update,
+    default: () => null,
+  }),
+  enterpriseName: Annotation<string | null>({
+    reducer: (_current, update) => update,
+    default: () => null,
+  }),
+  enterpriseCity: Annotation<string | null>({
+    reducer: (_current, update) => update,
+    default: () => null,
+  }),
+  conversationType: Annotation<string | null>({
+    reducer: (_current, update) => update,
+    default: () => null,
+  }),
+
   // Flags de handoff/automação
   automationBlockedByHandoff: Annotation<boolean>({
     reducer: (_current, update) => update,
@@ -52,6 +76,12 @@ export const AnaGraphStateAnnotation = Annotation.Root({
 
   // Saída do turno (preenchida pelos nós de ramificação/finalização)
   assistantReplyText: Annotation<string | null>({
+    reducer: (_current, update) => update,
+    default: () => null,
+  }),
+
+  /** Resultado da fase 4 (decisionPolicy) — carregado para a edge condicional decidir o roteamento da fase 5. */
+  lastDecision: Annotation<AnaDecisionPolicyResult | null>({
     reducer: (_current, update) => update,
     default: () => null,
   }),
