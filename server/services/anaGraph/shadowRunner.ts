@@ -58,7 +58,13 @@ function shadowDecisionPolicyExternalInput(): DecisionPolicyNodeExternalInput {
  * Ativar a flag roda essas chamadas para cada turno processado. Ficar
  * ciente do custo antes de ligar a flag, mesmo em empresa piloto única.
  */
-function buildShadowDeps(runId: string): AnaGraphRuntimeDeps {
+/**
+ * Exportado para reuso pelo harness de comparação (fase 10) — garante que
+ * qualquer execução do grafo fora da produção real (sombra ou harness) usa
+ * exatamente os mesmos mocks "somente log", nunca duas implementações
+ * divergentes de "não escrever/enviar de verdade".
+ */
+export function buildShadowDeps(runId: string): AnaGraphRuntimeDeps {
   return {
     decisionPolicyExternalInput: async () => shadowDecisionPolicyExternalInput(),
     ragAnswerContext: async () => {

@@ -1,4 +1,4 @@
-import { StateGraph, START, END } from '@langchain/langgraph';
+import { StateGraph, START, END, type BaseCheckpointSaver } from '@langchain/langgraph';
 import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { getPool } from '../../db/pg.js';
 import { getConversationById, type ConversationRow } from '../../repositories/conversationRepository.js';
@@ -201,7 +201,7 @@ export function createAnaGraphCheckpointer(): PostgresSaver {
   return new PostgresSaver(getPool());
 }
 
-export function compileAnaGraph(deps: AnaGraphRuntimeDeps, checkpointer?: PostgresSaver) {
+export function compileAnaGraph(deps: AnaGraphRuntimeDeps, checkpointer?: BaseCheckpointSaver) {
   const graph = buildAnaGraph(deps);
   return graph.compile({ checkpointer: checkpointer ?? createAnaGraphCheckpointer() });
 }
