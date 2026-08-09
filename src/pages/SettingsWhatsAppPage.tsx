@@ -303,8 +303,6 @@ export function SettingsWhatsAppPage() {
   const [testingEnterpriseId, setTestingEnterpriseId] = useState<number | null>(null);
   const [deletingEnterpriseId, setDeletingEnterpriseId] = useState<number | null>(null);
   const [savingCostSettings, setSavingCostSettings] = useState(false);
-  const [testingCostSettings, setTestingCostSettings] = useState(false);
-  const [syncingCostsNow, setSyncingCostsNow] = useState(false);
   const [expandedEnterpriseId, setExpandedEnterpriseId] = useState<number | null>(null);
   const [showGlobalApiKeyInput, setShowGlobalApiKeyInput] = useState(false);
   const [showCostApiKeyInput, setShowCostApiKeyInput] = useState(false);
@@ -352,10 +350,6 @@ export function SettingsWhatsAppPage() {
   const [availableModels, setAvailableModels] = useState<AvailableModelItem[]>([]);
   void savingCostSettings;
   void setSavingCostSettings;
-  void testingCostSettings;
-  void setTestingCostSettings;
-  void syncingCostsNow;
-  void setSyncingCostsNow;
   void showCostApiKeyInput;
   void setShowCostApiKeyInput;
   void costForm;
@@ -585,41 +579,7 @@ export function SettingsWhatsAppPage() {
     }
   };
 
-  const handleTestCostsConfig = async () => {
-    setTestingCostSettings(true);
-    setApiMessage(null);
-    try {
-      const result = await settingsApi.testOpenAiCostsConfig();
-      setApiMessage({ type: 'success', text: result.message });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Erro ao testar permissão da chave de custos.';
-      setApiMessage({ type: 'error', text: msg });
-    } finally {
-      setTestingCostSettings(false);
-    }
-  };
-
-  const handleSyncCostsNow = async () => {
-    setSyncingCostsNow(true);
-    setApiMessage(null);
-    try {
-      const result = await settingsApi.syncOpenAiCosts();
-      await loadApiSettings();
-      setApiMessage({
-        type: 'success',
-        text: `Sync de custos concluído. Linhas sincronizadas: ${result.syncedRows}, salvas: ${result.savedRows}, sem mapeamento: ${result.unknownApiKeyRows}.`,
-      });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Erro ao sincronizar custos OpenAI.';
-      await loadApiSettings();
-      setApiMessage({ type: 'error', text: msg });
-    } finally {
-      setSyncingCostsNow(false);
-    }
-  };
   void handleSaveCostsConfig;
-  void handleTestCostsConfig;
-  void handleSyncCostsNow;
 
   const updateEnterpriseForm = (enterpriseId: number, updater: (state: EnterpriseApiFormState) => EnterpriseApiFormState) => {
     setApiEnterpriseForms((prev) => {
@@ -1235,36 +1195,6 @@ export function SettingsWhatsAppPage() {
                           </>
                         ) : (
                           'Salvar chave de custos'
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleTestCostsConfig}
-                        disabled={testingCostSettings}
-                        className={btnSecondary}
-                      >
-                        {testingCostSettings ? (
-                          <>
-                            <span className="h-4 w-4 rounded-full border-2 border-[#9CA3AF] border-t-[#374151] animate-spin" />
-                            Testando…
-                          </>
-                        ) : (
-                          'Testar permissão'
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleSyncCostsNow}
-                        disabled={syncingCostsNow}
-                        className={btnSecondary}
-                      >
-                        {syncingCostsNow ? (
-                          <>
-                            <span className="h-4 w-4 rounded-full border-2 border-[#9CA3AF] border-t-[#374151] animate-spin" />
-                            Sincronizando…
-                          </>
-                        ) : (
-                          'Sincronizar custos agora'
                         )}
                       </button>
                     </div>

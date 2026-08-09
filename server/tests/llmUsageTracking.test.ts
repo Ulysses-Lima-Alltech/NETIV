@@ -287,21 +287,6 @@ test('dashboard prioriza snapshot oficial e faz fallback para custo local quando
   assert.match(source, /llmCostSource/);
 });
 
-test('sync de custos usa upsert e mapeia api_key_id para enterprise_id sem vazar secret', () => {
-  const source = readServerSourceFile('services/openaiCostSyncService.js');
-  const routeSource = readServerSourceFile('routes/settingsAi.js');
-
-  assert.match(source, /\/v1\/organization\/costs/);
-  assert.match(source, /group_by/);
-  assert.match(source, /api_key_id/);
-  assert.match(source, /ON CONFLICT/);
-  assert.match(source, /enterprise_ai_settings/);
-  assert.match(source, /unknownApiKeyRows/);
-  assert.doesNotMatch(source, /console\.log\([^)]*adminKey/i);
-  assert.match(routeSource, /\/api\/costs\/sync/);
-  assert.match(routeSource, /\/api\/costs\/snapshots/);
-});
-
 test('migration e script de backfill existem sem seed automatico', () => {
   const migration = readServerSourceFile('db/migrations/pg/052_llm_cost_backfills.sql');
   const script = readServerSourceFile('scripts/addLlmCostBackfill.js');

@@ -50,14 +50,6 @@ export interface OpenAiCostSettingsPublic {
   updated_at: string;
 }
 
-export interface OpenAiCostSettingsTestResult {
-  success: boolean;
-  status: number;
-  message: string;
-  baseUrl: string;
-  openaiProjectId: string | null;
-}
-
 function trimOrNull(value: string | null | undefined): string | null {
   if (value == null) return null;
   const normalized = String(value).trim();
@@ -86,35 +78,6 @@ async function ensureOpenAiCostSettingsRow(): Promise<void> {
      VALUES ('openai', true, NOW(), NOW())
      ON CONFLICT (provider) DO NOTHING`
   );
-}
-
-function buildCostsApiUrl(baseUrl: string): string {
-  const nowSec = Math.floor(Date.now() / 1000);
-  const startSec = nowSec - 24 * 60 * 60;
-  const url = new URL('/v1/organization/costs', baseUrl);
-  url.searchParams.set('start_time', String(startSec));
-  url.searchParams.set('end_time', String(nowSec));
-  url.searchParams.set('bucket_width', '1d');
-  url.searchParams.append('group_by', 'api_key_id');
-  return url.toString();
-}
-
-function extractErrorMessage(rawText: string): string {
-  const text = rawText.trim();
-  if (!text) return 'Erro sem detalhes retornado pela OpenAI.';
-  try {
-    const parsed = JSON.parse(text) as { error?: { message?: string } };
-    const fromError = trimOrNull(parsed?.error?.message);
-    if (fromError) return fromError;
-  } catch {
-    // no-op
-  }
-  return text.slice(0, 500);
-}
-
-function isMissingUsageReadScope(status: number, rawText: string): boolean {
-  if (status !== 403) return false;
-  return /api\.usage\.read|missing scopes?/i.test(rawText);
 }
 
 function newRepositoryError(message: string, code: string): Error {
@@ -230,45 +193,3 @@ export async function registerOpenAiCostSyncStatus(payload: {
   );
 }
 
-export async function testOpenAiCostSettings(): Promise<OpenAiCostSettingsTestResult> {
-  const settings = await getOpenAiCostSettings();
-  const apiKey = await resolveOpenAiCostsApiKey();
-  const baseUrl = 'https://api.openai.com';
-  const url = buildCostsApiUrl(baseUrl);
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      ...(settings.openaiProjectId ? { 'OpenAI-Project': settings.openaiProjectId } : {}),
-    },
-  });
-
-  if (!response.ok) {
-    const rawText = await response.text();
-    if (isMissingUsageReadScope(response.status, rawText)) {
-      return {
-        success: false,
-        status: response.status,
-        message: 'A chave de custos não possui permissão api.usage.read.',
-        baseUrl,
-        openaiProjectId: settings.openaiProjectId,
-      };
-    }
-    return {
-      success: false,
-      status: response.status,
-      message: extractErrorMessage(rawText),
-      baseUrl,
-      openaiProjectId: settings.openaiProjectId,
-    };
-  }
-
-  return {
-    success: true,
-    status: response.status,
-    message: 'Permissão de custos validada com sucesso.',
-    baseUrl,
-    openaiProjectId: settings.openaiProjectId,
-  };
-}
