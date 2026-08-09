@@ -1,0 +1,83 @@
+import {
+  buildAnaDecisionPolicy,
+  type AnaDecisionPolicyInput,
+  type AnaDecisionPolicyResult,
+} from '../../../utils/anaDecisionPolicy.js';
+import { inferRequestedProductType } from '../../../utils/anaRequestedProductType.js';
+import { isBareGreetingOnly } from '../../../utils/anaDocSendIntent.js';
+import type { AnaEnterpriseEvidence } from '../../../utils/anaEnterpriseEvidence.js';
+import type { CommercialAxis } from '../../../utils/anaCommercialAxisGuard.js';
+import type { AnaGraphState } from '../state.js';
+
+/**
+ * Entradas que hoje são computadas dentro do monólito conversationEngine.ts
+ * (não exportadas) e ainda não têm detector reutilizável fora dele. Ficam
+ * como parâmetro explícito do nó em vez de reimplementadas aqui — evita
+ * duplicar regex de negócio antes de existir um ponto de extração seguro.
+ * TODO(fase 8/9): decidir se esses detectores são extraídos para
+ * server/utils/ana*.ts (fase futura, fora do escopo atual) ou se o grafo
+ * novo aceita fidelidade parcial enquanto roda em modo sombra.
+ */
+export interface DecisionPolicyNodeExternalInput {
+  requestedAxis: CommercialAxis | null;
+  lastAxis: CommercialAxis | null;
+  enterpriseResolved: boolean;
+  enterpriseEvidence: AnaEnterpriseEvidence;
+  conversationContext: {
+    phase: string;
+    historyCount: number;
+    hasOpenAppointment: boolean;
+  };
+  conversationContextText: string;
+  detectedIntent: string | null;
+  isShortFollowUp: boolean;
+  isFirstAnaReply: boolean;
+  explicitMaterialRequest: boolean;
+  explicitExactLocationRequest: boolean;
+  explicitPaymentSimulationRequest: boolean;
+  asksListStyleInfo: boolean;
+  asksSpecificInfoWithoutEvidence: boolean;
+}
+
+export function decisionPolicyNode(
+  state: AnaGraphState,
+  external: DecisionPolicyNodeExternalInput
+): AnaDecisionPolicyResult {
+  const requestedProductType = inferRequestedProductType(state.userMessage, external.conversationContextText);
+  const isBareGreeting = isBareGreetingOnly(state.userMessage);
+
+  const input: AnaDecisionPolicyInput = {
+    detectedIntent: external.detectedIntent,
+    requestedAxis: external.requestedAxis,
+    lastAxis: external.lastAxis,
+    requestedProductType,
+    enterpriseResolved: external.enterpriseResolved,
+    enterpriseId: state.enterpriseId,
+    enterpriseEvidence: external.enterpriseEvidence,
+    conversationContext: external.conversationContext,
+    turnFlags: {
+      isBareGreeting,
+      isShortFollowUp: external.isShortFollowUp,
+      isFirstAnaReply: external.isFirstAnaReply,
+      explicitMaterialRequest: external.explicitMaterialRequest,
+      explicitExactLocationRequest: external.explicitExactLocationRequest,
+      explicitPaymentSimulationRequest: external.explicitPaymentSimulationRequest,
+      asksListStyleInfo: external.asksListStyleInfo,
+      asksSpecificInfoWithoutEvidence: external.asksSpecificInfoWithoutEvidence,
+    },
+    userMessage: state.userMessage,
+  };
+
+  return buildAnaDecisionPolicy(input);
+}
+
+/** Edge condicional: decide o próximo nó de ramificação (fase 5) a partir do resultado da política. */
+export function routeAfterDecisionPolicy(
+  decision: AnaDecisionPolicyResult
+): 'visitScheduling' | 'sendMaterial' | 'ragAnswer' | 'knowledgeGapReply' | 'humanHandoff' {
+  if (decision.primaryAxis === 'visita_agendamento' || decision.shouldSuggestVisit) return 'visitScheduling';
+  if (decision.shouldSendMaterial || decision.primaryAxis === 'material') return 'sendMaterial';
+  if (decision.shouldCreateInfoGapFlag || !decision.evidenceFound) return 'knowledgeGapReply';
+  if (!decision.canRespond || !decision.outboundAllowed) return 'humanHandoff';
+  return 'ragAnswer';
+}
