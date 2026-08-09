@@ -33,6 +33,7 @@ import {
   repairAnaOutboundSplitParts,
   splitAnaOutboundMessages,
 } from '../utils/anaOutboundTextSplitting.js';
+import { normText } from '../utils/anaTextNormalize.js';
 import {
   getMessagesByConversationId,
   getLastUserMessageRow,
@@ -2497,10 +2498,6 @@ const HANDOFF_INTENT_REGEX_PATTERNS: RegExp[] = [
   /\batendimento\s+humano\b/,
   /\bquero\s+falar\s+com\s+(?:uma)?\s*pessoa\b/,
 ];
-
-function normText(s: string): string {
-  return s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim();
-}
 
 function formatYmdForAnaVisitAvailability(value: Date): string {
   return new Intl.DateTimeFormat('en-CA', {
