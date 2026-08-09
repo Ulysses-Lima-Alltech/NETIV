@@ -2505,16 +2505,18 @@ test('onde fica esse loteamento responde localizacao normal, nao preco e nao lin
 
 test('pedido explicito de link de localizacao permanece no fluxo de link/rota', () => {
   const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
-  assert.match(source, /tem link da localizacao/);
-  assert.match(source, /google maps/);
-  assert.match(source, /me envia a localizacao/);
-  assert.match(source, /manda a localizacao pfv/);
-  assert.match(source, /nao entendi onde fica/);
   assert.match(source, /if \(isLocationLinkRequest\(trimmed\) && isEvoraEnterpriseName/);
+
+  const locationSource = readFileSync(path.resolve(process.cwd(), 'utils/anaEvoraLocationAndMaterial.ts'), 'utf8');
+  assert.match(locationSource, /tem link da localizacao/);
+  assert.match(locationSource, /google maps/);
+  assert.match(locationSource, /me envia a localizacao/);
+  assert.match(locationSource, /manda a localizacao pfv/);
+  assert.match(locationSource, /nao entendi onde fica/);
 });
 
 test('engine prioriza aliases de link de localizacao em variablesMap', () => {
-  const source = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
+  const source = readFileSync(path.resolve(process.cwd(), 'utils/anaEvoraLocationAndMaterial.ts'), 'utf8');
   assert.match(source, /google_maps_url/);
   assert.match(source, /maps_url/);
   assert.match(source, /location_url/);

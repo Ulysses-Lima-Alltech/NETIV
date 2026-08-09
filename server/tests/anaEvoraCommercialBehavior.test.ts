@@ -60,7 +60,9 @@ test('endereco/localizacao exata envia texto e link separados no engine', () => 
   assert.match(source, /getEvoraCanonicalMapsLink/);
   assert.match(source, /locationLinkMessages: string\[\] = \[locationOverview\]/);
   assert.match(source, /locationLinkMessages\.push\(resolvedLocationLink\)/);
-  assert.match(source, /https:\/\/maps\.app\.goo\.gl\/jBoxPM6XRut2iXHSA\?g_st=ic/);
+
+  const locationSource = readFileSync(path.resolve(process.cwd(), 'utils/anaEvoraLocationAndMaterial.ts'), 'utf8');
+  assert.match(locationSource, /https:\/\/maps\.app\.goo\.gl\/jBoxPM6XRut2iXHSA\?g_st=ic/);
 });
 
 test('guard de deduplicacao de regiao bloqueia segunda mensagem de mesmo nucleo', () => {

@@ -15,6 +15,7 @@ function readSource(tsRelativePath: string, jsRelativePath: string): string {
 
 const engineSource = readSource('../services/conversationEngine.ts', '../services/conversationEngine.js');
 const webhookSource = readSource('../services/webhookProcessor.ts', '../services/webhookProcessor.js');
+const evoraLocationAndMaterialSource = readSource('../utils/anaEvoraLocationAndMaterial.ts', '../utils/anaEvoraLocationAndMaterial.js');
 
 const REF = new Date('2026-07-05T12:00:00-03:00');
 
@@ -64,9 +65,9 @@ test('guardrail factual do Evora remove Campinas e força localização correta'
 
 test('foto indisponivel nao promete envio', () => {
   assert.match(engineSource, /ANA_IMAGE_NOT_FOUND_REPLY/);
-  assert.match(engineSource, /Ainda não encontrei essa foto cadastrada aqui/);
   assert.match(engineSource, /canClaimMaterialWasSent = mediaOutcome\.ok === true/);
   assert.match(engineSource, /textHasMaterialDeliveryClaim\(replyText\)/);
+  assert.match(evoraLocationAndMaterialSource, /Ainda não encontrei essa foto cadastrada aqui/);
 });
 
 test('agenda preserva semana que vem, tarde, 15h e confirma exatamente ultimo candidato', () => {
