@@ -15,6 +15,7 @@ import {
   detectStructuredListIntent,
 } from '../../../utils/anaDecisionPolicy.js';
 import { buildAnaEnterpriseEvidence } from '../../../utils/anaEnterpriseEvidence.js';
+import { loadRankedKnowledgeChunksForPromptWithMeta } from '../../../repositories/enterpriseKnowledgeChunkRepository.js';
 import type { AnaGraphState } from '../state.js';
 import type { DecisionPolicyNodeExternalInput } from './decisionPolicy.js';
 
@@ -23,12 +24,13 @@ import type { DecisionPolicyNodeExternalInput } from './decisionPolicy.js';
  * detectores exportados que o motor legado (conversationEngine.ts) usa —
  * nenhuma regex de negócio nova foi escrita aqui.
  *
- * Gap conhecido (documentado, não forçado): `enterpriseEvidence.knowledgeText`
- * fica vazio. A recuperação real vem do subsistema de RAG (busca semântica em
- * chunks) do motor legado, que não é uma função pura extraível — depende de
- * embeddings e múltiplas tabelas. `hasSendableBook`/`hasPricingInfo`/etc.
- * calculados a partir de arquivos e variáveis reais continuam corretos;
- * apenas o sinal derivado de texto livre de conhecimento fica ausente.
+ * `enterpriseEvidence.knowledgeText` vem de loadRankedKnowledgeChunksForPromptWithMeta
+ * (mesma busca de chunks que ragAnswerNode já faz para montar o prompt) — mesma
+ * fonte que o motor legado usa antes de chamar buildAnaEnterpriseEvidence numa
+ * resposta real. Isso duplica a busca de RAG (decisionPolicy busca pra decidir
+ * se há evidência, ragAnswerNode busca de novo pra montar o prompt) — consolidar
+ * num único fetch compartilhado via AnaGraphState fica como otimização futura,
+ * não é trivial sem também mudar a assinatura de ragAnswerNode/graph.ts.
  *
  * Gap conhecido (fidelidade parcial): `conversationContext.phase` aqui é uma
  * aproximação (`scoped` vs `triage`) — o motor legado tem um enum mais fino
@@ -56,11 +58,21 @@ export async function buildDecisionContextNode(
   const enterprise = state.enterpriseId != null ? await getEnterpriseById(state.enterpriseId) : null;
   const files = state.enterpriseId != null ? await listEnterpriseFiles(state.enterpriseId) : [];
   const variablesMap = state.enterpriseId != null ? await getVariablesMap(state.enterpriseId) : {};
+  const knowledgeText =
+    state.enterpriseId != null
+      ? (
+          await loadRankedKnowledgeChunksForPromptWithMeta(
+            state.enterpriseId,
+            `${state.enterpriseName ?? ''}\n${state.userMessage}`.slice(0, 4000),
+            {}
+          )
+        ).promptText
+      : '';
   const enterpriseEvidence = buildAnaEnterpriseEvidence({
     enterprise,
     files,
     variablesMap,
-    knowledgeText: '',
+    knowledgeText,
   });
 
   const appointmentPreflight = computeAppointmentPreflight(state.userMessage, conversationContextText);

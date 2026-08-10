@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { compileAnaGraph, type AnaGraphRuntimeDeps } from './graph.js';
 import { resolveAiSettingsForEnterprise } from '../enterpriseAiSettingsService.js';
+import { buildDecisionContextNode } from './nodes/buildDecisionContext.js';
 import type { AnaGraphState } from './state.js';
 import type { ConversationRow } from '../../repositories/conversationRepository.js';
 
@@ -31,21 +32,18 @@ export function isAnaGraphShadowEnabled(): boolean {
  */
 export function buildShadowDeps(runId: string): AnaGraphRuntimeDeps {
   return {
-    ragAnswerContext: async (state: AnaGraphState) => {
+    ragAnswerContext: async (state: AnaGraphState, conversation: ConversationRow) => {
       // Mesma resolução usada pelo motor legado (enterpriseAiSettingsService.ts) —
       // força Bedrock via ANA_PROVIDER, com fallback determinístico ao model/
       // maxTokens do Bedrock em vez da config OpenAI global órfã.
       const resolved = await resolveAiSettingsForEnterprise(state.enterpriseId);
+      // Reaproveita buildDecisionContextNode em vez de recalcular evidência aqui
+      // pela terceira vez (decisionPolicy já monta isso com knowledgeText real) —
+      // custa um fetch de RAG a mais por turno; consolidar num único fetch
+      // compartilhado via AnaGraphState fica como otimização futura.
+      const decisionContext = await buildDecisionContextNode(state, conversation);
       return {
-        enterpriseEvidence: {
-          hasSendableBook: false,
-          hasSendableFloorplan: false,
-          hasAnySendableMaterial: false,
-          hasExactLocation: false,
-          hasPricingInfo: false,
-          hasFinancingInfo: false,
-          hasUsableKnowledgeChunks: false,
-        },
+        enterpriseEvidence: decisionContext.enterpriseEvidence,
         aiConfig: {
           apiKey: resolved.openaiApiKey ?? '',
           baseUrl: resolved.openaiBaseUrl,
