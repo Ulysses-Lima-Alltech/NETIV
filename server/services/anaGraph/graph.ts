@@ -7,11 +7,8 @@ import { AnaGraphStateAnnotation, type AnaGraphState } from './state.js';
 import { automationGateNode } from './nodes/automationGate.js';
 import { resolveEnterpriseNode } from './nodes/resolveEnterprise.js';
 import { classifyLeadTurnNode } from './nodes/classifyLeadTurn.js';
-import {
-  decisionPolicyNode,
-  routeAfterDecisionPolicy,
-  type DecisionPolicyNodeExternalInput,
-} from './nodes/decisionPolicy.js';
+import { decisionPolicyNode, routeAfterDecisionPolicy } from './nodes/decisionPolicy.js';
+import { buildDecisionContextNode } from './nodes/buildDecisionContext.js';
 import { visitSchedulingNode, type PersistAppointmentFn } from './nodes/visitScheduling.js';
 import { sendMaterialNode, type SendMaterialFn } from './nodes/sendMaterial.js';
 import { ragAnswerNode, type RagAnswerNodeParams } from './nodes/ragAnswer.js';
@@ -33,10 +30,6 @@ import { persistStateNode, type PersistCommercialFlowStateFn } from './nodes/per
  * vez de recomputadas aqui, evitando reescrever regex de negócio às cegas.
  */
 export interface AnaGraphRuntimeDeps {
-  decisionPolicyExternalInput: (
-    state: AnaGraphState,
-    conversation: ConversationRow
-  ) => Promise<DecisionPolicyNodeExternalInput>;
   ragAnswerContext: (
     state: AnaGraphState,
     conversation: ConversationRow
@@ -91,7 +84,7 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
     })
     .addNode('decisionPolicy', async (state) => {
       const conversation = await loadConversationOrThrow(state.conversationId);
-      const external = await deps.decisionPolicyExternalInput(state, conversation);
+      const external = await buildDecisionContextNode(state, conversation);
       const decision = decisionPolicyNode(state, external);
       return { lastDecision: decision };
     })

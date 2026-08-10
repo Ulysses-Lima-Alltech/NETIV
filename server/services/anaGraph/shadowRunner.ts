@@ -3,47 +3,12 @@ import { compileAnaGraph, type AnaGraphRuntimeDeps } from './graph.js';
 import { resolveAiSettingsForEnterprise } from '../enterpriseAiSettingsService.js';
 import type { AnaGraphState } from './state.js';
 import type { ConversationRow } from '../../repositories/conversationRepository.js';
-import type { DecisionPolicyNodeExternalInput } from './nodes/decisionPolicy.js';
 
 const SHADOW_TAG = '[ANA_GRAPH_SHADOW]';
 
 /** Flag global, nasce desligada por padrão. Nenhuma empresa é ativada automaticamente. */
 export function isAnaGraphShadowEnabled(): boolean {
   return String(process.env.ANA_GRAPH_SHADOW_ENABLED ?? '').trim().toLowerCase() === 'true';
-}
-
-/**
- * turnFlags/enterpriseEvidence hoje só existem como variáveis privadas em
- * conversationEngine.ts (gap documentado desde a fase 4). Em modo sombra
- * usamos defaults conservadores — o objetivo aqui é medir se o grafo roda
- * sem erro e logar sua saída para comparação futura (fase 10), não obter
- * fidelidade total de roteamento ainda.
- */
-function shadowDecisionPolicyExternalInput(): DecisionPolicyNodeExternalInput {
-  return {
-    requestedAxis: null,
-    lastAxis: null,
-    enterpriseResolved: false,
-    enterpriseEvidence: {
-      hasSendableBook: false,
-      hasSendableFloorplan: false,
-      hasAnySendableMaterial: false,
-      hasExactLocation: false,
-      hasPricingInfo: false,
-      hasFinancingInfo: false,
-      hasUsableKnowledgeChunks: false,
-    },
-    conversationContext: { phase: 'shadow', historyCount: 0, hasOpenAppointment: false },
-    conversationContextText: '',
-    detectedIntent: null,
-    isShortFollowUp: false,
-    isFirstAnaReply: false,
-    explicitMaterialRequest: false,
-    explicitExactLocationRequest: false,
-    explicitPaymentSimulationRequest: false,
-    asksListStyleInfo: false,
-    asksSpecificInfoWithoutEvidence: false,
-  };
 }
 
 /**
@@ -66,7 +31,6 @@ function shadowDecisionPolicyExternalInput(): DecisionPolicyNodeExternalInput {
  */
 export function buildShadowDeps(runId: string): AnaGraphRuntimeDeps {
   return {
-    decisionPolicyExternalInput: async () => shadowDecisionPolicyExternalInput(),
     ragAnswerContext: async (state: AnaGraphState) => {
       // Mesma resolução usada pelo motor legado (enterpriseAiSettingsService.ts) —
       // força Bedrock via ANA_PROVIDER, com fallback determinístico ao model/

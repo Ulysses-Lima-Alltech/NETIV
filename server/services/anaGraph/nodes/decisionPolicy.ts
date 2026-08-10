@@ -10,13 +10,15 @@ import type { CommercialAxis } from '../../../utils/anaCommercialAxisGuard.js';
 import type { AnaGraphState } from '../state.js';
 
 /**
- * Entradas que hoje são computadas dentro do monólito conversationEngine.ts
- * (não exportadas) e ainda não têm detector reutilizável fora dele. Ficam
- * como parâmetro explícito do nó em vez de reimplementadas aqui — evita
- * duplicar regex de negócio antes de existir um ponto de extração seguro.
- * TODO(fase 8/9): decidir se esses detectores são extraídos para
- * server/utils/ana*.ts (fase futura, fora do escopo atual) ou se o grafo
- * novo aceita fidelidade parcial enquanto roda em modo sombra.
+ * Montado por buildDecisionContextNode (buildDecisionContext.ts), reaproveitando
+ * os mesmos detectores exportados que o motor legado usa (inferUserRequestedAxis,
+ * detectExplicitExactLocationRequest, buildAnaEnterpriseEvidence, etc.) — sem
+ * regex de negócio nova. Continua como parâmetro explícito do nó (em vez de
+ * chamado direto aqui) para manter decisionPolicyNode puro/testável isoladamente.
+ *
+ * Gaps remanescentes documentados em buildDecisionContext.ts: `enterpriseEvidence
+ * .knowledgeText` fica vazio (depende do subsistema de RAG, não é função pura) e
+ * `conversationContext.phase` é uma aproximação simplificada.
  */
 export interface DecisionPolicyNodeExternalInput {
   requestedAxis: CommercialAxis | null;
