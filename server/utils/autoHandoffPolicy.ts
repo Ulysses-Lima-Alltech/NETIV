@@ -4,6 +4,16 @@ export function isAutoHandoffEnabled(): boolean {
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
 }
 
+export function resolveAnaAutomaticHandoffUpdate(params: {
+  handoffAlreadyActive: boolean;
+  requestedHandoff: boolean;
+}): { handoff: boolean; blockedAutomaticActivation: boolean } {
+  return {
+    handoff: params.handoffAlreadyActive,
+    blockedAutomaticActivation: params.requestedHandoff && !params.handoffAlreadyActive,
+  };
+}
+
 export function logAutoHandoffBlocked(params: {
   origin: string;
   conversationId?: number | null;

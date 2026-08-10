@@ -5,9 +5,9 @@ import { getConversationById } from '../repositories/conversationRepository.js';
 import { getConversationWhatsAppWindowStatus } from './whatsappWindowService.js';
 import { isMetaWindowClosedError, sendTextMessage } from './whatsappMetaService.js';
 import {
-  cancelActiveAnaVisitFollowupJobs,
   withAnaVisitFollowupConversationLock,
 } from '../repositories/anaVisitFollowupJobRepository.js';
+import { cancelAnaPendingAutomationForHandoff } from '../repositories/anaHandoffAutomationRepository.js';
 
 type MobileConversationStatus = 'ANA' | 'HUMAN';
 type MobileConversationFilterType = 'CLIENT' | 'INTERNO';
@@ -439,9 +439,9 @@ export async function setMobileConversationHandoff(
 
     const updated = updateResult.rows[0] ?? null;
     if (updated?.handoff === true) {
-      await cancelActiveAnaVisitFollowupJobs({
+      await cancelAnaPendingAutomationForHandoff({
         conversationId,
-        reason: 'handoff',
+        source: 'setMobileConversationHandoff',
       });
     }
     return updated;

@@ -38,6 +38,7 @@ import {
   manualAttachmentRejectionMessage,
   MANUAL_UPLOAD_BODY_LIMIT_BYTES,
 } from '../utils/manualWhatsappAttachment.js';
+import { ConversationDateFilterError, parseConversationDateFilter } from '../utils/inboxDateFilter.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import {
   findOrCreateConversation,
@@ -462,7 +463,24 @@ router.get('/config/check', async (_req, res) => {
   }
 });
 
-router.get('/conversations', async (req, res) => {
+type ListConversationsHandlerDependencies = {
+  listConversationsWithPreview: typeof listConversationsWithPreview;
+  canAccessAll: typeof canAccessAll;
+  getAccessibleConversationIds: typeof getAccessibleConversationIds;
+};
+
+/** Permite testar a rota HTTP sem alterar as dependências usadas em produção. */
+export function createListConversationsHandler(
+  overrides: Partial<ListConversationsHandlerDependencies> = {}
+) {
+  const dependencies: ListConversationsHandlerDependencies = {
+    listConversationsWithPreview,
+    canAccessAll,
+    getAccessibleConversationIds,
+    ...overrides,
+  };
+
+  return async (req: Request, res: Response) => {
   try {
     const channel = (req.query.channel as string) || 'whatsapp';
     const limit = Math.min(parseInt(String(req.query.limit), 10) || 100, 500);
@@ -470,6 +488,11 @@ router.get('/conversations', async (req, res) => {
     const status = req.query.status as string | undefined;
     const enterpriseId = req.query.enterpriseId != null ? parseInt(String(req.query.enterpriseId), 10) : undefined;
     const search = req.query.search as string | undefined;
+    const dateFilter = parseConversationDateFilter({
+      dateFrom: req.query.dateFrom,
+      dateTo: req.query.dateTo,
+      dateReference: req.query.dateReference,
+    });
     const typeRaw = String(req.query.type || 'CLIENT').toUpperCase();
     const type = typeRaw === 'INTERNO' ? 'INTERNO' : 'CLIENT';
 
@@ -477,13 +500,18 @@ router.get('/conversations', async (req, res) => {
     // Se o usuário tem escopo broker_portfolio, SEMPRE passa o array (mesmo vazio).
     // O repositório interpreta `[]` como "não retornar nada" e `undefined` como "sem restrição".
     const user = (req as AuthenticatedRequest).user;
-    const scopeConvIds = canAccessAll(user) ? undefined : await getAccessibleConversationIds(user);
+    const scopeConvIds = dependencies.canAccessAll(user)
+      ? undefined
+      : await dependencies.getAccessibleConversationIds(user);
 
     const filters: {
       mode?: 'ANA' | 'handoff';
       status?: string;
       enterpriseId?: number;
       search?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      dateReference?: 'last_message' | 'conversation_started';
       conversationTypeFilter?: 'CLIENT' | 'INTERNO';
       scopeConvIds?: number[];
     } = {};
@@ -491,19 +519,29 @@ router.get('/conversations', async (req, res) => {
     if (status && status !== 'all') filters.status = status;
     if (enterpriseId != null && !Number.isNaN(enterpriseId)) filters.enterpriseId = enterpriseId;
     if (search && search.trim() !== '') filters.search = search.trim();
+    if (dateFilter.dateFrom) filters.dateFrom = dateFilter.dateFrom;
+    if (dateFilter.dateTo) filters.dateTo = dateFilter.dateTo;
+    if (dateFilter.dateReference) filters.dateReference = dateFilter.dateReference;
     if (scopeConvIds !== undefined) filters.scopeConvIds = scopeConvIds;
     filters.conversationTypeFilter = type as 'CLIENT' | 'INTERNO';
     const hasFilters = Object.keys(filters).length > 0;
-    const rows = await listConversationsWithPreview(channel, limit, hasFilters ? filters : undefined);
+    const rows = await dependencies.listConversationsWithPreview(channel, limit, hasFilters ? filters : undefined);
     console.log('[INBOX_CONTACT_TYPE_FILTER]', { requestedType: type, returned: rows.length, scopeSize: scopeConvIds?.length });
     res.json({
       conversations: rows.map((r) => mapConversationWithPreviewRow(r)),
     });
   } catch (e) {
+    if (e instanceof ConversationDateFilterError) {
+      res.status(400).json({ error: e.message });
+      return;
+    }
     console.error('[WhatsApp] GET conversations:', e);
     res.status(500).json({ error: 'Erro ao listar.' });
   }
-});
+  };
+}
+
+router.get('/conversations', createListConversationsHandler());
 
 router.get('/conversations/:id', async (req, res) => {
   try {

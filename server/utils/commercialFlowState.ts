@@ -11,6 +11,14 @@ import {
   type PurchaseIntent,
 } from './anaCommercialAxisGuard.js';
 
+export interface PendingAppointmentCandidate {
+  date: string;
+  time: string;
+  datetime: string;
+  sourceMessage: string;
+  confidence: number;
+  offeredAt: string;
+}
 export type MaterialPendingAction = 'send_material';
 export type MaterialSendStatus =
   | 'sent'
@@ -19,14 +27,33 @@ export type MaterialSendStatus =
   | 'enterprise_not_resolved'
   | 'material_type_not_resolved';
 
+
+export interface PendingAssistantContinuation {
+  reason: 'split_interrupted_by_new_inbound';
+  topic: string | null;
+  lastSentAssistantMessageId: number | null;
+  lastSentText: string;
+  createdAt: string;
+}
+
 export type LeadQualificationPurpose = 'moradia' | 'investimento' | 'construcao' | 'familia' | 'pesquisa';
 export type LeadQualificationProductFit = 'loteamento' | 'casa' | 'apartamento' | 'indefinido';
+export type LeadQualificationPurchaseIntent = 'MORAR' | 'INVESTIR';
 
 export interface LeadQualificationState {
   name: string | null;
   nameAsked: boolean;
   nameCollected: boolean;
   customerName: string | null;
+  purchaseIntent?: LeadQualificationPurchaseIntent | null;
+  desiredRegion?: string | null;
+  propertyType?: string | null;
+  desiredSize?: string | null;
+  bedrooms?: number | null;
+  priceMin?: number | null;
+  priceMax?: number | null;
+  paymentMethod?: string | null;
+  purchaseTimeline?: string | null;
   purpose: LeadQualificationPurpose | null;
   productFit: LeadQualificationProductFit | null;
   knowsAtibaia: boolean | null;
@@ -68,6 +95,7 @@ export interface CommercialFlowState {
   last_requested_material_type?: FileCategory | null;
   /** Timestamp ISO da última solicitação de material. */
   last_material_request_at?: string;
+  pendingAssistantContinuation?: PendingAssistantContinuation | null;
   /** Último arquivo efetivamente enviado. */
   last_material_sent_id?: number | null;
   /** Último status de envio de material no fluxo determinístico. */
@@ -93,6 +121,7 @@ export interface CommercialFlowState {
   /** Nome capturado no fluxo de visita (quando ainda nao foi confirmado no cadastro principal). */
   pendingVisitCustomerName?: string | null;
   /** Marca quando a Ana já perguntou confirmacao final da visita e aguarda resposta curta. */
+  pendingAppointmentCandidate?: PendingAppointmentCandidate | null;
   pendingVisitConfirmationAsked?: boolean;
   suggestedVisitStartAt?: string | null;
   suggestedVisitEndAt?: string | null;
@@ -175,6 +204,7 @@ export function resetCommercialScopeHints(prev: CommercialFlowState | null): Com
   delete next.pendingVisitMissingSlot;
   delete next.pendingVisitCustomerName;
   delete next.pendingVisitConfirmationAsked;
+  delete next.pendingAppointmentCandidate;
   delete next.suggestedVisitStartAt;
   delete next.suggestedVisitEndAt;
   delete next.suggestedVisitBrokerId;

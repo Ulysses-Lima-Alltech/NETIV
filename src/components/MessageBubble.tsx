@@ -1,11 +1,99 @@
 ﻿import { useState } from 'react';
 import type { Message } from '../types';
+import { useEffect } from 'react';
 import { formatMessageTime } from '../utils/format';
+import { fetchAuthenticatedBlob } from '../api/client';
 
 interface MessageBubbleProps {
   message: Message;
   onDeleteMessage?: (messageId: string) => void | Promise<void>;
   isLast?: boolean;
+}
+
+function SecureAttachment({ message, isAgent }: { message: Message; isAgent: boolean }) {
+  const attachment = message.attachment;
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const canPreview = message.messageType === 'image' || message.messageType === 'video';
+
+  useEffect(() => {
+    if (!attachment?.downloadUrl || !canPreview) return;
+    let cancelled = false;
+    let createdUrl: string | null = null;
+    void fetchAuthenticatedBlob(attachment.downloadUrl)
+      .then((blob) => {
+        if (cancelled) return;
+        createdUrl = URL.createObjectURL(blob);
+        setObjectUrl(createdUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError(true);
+      });
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [attachment?.downloadUrl, canPreview]);
+
+  if (!attachment) return null;
+
+  const download = async () => {
+    if (!attachment.downloadUrl || downloading) return;
+    setDownloading(true);
+    try {
+      const blob = await fetchAuthenticatedBlob(attachment.downloadUrl);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = attachment.fileName || 'arquivo';
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <div className="mb-2 space-y-1.5">
+      {objectUrl && message.messageType === 'image' && (
+        <img src={objectUrl} alt={attachment.fileName || 'Imagem do template'} className="max-h-72 w-full rounded-xl object-contain" />
+      )}
+      {objectUrl && message.messageType === 'video' && (
+        <video src={objectUrl} controls className="max-h-72 w-full rounded-xl" aria-label={attachment.fileName || 'Vídeo do template'} />
+      )}
+      <button
+        type="button"
+        onClick={() => void download()}
+        disabled={!attachment.downloadUrl || downloading}
+        className={`inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium ${isAgent ? 'bg-white/15 text-white' : 'border border-[#bfdbfe] bg-[#eff6ff] text-[#1d4ed8]'} disabled:cursor-default`}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <span className="break-all">
+          {message.messageType === 'image' ? 'Imagem: ' : message.messageType === 'video' ? 'Vídeo: ' : 'Arquivo: '}
+          {attachment.fileName}
+        </span>
+        {attachment.sizeBytes != null && (
+          <span className={isAgent ? 'opacity-75' : 'text-[#64748b]'}>
+            ({(attachment.sizeBytes / 1024).toFixed(0)} KB)
+          </span>
+        )}
+      </button>
+      {loadError && <p className="text-[11px] opacity-75">Prévia indisponível; os metadados do arquivo foram preservados.</p>}
+      {attachment.caption && attachment.caption !== message.text && (
+        <p className="whitespace-pre-wrap text-[12px] opacity-90">{attachment.caption}</p>
+      )}
+    </div>
+  );
+}
+
+function deliveryLabel(message: Message): string {
+  if (message.status === 'failed') return 'Falha no envio';
+  if (message.status === 'read') return 'Lida';
+  if (message.status === 'delivered') return 'Entregue';
+  if (message.status === 'pending') return 'Pendente';
+  if (message.status === 'accepted') return 'Aceita';
+  return 'Enviada';
 }
 
 export function MessageBubble({ message, onDeleteMessage, isLast = false }: MessageBubbleProps) {
@@ -92,26 +180,39 @@ export function MessageBubble({ message, onDeleteMessage, isLast = false }: Mess
         <div
           className={`max-w-[76%] rounded-[18px] px-4 py-2.5 text-[14px] shadow-[0_8px_24px_rgba(15,23,42,0.07)] ${isAgent ? 'rounded-br-[8px] bg-[linear-gradient(135deg,#2563eb,#3478f6)] text-white' : 'rounded-bl-[8px] border border-[#e2e8f0] bg-white text-[#1e293b]'}`}
         >
-          {message.attachment && (
-            <div
-              className={`mb-2 inline-flex flex-wrap items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium ${isAgent ? 'bg-white/15 text-white' : 'border border-[#bfdbfe] bg-[#eff6ff] text-[#1d4ed8]'}`}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
-              <span className="break-all">
-                {message.messageType === 'image' ? 'Imagem: ' : 'Arquivo: '}
-                {message.attachment.fileName}
-              </span>
-              {message.attachment.sizeBytes != null && (
-                <span className={isAgent ? 'opacity-75' : 'text-[#64748b]'}>
-                  ({(message.attachment.sizeBytes / 1024).toFixed(0)} KB)
-                </span>
+          <SecureAttachment message={message} isAgent={isAgent} />
+
+          <p className="whitespace-pre-wrap break-words leading-relaxed">{message.text}</p>
+          {message.template?.buttons && message.template.buttons.length > 0 && (
+            <div className="mt-2 space-y-1.5 border-t border-current/15 pt-2">
+              {message.template.buttons.map((button, index) =>
+                button.type === 'url' && button.url ? (
+                  <a
+                    key={`${button.text}-${index}`}
+                    href={button.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className={`block rounded-lg px-3 py-1.5 text-center text-[12px] font-semibold underline ${isAgent ? 'bg-white/15 text-white' : 'bg-[#eff6ff] text-[#1d4ed8]'}`}
+                  >
+                    {button.text || button.url}
+                    <span className="mt-0.5 block break-all text-[10px] font-normal opacity-75">{button.url}</span>
+                  </a>
+                ) : (
+                  <div key={`${button.text}-${index}`} className={`rounded-lg px-3 py-1.5 text-center text-[12px] font-semibold ${isAgent ? 'bg-white/15' : 'bg-[#eff6ff] text-[#1d4ed8]'}`}>
+                    {button.text || button.payload || 'Resposta rápida'}
+                  </div>
+                )
               )}
             </div>
           )}
-
-          <p className="whitespace-pre-wrap break-words leading-relaxed">{message.text}</p>
+          {message.status === 'failed' && (
+            <p className={`mt-2 rounded-md px-2 py-1 text-[11px] ${isAgent ? 'bg-red-950/25 text-red-50' : 'bg-red-50 text-red-700'}`}>
+              {message.failure?.message || 'A Meta informou que esta mensagem falhou.'}
+              {message.failure?.code != null ? ` (código ${message.failure.code})` : ''}
+            </p>
+          )}
           <p className={`mt-1.5 text-[10px] font-medium ${isAgent ? 'text-white/70' : 'text-[#94a3b8]'}`}>
-            {formatMessageTime(message.createdAt)}
+            {formatMessageTime(message.createdAt)}{isAgent ? ` ? ${deliveryLabel(message)}` : ''}
           </p>
         </div>
       </div>

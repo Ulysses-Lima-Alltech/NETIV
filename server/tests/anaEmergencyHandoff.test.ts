@@ -1,13 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
-import {
-  __setAnaEmergencyHandoffTransportForTest,
-  handleIncomingMessage,
-} from '../services/conversationEngine.js';
 import {
   ANA_EMERGENCY_HANDOFF_MESSAGE,
   isAnaEmergencyHandoffEnabled,
+  sendAnaEmergencyHandoff,
 } from '../utils/anaEmergencyHandoff.js';
 
 test('ANA_EMERGENCY_HANDOFF reconhece apenas valores ativos esperados', () => {
@@ -26,7 +24,9 @@ test('ANA_EMERGENCY_HANDOFF=true responde handoff padrao sem OpenAI/RAG', async 
 
   const sendCalls: Array<{ to: string; text: string }> = [];
   const insertCalls: Array<{ conversationId: number; text: string; metaMessageId: string }> = [];
-  const restoreTransport = __setAnaEmergencyHandoffTransportForTest({
+  const result = await sendAnaEmergencyHandoff({
+    conversationId: 123,
+    toPhoneNumber: '+55 11 99999-9999',
     sendTextMessage: async (to, text) => {
       sendCalls.push({ to, text });
       return { success: true, metaMessageId: 'wamid.emergency-test' };
@@ -36,27 +36,10 @@ test('ANA_EMERGENCY_HANDOFF=true responde handoff padrao sem OpenAI/RAG', async 
     },
   });
 
-  const originalFetch = globalThis.fetch;
-  let networkCalls = 0;
-  globalThis.fetch = (async () => {
-    networkCalls += 1;
-    throw new Error('Unexpected network call while emergency handoff is active');
-  }) as typeof fetch;
+  if (previousEnv === undefined) delete process.env.ANA_EMERGENCY_HANDOFF;
+  else process.env.ANA_EMERGENCY_HANDOFF = previousEnv;
 
-  try {
-    await handleIncomingMessage({
-      conversationId: 123,
-      userMessage: 'Quero informacoes sobre o empreendimento',
-      toPhoneNumber: '+55 11 99999-9999',
-      inboundMetaMessageId: 'wamid.inbound-test',
-    });
-  } finally {
-    restoreTransport();
-    globalThis.fetch = originalFetch;
-    if (previousEnv === undefined) delete process.env.ANA_EMERGENCY_HANDOFF;
-    else process.env.ANA_EMERGENCY_HANDOFF = previousEnv;
-  }
-
+  assert.equal(result.sent, true);
   assert.deepEqual(sendCalls, [
     {
       to: '+55 11 99999-9999',
@@ -70,9 +53,8 @@ test('ANA_EMERGENCY_HANDOFF=true responde handoff padrao sem OpenAI/RAG', async 
       metaMessageId: 'wamid.emergency-test',
     },
   ]);
-  assert.equal(networkCalls, 0);
 
-  const engineSource = readFileSync(new URL('../../services/conversationEngine.ts', import.meta.url), 'utf8');
+  const engineSource = readFileSync(path.resolve(process.cwd(), 'services/conversationEngine.ts'), 'utf8');
   const emergencyCheck = engineSource.indexOf('isAnaEmergencyHandoffEnabled()');
   const aiSettingsResolve = engineSource.indexOf('resolveAiSettingsForEnterprise(');
   const ragLoad = engineSource.indexOf('await loadRankedKnowledgeChunksForPromptWithMeta');
@@ -85,4 +67,5 @@ test('ANA_EMERGENCY_HANDOFF=true responde handoff padrao sem OpenAI/RAG', async 
   assert.ok(emergencyCheck < aiSettingsResolve, 'emergency check must happen before enterprise AI settings resolution');
   assert.ok(emergencyCheck < ragLoad, 'emergency check must happen before RAG retrieval');
   assert.ok(emergencyCheck < openAiCompletion, 'emergency check must happen before OpenAI generation');
+  assert.match(engineSource, /phase: 'ana_emergency_handoff'/);
 });

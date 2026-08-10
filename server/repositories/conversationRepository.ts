@@ -8,10 +8,12 @@ import type { LeadOriginInput } from '../services/leadOriginResolver.js';
 import { resolveEnterpriseFromLeadSource } from '../services/leadOriginResolver.js';
 import { parseCommercialFlowState, type CommercialFlowState } from '../utils/commercialFlowState.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
+import { INBOX_DATE_TIME_ZONE } from '../utils/inboxDateFilter.js';
 import {
   cancelActiveAnaVisitFollowupJobs,
   withAnaVisitFollowupConversationLock,
 } from './anaVisitFollowupJobRepository.js';
+import { cancelAnaPendingAutomationForHandoff } from './anaHandoffAutomationRepository.js';
 import {
   assignContactToConversation,
   findContactById,
@@ -881,6 +883,9 @@ export interface ListConversationsFilters {
   status?: string;
   enterpriseId?: number;
   search?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  dateReference?: 'last_message' | 'conversation_started';
   brokerId?: number;  // NOVO — filtra por assigned_broker_id
   conversationTypeFilter?: 'CLIENT' | 'INTERNO';
   scopeConvIds?: number[];  // NOVO — filtra por whitelist de IDs de conversa (broker scope)
@@ -889,7 +894,8 @@ export interface ListConversationsFilters {
 export async function listConversationsWithPreview(
   channel: string = 'whatsapp',
   limit: number = 100,
-  filters?: ListConversationsFilters
+  filters?: ListConversationsFilters,
+  queryExecutor: typeof query = query
 ): Promise<ConversationWithPreview[]> {
   const conditions: string[] = ['c.channel = $1'];
   const params: unknown[] = [channel];
@@ -934,6 +940,18 @@ export async function listConversationsWithPreview(
     paramIndex += 1;
   }
 
+  const dateColumn = filters?.dateReference === 'conversation_started' ? 'c.created_at' : 'c.last_message_at';
+  if (filters?.dateFrom) {
+    conditions.push(`${dateColumn} >= ($${paramIndex}::date::timestamp AT TIME ZONE '${INBOX_DATE_TIME_ZONE}')`);
+    params.push(filters.dateFrom);
+    paramIndex += 1;
+  }
+  if (filters?.dateTo) {
+    conditions.push(`${dateColumn} < (($${paramIndex}::date + INTERVAL '1 day')::timestamp AT TIME ZONE '${INBOX_DATE_TIME_ZONE}')`);
+    params.push(filters.dateTo);
+    paramIndex += 1;
+  }
+
   if (filters?.brokerId != null) {
     conditions.push(`c.assigned_broker_id = $${paramIndex}`);
     params.push(filters.brokerId);
@@ -963,7 +981,7 @@ export async function listConversationsWithPreview(
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   params.push(limit);
 
-  const { rows } = await query<ConversationWithPreview>(
+  const { rows } = await queryExecutor<ConversationWithPreview>(
     `SELECT c.*,
       (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_preview,
       e.name AS enterprise_name,
@@ -1143,9 +1161,9 @@ export async function updateClassification(
         enterprise: manualEnterpriseOverrideRequested,
       });
       if (handoff) {
-        await cancelActiveAnaVisitFollowupJobs({
+        await cancelAnaPendingAutomationForHandoff({
           conversationId,
-          reason: 'handoff',
+          source: 'updateClassification',
         });
         const contact = row.contact_id != null ? await findContactById(row.contact_id) : null;
         notifyDjangoLead(row, {
@@ -1241,9 +1259,9 @@ export async function updateClassification(
       enterprise: manualEnterpriseOverrideRequested,
     });
     if (handoff) {
-      await cancelActiveAnaVisitFollowupJobs({
+      await cancelAnaPendingAutomationForHandoff({
         conversationId,
-        reason: 'handoff',
+        source: 'updateClassification',
       });
       const contact = row.contact_id != null ? await findContactById(row.contact_id) : null;
       notifyDjangoLead(row, {
@@ -1496,7 +1514,10 @@ export async function applyAnaConversationUpdate(
      END,
      classification_before_handoff = CASE WHEN $3 = true AND ($6::text) IS NOT NULL THEN $6::text ELSE
        (CASE WHEN $3 = false THEN NULL ELSE classification_before_handoff END) END,
-     updated_at = NOW() WHERE id = $5`,
+     updated_at = NOW()
+     WHERE id = $5
+       AND COALESCE(handoff, false) = false
+       AND lower(trim(COALESCE(classification, ''))) <> 'handoff'`,
     [classification, lead_temperature, handoff, cn ?? null, conversationId, saveBeforeHandoff ?? null]
   );
   // Sem ações automáticas de handoff neste fluxo.
@@ -1507,10 +1528,15 @@ export async function mergeConversationCommercialFlowState(
   conversationId: number,
   nextState: CommercialFlowState
 ): Promise<void> {
-  await query(`UPDATE conversations SET commercial_flow_state = $1::jsonb, updated_at = NOW() WHERE id = $2`, [
-    JSON.stringify(nextState),
-    conversationId,
-  ]);
+  await query(
+    `UPDATE conversations
+        SET commercial_flow_state = $1::jsonb,
+            updated_at = NOW()
+      WHERE id = $2
+        AND COALESCE(handoff, false) = false
+        AND lower(trim(COALESCE(classification, ''))) <> 'handoff'`,
+    [JSON.stringify(nextState), conversationId]
+  );
 }
 
 /**
@@ -1610,9 +1636,9 @@ export async function markAnaAskedForCustomerName(conversationId: number): Promi
 export async function applyInboundUserMessageResets(conversationId: number): Promise<void> {
   await query(
     `UPDATE conversations SET
-       manual_closed_at = CASE WHEN classification = 'Carteira' THEN manual_closed_at ELSE NULL END,
-       manual_closed_by_user_id = CASE WHEN classification = 'Carteira' THEN manual_closed_by_user_id ELSE NULL END,
-       manual_closed_reason = CASE WHEN classification = 'Carteira' THEN manual_closed_reason ELSE NULL END,
+       manual_closed_at = CASE WHEN classification = 'Carteira' OR handoff = true OR lower(trim(COALESCE(classification, ''))) = 'handoff' THEN manual_closed_at ELSE NULL END,
+       manual_closed_by_user_id = CASE WHEN classification = 'Carteira' OR handoff = true OR lower(trim(COALESCE(classification, ''))) = 'handoff' THEN manual_closed_by_user_id ELSE NULL END,
+       manual_closed_reason = CASE WHEN classification = 'Carteira' OR handoff = true OR lower(trim(COALESCE(classification, ''))) = 'handoff' THEN manual_closed_reason ELSE NULL END,
        updated_at = NOW()
      WHERE id = $1`,
     [conversationId]

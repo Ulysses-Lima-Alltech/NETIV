@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import { notifyAndPersistBrokerPendingAttendance } from './brokerNotificationService.js';
 import { getPool } from '../db/pg.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
+import { cancelAnaPendingAutomationForHandoff } from '../repositories/anaHandoffAutomationRepository.js';
 
 type PgClient = PoolClient;
 
@@ -229,6 +230,11 @@ export async function markConversationAsHandoffAssigned(args: {
      WHERE id = $1`,
     [args.conversationId, args.brokerId, args.reason]
   );
+  await cancelAnaPendingAutomationForHandoff({
+    conversationId: args.conversationId,
+    source: 'markConversationAsHandoffAssigned',
+    client: args.client,
+  });
   await logEnforcedHandoffState({
     conversationId: args.conversationId,
     expectedBrokerId: args.brokerId,
@@ -269,6 +275,11 @@ export async function markConversationAsHandoffUnassigned(args: {
      WHERE id = $1`,
     [args.conversationId, args.reason]
   );
+  await cancelAnaPendingAutomationForHandoff({
+    conversationId: args.conversationId,
+    source: 'markConversationAsHandoffUnassigned',
+    client: args.client,
+  });
   await logEnforcedHandoffState({
     conversationId: args.conversationId,
     expectedBrokerId: null,

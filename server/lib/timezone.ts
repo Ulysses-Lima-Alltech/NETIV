@@ -1,5 +1,6 @@
 /** Fuso horário do negócio (Brazil/São Paulo). */
-const TZ = 'America/Sao_Paulo';
+export const APPLICATION_TIME_ZONE = 'America/Sao_Paulo';
+const TZ = APPLICATION_TIME_ZONE;
 
 /**
  * Retorna o dia da semana (0=domingo … 6=sábado) em America/Sao_Paulo.

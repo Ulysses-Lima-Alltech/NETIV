@@ -450,6 +450,11 @@ type AnaEmergencyHandoffTransport = {
   insertAssistantMessage: (conversationId: number, text: string, metaMessageId: string) => Promise<unknown>;
 };
 
+type LegacyAnaEmergencyHandoffSendText = (
+  to: string,
+  text: string
+) => Promise<AnaEmergencyHandoffSendResult>;
+
 const defaultAnaEmergencyHandoffTransport: AnaEmergencyHandoffTransport = {
   sendTextMessage: (conversationId, to, text) =>
     sendTextMessage({
@@ -466,10 +471,36 @@ let anaEmergencyHandoffTransport: AnaEmergencyHandoffTransport = defaultAnaEmerg
 let anaEntryConversationLoader: typeof getConversationById = getConversationById;
 
 export function __setAnaEmergencyHandoffTransportForTest(
+  overrides: Partial<Omit<AnaEmergencyHandoffTransport, 'sendTextMessage'>> & {
+    sendTextMessage?: LegacyAnaEmergencyHandoffSendText;
+  }
+): () => void;
+export function __setAnaEmergencyHandoffTransportForTest(
   overrides: Partial<AnaEmergencyHandoffTransport>
+): () => void;
+export function __setAnaEmergencyHandoffTransportForTest(
+  overrides: {
+    sendTextMessage?: LegacyAnaEmergencyHandoffSendText | AnaEmergencyHandoffTransport['sendTextMessage'];
+    insertAssistantMessage?: AnaEmergencyHandoffTransport['insertAssistantMessage'];
+  }
 ): () => void {
   const previous = anaEmergencyHandoffTransport;
-  anaEmergencyHandoffTransport = { ...previous, ...overrides };
+  const sendTextMessageOverride = overrides.sendTextMessage;
+  anaEmergencyHandoffTransport = {
+    ...previous,
+    ...(overrides.insertAssistantMessage
+      ? { insertAssistantMessage: overrides.insertAssistantMessage }
+      : {}),
+    ...(sendTextMessageOverride
+      ? {
+          sendTextMessage: sendTextMessageOverride.length <= 2
+            ? (_conversationId: number, to: string, text: string) => (
+                sendTextMessageOverride as LegacyAnaEmergencyHandoffSendText
+              )(to, text)
+            : sendTextMessageOverride as AnaEmergencyHandoffTransport['sendTextMessage'],
+        }
+      : {}),
+  };
   return () => {
     anaEmergencyHandoffTransport = previous;
   };
@@ -3250,7 +3281,6 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
       automationType: 'conversation_engine',
       blockedAt: 'inbound_entry',
       source: 'handle_incoming_message',
-      messageId: inboundMetaFromCtx ?? null,
     });
     return;
   }
@@ -3929,7 +3959,6 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
         automationType: 'conversation_engine',
         blockedAt: 'before_ai',
         source: 'handle_incoming_message',
-        messageId: inboundMetaFromCtx ?? null,
       });
       console.log('[ANA_SKIPPED_HANDOFF_ACTIVE]', {
         conversationId,

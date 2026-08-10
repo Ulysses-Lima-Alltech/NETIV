@@ -245,6 +245,9 @@ test('ANA_EMERGENCY_HANDOFF=true bloqueia retry worker antes de DB/OpenAI/Meta',
     },
     async () => {
       await processAnaRetryJobsTick();
+      const retryWorkerSource = readFileSync(path.resolve(process.cwd(), 'services/anaRetryWorkerService.ts'), 'utf8');
+      assert.match(retryWorkerSource, /getAnaAutomationPauseReason\(\)/);
+      assert.match(retryWorkerSource, /\[ANA_RETRY_SKIP\].*ana_emergency_handoff_active/s);
     }
   );
 });
@@ -261,6 +264,8 @@ test('ANA_AUTOMATION_DISABLED=true bloqueia retry e visit follow-up sem buscar j
       assert.equal(isAnaAutomationDisabled(), true);
       const logs = await captureConsoleLogs(async () => {
         await processAnaRetryJobsTick();
+        const retryWorkerSource = readFileSync(path.resolve(process.cwd(), 'services/anaRetryWorkerService.ts'), 'utf8');
+        assert.match(retryWorkerSource, /source: 'ana_retry_worker'/);
         await startAnaVisitFollowupIfEligible({
           conversationId: 456,
           flowState: {
