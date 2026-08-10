@@ -338,8 +338,16 @@ const ANA_AUTO_HANDOFF_CREATION_DISABLED =
 const ANA_DEBUG_QWEN_RAW = String(process.env.ANA_DEBUG_QWEN_RAW || '').trim().toLowerCase() === 'true';
 const ANA_LLM_FIRST_COMMERCIAL_REPLIES =
   String(process.env.ANA_LLM_FIRST_COMMERCIAL_REPLIES ?? 'true').trim().toLowerCase() !== 'false';
+// Rede de segurança: quando um guard/regra zera a resposta e o turno termina 'blocked' sem
+// nenhuma mensagem enviada, garante 1 mensagem neutra + acionamento de corretor humano, em vez
+// de silêncio total. Não reintroduz retry automático do LLM nem reengajamento proativo depois
+// (esses padrões foram removidos por causarem loop/spam — ver histórico de commits).
+const ANA_BLOCKED_TURN_FALLBACK_ENABLED =
+  String(process.env.ANA_BLOCKED_TURN_FALLBACK_ENABLED ?? 'true').trim().toLowerCase() !== 'false';
 export const ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY =
   'Claro, posso te ajudar. Qual empreendimento, região ou tipo de imóvel você procura?';
+export const ANA_BLOCKED_TURN_SAFETY_FALLBACK_REPLY =
+  'Vou confirmar isso rapidinho com o time e te retorno.';
 
 export function buildEvoraDeliveryUnavailableReply(): string {
   return 'Ainda não tenho essa previsão exata confirmada por aqui.';
@@ -2136,7 +2144,6 @@ async function sendAnaOutboundMessages(params: {
   const metaMessageIds: string[] = [];
   const messageIds: number[] = [];
   const sentParts: string[] = [];
-  const insertedMessages: Array<{ id: number; created_at: Date }> = [];
   for (const part of messageParts) {
     if (isPipelineStale(params.conversationId, params.replyPipelineToken)) {
       await persistPendingAssistantContinuationFromSplitStale({
@@ -2189,7 +2196,6 @@ async function sendAnaOutboundMessages(params: {
     sentParts.push(part);
     const inserted = await insertMessage(params.conversationId, 'assistant', part, sendResult.metaMessageId);
     messageIds.push(inserted.id);
-    insertedMessages.push({ id: inserted.id, created_at: inserted.created_at });
   }
   console.log('[ANA_REPLY_SEND_RESULT]', {
     conversationId: params.conversationId,
@@ -4269,6 +4275,94 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
       });
     }
     await publishConversationUpdated(conversationId);
+  };
+  const sendAnaBlockedTurnSafetyFallback = async (): Promise<void> => {
+    if (!ANA_BLOCKED_TURN_FALLBACK_ENABLED) return;
+    if (anaTurnAuditOutcome !== 'blocked') return;
+    if (assistantReplyAttemptedOrSent) return;
+    const silentExitContext = getAnaSilentExitContext();
+    if (silentExitContext.hardBlockReason != null) return;
+    const originalBlockedReason = anaTurnAuditBlockedReason;
+    assistantReplyAttemptedOrSent = true;
+    console.log('[ANA_BLOCKED_TURN_SAFETY_FALLBACK]', {
+      conversationId,
+      originalBlockedReason,
+      channel: silentExitContext.channel,
+      classification: silentExitContext.classification,
+      enterpriseId: silentExitContext.enterpriseId,
+    });
+    const safeSend = await sendAnaOutboundMessages({
+      conversationId,
+      toPhoneNumber,
+      text: ANA_BLOCKED_TURN_SAFETY_FALLBACK_REPLY,
+      phase: 'ana_blocked_turn_safety_fallback',
+      replyPipelineToken,
+    });
+    if (!safeSend.success || safeSend.metaMessageIds.length === 0) {
+      anaTurnAuditOutcome = 'send_failed';
+      anaTurnAuditBlockedReason = `blocked_turn_safety_fallback_send_failed:${originalBlockedReason ?? 'unknown'}`;
+      anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+      anaTurnAuditGuardsApplied.blockedTurnSafetyFallback = {
+        sent: false,
+        originalBlockedReason,
+        brokerAssigned: false,
+      };
+      console.log('[ANA_BLOCKED_TURN_SAFETY_FALLBACK_SEND_FAILED]', {
+        conversationId,
+        originalBlockedReason,
+      });
+      return;
+    }
+    anaTurnAuditOutcome = 'sent';
+    anaTurnAuditBlockedReason = null;
+    anaTurnDiagnostics.finalResponse.replySource = 'ana_blocked_turn_safety_fallback';
+    anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+    // ANA_AUTO_HANDOFF_CREATION_DISABLED continua valendo aqui: a mutação de handoff
+    // (SET handoff = true) só acontece dentro de verifyAndRepairHandoffAfterBrokerAssignment,
+    // que já respeita esse kill switch — não sobrescrevemos handoff diretamente nesta função.
+    let assignment: Awaited<ReturnType<typeof assignConversationToNextBroker>> = null;
+    try {
+      assignment = await assignConversationToNextBroker({
+        conversationId,
+        reason: `blocked_turn_safety_fallback:${originalBlockedReason ?? 'unknown'}`,
+      });
+    } catch (error) {
+      console.error('[ANA_BLOCKED_TURN_SAFETY_FALLBACK_BROKER_ASSIGNMENT_FAILED]', {
+        conversationId,
+        originalBlockedReason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (assignment) {
+      await verifyAndRepairHandoffAfterBrokerAssignment(assignment);
+      if (assignment.assignedBrokerId != null) {
+        const enterpriseNameForNotification = assignment.enterpriseName ?? 'empreendimento';
+        await sendBrokerPendingAttendanceTemplate({
+          brokerPhone: assignment.assignedBrokerPhone,
+          brokerName: assignment.assignedBrokerName,
+          customerNameOrPhone: assignment.customerNameOrPhone,
+          enterpriseName: enterpriseNameForNotification,
+          conversationId,
+        });
+        await sendBrokerPendingAttendancePush({
+          brokerId: assignment.assignedBrokerId,
+          conversationId,
+          enterpriseId: assignment.enterpriseId,
+          customerNameOrPhone: assignment.customerNameOrPhone,
+          enterpriseName: enterpriseNameForNotification,
+        });
+      }
+    }
+    anaTurnAuditGuardsApplied.blockedTurnSafetyFallback = {
+      sent: true,
+      originalBlockedReason,
+      brokerAssigned: assignment?.assignedBrokerId != null,
+    };
+    console.log('[ANA_BLOCKED_TURN_SAFETY_FALLBACK_SENT]', {
+      conversationId,
+      originalBlockedReason,
+      brokerAssigned: assignment?.assignedBrokerId != null,
+    });
   };
   const resolveCustomerNameOrPhoneForBrokerTemplate = (
     conversation: Awaited<ReturnType<typeof getConversationById>> | null
@@ -14313,6 +14407,7 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
     ) {
       await sendGlobalNoEnterpriseFinalSafeReply(anaTurnAuditBlockedReason);
     }
+    await sendAnaBlockedTurnSafetyFallback();
     if (anaTurnAuditOutcome === 'silent' || anaTurnAuditOutcome === 'blocked') {
       const finalSilentExitContext = getAnaSilentExitContext();
       console.log('[ANA_SILENT_EXIT_BLOCKED]', {
@@ -14376,9 +14471,6 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
     }
   }
 }
-
-
-
 
 
 
@@ -14529,6 +14621,3 @@ function buildConversationalCanonicalFallback(lastAxis: string | null): string {
   }
   return 'Posso te ajudar de forma objetiva com as informações do empreendimento.';
 }
-
-
-
