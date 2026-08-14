@@ -5,6 +5,8 @@ import {
 } from '../../../utils/anaDirectVisitScheduling.js';
 import { parseAppointmentStartEndInSaoPaulo } from '../../../utils/appointmentDateNormalize.js';
 import { assignAppointment, type AssignAppointmentResult } from '../../appointmentService.js';
+import { computeVisitAvailabilityContext } from './visitAvailabilityContext.js';
+import type { AnaVisitSlotAvailabilityChecker } from '../../anaVisitAvailabilityService.js';
 import type { AnaGraphState } from '../state.js';
 
 export type PersistAppointmentFn = (
@@ -26,6 +28,8 @@ export interface VisitSchedulingNodeParams {
    * (ex.: harness com banco descartável), nunca em produção sem flag.
    */
   persistAppointment?: PersistAppointmentFn;
+  /** Só para testes — produção sempre usa a checagem real (checkAvailability via DB). */
+  checkSlotAvailability?: AnaVisitSlotAvailabilityChecker;
 }
 
 /**
@@ -39,6 +43,18 @@ export async function visitSchedulingNode(
   state: AnaGraphState,
   params: VisitSchedulingNodeParams
 ): Promise<Partial<AnaGraphState> & { visitDecision: DirectVisitSchedulingDecision }> {
+  const referenceNow = params.referenceNow ?? new Date();
+  const availabilityContext =
+    params.enterpriseId != null
+      ? await computeVisitAvailabilityContext({
+          userMessage: state.userMessage,
+          flowState: state.commercialFlowState,
+          enterpriseId: params.enterpriseId,
+          referenceNow,
+          checkSlotAvailability: params.checkSlotAvailability,
+        })
+      : null;
+
   const input: DirectVisitSchedulingInput = {
     userMessage: state.userMessage,
     flowState: state.commercialFlowState,
@@ -46,6 +62,7 @@ export async function visitSchedulingNode(
     customerName: params.customerName ?? null,
     customerPhone: params.customerPhone ?? null,
     referenceNow: params.referenceNow,
+    ...(availabilityContext ?? {}),
   };
 
   const decision = handleVisitSchedulingDeterministically(input);

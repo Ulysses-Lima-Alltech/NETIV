@@ -13,7 +13,13 @@ import type {
 const SP_OFFSET = '-03:00';
 export const VISIT_WINDOW_START_MINUTES = 9 * 60;
 export const VISIT_WINDOW_END_MINUTES = 18 * 60;
+/** Regra de negócio: domingo (weekday 0) atende só até 14h, os demais dias até 18h. */
+export const VISIT_WINDOW_SUNDAY_END_MINUTES = 14 * 60;
 export const VISIT_WINDOW_REPLY = 'Os horários de visita são das 09h às 18h, conforme disponibilidade da agenda.';
+
+function visitWindowEndMinutesForWeekday(weekday: number): number {
+  return weekday === 0 ? VISIT_WINDOW_SUNDAY_END_MINUTES : VISIT_WINDOW_END_MINUTES;
+}
 
 const PROHIBITED_VISIT_SCHEDULING_PHRASES = [
   'assim que o corretor confirmar',
@@ -609,19 +615,24 @@ export function isDirectVisitSchedulingWindow(now: Date = new Date()): boolean {
     minute: '2-digit',
     hour12: false,
   }).formatToParts(now);
-  const weekday = parts.find((p) => p.type === 'weekday')?.value ?? '';
   const hour = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '', 10);
   const minute = parseInt(parts.find((p) => p.type === 'minute')?.value ?? '', 10);
   const minutes = hour * 60 + minute;
-  void weekday;
-  return Number.isFinite(minutes) && minutes >= VISIT_WINDOW_START_MINUTES && minutes <= VISIT_WINDOW_END_MINUTES;
+  const ymd = formatYmdInSaoPaulo(now);
+  const weekday = getJsWeekdayForYmdInSaoPaulo(ymd);
+  return (
+    Number.isFinite(minutes) &&
+    minutes >= VISIT_WINDOW_START_MINUTES &&
+    minutes <= visitWindowEndMinutesForWeekday(weekday)
+  );
 }
 
 export function isAllowedVisitSlot(dateYmd: string, timeHm: string): boolean {
   const parsed = parseAppointmentStartEndInSaoPaulo(dateYmd, timeHm);
   if (!parsed) return false;
   const minutes = timeHmToMinutes(timeHm);
-  return minutes != null && minutes >= VISIT_WINDOW_START_MINUTES && minutes <= VISIT_WINDOW_END_MINUTES;
+  const weekday = getJsWeekdayForYmdInSaoPaulo(dateYmd);
+  return minutes != null && minutes >= VISIT_WINDOW_START_MINUTES && minutes <= visitWindowEndMinutesForWeekday(weekday);
 }
 
 export type VisitDateTimeSlotValidation =
@@ -634,7 +645,7 @@ export function validateVisitDateTimeSlot(dateYmd: string, timeHm: string): Visi
   const weekday = getJsWeekdayForYmdInSaoPaulo(dateYmd);
   const minutes = timeHmToMinutes(timeHm);
   if (minutes == null) return { valid: false, reason: 'invalid_datetime', weekday, minutes: null };
-  if (minutes < VISIT_WINDOW_START_MINUTES || minutes > VISIT_WINDOW_END_MINUTES) {
+  if (minutes < VISIT_WINDOW_START_MINUTES || minutes > visitWindowEndMinutesForWeekday(weekday)) {
     return { valid: false, reason: 'outside_visit_window', weekday, minutes };
   }
   return { valid: true, reason: 'ok', weekday, minutes };

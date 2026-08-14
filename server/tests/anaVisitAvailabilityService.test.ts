@@ -199,3 +199,32 @@ test('validateVisitSlotStillAvailable encaminha preferredBrokerId para a checage
   assert.equal(result.brokerId, 7);
   assert.deepEqual(preferredBrokerIds, [7]);
 });
+
+test('domingo nao oferece horario apos 14h mesmo com corretor disponivel', async () => {
+  const slot = await findNextAvailableVisitSlot({
+    enterpriseId: 10,
+    referenceNow: new Date('2026-06-13T11:00:00-03:00'),
+    checkSlotAvailability: checkerFor({
+      '2026-06-14 15:00': 30,
+      '2026-06-15 10:00': 31,
+    }),
+  });
+
+  assert.equal(slot?.startYmd, '2026-06-15');
+  assert.equal(slot?.timeHm, '10:00');
+  assert.equal(slot?.brokerId, 31);
+});
+
+test('sabado continua atendendo ate 18h', async () => {
+  const slot = await findNextAvailableVisitSlot({
+    enterpriseId: 10,
+    referenceNow: new Date('2026-06-12T11:00:00-03:00'),
+    checkSlotAvailability: checkerFor({
+      '2026-06-13 17:00': 32,
+    }),
+  });
+
+  assert.equal(slot?.startYmd, '2026-06-13');
+  assert.equal(slot?.timeHm, '17:00');
+  assert.equal(slot?.brokerId, 32);
+});

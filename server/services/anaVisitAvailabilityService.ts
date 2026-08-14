@@ -8,6 +8,8 @@ import {
 const SP_OFFSET = '-03:00';
 const DEFAULT_BUSINESS_START_MINUTES = 9 * 60;
 const DEFAULT_BUSINESS_END_MINUTES = 18 * 60;
+/** Regra de negócio: domingo (weekday 0) atende só até 14h, os demais dias até 18h. */
+const DEFAULT_SUNDAY_BUSINESS_END_MINUTES = 14 * 60;
 const DEFAULT_VISIT_DURATION_MINUTES = 60;
 const DEFAULT_SLOT_STEP_MINUTES = 60;
 const DEFAULT_SEARCH_DAYS = 21;
@@ -312,6 +314,11 @@ export async function findAvailableVisitSlots(
     if (!allowedWeekdays.has(weekday)) continue;
     if (preference?.weekday != null && weekday !== preference.weekday) continue;
 
+    const dayBusinessEnd =
+      weekday === 0 && params.businessEndMinutes == null
+        ? Math.min(businessEnd, DEFAULT_SUNDAY_BUSINESS_END_MINUTES)
+        : businessEnd;
+
     const exactTimeMinutes = preference?.timeHm
       ? (() => {
           const [hhRaw, mmRaw] = preference.timeHm!.split(':');
@@ -324,13 +331,13 @@ export async function findAvailableVisitSlots(
       exactTimeMinutes != null
         ? [exactTimeMinutes]
         : Array.from(
-            { length: Math.max(0, Math.floor((businessEnd - businessStart) / step) + 1) },
+            { length: Math.max(0, Math.floor((dayBusinessEnd - businessStart) / step) + 1) },
             (_value, index) => businessStart + index * step
           );
 
     for (const minutes of candidateMinutes) {
-      if (minutes < businessStart || minutes > businessEnd) continue;
-      if (minutes + duration > businessEnd) continue;
+      if (minutes < businessStart || minutes > dayBusinessEnd) continue;
+      if (minutes + duration > dayBusinessEnd) continue;
       if (!slotMatchesPeriod(minutes, preference?.period ?? null)) continue;
       const timeHm = minutesToHm(minutes);
       const parsed = parseAppointmentStartEndInSaoPaulo(ymd, timeHm);
