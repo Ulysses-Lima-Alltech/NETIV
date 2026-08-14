@@ -3,6 +3,7 @@ import {
   isAnaAutomationBlockedByHandoff,
   logAnaAutomationBlockedByHandoff,
 } from '../../../utils/anaHandoffPolicy.js';
+import { parseCommercialFlowState, isEmptyCommercialFlowState } from '../../../utils/commercialFlowState.js';
 import type { AnaGraphState } from '../state.js';
 
 /**
@@ -10,6 +11,13 @@ import type { AnaGraphState } from '../state.js';
  * webhookProcessor.ts (shouldBlockAnaWebhookAutomation) antes de qualquer
  * classificador/IA rodar. Não decide o roteamento — apenas marca o estado;
  * a edge condicional decide se o grafo segue ou encerra o turno.
+ *
+ * Também hidrata commercialFlowState a partir de conversations.commercial_flow_state
+ * (mesma coluna que o motor legado lê/grava) quando o checkpointer do LangGraph
+ * ainda não tem estado pra essa thread — primeiro turno que o grafo processa
+ * de uma conversa que já existia antes (ex.: no dia da virada de produção, ou
+ * conversas atendidas pelo motor legado antes desse turno). Sem isso, o grafo
+ * "esquece" tudo que já foi respondido/perguntado/agendado até aqui.
  */
 export async function automationGateNode(state: AnaGraphState): Promise<Partial<AnaGraphState>> {
   const conversation = await getConversationById(state.conversationId);
@@ -23,8 +31,18 @@ export async function automationGateNode(state: AnaGraphState): Promise<Partial<
       messageId: state.metaMessageId,
     });
   }
-  return {
+
+  const patch: Partial<AnaGraphState> = {
     automationBlockedByHandoff: blocked,
     handoffBlockedReason: blocked ? 'HANDOFF_BLOCKS_ANA_AUTOMATION' : null,
   };
+
+  if (!blocked && conversation && isEmptyCommercialFlowState(state.commercialFlowState)) {
+    const persisted = parseCommercialFlowState(conversation.commercial_flow_state);
+    if (persisted) {
+      patch.commercialFlowState = persisted;
+    }
+  }
+
+  return patch;
 }

@@ -17,12 +17,17 @@ type EnterpriseFileRow = Awaited<ReturnType<typeof listEnterpriseFiles>>[number]
 /**
  * Envio real é sempre injetável — nunca chamado direto hardcoded a partir do
  * grafo novo. Em modo sombra (fase 9) o chamador DEVE passar um mock aqui.
- * TODO(fase 8/9): a resolução de storage_path -> caminho de arquivo local/S3
- * hoje só existe embutida em conversationEngine.ts (não exportada); esta
- * função injetável recebe a linha do arquivo e decide como resolvê-lo.
+ * A resolução de storage_path -> caminho de arquivo local/S3 (getFileForSend,
+ * enterpriseRepository.ts) e o envio real (sendAnaLocalMediaToWhatsAppWithQuota,
+ * anaOutboundQuotaService.ts) já existem prontos e exportados — a implementação
+ * real desta função (productionDeps.ts) só orquestra as duas, sem lógica nova.
+ * `enterpriseId` vai junto porque getFileForSend precisa dele (a linha de
+ * listEnterpriseFiles usada para escolher a categoria não carrega o path
+ * resolvido de S3 sozinha).
  */
 export type SendMaterialFn = (params: {
   conversationId: number;
+  enterpriseId: number;
   to: string;
   file: EnterpriseFileRow;
 }) => Promise<{ sent: boolean }>;
@@ -77,6 +82,7 @@ export async function sendMaterialNode(
 
   const result = await params.sendMaterial({
     conversationId: params.conversationId,
+    enterpriseId: params.enterpriseId,
     to: params.customerPhone,
     file: chosenFile,
   });

@@ -33,6 +33,7 @@ import {
 } from '../utils/anaEmergencyHandoff.js';
 import { resolveAnaEnterpriseForTurn } from './anaGraph/nodes/resolveEnterprise.js';
 import { isAnaGraphShadowEnabled, runAnaGraphShadow } from './anaGraph/shadowRunner.js';
+import { isAnaGraphProductionEnabledForEnterprise } from './anaGraph/productionRollout.js';
 import {
   isAnaAutomationBlockedByHandoff,
   logAnaAutomationBlockedByHandoff,
@@ -870,7 +871,9 @@ const shouldFastScheduleAnaBeforeClassifier =
             continue;
           }
 
-          if (isAnaGraphShadowEnabled()) {
+          if (isAnaGraphShadowEnabled() && !isAnaGraphProductionEnabledForEnterprise(conv.enterprise_id ?? null)) {
+            // Não roda sombra pra empresas já na allowlist de produção real do
+            // grafo (evita chamada dupla ao LLM/custo duplicado pro mesmo turno).
             void runAnaGraphShadow({
               conversationId: conv.id,
               contactId: conv.contact_id ?? null,

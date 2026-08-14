@@ -4,6 +4,9 @@ import {
   bumpConversationPipelineToken,
   getConversationPipelineToken,
 } from './conversationPipelineToken.js';
+import { getConversationById } from '../repositories/conversationRepository.js';
+import { isAnaGraphProductionEnabledForEnterprise } from './anaGraph/productionRollout.js';
+import { runAnaGraphProduction } from './anaGraph/productionRunner.js';
 
 function phoneTail(raw: string, len = 6): string | null {
   const d = String(raw ?? '').replace(/\D/g, '');
@@ -74,21 +77,45 @@ async function flushSingleMessage(
       return;
     }
     const lastBurstMeta = [...burst].reverse().find((m) => m.meta_message_id)?.meta_message_id ?? null;
+    const effectiveMetaMessageId = inboundMetaMessageId ?? lastBurstMeta;
     console.log('[ANA_PIPELINE] flush_dispatch', {
       conversationId,
       pipelineToken,
       toPhoneTail: phoneTail(toPhoneNumber, 6),
-      inboundMetaMessageId: inboundMetaMessageId ?? lastBurstMeta,
+      inboundMetaMessageId: effectiveMetaMessageId,
       mergedLen: merged.length,
       trailingUserBubbles: burst.length,
     });
+
+    // Rollout controlado do grafo novo (fase 11): quando o enterpriseId da
+    // conversa está na allowlist de produção, o grafo responde de verdade no
+    // lugar do motor legado — nunca os dois, pra não duplicar resposta.
+    // Fora da allowlist, comportamento inalterado (motor legado, como sempre).
+    const conversation = await getConversationById(conversationId);
+    if (isAnaGraphProductionEnabledForEnterprise(conversation?.enterprise_id ?? null)) {
+      console.log('[ANA_PIPELINE] routed_to_graph_production', {
+        conversationId,
+        pipelineToken,
+        enterpriseId: conversation?.enterprise_id ?? null,
+      });
+      await runAnaGraphProduction({
+        conversationId,
+        contactId: conversation?.contact_id ?? null,
+        enterpriseId: conversation?.enterprise_id ?? null,
+        userMessage: merged,
+        metaMessageId: effectiveMetaMessageId,
+        phoneNumberId: null,
+      });
+      return;
+    }
+
     await handleIncomingMessage({
       conversationId,
       userMessage: merged,
       toPhoneNumber,
       trailingUserBubbles: burst.length,
       replyPipelineToken: pipelineToken,
-      inboundMetaMessageId: inboundMetaMessageId ?? lastBurstMeta,
+      inboundMetaMessageId: effectiveMetaMessageId,
     });
   } catch (e) {
     console.error('[ANA_PIPELINE] flush_error', e instanceof Error ? e.message : String(e));
