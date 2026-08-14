@@ -80,6 +80,17 @@ export const AnaGraphStateAnnotation = Annotation.Root({
     default: () => null,
   }),
 
+  /**
+   * Marca quando assistantReplyText === null é intencional (ex.: sendMaterial
+   * já respondeu via mídia, sem necessidade de texto extra) — distingue esse
+   * caso do "não conseguimos responder", que deve rotear para humanHandoff em
+   * vez de terminar em silêncio puro.
+   */
+  replyIntentionallyEmpty: Annotation<boolean>({
+    reducer: (_current, update) => update,
+    default: () => false,
+  }),
+
   /** Resultado da fase 4 (decisionPolicy) — carregado para a edge condicional decidir o roteamento da fase 5. */
   lastDecision: Annotation<AnaDecisionPolicyResult | null>({
     reducer: (_current, update) => update,

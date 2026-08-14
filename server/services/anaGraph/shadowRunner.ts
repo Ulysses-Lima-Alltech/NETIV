@@ -99,6 +99,10 @@ export function buildShadowDeps(runId: string): AnaGraphRuntimeDeps {
       console.log(SHADOW_TAG, 'assignBroker_skipped', { runId, conversationId: args.conversationId });
       return null;
     },
+    updateHandoffClassification: async (conversationId) => {
+      console.log(SHADOW_TAG, 'updateHandoffClassification_skipped', { runId, conversationId });
+      return null;
+    },
     sendWhatsappText: async () => {
       console.log(SHADOW_TAG, 'sendWhatsappText_skipped', { runId });
       return { success: false, error: 'shadow_mode_skipped' };

@@ -93,6 +93,7 @@ export async function sendMaterialNode(
 
   return {
     assistantReplyText: null,
+    replyIntentionallyEmpty: true,
     commercialFlowState: {
       ...state.commercialFlowState,
       last_material_sent_id: chosenFile.id,

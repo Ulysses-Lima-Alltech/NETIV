@@ -18,6 +18,7 @@ import {
   type SendEmergencyHandoffTextFn,
   type InsertAssistantMessageFn,
   type AssignBrokerFn,
+  type UpdateHandoffClassificationFn,
 } from './nodes/humanHandoff.js';
 import { finalizeReplyNode, type FinalizeReplyNodeParams } from './nodes/finalizeReply.js';
 import { sendWhatsappNode, type SendWhatsappTextFn } from './nodes/sendWhatsapp.js';
@@ -49,8 +50,24 @@ export interface AnaGraphRuntimeDeps {
   sendEmergencyHandoffText: SendEmergencyHandoffTextFn;
   insertAssistantMessage: InsertAssistantMessageFn;
   assignBroker?: AssignBrokerFn;
+  updateHandoffClassification?: UpdateHandoffClassificationFn;
   sendWhatsappText?: SendWhatsappTextFn;
   persistCommercialFlowState?: PersistCommercialFlowStateFn;
+}
+
+/**
+ * Roteamento estrutural pós-nó de ramificação: só segue adiante quando há
+ * texto real pra enviar, ou quando a ausência de texto é intencional
+ * (replyIntentionallyEmpty — ex.: sendMaterial já respondeu via mídia).
+ * Qualquer outro "sem resposta" vira humanHandoff em vez de silêncio puro.
+ */
+export function routeAfterReplyOrHandoff(state: AnaGraphState): 'finalizeReply' | 'humanHandoff' {
+  return state.assistantReplyText != null || state.replyIntentionallyEmpty ? 'finalizeReply' : 'humanHandoff';
+}
+
+/** Mesma regra que routeAfterReplyOrHandoff, mas pro destino pós-finalizeReply (sendWhatsapp em vez de finalizeReply). */
+export function routeAfterFinalizeReply(state: AnaGraphState): 'sendWhatsapp' | 'humanHandoff' {
+  return state.assistantReplyText != null || state.replyIntentionallyEmpty ? 'sendWhatsapp' : 'humanHandoff';
 }
 
 async function loadConversationOrThrow(conversationId: number): Promise<ConversationRow> {
@@ -132,6 +149,7 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
         sendTextMessage: deps.sendEmergencyHandoffText,
         insertAssistantMessage: deps.insertAssistantMessage,
         assignBroker: deps.assignBroker,
+        updateHandoffClassification: deps.updateHandoffClassification,
       })
     )
     .addNode('finalizeReply', async (state) => {
@@ -173,11 +191,35 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
       }
     )
     .addEdge('visitScheduling', 'finalizeReply')
-    .addEdge('sendMaterial', 'finalizeReply')
-    .addEdge('ragAnswer', 'finalizeReply')
-    .addEdge('knowledgeGapReply', 'finalizeReply')
-    .addEdge('humanHandoff', 'finalizeReply')
-    .addEdge('finalizeReply', 'sendWhatsapp')
+    // sendMaterial pode legitimamente não ter texto (mídia já enviada é a
+    // resposta) — routeAfterReplyOrHandoff só rotea pra handoff quando
+    // replyIntentionallyEmpty for false, isto é, quando de fato não
+    // conseguiu responder.
+    .addConditionalEdges('sendMaterial', routeAfterReplyOrHandoff, {
+      finalizeReply: 'finalizeReply',
+      humanHandoff: 'humanHandoff',
+    })
+    // ragAnswer/knowledgeGapReply: contrato é sempre "responde com texto real
+    // ou falha" — null aqui é sempre "não sabemos responder", nunca ok.
+    .addConditionalEdges('ragAnswer', routeAfterReplyOrHandoff, {
+      finalizeReply: 'finalizeReply',
+      humanHandoff: 'humanHandoff',
+    })
+    .addConditionalEdges('knowledgeGapReply', routeAfterReplyOrHandoff, {
+      finalizeReply: 'finalizeReply',
+      humanHandoff: 'humanHandoff',
+    })
+    // humanHandoff sempre produz um texto fixo pré-aprovado (ANA_EMERGENCY_HANDOFF_MESSAGE)
+    // — vai direto pro envio, sem passar de novo por finalizeReply (evita ciclo
+    // finalizeReply -> humanHandoff -> finalizeReply e sanitização desnecessária
+    // de uma mensagem operacional já controlada).
+    .addEdge('humanHandoff', 'sendWhatsapp')
+    // finalizeReply pode zerar um rascunho não vazio (guard de segurança/tamanho) —
+    // isso também é "não conseguimos responder com segurança", vira handoff.
+    .addConditionalEdges('finalizeReply', routeAfterFinalizeReply, {
+      sendWhatsapp: 'sendWhatsapp',
+      humanHandoff: 'humanHandoff',
+    })
     .addEdge('sendWhatsapp', 'persistState')
     .addEdge('persistState', END);
 
