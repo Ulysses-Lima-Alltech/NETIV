@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { routeAfterReplyOrHandoff, routeAfterFinalizeReply } from '../services/anaGraph/graph.js';
+import {
+  routeAfterReplyOrHandoff,
+  routeAfterFinalizeReply,
+  routeAfterDecisionPolicyWithExplicitHandoff,
+} from '../services/anaGraph/graph.js';
 import { humanHandoffNode } from '../services/anaGraph/nodes/humanHandoff.js';
 import type { AnaGraphState } from '../services/anaGraph/state.js';
 
@@ -45,6 +49,80 @@ test('routeAfterReplyOrHandoff segue para finalizeReply quando silencio e intenc
 test('routeAfterFinalizeReply vai para humanHandoff quando finalizeReply zera o rascunho', () => {
   const state = baseState({ assistantReplyText: null, replyIntentionallyEmpty: false });
   assert.equal(routeAfterFinalizeReply(state), 'humanHandoff');
+});
+
+test('routeAfterDecisionPolicyWithExplicitHandoff prioriza pedido explicito de corretor sobre qualquer outra rota', () => {
+  const state = baseState({
+    userMessage: 'quero falar com corretor',
+    lastDecision: {
+      policyVersion: 'v2',
+      resolvedIntent: 'geral',
+      canRespond: true,
+      shouldAskQuestion: false,
+      shouldSendMaterial: false,
+      shouldCreateInfoGapFlag: false,
+      shouldSuggestVisit: false,
+      hasDirectVisitSchedulingIntent: false,
+      responseMode: 'short',
+      primaryAxis: 'geral',
+      canMentionExactLocation: true,
+      canMentionPaymentSimulation: false,
+      outboundAllowed: true,
+      blockedReason: null,
+      shouldUseMissingInformationReply: false,
+      shouldUsePaymentSimulationRedirect: false,
+      missingInformationSubject: null,
+      detectedIntent: 'geral',
+      currentAxis: 'geral',
+      lastAxis: null,
+      isDirectInfoRequest: false,
+      isGenericOpenQuestion: false,
+      isRepeatOfLastAxis: false,
+      isAskingForMoreOnSameAxis: false,
+      evidenceFound: true,
+      shouldAnswerDirectly: false,
+      shouldAskClarifyingQuestion: false,
+      shouldAvoidGenericFallback: false,
+    },
+  });
+  assert.equal(routeAfterDecisionPolicyWithExplicitHandoff(state), 'humanHandoff');
+});
+
+test('routeAfterDecisionPolicyWithExplicitHandoff nao intercepta mensagens comuns', () => {
+  const state = baseState({
+    userMessage: 'qual o valor do lote?',
+    lastDecision: {
+      policyVersion: 'v2',
+      resolvedIntent: 'preco',
+      canRespond: true,
+      shouldAskQuestion: false,
+      shouldSendMaterial: false,
+      shouldCreateInfoGapFlag: false,
+      shouldSuggestVisit: false,
+      hasDirectVisitSchedulingIntent: false,
+      responseMode: 'short',
+      primaryAxis: 'preco',
+      canMentionExactLocation: true,
+      canMentionPaymentSimulation: false,
+      outboundAllowed: true,
+      blockedReason: null,
+      shouldUseMissingInformationReply: false,
+      shouldUsePaymentSimulationRedirect: false,
+      missingInformationSubject: null,
+      detectedIntent: 'preco',
+      currentAxis: 'preco',
+      lastAxis: null,
+      isDirectInfoRequest: true,
+      isGenericOpenQuestion: false,
+      isRepeatOfLastAxis: false,
+      isAskingForMoreOnSameAxis: false,
+      evidenceFound: true,
+      shouldAnswerDirectly: true,
+      shouldAskClarifyingQuestion: false,
+      shouldAvoidGenericFallback: true,
+    },
+  });
+  assert.equal(routeAfterDecisionPolicyWithExplicitHandoff(state), 'ragAnswer');
 });
 
 test('humanHandoffNode muda status pra Handoff mesmo quando assignBroker nao atribui corretor (reason fora da whitelist)', async () => {

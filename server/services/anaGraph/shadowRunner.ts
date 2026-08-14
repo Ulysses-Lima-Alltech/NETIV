@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { compileAnaGraph, type AnaGraphRuntimeDeps } from './graph.js';
 import { resolveAiSettingsForEnterprise } from '../enterpriseAiSettingsService.js';
 import { buildDecisionContextNode } from './nodes/buildDecisionContext.js';
+import { hasExplicitHandoffIntent } from '../../utils/anaInstructionLeakAndHandoffIntent.js';
 import type { AnaGraphState } from './state.js';
 import type { ConversationRow } from '../../repositories/conversationRepository.js';
 
@@ -57,7 +58,8 @@ export function buildShadowDeps(runId: string): AnaGraphRuntimeDeps {
       enterpriseName: state.enterpriseName,
       conversationType: conversation.conversation_type ?? 'CLIENT',
     }),
-    handoffReason: () => 'ana_graph_shadow_gap_default',
+    handoffReason: (state: AnaGraphState) =>
+      hasExplicitHandoffIntent(state.userMessage) ? 'explicit_broker_request' : 'ana_graph_shadow_gap_default',
 
     persistAppointment: async (data) => {
       console.log(SHADOW_TAG, 'persistAppointment_skipped', { runId, enterpriseId: data.enterpriseId });

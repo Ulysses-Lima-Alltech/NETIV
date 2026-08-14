@@ -9,6 +9,7 @@ import { resolveEnterpriseNode } from './nodes/resolveEnterprise.js';
 import { classifyLeadTurnNode } from './nodes/classifyLeadTurn.js';
 import { decisionPolicyNode, routeAfterDecisionPolicy } from './nodes/decisionPolicy.js';
 import { buildDecisionContextNode } from './nodes/buildDecisionContext.js';
+import { hasExplicitHandoffIntent } from '../../utils/anaInstructionLeakAndHandoffIntent.js';
 import { visitSchedulingNode, type PersistAppointmentFn } from './nodes/visitScheduling.js';
 import { sendMaterialNode, type SendMaterialFn } from './nodes/sendMaterial.js';
 import { ragAnswerNode, type RagAnswerNodeParams } from './nodes/ragAnswer.js';
@@ -68,6 +69,22 @@ export function routeAfterReplyOrHandoff(state: AnaGraphState): 'finalizeReply' 
 /** Mesma regra que routeAfterReplyOrHandoff, mas pro destino pós-finalizeReply (sendWhatsapp em vez de finalizeReply). */
 export function routeAfterFinalizeReply(state: AnaGraphState): 'sendWhatsapp' | 'humanHandoff' {
   return state.assistantReplyText != null || state.replyIntentionallyEmpty ? 'sendWhatsapp' : 'humanHandoff';
+}
+
+/**
+ * Pedido explícito de corretor ("falar com corretor", "quero um atendente")
+ * tem prioridade sobre qualquer outra rota — reaproveita hasExplicitHandoffIntent
+ * (anaInstructionLeakAndHandoffIntent.ts), o mesmo detector que o motor legado usa
+ * (conversationEngine.ts ~linha 4096) para desviar pro branch de atribuição de
+ * corretor antes mesmo do decisionPolicy rodar. Sem isso, o pedido caía no
+ * roteamento normal (ragAnswer/visitScheduling) e a Ana só *dizia* que ia
+ * encaminhar, sem o status da conversa mudar pra Handoff de verdade.
+ */
+export function routeAfterDecisionPolicyWithExplicitHandoff(
+  state: AnaGraphState
+): 'visitScheduling' | 'sendMaterial' | 'ragAnswer' | 'knowledgeGapReply' | 'humanHandoff' {
+  if (hasExplicitHandoffIntent(state.userMessage)) return 'humanHandoff';
+  return state.lastDecision ? routeAfterDecisionPolicy(state.lastDecision) : 'humanHandoff';
 }
 
 async function loadConversationOrThrow(conversationId: number): Promise<ConversationRow> {
@@ -179,17 +196,13 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
     .addEdge('resolveEnterprise', 'loadTurnContext')
     .addEdge('loadTurnContext', 'classifyLeadTurn')
     .addEdge('classifyLeadTurn', 'decisionPolicy')
-    .addConditionalEdges(
-      'decisionPolicy',
-      (state) => (state.lastDecision ? routeAfterDecisionPolicy(state.lastDecision) : 'humanHandoff'),
-      {
-        visitScheduling: 'visitScheduling',
-        sendMaterial: 'sendMaterial',
-        ragAnswer: 'ragAnswer',
-        knowledgeGapReply: 'knowledgeGapReply',
-        humanHandoff: 'humanHandoff',
-      }
-    )
+    .addConditionalEdges('decisionPolicy', routeAfterDecisionPolicyWithExplicitHandoff, {
+      visitScheduling: 'visitScheduling',
+      sendMaterial: 'sendMaterial',
+      ragAnswer: 'ragAnswer',
+      knowledgeGapReply: 'knowledgeGapReply',
+      humanHandoff: 'humanHandoff',
+    })
     .addEdge('visitScheduling', 'finalizeReply')
     // sendMaterial pode legitimamente não ter texto (mídia já enviada é a
     // resposta) — routeAfterReplyOrHandoff só rotea pra handoff quando
