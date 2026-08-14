@@ -1,5 +1,6 @@
 import { loadRankedKnowledgeChunksForPromptWithMeta } from '../../../repositories/enterpriseKnowledgeChunkRepository.js';
-import { generateChatCompletion } from '../../openaiService.js';
+import { getRecentConversationMessages } from '../../../repositories/messageRepository.js';
+import { generateChatCompletion, type ChatMessage } from '../../openaiService.js';
 import { hasAnaEvidenceForNeed, type AnaEnterpriseEvidence } from '../../../utils/anaEnterpriseEvidence.js';
 import type { AnaGraphState } from '../state.js';
 
@@ -40,10 +41,30 @@ export async function ragAnswerNode(
     return { assistantReplyText: null };
   }
 
+  const recentMessages = await getRecentConversationMessages(params.conversationId, 12);
+  const currentUserMessageNorm = state.userMessage.trim();
+  const historyMessages: ChatMessage[] = recentMessages
+    .filter((m, index) => !(index === recentMessages.length - 1 && m.role === 'user' && m.content === currentUserMessageNorm))
+    .map((m) => ({ role: m.role, content: m.content }));
+
+  const flowState = state.commercialFlowState;
+  const knownCustomerContextLines: string[] = [];
+  if (flowState.purchaseIntent === 'MORADIA') {
+    knownCustomerContextLines.push('O cliente já disse que busca o imóvel para MORAR. Não pergunte de novo se é para morar ou investir.');
+  } else if (flowState.purchaseIntent === 'INVESTIMENTO') {
+    knownCustomerContextLines.push('O cliente já disse que busca o imóvel para INVESTIR. Não pergunte de novo se é para morar ou investir.');
+  }
+  const knownCustomerContext =
+    knownCustomerContextLines.length > 0
+      ? `\n\nO QUE JÁ SABEMOS SOBRE O CLIENTE (não repita a pergunta):\n${knownCustomerContextLines.join('\n')}`
+      : '';
+
   const systemPrompt = [
     `Você é a Ana, assistente comercial do empreendimento ${params.enterpriseName}.`,
     'Responda apenas com base no CONTEXTO abaixo. Se a informação não estiver no contexto, não responda — não invente.',
+    'Use o HISTÓRICO da conversa para não repetir perguntas já respondidas pelo cliente e para interpretar respostas curtas (ex.: "morar", "sim") no contexto da última pergunta feita.',
     'Seja objetiva e curta (2-4 frases).',
+    knownCustomerContext,
     '',
     'CONTEXTO:',
     chunkMeta.promptText,
@@ -57,6 +78,7 @@ export async function ragAnswerNode(
     maxTokens: params.aiConfig.maxTokens,
     messages: [
       { role: 'system', content: systemPrompt },
+      ...historyMessages,
       { role: 'user', content: state.userMessage },
     ],
     costTracking: {
