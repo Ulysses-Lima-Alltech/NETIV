@@ -1,6 +1,19 @@
 ﻿import type { RequestedProductType } from './anaRequestedProductType.js';
 import type { CommercialAxis } from './anaCommercialAxisGuard.js';
 import { hasAnaEvidenceForNeed, type AnaEnterpriseEvidence } from './anaEnterpriseEvidence.js';
+import type { CommercialFlowState } from './commercialFlowState.js';
+import {
+  isVisitSchedulingIntent,
+  isCommercialQuestionThatShouldBypassVisitScheduling,
+  isExplicitVisitSchedulingAcceptance,
+  isExplicitVisitSchedulingNegativeMessage,
+  isVisitSchedulingSlotAnswer,
+  isSuggestedSlotAlternativeInterestMessage,
+} from './anaDirectVisitScheduling.js';
+import {
+  shouldSuppressVisitFlowForConfirmationKind,
+  type AnaShortConfirmationKind,
+} from './anaShortConfirmationContext.js';
 
 export const ANA_DECISION_POLICY_VERSION = 'v2';
 
@@ -34,6 +47,20 @@ export interface AnaDecisionPolicyInput {
     asksSpecificInfoWithoutEvidence: boolean;
   };
   userMessage: string;
+  /**
+   * Estado comercial completo (commercial_flow_state) — mesmo objeto que o
+   * motor legado usa para computar `directVisitSchedulingIntent`. Opcional só
+   * para não quebrar chamadores existentes (conversationEngine.ts computa seu
+   * próprio directVisitSchedulingIntent separadamente e não depende deste
+   * campo); default `{}` quando ausente.
+   */
+  flowState?: CommercialFlowState;
+  lastAssistantMessage?: string | null;
+  confirmationContext?: {
+    kind: AnaShortConfirmationKind;
+    isShortConfirmation: boolean;
+  } | null;
+  referenceNow?: Date;
 }
 
 export interface AnaDecisionPolicyResult {
@@ -44,6 +71,16 @@ export interface AnaDecisionPolicyResult {
   shouldSendMaterial: boolean;
   shouldCreateInfoGapFlag: boolean;
   shouldSuggestVisit: boolean;
+  /**
+   * Gate determinístico real de roteamento pro fluxo de agendamento — espelha
+   * `directVisitSchedulingIntent` de conversationEngine.ts (isVisitSchedulingIntent +
+   * guards de supressão: pergunta comercial que deve ser respondida antes,
+   * contexto de confirmação curta que não é sobre visita). `shouldSuggestVisit`
+   * continua sendo o sinal solto (usado como diretriz de prompt no motor legado,
+   * nunca como gate de roteamento) — não usar para decidir se entra no fluxo
+   * de agendamento.
+   */
+  hasDirectVisitSchedulingIntent: boolean;
   responseMode: AnaDecisionResponseMode;
   primaryAxis: CommercialAxis | 'material' | 'geral';
   canMentionExactLocation: boolean;
@@ -212,6 +249,75 @@ function detectVisitOpportunity(params: {
   return /\b(gostei|curti|me interessei)\b/.test(n);
 }
 
+/**
+ * Espelha o gate `directVisitSchedulingIntent` de conversationEngine.ts
+ * (linhas ~6488-6554): isVisitSchedulingIntent (que já embute os guards
+ * canônicos — isCommercialQuestionThatShouldBypassVisitScheduling,
+ * confirmationContextKind, pendingVisitScheduling) mais os dois bypasses
+ * adicionais aplicados no call site do motor legado antes de rotear pro
+ * fluxo determinístico de agendamento.
+ *
+ * Gap conhecido: o motor legado também suprime quando
+ * `effectiveConv.pending_resolution_choice === true` (escolha pendente de
+ * resolução que não é visita) — esse campo ainda não existe no estado do
+ * grafo novo, então não é replicado aqui.
+ */
+function resolveHasDirectVisitSchedulingIntent(params: {
+  userMessage: string;
+  flowState: CommercialFlowState;
+  lastAssistantMessage: string | null;
+  confirmationContext: { kind: AnaShortConfirmationKind; isShortConfirmation: boolean } | null;
+  resolvedIntent: string | null;
+  primaryAxis: AnaDecisionPolicyResult['primaryAxis'];
+  currentAxis: CommercialAxis | null;
+  requestedAxis: CommercialAxis | null;
+  enterpriseId: number | null;
+  referenceNow?: Date;
+}): boolean {
+  const rawIntent = isVisitSchedulingIntent({
+    userMessage: params.userMessage,
+    flowState: params.flowState,
+    confirmationContextKind: params.confirmationContext?.kind ?? null,
+    resolvedIntent: params.resolvedIntent,
+    primaryAxis: params.primaryAxis,
+    currentAxis: params.currentAxis,
+    requestedAxis: params.requestedAxis,
+    lastAssistantMessage: params.lastAssistantMessage,
+    enterpriseId: params.enterpriseId,
+    referenceNow: params.referenceNow,
+  });
+
+  const visitFlowSuppressedByConfirmationContext =
+    params.flowState.pendingVisitScheduling !== true &&
+    params.confirmationContext?.isShortConfirmation === true &&
+    shouldSuppressVisitFlowForConfirmationKind(params.confirmationContext.kind);
+  if (visitFlowSuppressedByConfirmationContext) return false;
+
+  const commercialQuestionThisTurn = isCommercialQuestionThatShouldBypassVisitScheduling(params.userMessage);
+  const explicitVisitSchedulingAcceptanceThisTurn = isExplicitVisitSchedulingAcceptance(params.userMessage);
+  const awaitingAlternativeSlotInterestForTurn =
+    params.flowState.suggestedVisitStatus === 'declined' &&
+    params.flowState.awaitingAlternativeSlotInterest === true;
+  const alternativeSlotInterestAnswerThisTurn =
+    awaitingAlternativeSlotInterestForTurn &&
+    (isSuggestedSlotAlternativeInterestMessage(params.userMessage) ||
+      isExplicitVisitSchedulingNegativeMessage(params.userMessage));
+  const visitSchedulingSlotAnswerThisTurn = isVisitSchedulingSlotAnswer({
+    userMessage: params.userMessage,
+    flowState: params.flowState,
+    lastAssistantMessage: params.lastAssistantMessage,
+    referenceNow: params.referenceNow,
+  });
+  const shouldBypassVisitSchedulingForCommercialQuestion =
+    commercialQuestionThisTurn &&
+    !explicitVisitSchedulingAcceptanceThisTurn &&
+    !alternativeSlotInterestAnswerThisTurn &&
+    !visitSchedulingSlotAnswerThisTurn;
+  if (shouldBypassVisitSchedulingForCommercialQuestion) return false;
+
+  return rawIntent;
+}
+
 function resolveCurrentAxis(input: AnaDecisionPolicyInput): AnaDecisionCurrentAxis {
   if (input.turnFlags.explicitMaterialRequest) return 'material';
   if (input.requestedAxis != null) return input.requestedAxis;
@@ -306,6 +412,18 @@ export function buildAnaDecisionPolicy(input: AnaDecisionPolicyInput): AnaDecisi
     conversationPhase: input.conversationContext.phase,
     historyCount: input.conversationContext.historyCount,
   });
+  const hasDirectVisitSchedulingIntent = resolveHasDirectVisitSchedulingIntent({
+    userMessage: input.userMessage,
+    flowState: input.flowState ?? {},
+    lastAssistantMessage: input.lastAssistantMessage ?? null,
+    confirmationContext: input.confirmationContext ?? null,
+    resolvedIntent: input.detectedIntent,
+    primaryAxis,
+    currentAxis: isCommercialAxis(currentAxis) ? currentAxis : null,
+    requestedAxis: input.requestedAxis,
+    enterpriseId: input.enterpriseId,
+    referenceNow: input.referenceNow,
+  });
   const shouldAskClarifyingQuestion =
     !isDirectInfoRequest &&
     isGenericOpenQuestion &&
@@ -336,6 +454,7 @@ export function buildAnaDecisionPolicy(input: AnaDecisionPolicyInput): AnaDecisi
     shouldSendMaterial,
     shouldCreateInfoGapFlag,
     shouldSuggestVisit,
+    hasDirectVisitSchedulingIntent,
     responseMode,
     primaryAxis,
     canMentionExactLocation,

@@ -7,6 +7,7 @@ import { inferRequestedProductType } from '../../../utils/anaRequestedProductTyp
 import { isBareGreetingOnly } from '../../../utils/anaDocSendIntent.js';
 import type { AnaEnterpriseEvidence } from '../../../utils/anaEnterpriseEvidence.js';
 import type { CommercialAxis } from '../../../utils/anaCommercialAxisGuard.js';
+import type { AnaShortConfirmationKind } from '../../../utils/anaShortConfirmationContext.js';
 import type { AnaGraphState } from '../state.js';
 
 /**
@@ -39,6 +40,11 @@ export interface DecisionPolicyNodeExternalInput {
   explicitPaymentSimulationRequest: boolean;
   asksListStyleInfo: boolean;
   asksSpecificInfoWithoutEvidence: boolean;
+  lastAssistantMessage: string | null;
+  confirmationContext: {
+    kind: AnaShortConfirmationKind;
+    isShortConfirmation: boolean;
+  } | null;
 }
 
 export function decisionPolicyNode(
@@ -68,6 +74,9 @@ export function decisionPolicyNode(
       asksSpecificInfoWithoutEvidence: external.asksSpecificInfoWithoutEvidence,
     },
     userMessage: state.userMessage,
+    flowState: state.commercialFlowState,
+    lastAssistantMessage: external.lastAssistantMessage,
+    confirmationContext: external.confirmationContext,
   };
 
   return buildAnaDecisionPolicy(input);
@@ -77,7 +86,7 @@ export function decisionPolicyNode(
 export function routeAfterDecisionPolicy(
   decision: AnaDecisionPolicyResult
 ): 'visitScheduling' | 'sendMaterial' | 'ragAnswer' | 'knowledgeGapReply' | 'humanHandoff' {
-  if (decision.primaryAxis === 'visita_agendamento' || decision.shouldSuggestVisit) return 'visitScheduling';
+  if (decision.primaryAxis === 'visita_agendamento' || decision.hasDirectVisitSchedulingIntent) return 'visitScheduling';
   if (decision.shouldSendMaterial || decision.primaryAxis === 'material') return 'sendMaterial';
   if (decision.shouldCreateInfoGapFlag || !decision.evidenceFound) return 'knowledgeGapReply';
   if (!decision.canRespond || !decision.outboundAllowed) return 'humanHandoff';

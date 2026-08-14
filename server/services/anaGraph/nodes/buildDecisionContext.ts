@@ -15,6 +15,7 @@ import {
   detectStructuredListIntent,
 } from '../../../utils/anaDecisionPolicy.js';
 import { buildAnaEnterpriseEvidence } from '../../../utils/anaEnterpriseEvidence.js';
+import { resolveShortConfirmationContext } from '../../../utils/anaShortConfirmationContext.js';
 import { loadRankedKnowledgeChunksForPromptWithMeta } from '../../../repositories/enterpriseKnowledgeChunkRepository.js';
 import type { AnaGraphState } from '../state.js';
 import type { DecisionPolicyNodeExternalInput } from './decisionPolicy.js';
@@ -94,6 +95,16 @@ export async function buildDecisionContextNode(
     ? 'pedir_material'
     : requestedAxis ?? (appointmentPreflight.active ? 'agendar' : 'geral');
 
+  const shortConfirmationContext = resolveShortConfirmationContext({
+    userText: state.userMessage,
+    recentMessages: recentMessages.map((m) => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: m.content,
+    })),
+    lastAssistantMessage,
+    flowState: state.commercialFlowState,
+  });
+
   return {
     requestedAxis,
     lastAxis,
@@ -113,5 +124,10 @@ export async function buildDecisionContextNode(
     explicitPaymentSimulationRequest,
     asksListStyleInfo,
     asksSpecificInfoWithoutEvidence,
+    lastAssistantMessage,
+    confirmationContext: {
+      kind: shortConfirmationContext.kind,
+      isShortConfirmation: shortConfirmationContext.isShortConfirmation,
+    },
   };
 }
