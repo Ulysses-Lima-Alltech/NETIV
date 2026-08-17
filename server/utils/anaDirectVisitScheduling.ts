@@ -309,10 +309,24 @@ export function isExplicitVisitSchedulingAcceptance(text: string): boolean {
   );
 }
 
+/**
+ * "tem como visitar?"/"dá pra visitar?"/"posso conhecer?" — a palavra "tem"
+ * sozinha faz parte da lista de gatilhos comerciais abaixo (pensada pra
+ * "tem lote disponível?"/"tem desconto?" etc.), mas quando combinada com
+ * visitar/conhecer/agendar/marcar a frase INTEIRA é sobre agendamento, não
+ * uma pergunta comercial concorrente — sem essa exceção, "tem como visitar?"
+ * era suprimido e nunca chegava no fluxo de agendamento (reportado em
+ * produção: pedido de visita ignorado, respondido com fato genérico do
+ * empreendimento).
+ */
+const VISIT_INTENT_DESPITE_COMMERCIAL_WORD_RE =
+  /\b(?:tem como|da pra|dá pra|consigo|posso)\s+(?:visitar|conhecer|agendar|marcar)\b/;
+
 export function isCommercialQuestionThatShouldBypassVisitScheduling(text: string): boolean {
   const n = norm(text);
   if (!n) return false;
   if (extractVisitLotPreference(text) != null) return false;
+  if (VISIT_INTENT_DESPITE_COMMERCIAL_WORD_RE.test(n)) return false;
   return /\b(lote|lotes|tamanho|metragem|valor|preco|parcela|entrada|financiamento|localizacao|endereco|seguranca|camera|cameras|portaria|lazer|condominio|obra|entrega|disponibilidade|tabela|desconto|simulacao|qual|quais|tem|existe|me fala|me manda|nao entendi|vi que)\b/.test(
     n
   );
@@ -409,7 +423,7 @@ export function isVisitSchedulingConfirmationMessage(text: string): boolean {
  */
 // Aplicado sobre texto já normalizado (norm() remove acentos) — sem ç/õ.
 const BARE_CONHECER_AS_VISIT_RE =
-  /\b(?:como\s+(?:eu\s+)?(?:faco|posso)\s+(?:pra|para)\s+conhecer|quero\s+conhecer|gostaria\s+de\s+conhecer)\b(?!\s+(?:mais|melhor|as\s+opcoes|opcoes|os\s+lotes|melhores))/;
+  /\b(?:como\s+(?:eu\s+)?(?:faco|posso)\s+(?:pra|para)\s+conhecer|quer(?:o|ia)\s+conhecer|gostaria\s+de\s+conhecer)\b(?!\s+(?:mais|melhor|as\s+opcoes|opcoes|os\s+lotes|melhores))/;
 
 function hasVisitSchedulingWords(text: string): boolean {
   const n = norm(text);
