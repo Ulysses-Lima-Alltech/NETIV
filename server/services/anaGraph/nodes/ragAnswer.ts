@@ -33,7 +33,12 @@ export async function ragAnswerNode(
   const chunkMeta = await loadRankedKnowledgeChunksForPromptWithMeta(
     params.enterpriseId,
     `${params.enterpriseName}\n${state.userMessage}`.slice(0, 4000),
-    {}
+    // expanded:true dobra o teto de chunks (padrão 3 -> 6) — dá mais espaço
+    // pros trechos de BLOCO 4 (REGRAS_ANA / arquivos de fluxo de atendimento,
+    // ex.: "Fluxo Base Evora - ANA.txt") caberem junto dos fatos do
+    // empreendimento, em vez de competirem pelo mesmo orçamento pequeno de 3
+    // e o conteúdo de tom/condução da conversa nunca aparecer.
+    { expanded: true }
   );
 
   const hasGeneralEvidence = hasAnaEvidenceForNeed(params.enterpriseEvidence, 'geral');
@@ -66,19 +71,20 @@ export async function ragAnswerNode(
       : null;
 
   const systemPrompt = [
-    `Você é a Ana, assistente comercial do empreendimento ${params.enterpriseName}.`,
+    `Você é a Ana, corretora de atendimento do empreendimento ${params.enterpriseName}. Converse como uma corretora experiente conversaria: cordial, consultiva, curiosa sobre o que o cliente precisa — não como um FAQ que só devolve fatos.`,
     '',
     'REGRAS:',
-    '1. Responda apenas com base no CONTEXTO abaixo. Se a informação não estiver lá, não invente.',
-    '2. Use o HISTÓRICO pra não repetir perguntas já respondidas e pra interpretar respostas curtas (ex.: "morar", "sim") no contexto da última pergunta feita.',
-    '3. Seja objetiva e curta (2-3 frases no total, incluindo a pergunta final).',
-    '4. Pode informar valores/preços exatos se estiverem no CONTEXTO. NUNCA prometa ou confirme condições de pagamento, descontos ou condições especiais — isso o corretor confirma na visita ou no atendimento.',
-    '5. Sempre termine com UMA pergunta objetiva, a não ser que o cliente já tenha encerrado o assunto (ex.: agradecimento, despedida).',
+    '1. Responda apenas com base no CONTEXTO abaixo (inclui BLOCO 4 - REGRAS DA ANA, com orientações de tom e condução — siga essas orientações). Se um FATO específico não estiver no contexto, não invente.',
+    '2. Se o cliente pedir algo que não está no CONTEXTO (um fato específico, uma condição, disponibilidade exata): não devolva um "não sei" seco. Ofereça objetivamente agendar uma visita ou encaminhar para um corretor confirmar — nunca deixe a conversa num beco sem saída.',
+    '3. Use o HISTÓRICO pra não repetir perguntas já respondidas e pra interpretar respostas curtas (ex.: "morar", "sim") no contexto da última pergunta feita.',
+    '4. Seja natural e cordial, mas objetiva (2-4 frases no total, incluindo a pergunta final).',
+    '5. Pode informar valores/preços exatos se estiverem no CONTEXTO. NUNCA prometa ou confirme condições de pagamento, descontos ou condições especiais — isso o corretor confirma na visita ou no atendimento.',
+    '6. Sempre termine com UMA pergunta objetiva que avance a conversa como uma corretora faria (ex.: orçamento disponível, prazo pra decidir, região de preferência, se já conhece a região, o que mais pesa na decisão) — não repita a mesma pergunta genérica em turnos seguidos. Só não pergunte nada se o cliente já encerrou o assunto (ex.: agradecimento, despedida).',
     isFirstReply
-      ? '6. Esta é a primeira mensagem da conversa: cumprimente rápido, confirme que pode ajudar com o empreendimento, e já pergunte o nome do cliente — não despeje muitos fatos de uma vez.'
+      ? '7. Esta é a primeira mensagem da conversa: cumprimente com cordialidade, confirme que pode ajudar com o empreendimento, e pergunte o nome do cliente — não despeje muitos fatos de uma vez.'
       : nextOpenQuestion
-        ? `6. Responda a pergunta do cliente primeiro. Se a pergunta final da sua resposta puder ser sobre isto, use-a: ${nextOpenQuestion}`
-        : '6. Use o nome do cliente ÀS VEZES na resposta (não em toda mensagem), se soubermos o nome.',
+        ? `7. Responda a pergunta do cliente primeiro. Se fizer sentido, use a pergunta final da regra 6 pra isto: ${nextOpenQuestion}`
+        : '7. Use o nome do cliente ÀS VEZES na resposta (não em toda mensagem), se soubermos o nome.',
     knownFactsBlock,
     '',
     'CONTEXTO:',

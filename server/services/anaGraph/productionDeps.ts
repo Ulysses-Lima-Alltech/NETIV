@@ -3,7 +3,7 @@ import type { AnaGraphState } from './state.js';
 import { resolveAiSettingsForEnterprise } from '../enterpriseAiSettingsService.js';
 import { buildDecisionContextNode } from './nodes/buildDecisionContext.js';
 import { hasExplicitHandoffIntent } from '../../utils/anaInstructionLeakAndHandoffIntent.js';
-import { getVariablesMap, getFileForSend } from '../../repositories/enterpriseRepository.js';
+import { getVariablesMap } from '../../repositories/enterpriseRepository.js';
 import { logSentFile } from '../../repositories/enterpriseRepository.js';
 import { loadRankedKnowledgeChunksForPromptWithMeta } from '../../repositories/enterpriseKnowledgeChunkRepository.js';
 import { sendAnaLocalMediaToWhatsAppWithQuota } from '../anaOutboundQuotaService.js';
@@ -79,19 +79,21 @@ export function buildProductionDeps(): AnaGraphRuntimeDeps {
     handoffReason: (state: AnaGraphState) =>
       hasExplicitHandoffIntent(state.userMessage) ? 'explicit_broker_request' : 'ana_graph_no_safe_answer',
 
-    sendMaterial: async ({ enterpriseId, to, file, conversationId }) => {
-      const resolved = await getFileForSend(enterpriseId, file.category);
-      if (!resolved) return { sent: false };
+    // `file` já vem totalmente resolvido do sendMaterialNode (categoria única
+    // via getFileForSend, ou a foto/vídeo específico já filtrado por título
+    // pra fotos/vídeos) — manda exatamente esse arquivo, sem re-resolver por
+    // categoria (isso ignorava qual instância específica tinha sido escolhida).
+    sendMaterial: async ({ to, file, conversationId }) => {
       const result = await sendAnaLocalMediaToWhatsAppWithQuota({
         conversationId,
         to,
-        filePath: resolved.path,
-        filename: resolved.originalName,
-        mimeFromDb: resolved.mime,
+        filePath: file.path,
+        filename: file.originalName,
+        mimeFromDb: file.mime,
         phase: 'ana_graph_send_material',
       });
       if (!result.success) return { sent: false };
-      await logSentFile(conversationId, resolved.id);
+      await logSentFile(conversationId, file.id);
       return { sent: true };
     },
 
