@@ -85,9 +85,13 @@ export function buildShadowDeps(runId: string): AnaGraphRuntimeDeps {
         cliente: data.customerName,
       };
     },
-    sendMaterial: async ({ file }) => {
-      console.log(SHADOW_TAG, 'sendMaterial_skipped', { runId, fileId: file.id, category: file.category });
-      return { sent: false };
+    sendMaterial: async ({ files }) => {
+      console.log(SHADOW_TAG, 'sendMaterial_skipped', {
+        runId,
+        fileIds: files.map((f) => f.id),
+        category: files[0]?.category ?? null,
+      });
+      return { sentCount: 0 };
     },
     sendEmergencyHandoffText: async () => {
       console.log(SHADOW_TAG, 'sendEmergencyHandoffText_skipped', { runId });

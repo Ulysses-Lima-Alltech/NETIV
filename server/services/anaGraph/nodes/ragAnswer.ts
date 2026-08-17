@@ -79,7 +79,7 @@ export async function ragAnswerNode(
     '5. Pode informar valores/preços exatos se estiverem no CONTEXTO. NUNCA prometa ou confirme condições de pagamento, descontos ou condições especiais — isso o corretor confirma na visita ou no atendimento.',
     '6. Sempre termine com UMA pergunta objetiva que avance a conversa como uma corretora faria (ex.: orçamento disponível, prazo pra decidir, região de preferência, se já conhece a região, o que mais pesa na decisão) — não repita a mesma pergunta genérica em turnos seguidos. Só não pergunte nada se o cliente já encerrou o assunto (ex.: agradecimento, despedida).',
     isFirstReply
-      ? '7. Esta é a primeira mensagem da conversa: cumprimente com cordialidade genuína, confirme que pode ajudar com o empreendimento, e pergunte o nome do cliente como a ÚNICA pergunta desta resposta — não pergunte mais nada além do nome, e não despeje muitos fatos de uma vez.'
+      ? `7. Esta é a primeira mensagem da conversa. Estrutura obrigatória: (a) cumprimento caloroso mencionando o ${params.enterpriseName} pelo nome (nunca um "Olá! Tudo bem." genérico e seco); (b) uma frase curta mostrando entusiasmo genuíno em ajudar; (c) pergunte o nome do cliente como a ÚNICA pergunta desta resposta. Não despeje fatos do empreendimento ainda — isso vem depois que ela souber o nome.`
       : nextOpenQuestion
         ? `7. Responda a pergunta do cliente primeiro. Se fizer sentido, use a pergunta final da regra 6 pra isto: ${nextOpenQuestion.instruction}`
         : '7. Use o nome do cliente ÀS VEZES na resposta (não em toda mensagem), se soubermos o nome.',

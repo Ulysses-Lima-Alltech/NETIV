@@ -21,6 +21,19 @@ export interface VisitSchedulingNodeParams {
   customerPhone?: string | null;
   referenceNow?: Date;
   /**
+   * Mesmo contexto que conversationEngine.ts passa pro motor legado
+   * (~linha 6960-6979) — sem isso, handleVisitSchedulingDeterministically
+   * fica sem saber o que a própria Ana acabou de perguntar (ex.:
+   * assistantAskedVisitConfirmation checa se a última resposta foi "Posso
+   * confirmar sua visita para amanhã às 9h?"), e a resposta do cliente a um
+   * slot sugerido ("melhor na sexta as 14") cai num branch errado dentro do
+   * handler em vez de continuar o fluxo de agendamento.
+   */
+  lastAssistantMessage?: string | null;
+  resolvedIntent?: string | null;
+  primaryAxis?: string | null;
+  currentAxis?: string | null;
+  /**
    * Persistência do agendamento é sempre injetável — nunca chame
    * assignAppointment diretamente a partir do grafo novo fora do ponto único
    * controlado por flag (fase 9). Em modo sombra, o chamador DEVE passar um
@@ -62,6 +75,10 @@ export async function visitSchedulingNode(
     customerName: params.customerName ?? null,
     customerPhone: params.customerPhone ?? null,
     referenceNow: params.referenceNow,
+    lastAssistantMessage: params.lastAssistantMessage ?? null,
+    resolvedIntent: params.resolvedIntent ?? null,
+    primaryAxis: params.primaryAxis ?? null,
+    currentAxis: params.currentAxis ?? null,
     ...(availabilityContext ?? {}),
   };
 

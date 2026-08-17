@@ -26,19 +26,25 @@ import type { AnaGraphState } from '../state.js';
 /**
  * Envio real é sempre injetável — nunca chamado direto hardcoded a partir do
  * grafo novo. Em modo sombra (fase 9) o chamador DEVE passar um mock aqui.
- * `file` já vem totalmente resolvido (path/originalName/mime) por este nó —
- * o dep de envio (productionDeps.ts) só manda o arquivo exato recebido, sem
- * re-resolver por categoria (bug anterior: re-resolver por categoria sempre
- * devolvia "o" arquivo atual daquela categoria, ignorando qual foto
+ * `files` já vem totalmente resolvido (path/originalName/mime) por este nó —
+ * o dep de envio (productionDeps.ts) só manda os arquivos exatos recebidos,
+ * sem re-resolver por categoria (bug anterior: re-resolver por categoria
+ * sempre devolvia "o" arquivo atual daquela categoria, ignorando qual foto
  * específica tinha sido escolhida — cliente pedia foto da piscina e recebia
- * sempre a mesma foto de academia).
+ * sempre a mesma foto de academia). Pode ser mais de um arquivo: pedido de
+ * espaço específico com múltiplas fotos cadastradas (ex.: 2 fotos de
+ * piscina), ou pedido genérico ("tem fotos de lá?") manda todas as
+ * disponíveis daquela categoria.
  */
 export type SendMaterialFn = (params: {
   conversationId: number;
   enterpriseId: number;
   to: string;
-  file: ResolvedSendableEnterpriseFile;
-}) => Promise<{ sent: boolean }>;
+  files: ResolvedSendableEnterpriseFile[];
+}) => Promise<{ sentCount: number }>;
+
+/** Teto de segurança — nunca manda mais que isso numa rajada só, mesmo que o pedido seja genérico. */
+const MAX_MEDIA_FILES_PER_TURN = 8;
 
 export interface SendMaterialNodeParams {
   conversationId: number;
@@ -83,12 +89,13 @@ export async function sendMaterialNode(
   );
   const chosenCategory = tryOrder[0] ?? null;
 
-  let chosenFile: ResolvedSendableEnterpriseFile | null = null;
+  let chosenFiles: ResolvedSendableEnterpriseFile[] = [];
   if (chosenCategory && MULTI_INSTANCE_CATEGORIES.has(chosenCategory)) {
     // Resolve por título/nome de arquivo (mesmo módulo que o motor legado usa
     // antes de enviar imagem — ver conversationEngine.ts, extractAnaImageFilenameTopic
-    // / extractAnaSpecificMediaSpace) pra mandar a foto certa do espaço pedido
-    // (piscina, academia, fireplace etc.), não sempre a primeira da categoria.
+    // / extractAnaSpecificMediaSpace) pra mandar a(s) foto(s) certa(s) do
+    // espaço pedido (piscina, academia, fireplace etc.), não sempre a
+    // primeira da categoria.
     const candidates = await resolveSendableEnterpriseImageFilesCurrentVersion(params.enterpriseId, 30);
     const byCategory = candidates.filter((f) => f.category === chosenCategory);
     const requestedSpace = extractAnaSpecificMediaSpace(state.userMessage);
@@ -98,12 +105,17 @@ export async function sendMaterialNode(
       : requestedTopic
         ? filterAnaImageFilesByFilenameTopic(byCategory, requestedTopic)
         : byCategory;
-    chosenFile = filtered[0] ?? byCategory[0] ?? null;
+    // Espaço específico com mais de uma foto cadastrada (ex.: 2 fotos de
+    // piscina) -> manda todas as que batem, não só a primeira. Pedido
+    // genérico sem espaço específico ("tem fotos de lá?") -> manda todas as
+    // disponíveis da categoria.
+    chosenFiles = (filtered.length > 0 ? filtered : byCategory).slice(0, MAX_MEDIA_FILES_PER_TURN);
   } else if (chosenCategory) {
-    chosenFile = await getFileForSend(params.enterpriseId, chosenCategory);
+    const single = await getFileForSend(params.enterpriseId, chosenCategory);
+    if (single) chosenFiles = [single];
   }
 
-  if (!chosenFile) {
+  if (chosenFiles.length === 0) {
     return {
       assistantReplyText: pickMaterialUnavailableNeutralReply(state.commercialFlowState.lastAssistantSnippet),
       commercialFlowState: {
@@ -117,10 +129,10 @@ export async function sendMaterialNode(
     conversationId: params.conversationId,
     enterpriseId: params.enterpriseId,
     to: params.customerPhone,
-    file: chosenFile,
+    files: chosenFiles,
   });
 
-  if (!result.sent) {
+  if (result.sentCount === 0) {
     return {
       assistantReplyText: pickMaterialSendFailedNeutralReply(state.commercialFlowState.lastAssistantSnippet),
       commercialFlowState: {
@@ -146,7 +158,7 @@ export async function sendMaterialNode(
     replyIntentionallyEmpty: false,
     commercialFlowState: {
       ...state.commercialFlowState,
-      last_material_sent_id: chosenFile.id,
+      last_material_sent_id: chosenFiles[chosenFiles.length - 1]!.id,
       last_material_send_status: 'sent',
       last_requested_material_type: chosenCategory,
       last_material_request_at: new Date().toISOString(),

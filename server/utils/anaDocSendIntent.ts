@@ -59,11 +59,25 @@ export function userExplicitlyAskedForMaterial(userText: string): MaterialAskRes
     `\\b(?:tem|t[eê]m|voc[eê]s?\\s+t[eê]m|possui(?:em)?|h[aá]|existe(?:m)?)\\b[^?]{0,25}${_MATERIAL}`,
     'i',
   );
+  // "tem da piscina?", "e a academia?" — pergunta sobre um espaço
+  // especificamente FOTOGRÁFICO (piscina/academia/playground/portaria/
+  // fireplace/salão de festas/pet place/quadra beach tennis, via
+  // extractAnaImageFilenameTopic) SEM a palavra "foto" no meio: sem isso,
+  // essa mensagem não batia em nenhum padrão acima e caía direto no
+  // ragAnswer, que às vezes alucinava "já te enviei" sem nenhum envio real
+  // ter acontecido. Usa extractAnaImageFilenameTopic (não
+  // extractAnaSpecificMediaSpace) de propósito — este último também cobre
+  // 'lote'/'planta'/'mapa_localizacao', que são perguntas factuais
+  // ("tem lotes disponíveis?"), não pedidos de foto.
+  const asksIfSpaceAvailableRe = /\b(?:tem|t[eê]m|voc[eê]s?\s+t[eê]m|possui(?:em)?|h[aá]|existe(?:m)?)\b/i;
 
   if (sendVerbRe.test(t)) return { explicit: true, matchedPattern: 'send_verb_plus_material' };
   if (wantRe.test(t)) return { explicit: true, matchedPattern: 'want_material' };
   if (needRe.test(t)) return { explicit: true, matchedPattern: 'need_material' };
   if (asksIfAvailableRe.test(t)) return { explicit: true, matchedPattern: 'asks_if_available' };
+  if (asksIfSpaceAvailableRe.test(t) && extractAnaImageFilenameTopic(t)) {
+    return { explicit: true, matchedPattern: 'asks_if_available' };
+  }
   return { explicit: false, matchedPattern: null };
 }
 

@@ -79,22 +79,29 @@ export function buildProductionDeps(): AnaGraphRuntimeDeps {
     handoffReason: (state: AnaGraphState) =>
       hasExplicitHandoffIntent(state.userMessage) ? 'explicit_broker_request' : 'ana_graph_no_safe_answer',
 
-    // `file` já vem totalmente resolvido do sendMaterialNode (categoria única
-    // via getFileForSend, ou a foto/vídeo específico já filtrado por título
-    // pra fotos/vídeos) — manda exatamente esse arquivo, sem re-resolver por
-    // categoria (isso ignorava qual instância específica tinha sido escolhida).
-    sendMaterial: async ({ to, file, conversationId }) => {
-      const result = await sendAnaLocalMediaToWhatsAppWithQuota({
-        conversationId,
-        to,
-        filePath: file.path,
-        filename: file.originalName,
-        mimeFromDb: file.mime,
-        phase: 'ana_graph_send_material',
-      });
-      if (!result.success) return { sent: false };
-      await logSentFile(conversationId, file.id);
-      return { sent: true };
+    // `files` já vem totalmente resolvido do sendMaterialNode (categoria
+    // única via getFileForSend, ou a(s) foto(s)/vídeo(s) específico(s) já
+    // filtrado(s) por título/espaço) — manda exatamente esses arquivos, sem
+    // re-resolver por categoria (isso ignorava qual instância específica
+    // tinha sido escolhida). Envio sequencial (a API do WhatsApp não manda
+    // lote) — uma falha no meio não impede as demais de tentarem.
+    sendMaterial: async ({ to, files, conversationId }) => {
+      let sentCount = 0;
+      for (const file of files) {
+        const result = await sendAnaLocalMediaToWhatsAppWithQuota({
+          conversationId,
+          to,
+          filePath: file.path,
+          filename: file.originalName,
+          mimeFromDb: file.mime,
+          phase: 'ana_graph_send_material',
+        });
+        if (result.success) {
+          sentCount += 1;
+          await logSentFile(conversationId, file.id);
+        }
+      }
+      return { sentCount };
     },
 
     sendEmergencyHandoffText: sendTextMessage,

@@ -187,16 +187,23 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
 
       return patch;
     })
-    .addNode('visitScheduling', (state) =>
-      visitSchedulingNode(state, {
+    .addNode('visitScheduling', async (state) => {
+      const recentMessages = await getRecentConversationMessages(state.conversationId, 4);
+      const lastAssistantMessage =
+        [...recentMessages].reverse().find((m) => m.role === 'assistant')?.content ?? null;
+      return visitSchedulingNode(state, {
         conversationId: state.conversationId,
         enterpriseId: state.enterpriseId,
         enterpriseCity: state.enterpriseCity ?? '',
         customerName: state.customerName,
         customerPhone: state.customerPhone,
         persistAppointment: deps.persistAppointment,
-      })
-    )
+        lastAssistantMessage,
+        resolvedIntent: state.lastDecision?.resolvedIntent ?? null,
+        primaryAxis: state.lastDecision?.primaryAxis ?? null,
+        currentAxis: state.lastDecision?.currentAxis ?? null,
+      });
+    })
     .addNode('sendMaterial', (state) =>
       sendMaterialNode(state, {
         conversationId: state.conversationId,
