@@ -195,7 +195,11 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
     .addNode('finalizeReply', async (state) => {
       const conversation = await loadConversationOrThrow(state.conversationId);
       const ctx = await deps.finalizeReplyContext(state, conversation);
-      return finalizeReplyNode(state, ctx);
+      // Limitado a 8: só precisamos saber se já estourou o gate de "primeiras
+      // 8 mensagens" (ver ensureEndsWithQuestionWithinFirstMessages em
+      // finalizeReply.ts) — não o histórico completo da conversa.
+      const messages = await getRecentConversationMessages(state.conversationId, 8);
+      return finalizeReplyNode(state, { ...ctx, messageCountSoFar: messages.length });
     })
     .addNode('sendWhatsapp', (state) =>
       sendWhatsappNode(state, {

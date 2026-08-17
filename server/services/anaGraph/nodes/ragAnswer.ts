@@ -2,20 +2,8 @@ import { loadRankedKnowledgeChunksForPromptWithMeta } from '../../../repositorie
 import { getRecentConversationMessages } from '../../../repositories/messageRepository.js';
 import { generateChatCompletion, type ChatMessage } from '../../openaiService.js';
 import { hasAnaEvidenceForNeed, type AnaEnterpriseEvidence } from '../../../utils/anaEnterpriseEvidence.js';
-import { isGratitudeOnlyMessage } from '../../../utils/anaEvoraGreetingAndFollowup.js';
+import { resolveNextOpenQuestion } from '../nextOpenQuestion.js';
 import type { AnaGraphState } from '../state.js';
-
-const CONVERSATION_CLOSER_RE =
-  /^(tchau|até mais|até logo|falou|flw|xau|adeus|bjs?|beijos?|abra[cç]os?)\b/i;
-
-function endsWithQuestion(text: string): boolean {
-  return /[?？]\s*$/.test(text.trim());
-}
-
-function looksLikeConversationCloser(userMessage: string): boolean {
-  const n = userMessage.trim();
-  return isGratitudeOnlyMessage(n) || CONVERSATION_CLOSER_RE.test(n);
-}
 
 export interface RagAnswerNodeParams {
   conversationId: number;
@@ -75,33 +63,10 @@ export async function ragAnswerNode(
   else if (flowState.purchaseIntent === 'INVESTIMENTO') knownFactsLines.push('- Interesse do cliente: INVESTIR. Não pergunte de novo se é morar ou investir.');
   const knownFactsBlock = knownFactsLines.length > 0 ? `\n\nO QUE JÁ SABEMOS (não repita estas perguntas):\n${knownFactsLines.join('\n')}` : '';
 
-  // Sequência de qualificação estilo BANT (Budget/Need/Timing — a mesma usada
-  // por corretores de verdade), uma pergunta em aberto por vez: pedir tudo
-  // junto (nome + interesse + orçamento + responder a pergunta atual)
-  // sobrecarrega a resposta. budgetRangeKnown/buyingTimeline só existem se já
-  // foram capturados antes (hidratado do motor legado); o grafo ainda não
-  // extrai/persiste esses dois sozinho — só evita perguntar de novo se já
-  // souber. Cada tier tem uma instrução (pro prompt) e uma pergunta literal
-  // (fallback determinístico, ver ensureEndsWithQuestion abaixo).
-  const leadQualification = flowState.dialoguePolicy?.leadQualification;
-  const nextOpenQuestion: { instruction: string; question: string } | null = !knownName
-    ? { instruction: 'Pergunte o nome do cliente.', question: 'Como posso te chamar?' }
-    : !flowState.purchaseIntent
-      ? {
-          instruction: 'Pergunte se o interesse é para morar, investir, ou se ainda não sabe.',
-          question: 'É pra morar, investir, ou você ainda está avaliando?',
-        }
-      : !leadQualification?.budgetRangeKnown
-        ? {
-            instruction: 'Pergunte qual a faixa de orçamento disponível pro imóvel.',
-            question: 'Qual faixa de orçamento você tem disponível pra esse imóvel?',
-          }
-        : !leadQualification?.buyingTimeline
-          ? {
-              instruction: 'Pergunte o prazo que o cliente tem pra decidir/comprar.',
-              question: 'Qual o prazo que você tem em mente pra decidir?',
-            }
-          : null;
+  // Sequência de qualificação estilo BANT — ver nextOpenQuestion.ts (compartilhado
+  // com finalizeReplyNode, que é quem de fato garante a pergunta final; aqui é só
+  // orientação de conteúdo pro prompt).
+  const nextOpenQuestion = resolveNextOpenQuestion(state);
 
   const systemPrompt = [
     `Você é a Ana, corretora de atendimento do empreendimento ${params.enterpriseName}. Converse como uma corretora experiente conversaria: cordial, consultiva, curiosa sobre o que o cliente precisa — não como um FAQ que só devolve fatos.`,
@@ -148,19 +113,12 @@ export async function ragAnswerNode(
     return { assistantReplyText: null };
   }
 
-  // Garantia determinística: instrução no prompt (regra 6) já pede pra
-  // sempre terminar com pergunta, mas depender só disso falhou 3x em
-  // produção (o modelo às vezes devolve um fechamento sem pergunta, ex.:
-  // "Que bom que você está interessado no Évora!"). Em vez de mais um ajuste
-  // de prompt, força aqui: se a resposta não termina em pergunta e o
-  // cliente não encerrou a conversa, completa com a próxima pergunta em
-  // aberto (mesma sequência estilo BANT usada na regra 7) ou um fechamento
-  // genérico.
-  let replyText = result.content.trim();
-  if (!endsWithQuestion(replyText) && !looksLikeConversationCloser(state.userMessage)) {
-    const followup = nextOpenQuestion?.question ?? 'Posso te ajudar com mais alguma coisa sobre o Évora?';
-    replyText = `${replyText} ${followup}`;
-  }
-
-  return { assistantReplyText: replyText };
+  // A garantia determinística de "sempre termina com pergunta" NÃO fica aqui:
+  // applyAnaHardLengthGuard (chamado depois, em finalizeReplyNode) trunca a
+  // resposta em no máximo 2 frases, e pode descartar silenciosamente uma
+  // pergunta anexada neste ponto se o rascunho do modelo já "gastou" as 2
+  // frases (ex.: "Olá! Tudo bem." já são 2 frases curtas). O enforcement real
+  // roda em finalizeReplyNode, depois de todos os guards de tamanho/sanitização
+  // — é o único lugar que garante que nada downstream pode apagar a pergunta.
+  return { assistantReplyText: result.content.trim() };
 }
