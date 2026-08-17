@@ -1,7 +1,7 @@
 /**
  * Cloudflare R2 storage — API S3-compatible via @aws-sdk/client-s3.
  *
- * Variáveis de ambiente (todas configuradas no Render):
+ * Variáveis de ambiente (todas configuradas na task definition do ECS):
  *   CLOUDFLARE_R2_ENDPOINT          — URL do endpoint S3 do R2
  *                                     ex.: https://<accountId>.r2.cloudflarestorage.com
  *                                     (se ausente, calculado a partir de CLOUDFLARE_R2_ACCOUNT_ID)

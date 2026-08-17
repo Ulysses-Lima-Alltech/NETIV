@@ -50,10 +50,10 @@ app.get('/', (_req, res) => {
 });
 app.get('/health', (_req, res) => {
   const providerRaw = String(process.env.BACKEND_PROVIDER ?? '').trim().toLowerCase();
-  const provider = providerRaw === 'aws' ? 'aws' : providerRaw === 'render' ? 'render' : 'unknown';
+  const provider = providerRaw === 'aws' ? 'aws' : 'unknown';
   const environment = String(process.env.APP_ENVIRONMENT ?? process.env.NODE_ENV ?? 'unknown').trim() || 'unknown';
   const version = String(process.env.APP_VERSION ?? process.env.npm_package_version ?? '0.0.0').trim() || '0.0.0';
-  const commit = String(process.env.APP_COMMIT ?? process.env.COMMIT_SHA ?? process.env.RENDER_GIT_COMMIT ?? 'unknown').trim() || 'unknown';
+  const commit = String(process.env.APP_COMMIT ?? process.env.COMMIT_SHA ?? 'unknown').trim() || 'unknown';
 
   res.status(200).json({
     status: 'ok',

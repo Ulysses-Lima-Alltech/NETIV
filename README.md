@@ -75,7 +75,7 @@ O backend expõe **GET** e **POST** em `/webhook` para o webhook da Meta (WhatsA
 
 ### 1. Variáveis de ambiente necessárias
 
-No `server/.env` (ou nas variáveis do Render):
+No `server/.env` (ou nas variáveis de ambiente da task definition do ECS):
 
 | Variável | Obrigatória | Descrição |
 |----------|-------------|-----------|
@@ -98,18 +98,19 @@ npm run dev
 
 O servidor sobe em `http://localhost:3001`. Para a Meta validar o webhook, use um túnel (ngrok, Cloudflare Tunnel, etc.) apontando para `http://localhost:3001/webhook`.
 
-### 3. Deploy no Render
+### 3. Deploy na AWS (ECS/Fargate)
 
-1. Crie um **Web Service** no [Render](https://render.com).
-2. Conecte o repositório e use o **root** do repositório.
-3. **Build:** raiz do projeto. Exemplo:
-   - **Build Command:** `cd server && npm install && npm run build`
-   - **Root Directory:** (vazio = raiz)
-4. **Start Command:** `cd server && node dist/index.js`
-5. Em **Environment** adicione todas as variáveis (OPENAI_*, META_*).
-6. O Render define `PORT` automaticamente; o servidor já usa `process.env.PORT`.
+O backend roda como serviço ECS Fargate (cluster `Netiv`, serviço `netiv-backend-svc`), com imagem publicada no ECR (`netiv-backend`). Fluxo de deploy:
 
-Em produção, a URL base depende do host (ex.: AWS/CloudFront, Render, etc.); o path do webhook no servidor é **`/webhook`** (ver `server/index.ts`).
+1. **Build da imagem:** `docker build -f server/Dockerfile -t netiv-backend:<tag> .` (build context é a raiz do repo — o Dockerfile copia `server/` e `public/data`).
+2. **Push pro ECR:** autenticar (`aws ecr get-login-password | docker login ...`) e enviar a imagem com uma tag identificável (ex.: `<branch>-<sha>-<timestamp>`).
+3. **Nova revisão da task definition:** registrar uma nova revisão de `netiv-backend` apontando pra imagem nova (`aws ecs register-task-definition`), preservando as variáveis de ambiente já configuradas.
+4. **Atualizar o serviço:** `aws ecs update-service --cluster Netiv --service netiv-backend-svc --task-definition netiv-backend:<revisão> --force-new-deployment`.
+5. O servidor lê `PORT` do ambiente (task definition já define `PORT=3000`).
+
+O frontend (Amplify, app `dpul1nw36jf3m`) é redeployado separadamente via `aws amplify start-job --app-id dpul1nw36jf3m --branch-name main --job-type RELEASE`.
+
+Em produção, a URL base do backend depende do host (AWS/CloudFront/ALB); o path do webhook no servidor é **`/webhook`** (ver `server/index.ts`).
 
 ### 4. URL para cadastrar no painel da Meta
 
@@ -158,7 +159,7 @@ A resposta deve ser imediata `200 OK`. O processamento (OpenAI + envio ao WhatsA
 ### 9. Observações
 
 - **OpenAI no backend:** toda chamada à OpenAI é feita no servidor. A chave e os tokens da Meta nunca vão para o frontend.
-- **Render gratuito:** no plano free o serviço pode **dormir** após período ocioso. A primeira requisição após dormir pode demorar alguns segundos (cold start). A Meta pode reenviar o webhook em caso de timeout.
+- **ECS Fargate:** o serviço roda continuamente (sem cold start por inatividade), mas um redeploy substitui a task em execução — a Meta pode reenviar o webhook se a requisição cair durante a troca.
 
 ### 10. Exemplo de payload recebido (Meta) e resposta enviada
 
