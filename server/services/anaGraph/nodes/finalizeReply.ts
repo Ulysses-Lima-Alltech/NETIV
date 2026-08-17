@@ -31,6 +31,33 @@ function looksLikeConversationCloser(userMessage: string): boolean {
 }
 
 /**
+ * Pool de perguntas de fechamento genéricas — usadas SÓ quando o BANT já
+ * terminou (nextOpenQuestion null) e o próprio modelo não fechou com
+ * pergunta. Antes disso era uma frase fixa única ("Posso te ajudar com mais
+ * alguma coisa?"), repetida em praticamente toda mensagem depois que o
+ * ciclo de qualificação zerava — ficava mecânico e óbvio que era fallback.
+ * Inclui, de propósito, uma sugestão de visita — não em toda mensagem, mas
+ * como uma das opções do rodízio (pedido explícito: oferecer visita "às
+ * vezes" ao longo da conversa, não só quando o cliente pede).
+ */
+const FALLBACK_CLOSING_QUESTIONS: readonly string[] = [
+  'Tem mais alguma coisa que eu possa te ajudar a esclarecer?',
+  'Ficou alguma dúvida ou quer que eu te conte sobre outro ponto do Évora?',
+  'Quer que eu detalhe melhor algum desses pontos?',
+  'Tem outra coisa que pesa pra você antes de decidir?',
+  'Já pensou em agendar uma visita pra conhecer o Évora pessoalmente?',
+  'Posso te ajudar com mais alguma informação sobre o empreendimento?',
+];
+
+/** Evita repetir a mesma pergunta de fechamento da mensagem anterior. */
+function pickFallbackClosingQuestion(lastAssistantSnippet: string | null | undefined): string {
+  const lastNorm = (lastAssistantSnippet ?? '').toLowerCase();
+  const candidates = FALLBACK_CLOSING_QUESTIONS.filter((q) => !lastNorm.includes(q.toLowerCase()));
+  const pool = candidates.length > 0 ? candidates : FALLBACK_CLOSING_QUESTIONS;
+  return pool[Math.floor(Math.random() * pool.length)]!;
+}
+
+/**
  * Regra explícita do produto: a Ana NUNCA responde sem terminar em pergunta
  * (mantém o cliente engajado), a menos que o cliente já tenha encerrado a
  * conversa. Roda por último, depois de finalizeAnaReplyText/
@@ -43,13 +70,14 @@ function looksLikeConversationCloser(userMessage: string): boolean {
 function ensureEndsWithQuestion(
   text: string,
   userMessage: string,
-  nextOpenQuestion: { question: string } | null
+  nextOpenQuestion: { question: string } | null,
+  lastAssistantSnippet: string | null | undefined
 ): string {
   if (!text.trim()) return text;
   if (endsWithQuestion(text)) return text;
   if (looksLikeConversationCloser(userMessage)) return text;
 
-  const followup = nextOpenQuestion?.question ?? 'Posso te ajudar com mais alguma coisa?';
+  const followup = nextOpenQuestion?.question ?? pickFallbackClosingQuestion(lastAssistantSnippet);
   return `${text} ${followup}`;
 }
 
@@ -113,7 +141,12 @@ export function finalizeReplyNode(
   }
 
   const nextOpenQuestion = resolveNextOpenQuestion(state);
-  let finalText = ensureEndsWithQuestion(evaluated.text, state.userMessage, nextOpenQuestion);
+  let finalText = ensureEndsWithQuestion(
+    evaluated.text,
+    state.userMessage,
+    nextOpenQuestion,
+    state.commercialFlowState.lastAssistantSnippet
+  );
 
   // Nome deve ser SEMPRE a primeira pergunta feita ao cliente: na primeira
   // resposta da Ana, se o nome ainda não é conhecido, força a pergunta de

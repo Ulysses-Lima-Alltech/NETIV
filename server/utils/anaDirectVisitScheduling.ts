@@ -400,9 +400,24 @@ export function isVisitSchedulingConfirmationMessage(text: string): boolean {
   );
 }
 
+/**
+ * "quero conhecer"/"como faço pra conhecer" bare (sem objeto) tende, no
+ * contexto imobiliário, a significar visitar pessoalmente — diferente de
+ * "quero conhecer melhor"/"quero conhecer as opções", que é interesse geral
+ * (já capturado por detectDirectCommercialInterest, sem virar agendamento).
+ * Negative lookahead evita capturar essas variações mais genéricas.
+ */
+// Aplicado sobre texto já normalizado (norm() remove acentos) — sem ç/õ.
+const BARE_CONHECER_AS_VISIT_RE =
+  /\b(?:como\s+(?:eu\s+)?(?:faco|posso)\s+(?:pra|para)\s+conhecer|quero\s+conhecer|gostaria\s+de\s+conhecer)\b(?!\s+(?:mais|melhor|as\s+opcoes|opcoes|os\s+lotes|melhores))/;
+
 function hasVisitSchedulingWords(text: string): boolean {
   const n = norm(text);
-  return /\b(agendar|agendamento|agenda|marcar|visita|visitar|conhecer pessoalmente|conhecer o stand|visitar o stand|visitar o empreendimento|quero visitar|vou visitar)\b/.test(n);
+  return (
+    /\b(agendar|agendamento|agenda|marcar|visita|visitar|conhecer pessoalmente|conhecer o stand|visitar o stand|visitar o empreendimento|quero visitar|vou visitar)\b/.test(
+      n
+    ) || BARE_CONHECER_AS_VISIT_RE.test(n)
+  );
 }
 
 export function isVisitSchedulingTopicSwitchMessage(text: string): boolean {
