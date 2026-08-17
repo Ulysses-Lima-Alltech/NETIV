@@ -16,6 +16,23 @@ export interface FinalizeReplyNodeParams {
   isKnowledgeGapTurn?: boolean;
   lastAssistantMessage?: string | null;
   maxChars?: number;
+  /**
+   * true quando o rascunho veio de um nó determinístico (hoje só
+   * visitScheduling — handleVisitSchedulingDeterministically) em vez de uma
+   * resposta livre do LLM (ragAnswer/knowledgeGapReply). Causa raiz real de
+   * "agendamento sempre volta pra localização/corretor", achada via CloudWatch
+   * + consulta direta no banco: finalizeAnaReplyText roda
+   * sanitizeTooManyQuestionsReply sempre que a resposta tem 2+ "?" — e o
+   * fallback dessa função quando sobra texto vazio é um texto FIXO sobre
+   * localização/corretor, sem nenhuma noção de agendamento. Uma resposta de
+   * agendamento perfeitamente válida (ex.: "Prefere quinta às 10h ou outro
+   * horário?") virava, silenciosamente, essa frase genérica e destruía o
+   * estado real (que continuava sendo atualizado corretamente por trás —
+   * só o TEXTO enviado é que ficava errado). Respostas determinísticas
+   * pulam esse pipeline inteiro (construído pra texto livre do RAG) e vão
+   * direto pra validação de segurança (evaluateAnaOutboundText).
+   */
+  isDeterministicReply?: boolean;
 }
 
 const CONVERSATION_CLOSER_RE =
@@ -115,26 +132,28 @@ export function finalizeReplyNode(
     return { assistantReplyText: null };
   }
 
-  const finalized = finalizeAnaReplyText(draft, {
-    userMessage: state.userMessage,
-    lastAssistantMessage: params.lastAssistantMessage ?? null,
-    conversationMode: params.conversationMode,
-    isFirstAnaReply: params.isFirstAnaReply,
-    enterpriseName: params.enterpriseName,
-    isKnowledgeGapTurn: params.isKnowledgeGapTurn,
-  });
-
-  const lengthGuarded = applyAnaHardLengthGuard({
-    text: finalized,
-    enterpriseName: params.enterpriseName,
-    maxChars: params.maxChars,
-  });
-
-  const evaluated = evaluateAnaOutboundText({
-    reply: lengthGuarded,
-    conversationType: params.conversationType,
-    enterpriseName: params.enterpriseName,
-  });
+  const evaluated = params.isDeterministicReply
+    ? evaluateAnaOutboundText({
+        reply: draft,
+        conversationType: params.conversationType,
+        enterpriseName: params.enterpriseName,
+      })
+    : evaluateAnaOutboundText({
+        reply: applyAnaHardLengthGuard({
+          text: finalizeAnaReplyText(draft, {
+            userMessage: state.userMessage,
+            lastAssistantMessage: params.lastAssistantMessage ?? null,
+            conversationMode: params.conversationMode,
+            isFirstAnaReply: params.isFirstAnaReply,
+            enterpriseName: params.enterpriseName,
+            isKnowledgeGapTurn: params.isKnowledgeGapTurn,
+          }),
+          enterpriseName: params.enterpriseName,
+          maxChars: params.maxChars,
+        }),
+        conversationType: params.conversationType,
+        enterpriseName: params.enterpriseName,
+      });
 
   if (!evaluated.valid) {
     return { assistantReplyText: null };

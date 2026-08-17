@@ -111,6 +111,11 @@ export async function visitSchedulingNode(
   return {
     commercialFlowState: decision.nextState,
     assistantReplyText: decision.reply,
+    // ver state.ts: finalizeReplyNode pula o pipeline de sanitização de
+    // texto livre (feito pra RAG) pra respostas determinísticas como esta —
+    // sem isso, uma resposta com 2 perguntas (ex.: sugerir data + horário)
+    // era substituída por um fallback fixo de localização/corretor.
+    replyIsDeterministic: true,
     visitDecision: decision,
   };
 }

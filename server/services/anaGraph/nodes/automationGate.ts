@@ -44,6 +44,11 @@ export async function automationGateNode(state: AnaGraphState): Promise<Partial<
     automationBlockedByHandoff: blocked,
     handoffBlockedReason: blocked ? 'HANDOFF_BLOCKS_ANA_AUTOMATION' : null,
     assistantReplyText: null,
+    // Mesmo motivo do reset de assistantReplyText acima: sem isso, um turno
+    // que não passa por visitScheduling herdaria replyIsDeterministic:true
+    // do último turno que passou, e finalizeReplyNode puraria o pipeline de
+    // sanitização indevidamente pra uma resposta livre do LLM.
+    replyIsDeterministic: false,
   };
 
   if (!blocked && conversation && isEmptyCommercialFlowState(state.commercialFlowState)) {

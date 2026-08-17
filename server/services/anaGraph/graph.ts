@@ -246,7 +246,7 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
       const ctx = await deps.finalizeReplyContext(state, conversation);
       const recentMessages = await getRecentConversationMessages(state.conversationId, 12);
       const isFirstAnaReply = !recentMessages.some((m) => m.role === 'assistant');
-      return finalizeReplyNode(state, { ...ctx, isFirstAnaReply });
+      return finalizeReplyNode(state, { ...ctx, isFirstAnaReply, isDeterministicReply: state.replyIsDeterministic });
     })
     .addNode('sendWhatsapp', (state) =>
       sendWhatsappNode(state, {

@@ -91,6 +91,20 @@ export const AnaGraphStateAnnotation = Annotation.Root({
     default: () => false,
   }),
 
+  /**
+   * Marca quando assistantReplyText veio de um nó determinístico
+   * (visitScheduling, via handleVisitSchedulingDeterministically) em vez de
+   * texto livre gerado pelo LLM — finalizeReplyNode usa isso pra pular o
+   * pipeline de sanitização/"rescue" pensado pra texto de RAG (ver
+   * finalizeReply.ts para o bug real que isso corrige: uma resposta de
+   * agendamento com 2 perguntas virava, silenciosamente, um fallback fixo
+   * de localização/corretor sem relação nenhuma com o agendamento).
+   */
+  replyIsDeterministic: Annotation<boolean>({
+    reducer: (_current, update) => update,
+    default: () => false,
+  }),
+
   /** Resultado da fase 4 (decisionPolicy) — carregado para a edge condicional decidir o roteamento da fase 5. */
   lastDecision: Annotation<AnaDecisionPolicyResult | null>({
     reducer: (_current, update) => update,
