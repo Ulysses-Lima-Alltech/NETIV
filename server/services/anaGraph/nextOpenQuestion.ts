@@ -46,3 +46,29 @@ export function resolveNextOpenQuestion(state: AnaGraphState): NextOpenQuestion 
   }
   return null;
 }
+
+const MONETARY_VALUE_RE = /(?:r\$\s*)?\d{1,3}(?:[.,]\d{3}){0,3}(?:\s*(?:mil|k|milh(?:a|õ)o|milhões))?/i;
+const BUDGET_UNKNOWN_RE = /\b(nao sei|não sei|nao tenho|não tenho|ainda nao|ainda não|sem ideia|nao faco ideia|não faço ideia)\b/i;
+
+/**
+ * Detecta se a mensagem ATUAL do cliente responde à pergunta de orçamento —
+ * só quando essa é de fato a pergunta em aberto (evita capturar um número
+ * qualquer fora de contexto). Sem isso, budgetRangeKnown nunca era marcado
+ * pelo grafo (só o motor legado tinha esse detector, em
+ * extractLeadQualificationSignals/anaLeadQualificationPolicy.ts, que exige
+ * uma palavra de contexto tipo "orçamento" junto do número — uma resposta
+ * seca como "400 mil" ou "R$400.000,00" a essa pergunta específica não
+ * batia lá também). Usado no MESMO turno em que o cliente responde (igual
+ * ao padrão de captura de nome/purchaseIntent), pra não repetir a mesma
+ * pergunta de novo no turno seguinte.
+ */
+export function inferBudgetAnswerFromCurrentTurn(state: AnaGraphState): { known: true; text: string | null } | null {
+  const activeQuestion = resolveNextOpenQuestion(state);
+  if (!activeQuestion || !/orçamento/i.test(activeQuestion.question)) return null;
+
+  const msg = state.userMessage;
+  const match = MONETARY_VALUE_RE.exec(msg);
+  if (match) return { known: true, text: match[0].trim() };
+  if (BUDGET_UNKNOWN_RE.test(msg)) return { known: true, text: null };
+  return null;
+}

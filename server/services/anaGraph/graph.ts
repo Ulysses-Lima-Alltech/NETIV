@@ -10,6 +10,8 @@ import { getRecentConversationMessages } from '../../repositories/messageReposit
 import { getEnterpriseById } from '../../repositories/enterpriseRepository.js';
 import { extractCustomerNameFromUserUtterance } from '../../utils/extractCustomerNameFromMessage.js';
 import { inferResolvedPurchaseIntent } from '../../utils/anaCommercialAxisGuard.js';
+import { inferBudgetAnswerFromCurrentTurn } from './nextOpenQuestion.js';
+import { mergeLeadQualificationState } from '../../utils/anaLeadQualificationPolicy.js';
 import { AnaGraphStateAnnotation, type AnaGraphState } from './state.js';
 import { automationGateNode } from './nodes/automationGate.js';
 import { resolveEnterpriseNode } from './nodes/resolveEnterprise.js';
@@ -158,6 +160,21 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
         if (inferredIntent) {
           patch.commercialFlowState = { ...state.commercialFlowState, purchaseIntent: inferredIntent };
         }
+      }
+
+      // Captura de resposta à pergunta de orçamento (mesmo padrão de nome/
+      // purchaseIntent acima): sem isso, budgetRangeKnown nunca era marcado
+      // pelo grafo — a Ana repetia "qual sua faixa de orçamento" pra sempre,
+      // mesmo depois do cliente responder "400 mil" (e mesmo depois dela
+      // usar esse valor na própria resposta), porque nextOpenQuestion
+      // continuava lendo o campo como nunca respondido.
+      const budgetAnswer = inferBudgetAnswerFromCurrentTurn(state);
+      if (budgetAnswer) {
+        const base = patch.commercialFlowState ?? state.commercialFlowState;
+        patch.commercialFlowState = mergeLeadQualificationState(base, {
+          budgetRangeKnown: budgetAnswer.known,
+          budgetRangeText: budgetAnswer.text,
+        });
       }
 
       return patch;
