@@ -10,7 +10,7 @@ import { getRecentConversationMessages } from '../../repositories/messageReposit
 import { getEnterpriseById } from '../../repositories/enterpriseRepository.js';
 import { extractCustomerNameFromUserUtterance } from '../../utils/extractCustomerNameFromMessage.js';
 import { inferResolvedPurchaseIntent } from '../../utils/anaCommercialAxisGuard.js';
-import { inferBudgetAnswerFromCurrentTurn } from './nextOpenQuestion.js';
+import { inferBudgetAnswerFromCurrentTurn, inferBuyingTimelineAnswerFromCurrentTurn } from './nextOpenQuestion.js';
 import { mergeLeadQualificationState } from '../../utils/anaLeadQualificationPolicy.js';
 import { AnaGraphStateAnnotation, type AnaGraphState } from './state.js';
 import { automationGateNode } from './nodes/automationGate.js';
@@ -175,6 +175,14 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
           budgetRangeKnown: budgetAnswer.known,
           budgetRangeText: budgetAnswer.text,
         });
+      }
+
+      // Mesmo padrão pro último tier (prazo/timeline) — ver
+      // inferBuyingTimelineAnswerFromCurrentTurn em nextOpenQuestion.ts.
+      const timelineAnswer = inferBuyingTimelineAnswerFromCurrentTurn(state);
+      if (timelineAnswer) {
+        const base = patch.commercialFlowState ?? state.commercialFlowState;
+        patch.commercialFlowState = mergeLeadQualificationState(base, { buyingTimeline: timelineAnswer.text });
       }
 
       return patch;

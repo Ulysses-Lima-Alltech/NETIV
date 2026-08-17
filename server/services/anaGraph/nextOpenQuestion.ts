@@ -72,3 +72,23 @@ export function inferBudgetAnswerFromCurrentTurn(state: AnaGraphState): { known:
   if (BUDGET_UNKNOWN_RE.test(msg)) return { known: true, text: null };
   return null;
 }
+
+/**
+ * Mesmo padrão do orçamento (ver inferBudgetAnswerFromCurrentTurn), agora
+ * pro último tier da sequência (prazo/timeline) — sem isso a Ana repetia
+ * "qual o prazo que você tem em mente pra decidir?" pra sempre, mesmo
+ * depois do cliente responder "ainda esse ano" e "ano que vem" (reportado
+ * em produção: a mesma pergunta apareceu 3x seguidas). buyingTimeline é
+ * texto livre (não booleano como budgetRangeKnown), então qualquer resposta
+ * não-vazia enquanto essa é a pergunta em aberto conta como resposta —
+ * inclusive "não sei"/uma mudança de assunto: o objetivo aqui é nunca mais
+ * travar nesse tier, não extrair um prazo estruturado.
+ */
+export function inferBuyingTimelineAnswerFromCurrentTurn(state: AnaGraphState): { text: string } | null {
+  const activeQuestion = resolveNextOpenQuestion(state);
+  if (!activeQuestion || !/prazo/i.test(activeQuestion.question)) return null;
+
+  const msg = state.userMessage.trim();
+  if (!msg) return null;
+  return { text: msg.slice(0, 200) };
+}
