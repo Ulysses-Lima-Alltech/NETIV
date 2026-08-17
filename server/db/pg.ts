@@ -9,7 +9,20 @@ let pool: pg.Pool | null = null;
 
 export function getPool(): pg.Pool {
   if (!pool) {
-    pool = new pg.Pool({ connectionString: config.databaseUrl, max: 12 });
+    pool = new pg.Pool({
+      connectionString: config.databaseUrl,
+      max: 12,
+      // Sem esses timeouts, uma única conexão travada/vazada (rede instável,
+      // query longa demais, cliente pego via pool.connect() e nunca liberado)
+      // esgota o pool inteiro pra sempre — toda query nova fica esperando um
+      // slot que nunca libera, sem erro nenhum, até o processo ser reiniciado
+      // manualmente. Causa raiz confirmada de uma parada total de produção
+      // (nenhum turno da Ana processado por dias, sem nenhum erro logado).
+      connectionTimeoutMillis: 10_000,
+      idleTimeoutMillis: 30_000,
+      statement_timeout: 30_000,
+      query_timeout: 30_000,
+    });
     pool.on('error', (error) => console.error('[pg] pool error', error.message));
   }
   return pool;

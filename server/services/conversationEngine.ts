@@ -2343,6 +2343,15 @@ export async function reprocessLastUserMessage(conversationId: number): Promise<
 
 /** Lock leve por conversationId: garante que apenas UMA mensagem por conversa seja processada por vez. */
 const processingConversations = new Map<string, Promise<void>>();
+/**
+ * Se o turno anterior travar (ex.: query sem timeout, chamada externa sem
+ * timeout) sem nunca chamar release(), essa conversa ficaria bloqueada pra
+ * sempre sem esse teto — nenhum erro, silêncio permanente pro cliente. Não
+ * elimina o travamento em si (causa raiz é ter timeout em toda operação
+ * bloqueante — ver db/pg.ts), mas garante que essa conversa especificamente
+ * volta a responder no próximo turno em vez de ficar presa pra sempre.
+ */
+const CONVERSATION_LOCK_WAIT_TIMEOUT_MS = 60_000;
 
 async function acquireConversationLock(conversationId: number): Promise<() => void> {
   const key = String(conversationId);
@@ -2350,7 +2359,20 @@ async function acquireConversationLock(conversationId: number): Promise<() => vo
   let release!: () => void;
   const next = new Promise<void>((r) => { release = r; });
   processingConversations.set(key, prev.then(() => next));
-  await prev;
+  const timedOut = Symbol('conversation_lock_wait_timeout');
+  const raceResult = await Promise.race([
+    prev.then(() => null),
+    new Promise<typeof timedOut>((resolve) =>
+      setTimeout(() => resolve(timedOut), CONVERSATION_LOCK_WAIT_TIMEOUT_MS)
+    ),
+  ]);
+  if (raceResult === timedOut) {
+    console.error('[ANA_CONVERSATION_LOCK_TIMEOUT]', {
+      conversationId,
+      waitedMs: CONVERSATION_LOCK_WAIT_TIMEOUT_MS,
+      reason: 'previous_turn_never_released_lock_proceeding_anyway',
+    });
+  }
   return release;
 }
 
