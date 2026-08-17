@@ -36,7 +36,7 @@ const _FOLLOWUP_MATERIAL_COMMAND_RE =
 export interface MaterialAskResult {
   /** true only when the current message asks explicit send intent. */
   explicit: boolean;
-  matchedPattern: 'send_verb_plus_material' | 'want_material' | 'need_material' | null;
+  matchedPattern: 'send_verb_plus_material' | 'want_material' | 'need_material' | 'asks_if_available' | null;
 }
 
 /**
@@ -52,10 +52,18 @@ export function userExplicitlyAskedForMaterial(userText: string): MaterialAskRes
   );
   const wantRe = new RegExp(`(?:quero\\s+(?:o\\s+|a\\s+)?${_MATERIAL})`, 'i');
   const needRe = new RegExp(`(?:preciso\\s+(?:do\\s+|da\\s+)?${_MATERIAL})`, 'i');
+  // "tem fotos?", "vocês têm book?", "possui planta?", "há fotos?" — pergunta
+  // se existe material tende a ser, na prática, um pedido implícito de envio
+  // (se a resposta é sim, o cliente quer ver). Tratado igual a explícito.
+  const asksIfAvailableRe = new RegExp(
+    `\\b(?:tem|t[eê]m|voc[eê]s?\\s+t[eê]m|possui(?:em)?|h[aá]|existe(?:m)?)\\b[^?]{0,25}${_MATERIAL}`,
+    'i',
+  );
 
   if (sendVerbRe.test(t)) return { explicit: true, matchedPattern: 'send_verb_plus_material' };
   if (wantRe.test(t)) return { explicit: true, matchedPattern: 'want_material' };
   if (needRe.test(t)) return { explicit: true, matchedPattern: 'need_material' };
+  if (asksIfAvailableRe.test(t)) return { explicit: true, matchedPattern: 'asks_if_available' };
   return { explicit: false, matchedPattern: null };
 }
 
@@ -82,7 +90,8 @@ export function inferPreferredCategoryFromUserText(userText: string): FileCatego
     .normalize('NFD')
     .replace(/\p{M}/gu, '');
   if (/\b(planta|plantas?|layout|implantacao)\b/.test(t)) return 'unidades';
-  if (/\b(foto|fotos|imagem|imagens|video|videos)\b/.test(t)) return 'outro';
+  if (/\b(foto|fotos|imagem|imagens)\b/.test(t)) return 'foto';
+  if (/\b(video|videos)\b/.test(t)) return 'video';
   // Ana não envia tabela comercial diretamente: pedido de tabela deve cair em oferta textual/book.
   if (/\b(tabela|preco|precos|valor|valores|planilha)\b/.test(t)) return 'book';
   if (
