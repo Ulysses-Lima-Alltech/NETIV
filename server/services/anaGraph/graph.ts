@@ -1,8 +1,14 @@
 import { StateGraph, START, END, type BaseCheckpointSaver } from '@langchain/langgraph';
 import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { getPool } from '../../db/pg.js';
-import { getConversationById, type ConversationRow } from '../../repositories/conversationRepository.js';
+import {
+  getConversationById,
+  mergeConfirmedCustomerNameIfEmpty,
+  type ConversationRow,
+} from '../../repositories/conversationRepository.js';
+import { getRecentConversationMessages } from '../../repositories/messageRepository.js';
 import { getEnterpriseById } from '../../repositories/enterpriseRepository.js';
+import { extractCustomerNameFromUserUtterance } from '../../utils/extractCustomerNameFromMessage.js';
 import { AnaGraphStateAnnotation, type AnaGraphState } from './state.js';
 import { automationGateNode } from './nodes/automationGate.js';
 import { resolveEnterpriseNode } from './nodes/resolveEnterprise.js';
@@ -120,7 +126,24 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
       const conversation = await loadConversationOrThrow(state.conversationId);
       const external = await buildDecisionContextNode(state, conversation);
       const decision = decisionPolicyNode(state, external);
-      return { lastDecision: decision };
+      const patch: Partial<AnaGraphState> = { lastDecision: decision };
+
+      // Captura de nome: mesmo detector/gravação do motor legado
+      // (extractCustomerNameFromUserUtterance + mergeConfirmedCustomerNameIfEmpty),
+      // sem regex nova. Só tenta quando ainda não sabemos o nome — grava e já
+      // reflete no estado deste turno (ragAnswerNode usa state.customerName).
+      if (!state.customerName) {
+        const recentMessages = await getRecentConversationMessages(state.conversationId, 4);
+        const lastAssistantPlain =
+          [...recentMessages].reverse().find((m) => m.role === 'assistant')?.content ?? null;
+        const extractedName = extractCustomerNameFromUserUtterance(state.userMessage, { lastAssistantPlain });
+        if (extractedName) {
+          const saved = await mergeConfirmedCustomerNameIfEmpty(state.conversationId, extractedName);
+          if (saved) patch.customerName = extractedName;
+        }
+      }
+
+      return patch;
     })
     .addNode('visitScheduling', (state) =>
       visitSchedulingNode(state, {
@@ -180,6 +203,7 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
         toPhoneNumber: state.customerPhone ?? '',
         phase: 'ana_graph_turn',
         sendText: deps.sendWhatsappText,
+        insertAssistantMessage: deps.insertAssistantMessage,
       })
     )
     .addNode('persistState', (state) =>
@@ -222,11 +246,11 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
       finalizeReply: 'finalizeReply',
       humanHandoff: 'humanHandoff',
     })
-    // humanHandoff sempre produz um texto fixo pré-aprovado (ANA_EMERGENCY_HANDOFF_MESSAGE)
-    // — vai direto pro envio, sem passar de novo por finalizeReply (evita ciclo
-    // finalizeReply -> humanHandoff -> finalizeReply e sanitização desnecessária
-    // de uma mensagem operacional já controlada).
-    .addEdge('humanHandoff', 'sendWhatsapp')
+    // humanHandoffNode já envia e persiste a mensagem de verdade sozinho
+    // (via sendAnaEmergencyHandoff, dentro do próprio node) — rotear de novo
+    // pra sendWhatsapp aqui reenviaria e regravaria o mesmo texto uma segunda
+    // vez (double-send real ao cliente). Vai direto pra persistState.
+    .addEdge('humanHandoff', 'persistState')
     // finalizeReply pode zerar um rascunho não vazio (guard de segurança/tamanho) —
     // isso também é "não conseguimos responder com segurança", vira handoff.
     .addConditionalEdges('finalizeReply', routeAfterFinalizeReply, {

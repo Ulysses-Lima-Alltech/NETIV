@@ -11,6 +11,12 @@ export type SendWhatsappTextFn = (params: {
   phase: string;
 }) => Promise<AnaQuotaSendResult>;
 
+export type InsertAssistantMessageFn = (
+  conversationId: number,
+  text: string,
+  metaMessageId: string
+) => Promise<unknown>;
+
 export interface SendWhatsappNodeParams {
   conversationId: number;
   toPhoneNumber: string;
@@ -22,6 +28,16 @@ export interface SendWhatsappNodeParams {
    * mock aqui, garantindo que o grafo novo nunca envie mensagem real.
    */
   sendText?: SendWhatsappTextFn;
+  /**
+   * Persiste a resposta enviada em `messages` (mesma tabela/formato que o
+   * motor legado grava depois de cada envio bem-sucedido). Sem isso, o
+   * caminho de sucesso do grafo (ragAnswer/knowledgeGapReply/visitScheduling/
+   * sendMaterial -> aqui) nunca gravava o que a Ana respondeu: a conversa no
+   * inbox ficava sem a bolha da Ana (só handoff persistia, via
+   * sendAnaEmergencyHandoff), e getRecentConversationMessages nunca via a
+   * resposta anterior no histórico passado pro LLM no turno seguinte.
+   */
+  insertAssistantMessage?: InsertAssistantMessageFn;
 }
 
 /**
@@ -45,6 +61,10 @@ export async function sendWhatsappNode(
     text,
     phase: params.phase,
   });
+
+  if (result.success && result.metaMessageId && params.insertAssistantMessage) {
+    await params.insertAssistantMessage(params.conversationId, text, result.metaMessageId);
+  }
 
   return { sendResult: result };
 }

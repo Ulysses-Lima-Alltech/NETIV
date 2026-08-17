@@ -18,6 +18,14 @@ import type { AnaGraphState } from '../state.js';
  * de uma conversa que já existia antes (ex.: no dia da virada de produção, ou
  * conversas atendidas pelo motor legado antes desse turno). Sem isso, o grafo
  * "esquece" tudo que já foi respondido/perguntado/agendado até aqui.
+ *
+ * Reseta assistantReplyText pra null aqui, sempre — o checkpointer persiste
+ * estado entre turnos por thread_id (conversationId), e Annotation só
+ * atualiza os campos que um nó de fato retorna. Sem esse reset explícito no
+ * primeiro nó do turno, um turno em que nenhum nó posterior define
+ * assistantReplyText (ex.: rota que não passa por ragAnswer/knowledgeGapReply)
+ * herdaria o texto do ÚLTIMO turno bem-sucedido do checkpoint e reenviaria a
+ * mesma resposta antiga pro cliente, ignorando a pergunta atual.
  */
 export async function automationGateNode(state: AnaGraphState): Promise<Partial<AnaGraphState>> {
   const conversation = await getConversationById(state.conversationId);
@@ -35,6 +43,7 @@ export async function automationGateNode(state: AnaGraphState): Promise<Partial<
   const patch: Partial<AnaGraphState> = {
     automationBlockedByHandoff: blocked,
     handoffBlockedReason: blocked ? 'HANDOFF_BLOCKS_ANA_AUTOMATION' : null,
+    assistantReplyText: null,
   };
 
   if (!blocked && conversation && isEmptyCommercialFlowState(state.commercialFlowState)) {

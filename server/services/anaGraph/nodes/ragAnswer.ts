@@ -49,6 +49,12 @@ export async function ragAnswerNode(
 
   const flowState = state.commercialFlowState;
   const knownCustomerContextLines: string[] = [];
+  const knownName = (state.customerName ?? '').trim();
+  if (knownName) {
+    knownCustomerContextLines.push(
+      `O nome do cliente é ${knownName}. Não pergunte o nome de novo. Use o nome ÀS VEZES pra deixar a conversa mais pessoal — não em toda mensagem.`
+    );
+  }
   if (flowState.purchaseIntent === 'MORADIA') {
     knownCustomerContextLines.push('O cliente já disse que busca o imóvel para MORAR. Não pergunte de novo se é para morar ou investir.');
   } else if (flowState.purchaseIntent === 'INVESTIMENTO') {
@@ -56,7 +62,21 @@ export async function ragAnswerNode(
   }
   const knownCustomerContext =
     knownCustomerContextLines.length > 0
-      ? `\n\nO QUE JÁ SABEMOS SOBRE O CLIENTE (não repita a pergunta):\n${knownCustomerContextLines.join('\n')}`
+      ? `\n\nO QUE JÁ SABEMOS SOBRE O CLIENTE (não repita essas perguntas):\n${knownCustomerContextLines.join('\n')}`
+      : '';
+
+  const openQuestionLines: string[] = [];
+  if (!knownName) {
+    openQuestionLines.push('Ainda não sabemos o nome do cliente — se ainda não perguntou nesta conversa, pergunte o nome dele.');
+  }
+  if (!flowState.purchaseIntent) {
+    openQuestionLines.push(
+      'Ainda não sabemos o interesse do cliente — se ainda não perguntou nesta conversa, pergunte se ele busca o imóvel para morar, investir, ou se ainda não sabe.'
+    );
+  }
+  const openQuestionsContext =
+    openQuestionLines.length > 0
+      ? `\n\nPERGUNTAS EM ABERTO (priorize uma destas antes de outras perguntas, se ainda não foi feita nesta conversa):\n${openQuestionLines.join('\n')}`
       : '';
 
   const systemPrompt = [
@@ -64,7 +84,10 @@ export async function ragAnswerNode(
     'Responda apenas com base no CONTEXTO abaixo. Se a informação não estiver no contexto, não responda — não invente.',
     'Use o HISTÓRICO da conversa para não repetir perguntas já respondidas pelo cliente e para interpretar respostas curtas (ex.: "morar", "sim") no contexto da última pergunta feita.',
     'Seja objetiva e curta (2-4 frases).',
+    'Pode informar valores/preços exatos se estiverem no CONTEXTO. NUNCA prometa ou confirme condições de pagamento, descontos ou condições especiais específicas — isso o corretor confirma certinho na visita ou no atendimento.',
+    'Termine a resposta com uma pergunta objetiva que ajude a conversa avançar (ex.: sobre nome, interesse morar/investir, prazo, ou o próximo tópico natural) — a não ser que a mensagem do cliente já tenha encerrado a conversa (ex.: agradecimento, despedida).',
     knownCustomerContext,
+    openQuestionsContext,
     '',
     'CONTEXTO:',
     chunkMeta.promptText,
