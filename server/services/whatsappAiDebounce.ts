@@ -91,6 +91,13 @@ async function flushSingleMessage(
     // conversa está na allowlist de produção, o grafo responde de verdade no
     // lugar do motor legado — nunca os dois, pra não duplicar resposta.
     // Fora da allowlist, comportamento inalterado (motor legado, como sempre).
+    //
+    // Se o grafo falhar (result.handled === false — ex.: erro de infra do
+    // checkpointer, exceção não prevista), cai pro motor legado em vez de
+    // devolver silêncio total ao cliente. Um subsistema novo/não totalmente
+    // validado nunca deve poder causar ausência completa de resposta —
+    // mesma lição da rede de segurança já existente em conversationEngine.ts
+    // (ANA_BLOCKED_TURN_FALLBACK_ENABLED) para o motor legado.
     const conversation = await getConversationById(conversationId);
     if (isAnaGraphProductionEnabledForEnterprise(conversation?.enterprise_id ?? null)) {
       console.log('[ANA_PIPELINE] routed_to_graph_production', {
@@ -98,7 +105,7 @@ async function flushSingleMessage(
         pipelineToken,
         enterpriseId: conversation?.enterprise_id ?? null,
       });
-      await runAnaGraphProduction({
+      const graphResult = await runAnaGraphProduction({
         conversationId,
         contactId: conversation?.contact_id ?? null,
         enterpriseId: conversation?.enterprise_id ?? null,
@@ -106,7 +113,15 @@ async function flushSingleMessage(
         metaMessageId: effectiveMetaMessageId,
         phoneNumberId: null,
       });
-      return;
+      if (graphResult.handled) {
+        return;
+      }
+      console.error('[ANA_PIPELINE] graph_production_failed_fallback_to_legacy', {
+        conversationId,
+        pipelineToken,
+        enterpriseId: conversation?.enterprise_id ?? null,
+        graphError: graphResult.error,
+      });
     }
 
     await handleIncomingMessage({
