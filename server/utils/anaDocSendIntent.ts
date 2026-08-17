@@ -224,27 +224,42 @@ function normalizedKeywordPattern(keyword: string): RegExp {
   return new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`);
 }
 
+/**
+ * Acha, dentre todas as keywords de todos os espaços, a que aparece na
+ * posição MAIS À DIREITA (mais recente) do texto normalizado — não a
+ * primeira em ordem de prioridade fixa. Importante quando o texto é uma
+ * rajada de mensagens do usuário mescladas (ex.: "tem fotos da piscina?
+ * show, e da academia?") — nesse caso o pedido mais recente ("academia")
+ * deve vencer, não o primeiro que aparecer na lista de prioridade fixa.
+ */
+function findLatestKeywordMatch<T extends string>(
+  normalized: string,
+  order: readonly T[],
+  keywordsByKey: Record<T, readonly string[]>
+): T | null {
+  let best: { key: T; index: number } | null = null;
+  for (const key of order) {
+    for (const keyword of keywordsByKey[key]) {
+      const match = normalizedKeywordPattern(keyword).exec(normalized);
+      if (match && (!best || match.index >= best.index)) {
+        best = { key, index: match.index };
+      }
+    }
+  }
+  return best?.key ?? null;
+}
+
 export function extractAnaImageFilenameTopic(text: string | null | undefined): AnaImageFilenameTopic | null {
   const normalized = normalizeAnaImageFilenameSearchText(text);
   if (!normalized) return null;
-  for (const [topic, keywords] of Object.entries(IMAGE_FILENAME_TOPIC_KEYWORDS)) {
-    if (keywords.some((keyword) => normalizedKeywordPattern(keyword).test(normalized))) {
-      return topic as AnaImageFilenameTopic;
-    }
-  }
-  return null;
+  const order = Object.keys(IMAGE_FILENAME_TOPIC_KEYWORDS) as AnaImageFilenameTopic[];
+  return findLatestKeywordMatch(normalized, order, IMAGE_FILENAME_TOPIC_KEYWORDS);
 }
 
 export function extractAnaSpecificMediaSpace(text: string | null | undefined): AnaSpecificMediaSpace | null {
   const normalized = normalizeAnaImageFilenameSearchText(text);
   if (!normalized) return null;
-  for (const space of SPECIFIC_MEDIA_SPACE_DETECTION_ORDER) {
-    const keywords = SPECIFIC_MEDIA_SPACE_KEYWORDS[space];
-    if (keywords.some((keyword) => normalizedKeywordPattern(keyword).test(normalized))) {
-      return space;
-    }
-  }
-  return null;
+  return findLatestKeywordMatch(normalized, SPECIFIC_MEDIA_SPACE_DETECTION_ORDER, SPECIFIC_MEDIA_SPACE_KEYWORDS);
 }
 
 export function formatAnaSpecificMediaSpaceLabel(space: AnaSpecificMediaSpace): string {

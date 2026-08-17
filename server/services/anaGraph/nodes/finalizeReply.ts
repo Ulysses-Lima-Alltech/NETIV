@@ -16,8 +16,6 @@ export interface FinalizeReplyNodeParams {
   isKnowledgeGapTurn?: boolean;
   lastAssistantMessage?: string | null;
   maxChars?: number;
-  /** Quantas mensagens (cliente + Ana) já existem na conversa antes deste turno. */
-  messageCountSoFar?: number;
 }
 
 const CONVERSATION_CLOSER_RE =
@@ -33,31 +31,46 @@ function looksLikeConversationCloser(userMessage: string): boolean {
 }
 
 /**
- * Regra explícita do produto: nas primeiras 8 mensagens da conversa, a Ana
- * NUNCA responde sem terminar em pergunta (mantém o cliente engajado
- * enquanto ela ainda está qualificando o lead). Roda por último, depois de
- * finalizeAnaReplyText/applyAnaHardLengthGuard/evaluateAnaOutboundText —
- * esses guards de tamanho/sanitização podem truncar a resposta do modelo
- * (ex.: applyAnaHardLengthGuard mantém no máx. 2 frases) e derrubar uma
- * pergunta que tivesse sido anexada mais cedo no pipeline. Este é o único
- * ponto depois do qual nada mais mexe no texto antes do envio.
+ * Regra explícita do produto: a Ana NUNCA responde sem terminar em pergunta
+ * (mantém o cliente engajado), a menos que o cliente já tenha encerrado a
+ * conversa. Roda por último, depois de finalizeAnaReplyText/
+ * applyAnaHardLengthGuard/evaluateAnaOutboundText — esses guards de tamanho/
+ * sanitização podem truncar a resposta do modelo (ex.: applyAnaHardLengthGuard
+ * mantém no máx. 2 frases) e derrubar uma pergunta que tivesse sido anexada
+ * mais cedo no pipeline. Este é o único ponto depois do qual nada mais mexe
+ * no texto antes do envio.
  */
-function ensureEndsWithQuestionWithinFirstMessages(
+function ensureEndsWithQuestion(
   text: string,
   userMessage: string,
-  messageCountSoFar: number | undefined,
   nextOpenQuestion: { question: string } | null
 ): string {
   if (!text.trim()) return text;
   if (endsWithQuestion(text)) return text;
   if (looksLikeConversationCloser(userMessage)) return text;
-  // messageCountSoFar indeterminado (dep não fornecida): erra pro lado de
-  // aplicar a regra, já que o custo de uma pergunta extra é baixo e o bug
-  // que motivou isso (resposta sem nenhuma pergunta) é pior.
-  if (messageCountSoFar != null && messageCountSoFar >= 8) return text;
 
   const followup = nextOpenQuestion?.question ?? 'Posso te ajudar com mais alguma coisa?';
   return `${text} ${followup}`;
+}
+
+/**
+ * "O nome deve ser a primeira pergunta": na primeira resposta da Ana, se
+ * ainda não sabemos o nome do cliente, a pergunta de fechamento TEM que ser
+ * sobre o nome — não outra pergunta que o modelo tenha decidido fazer por
+ * conta própria (ex.: morar/investir). Troca a última frase-pergunta da
+ * resposta (se houver) pela pergunta do nome, em vez de só anexar mais uma
+ * (o que deixaria duas perguntas na mesma mensagem).
+ */
+function forceNameAsFirstQuestion(text: string, nameQuestion: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return text;
+  if (trimmed.toLowerCase().includes(nameQuestion.toLowerCase())) return text;
+
+  const sentences = trimmed.split(/(?<=[.!?…])\s+/).map((s) => s.trim()).filter(Boolean);
+  const last = sentences[sentences.length - 1];
+  const kept = last && last.includes('?') ? sentences.slice(0, -1) : sentences;
+  const base = kept.join(' ').trim();
+  return (base ? `${base} ${nameQuestion}` : nameQuestion).replace(/\s{2,}/g, ' ').trim();
 }
 
 /**
@@ -99,12 +112,16 @@ export function finalizeReplyNode(
     return { assistantReplyText: null };
   }
 
-  const withQuestion = ensureEndsWithQuestionWithinFirstMessages(
-    evaluated.text,
-    state.userMessage,
-    params.messageCountSoFar,
-    resolveNextOpenQuestion(state)
-  );
+  const nextOpenQuestion = resolveNextOpenQuestion(state);
+  let finalText = ensureEndsWithQuestion(evaluated.text, state.userMessage, nextOpenQuestion);
 
-  return { assistantReplyText: withQuestion };
+  // Nome deve ser SEMPRE a primeira pergunta feita ao cliente: na primeira
+  // resposta da Ana, se o nome ainda não é conhecido, força a pergunta de
+  // fechamento a ser sobre o nome, mesmo que o modelo tenha preferido
+  // perguntar outra coisa (ex.: morar/investir).
+  if (params.isFirstAnaReply && !((state.customerName ?? '').trim()) && nextOpenQuestion?.question) {
+    finalText = forceNameAsFirstQuestion(finalText, nextOpenQuestion.question);
+  }
+
+  return { assistantReplyText: finalText };
 }

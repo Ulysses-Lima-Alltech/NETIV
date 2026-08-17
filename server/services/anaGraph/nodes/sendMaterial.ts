@@ -7,11 +7,13 @@ import {
   extractAnaSpecificMediaSpace,
   filterAnaImageFilesByFilenameTopic,
   filterAnaMediaFilesBySpecificSpace,
+  pickPostMediaAckText,
 } from '../../../utils/anaDocSendIntent.js';
 import {
   pickMaterialUnavailableNeutralReply,
   pickMaterialSendFailedNeutralReply,
 } from '../../../utils/anaMaterialReply.js';
+import { resolveNextOpenQuestion } from '../nextOpenQuestion.js';
 import {
   listEnterpriseFiles,
   getFileForSend,
@@ -128,9 +130,20 @@ export async function sendMaterialNode(
     };
   }
 
+  // Sempre acompanha o envio de mídia com um texto curto (nunca manda só a
+  // foto/vídeo sem nada): além de manter a conversa viva com uma pergunta,
+  // isso garante que insertAssistantMessage seja chamado (sendWhatsappNode só
+  // insere quando assistantReplyText não é null) — sem essa mensagem no
+  // histórico, a próxima pergunta do cliente era tratada como ainda-sem-resposta
+  // pelo agrupador de rajada (getTrailingUserMessageBurst) e mesclada com a
+  // pergunta de mídia anterior, o que fazia o extrator de espaço específico
+  // (extractAnaSpecificMediaSpace) enxergar as duas palavras-chave juntas.
+  const followupQuestion = resolveNextOpenQuestion(state)?.question ?? 'Quer ver mais alguma área ou posso te ajudar com outra coisa?';
+  const ack = pickPostMediaAckText(state.commercialFlowState.lastAssistantSnippet);
+
   return {
-    assistantReplyText: null,
-    replyIntentionallyEmpty: true,
+    assistantReplyText: `${ack} ${followupQuestion}`,
+    replyIntentionallyEmpty: false,
     commercialFlowState: {
       ...state.commercialFlowState,
       last_material_sent_id: chosenFile.id,

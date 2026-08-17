@@ -9,6 +9,7 @@ import {
 import { getRecentConversationMessages } from '../../repositories/messageRepository.js';
 import { getEnterpriseById } from '../../repositories/enterpriseRepository.js';
 import { extractCustomerNameFromUserUtterance } from '../../utils/extractCustomerNameFromMessage.js';
+import { inferResolvedPurchaseIntent } from '../../utils/anaCommercialAxisGuard.js';
 import { AnaGraphStateAnnotation, type AnaGraphState } from './state.js';
 import { automationGateNode } from './nodes/automationGate.js';
 import { resolveEnterpriseNode } from './nodes/resolveEnterprise.js';
@@ -143,6 +144,22 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
         }
       }
 
+      // Captura de intenção de compra (morar/investir): mesmo detector do
+      // motor legado (inferResolvedPurchaseIntent), aplicado no MESMO turno
+      // em que o cliente responde (ex.: "morar" respondendo à pergunta da
+      // Ana) — sem isso, o valor só ficaria disponível a partir do próximo
+      // turno (persistStateNode grava depois da resposta já gerada), e a
+      // mesma pergunta de morar/investir seria repetida neste turno porque
+      // nextOpenQuestion ainda leria o flowState antigo (sem o purchaseIntent
+      // recém-respondido). persistStateNode continua sendo quem grava no
+      // banco ao fim do turno; isto aqui só adianta a leitura pro turno atual.
+      if (!state.commercialFlowState.purchaseIntent) {
+        const inferredIntent = inferResolvedPurchaseIntent(state.userMessage);
+        if (inferredIntent) {
+          patch.commercialFlowState = { ...state.commercialFlowState, purchaseIntent: inferredIntent };
+        }
+      }
+
       return patch;
     })
     .addNode('visitScheduling', (state) =>
@@ -195,11 +212,9 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
     .addNode('finalizeReply', async (state) => {
       const conversation = await loadConversationOrThrow(state.conversationId);
       const ctx = await deps.finalizeReplyContext(state, conversation);
-      // Limitado a 8: só precisamos saber se já estourou o gate de "primeiras
-      // 8 mensagens" (ver ensureEndsWithQuestionWithinFirstMessages em
-      // finalizeReply.ts) — não o histórico completo da conversa.
-      const messages = await getRecentConversationMessages(state.conversationId, 8);
-      return finalizeReplyNode(state, { ...ctx, messageCountSoFar: messages.length });
+      const recentMessages = await getRecentConversationMessages(state.conversationId, 12);
+      const isFirstAnaReply = !recentMessages.some((m) => m.role === 'assistant');
+      return finalizeReplyNode(state, { ...ctx, isFirstAnaReply });
     })
     .addNode('sendWhatsapp', (state) =>
       sendWhatsappNode(state, {
