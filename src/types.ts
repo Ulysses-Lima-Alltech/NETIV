@@ -69,7 +69,7 @@ export interface MessageAttachment {
   enterpriseFileId?: number | null;
   templateMediaSettingId?: number | null;
   storageFolder?: string | null;
-  mediaType?: 'image' | 'video' | 'document' | null;
+  mediaType?: 'image' | 'video' | 'document' | 'audio' | null;
   downloadUrl?: string | null;
 }
 
@@ -111,8 +111,8 @@ export interface Message {
   sender: MessageSender;
   text: string;
   createdAt: string; // ISO date
-  /** document | image quando envio com arquivo */
-  messageType?: 'text' | 'document' | 'image' | 'video';
+  /** document | image | video | audio quando envio com arquivo */
+  messageType?: 'text' | 'document' | 'image' | 'video' | 'audio';
   attachment?: MessageAttachment | null;
   status?: MessageDeliveryStatus;
   template?: MessageTemplateMetadata | null;

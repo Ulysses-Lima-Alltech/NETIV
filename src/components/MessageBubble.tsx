@@ -15,7 +15,7 @@ function SecureAttachment({ message, isAgent }: { message: Message; isAgent: boo
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const canPreview = message.messageType === 'image' || message.messageType === 'video';
+  const canPreview = message.messageType === 'image' || message.messageType === 'video' || message.messageType === 'audio';
 
   useEffect(() => {
     if (!attachment?.downloadUrl || !canPreview) return;
@@ -62,6 +62,9 @@ function SecureAttachment({ message, isAgent }: { message: Message; isAgent: boo
       {objectUrl && message.messageType === 'video' && (
         <video src={objectUrl} controls className="max-h-72 w-full rounded-xl" aria-label={attachment.fileName || 'Vídeo do template'} />
       )}
+      {objectUrl && message.messageType === 'audio' && (
+        <audio src={objectUrl} controls className="w-full" aria-label={attachment.fileName || 'Áudio recebido'} />
+      )}
       <button
         type="button"
         onClick={() => void download()}
@@ -70,7 +73,7 @@ function SecureAttachment({ message, isAgent }: { message: Message; isAgent: boo
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
         <span className="break-all">
-          {message.messageType === 'image' ? 'Imagem: ' : message.messageType === 'video' ? 'Vídeo: ' : 'Arquivo: '}
+          {message.messageType === 'image' ? 'Imagem: ' : message.messageType === 'video' ? 'Vídeo: ' : message.messageType === 'audio' ? 'Áudio: ' : 'Arquivo: '}
           {attachment.fileName}
         </span>
         {attachment.sizeBytes != null && (

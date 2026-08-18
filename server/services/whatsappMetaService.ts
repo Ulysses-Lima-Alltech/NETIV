@@ -76,6 +76,57 @@ export function resolveManualTemplate(templateKey: string): ManualTemplateDef | 
   };
 }
 
+export interface InboundMediaDownloadResult {
+  success: boolean;
+  buffer?: Buffer;
+  mimeType?: string;
+  fileSize?: number;
+  error?: string;
+}
+
+/**
+ * Contraparte do envio (uploadWhatsAppMedia/sendImageMessage etc., que
+ * fazem POST .../media pra enviar): baixa mídia RECEBIDA do cliente.
+ * Fluxo em 2 passos exigido pela Graph API — GET /{media-id} devolve uma URL
+ * temporária de CDN (expira em minutos), depois GET nessa URL (com o MESMO
+ * Bearer token) devolve os bytes de verdade.
+ */
+export async function downloadInboundMedia(mediaId: string): Promise<InboundMediaDownloadResult> {
+  const config = await getCfg();
+  if (!config) return { success: false, error: 'whatsapp_nao_configurado' };
+
+  try {
+    const metaRes = await fetch(`${META_GRAPH_BASE}/${config.apiVersion}/${mediaId}`, {
+      headers: { Authorization: `Bearer ${config.metaAccessToken}` },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!metaRes.ok) {
+      return { success: false, error: `media_lookup_failed_${metaRes.status}` };
+    }
+    const meta = (await metaRes.json()) as { url?: string; mime_type?: string; file_size?: number };
+    if (!meta.url) {
+      return { success: false, error: 'media_lookup_missing_url' };
+    }
+
+    const fileRes = await fetch(meta.url, {
+      headers: { Authorization: `Bearer ${config.metaAccessToken}` },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!fileRes.ok) {
+      return { success: false, error: `media_download_failed_${fileRes.status}` };
+    }
+    const arrayBuffer = await fileRes.arrayBuffer();
+    return {
+      success: true,
+      buffer: Buffer.from(arrayBuffer),
+      mimeType: meta.mime_type || fileRes.headers.get('content-type') || 'application/octet-stream',
+      fileSize: meta.file_size ?? arrayBuffer.byteLength,
+    };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function uploadWhatsAppMedia(params: {
   buffer: Buffer;
   filename: string;

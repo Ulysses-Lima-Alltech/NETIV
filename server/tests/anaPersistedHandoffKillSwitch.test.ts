@@ -219,7 +219,7 @@ test('conversa normal continua enviando com flag antiga ativa', async () => {
 test('webhook persiste e publica inbound antes de bloquear texto e nao texto', () => {
   const source = readServerSourceFile('services/webhookProcessor.ts');
   const textPersisted = source.indexOf("await insertMessage(conv.id, 'user', text, mid)");
-  const nonTextPersisted = source.indexOf("await insertMessage(conv.id, 'user', getNonTextInboxContent(msg), mid)");
+  const nonTextPersisted = source.indexOf("await insertMessage(conv.id, 'user', inboxText, mid,");
   const nonTextGuard = source.indexOf("blockedAt: 'inbound_entry'", nonTextPersisted);
   const textGuard = source.indexOf("blockedAt: 'inbound_entry'", textPersisted);
   const enterpriseResolution = source.indexOf('conv = await resolveAnaEnterpriseBeforeEngine', textGuard);

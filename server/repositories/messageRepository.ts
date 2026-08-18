@@ -7,7 +7,7 @@ import {
   publishMessageUpdated,
 } from '../realtime/realtimePublisher.js';
 
-export type MessageKindDb = 'text' | 'document' | 'image' | 'video';
+export type MessageKindDb = 'text' | 'document' | 'image' | 'video' | 'audio';
 
 export interface MessageAttachmentPayload {
   fileName: string;
@@ -16,6 +16,10 @@ export interface MessageAttachmentPayload {
   whatsappMediaId?: string | null;
   caption?: string | null;
   enterpriseFileId?: number | null;
+  /** Chave do objeto no bucket S3 (ver s3Storage.ts) — mídia recebida do cliente via webhook fica aqui. */
+  storageKey?: string | null;
+  /** Rota autenticada de download, computada em insertMessageUnlocked quando storageKey existe. */
+  downloadUrl?: string | null;
 }
 
 export interface MessageRow {
@@ -119,7 +123,7 @@ async function insertMessageUnlocked(
       content: inserted.content,
       metaMessageId: inserted.meta_message_id,
       messageKind: inserted.message_kind ?? 'text',
-      attachment: inserted.attachment_json ?? null,
+      attachment: withAttachmentDownloadUrl(inserted.conversation_id, inserted.id, inserted.attachment_json),
       createdAt: inserted.created_at.toISOString(),
       deleted: inserted.deleted_at != null,
       deletedAt: inserted.deleted_at ? inserted.deleted_at.toISOString() : null,
@@ -127,6 +131,34 @@ async function insertMessageUnlocked(
     void publishConversationUpdated(inserted.conversation_id);
   }
   return inserted;
+}
+
+/**
+ * Anexa a rota autenticada de download quando o anexo tem storageKey (mídia
+ * recebida do cliente, guardada em S3 — ver s3Storage.ts). Não persistida
+ * no banco: computada a cada leitura, pra sempre refletir a rota atual e
+ * não duplicar a URL em toda linha gravada.
+ */
+export function withAttachmentDownloadUrl(
+  conversationId: number,
+  messageId: number,
+  attachmentJson: unknown | null
+): unknown | null {
+  if (!attachmentJson || typeof attachmentJson !== 'object') return attachmentJson ?? null;
+  const storageKey = (attachmentJson as { storageKey?: string | null }).storageKey;
+  if (!storageKey) return attachmentJson;
+  return {
+    ...attachmentJson,
+    downloadUrl: `/whatsapp/conversations/${conversationId}/messages/${messageId}/attachment`,
+  };
+}
+
+export async function getMessageById(messageId: number, conversationId: number): Promise<MessageRow | null> {
+  const { rows } = await query<MessageRow>(
+    `SELECT * FROM messages WHERE id = $1 AND conversation_id = $2 LIMIT 1`,
+    [messageId, conversationId]
+  );
+  return rows[0] ?? null;
 }
 
 export async function getMessageCreatedAtById(messageId: number): Promise<Date | null> {

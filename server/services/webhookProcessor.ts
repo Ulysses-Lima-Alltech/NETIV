@@ -16,7 +16,11 @@ import {
   insertMessage,
   findMessageByMetaId,
   getRecentConversationMessages,
+  type MessageAttachmentPayload,
+  type MessageKindDb,
 } from '../repositories/messageRepository.js';
+import { downloadInboundMedia } from './whatsappMetaService.js';
+import { putObjectToKnowledgeS3, isKnowledgeS3Configured } from './s3Storage.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { scheduleWhatsAppAiAfterUserMessage } from './whatsappAiDebounce.js';
 import { handleIncomingMessage } from './conversationEngine.js';
@@ -64,6 +68,82 @@ function getNonTextInboxContent(msg: WebhookMessage): string {
   const body = getMessageBody(msg)?.trim();
   if (body) return body;
   return `[Mensagem ${String(msg.type ?? 'nao_texto')}]`;
+}
+
+const MIME_EXTENSION_FALLBACK: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'audio/ogg': 'ogg',
+  'audio/mpeg': 'mp3',
+  'audio/amr': 'amr',
+  'audio/aac': 'aac',
+  'video/mp4': 'mp4',
+  'video/3gpp': '3gp',
+  'application/pdf': 'pdf',
+};
+
+function guessFileExtension(mimeType: string): string {
+  const clean = mimeType.split(';')[0]?.trim().toLowerCase() ?? '';
+  return MIME_EXTENSION_FALLBACK[clean] ?? clean.split('/')[1] ?? 'bin';
+}
+
+/**
+ * Contraparte inbound do que já existe pra envio (whatsappMetaService.ts
+ * já sabe subir mídia PRA fora — isso baixa mídia recebida DE fora).
+ * Sem isso, imagem/áudio/vídeo/documento do cliente nunca aparecia no
+ * inbox: só o texto placeholder "[Mensagem image]" era gravado, o media_id
+ * da Meta era descartado e nada nunca era de fato baixado/guardado.
+ * Retorna null em qualquer falha (S3 não configurado, download falhou,
+ * tipo sem media id) — o chamador cai de volta pro placeholder de texto
+ * puro, nunca quebra o fluxo de recebimento por causa de mídia.
+ */
+async function downloadAndStoreInboundMedia(
+  msg: WebhookMessage,
+  conversationId: number
+): Promise<{ messageKind: MessageKindDb; attachment: MessageAttachmentPayload } | null> {
+  if (!isKnowledgeS3Configured()) return null;
+
+  const type = msg.type;
+  const mediaId =
+    type === 'image' ? msg.image?.id
+    : type === 'audio' ? msg.audio?.id
+    : type === 'video' ? msg.video?.id
+    : type === 'document' ? msg.document?.id
+    : null;
+  if (!mediaId) return null;
+
+  const messageKind: MessageKindDb | null =
+    type === 'image' ? 'image' : type === 'audio' ? 'audio' : type === 'video' ? 'video' : type === 'document' ? 'document' : null;
+  if (!messageKind) return null;
+
+  const download = await downloadInboundMedia(mediaId);
+  if (!download.success || !download.buffer) {
+    console.error('[WHATSAPP_INBOUND_MEDIA_DOWNLOAD_FAILED]', { conversationId, mediaId, type, error: download.error });
+    return null;
+  }
+
+  const mimeType = download.mimeType || 'application/octet-stream';
+  const fileName = msg.document?.filename || `${type}-${mediaId}.${guessFileExtension(mimeType)}`;
+  const storageKey = `inbound-media/${conversationId}/${mediaId}-${fileName}`;
+
+  const uploaded = await putObjectToKnowledgeS3(storageKey, download.buffer, mimeType);
+  if (!uploaded.ok) {
+    console.error('[WHATSAPP_INBOUND_MEDIA_UPLOAD_FAILED]', { conversationId, mediaId, error: uploaded.error });
+    return null;
+  }
+
+  return {
+    messageKind,
+    attachment: {
+      fileName,
+      mimeType,
+      sizeBytes: download.fileSize,
+      whatsappMediaId: mediaId,
+      caption: msg.image?.caption ?? null,
+      storageKey,
+    },
+  };
 }
 
 async function shouldBlockAnaWebhookAutomation(params: {
@@ -407,7 +487,13 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
 
           if (type !== 'text' || !bodyText?.trim()) {
             console.log('[ANA_PIPELINE] non_text_branch', { conversationId: conv.id, metaMessageId: mid, type });
-            await insertMessage(conv.id, 'user', getNonTextInboxContent(msg), mid);
+            const media = await downloadAndStoreInboundMedia(msg, conv.id);
+            // Com mídia baixada com sucesso, o anexo já é o conteúdo visual —
+            // não duplica com o texto "[Mensagem image]" embaixo. Sem
+            // download (S3 não configurado, falha na Meta), mantém o
+            // placeholder de texto como fallback (comportamento anterior).
+            const inboxText = media ? media.attachment.caption ?? null : getNonTextInboxContent(msg);
+            await insertMessage(conv.id, 'user', inboxText, mid, media ? { messageKind: media.messageKind, attachment: media.attachment } : undefined);
             await applyInboundUserMessageResets(conv.id);
             console.log('[ANA_PIPELINE] message_persisted', {
               conversationId: conv.id,

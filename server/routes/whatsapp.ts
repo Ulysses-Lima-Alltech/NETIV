@@ -64,10 +64,13 @@ import { findContactById, updateContactType } from '../repositories/contactsRepo
 import {
   insertMessage,
   getMessagesByConversationId,
+  getMessageById,
   softDeleteMessage,
   getLastUserMessageRow,
+  withAttachmentDownloadUrl,
   type MessageAttachmentPayload,
 } from '../repositories/messageRepository.js';
+import { downloadFromKnowledgeS3 } from '../services/s3Storage.js';
 import { scheduleAnaRetry } from '../services/anaRetrySchedulerService.js';
 import { getCorretorById } from '../repositories/corretorRepository.js';
 import {
@@ -953,7 +956,7 @@ router.get('/conversations/:id/messages', async (req, res) => {
       window,
       messages: rows.map((m) => {
         const kind = (m.message_kind as string | undefined) || 'text';
-        const hasAtt = kind === 'document' || kind === 'image' || kind === 'video';
+        const hasAtt = kind === 'document' || kind === 'image' || kind === 'video' || kind === 'audio';
         const isDeleted = m.deleted_at != null;
         return {
           id: String(m.id),
@@ -965,7 +968,7 @@ router.get('/conversations/:id/messages', async (req, res) => {
           status: 'sent',
           externalMessageId: m.meta_message_id,
           createdAt: m.created_at.toISOString(),
-          attachment: hasAtt && !isDeleted ? m.attachment_json : null,
+          attachment: hasAtt && !isDeleted ? withAttachmentDownloadUrl(id, m.id, m.attachment_json) : null,
           deleted: isDeleted,
           deletedAt: m.deleted_at ? m.deleted_at.toISOString() : null,
           deleteScope: m.delete_scope ?? null,
@@ -1089,6 +1092,45 @@ router.delete('/conversations/:convId/messages/:msgId', async (req, res) => {
   } catch (e) {
     console.error('[WhatsApp] DELETE message:', e);
     return res.status(500).json({ error: 'Erro ao apagar mensagem.' });
+  }
+});
+
+// GET /conversations/:convId/messages/:msgId/attachment — stream de mídia
+// recebida do cliente (imagem/áudio/vídeo/documento), guardada em S3 no
+// download do webhook (ver webhookProcessor.ts). Autenticado igual ao resto
+// do inbox — sem link público.
+router.get('/conversations/:convId/messages/:msgId/attachment', async (req, res) => {
+  try {
+    const convId = parseInt(req.params.convId, 10);
+    const msgId = parseInt(req.params.msgId, 10);
+    if (Number.isNaN(convId) || Number.isNaN(msgId)) {
+      return res.status(400).json({ error: 'IDs inválidos.' });
+    }
+    if (!(await assertCanAccessConversation(req as AuthenticatedRequest, res, convId))) return;
+
+    const msg = await getMessageById(msgId, convId);
+    if (!msg || msg.deleted_at != null) {
+      return res.status(404).json({ error: 'Mensagem não encontrada.' });
+    }
+    const attachment = msg.attachment_json as
+      | { storageKey?: string | null; mimeType?: string | null; fileName?: string | null }
+      | null;
+    if (!attachment?.storageKey) {
+      return res.status(404).json({ error: 'Anexo não disponível.' });
+    }
+
+    const buffer = await downloadFromKnowledgeS3(attachment.storageKey);
+    if (!buffer) {
+      return res.status(404).json({ error: 'Arquivo não encontrado no armazenamento.' });
+    }
+
+    res.setHeader('Content-Type', attachment.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${(attachment.fileName || 'arquivo').replace(/"/g, '')}"`);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    return res.send(buffer);
+  } catch (e) {
+    console.error('[WhatsApp] GET attachment:', e);
+    return res.status(500).json({ error: 'Erro ao carregar anexo.' });
   }
 });
 

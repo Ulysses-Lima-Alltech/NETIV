@@ -49,7 +49,7 @@ export interface RealtimeMessagePayload {
   role: 'user' | 'assistant';
   content: string | null;
   metaMessageId: string | null;
-  messageKind: 'text' | 'document' | 'image' | 'video';
+  messageKind: 'text' | 'document' | 'image' | 'video' | 'audio';
   attachment: unknown | null;
   createdAt: string;
   deleted: boolean;

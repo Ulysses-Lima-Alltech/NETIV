@@ -163,7 +163,7 @@ function mapApiMessageToMessage(m: MessageListItem, conversationId: string): Mes
     sender: m.direction === 'inbound' ? 'LEAD' : 'AGENT',
     text: m.deleted ? '' : canonicalText,
     createdAt: m.createdAt,
-    messageType: m.type === 'document' || m.type === 'image' || m.type === 'video' ? m.type : 'text',
+    messageType: m.type === 'document' || m.type === 'image' || m.type === 'video' || m.type === 'audio' ? m.type : 'text',
     attachment: m.deleted
       ? null
       : att?.fileName
@@ -651,7 +651,7 @@ export function InboxPage() {
         conversationId: number;
         role: 'user' | 'assistant';
         content: string | null;
-        messageKind?: 'text' | 'document' | 'image' | 'video';
+        messageKind?: 'text' | 'document' | 'image' | 'video' | 'audio';
         attachment?: unknown;
         status?: Message['status'];
         template?: Message['template'];
@@ -691,7 +691,7 @@ export function InboxPage() {
         sender: p.role === 'user' ? 'LEAD' : 'AGENT',
         text: p.deleted ? '' : (p.template?.renderedText?.trim() || p.content || ''),
         createdAt: p.createdAt,
-        messageType: p.messageKind === 'document' || p.messageKind === 'image' || p.messageKind === 'video' ? p.messageKind : 'text',
+        messageType: p.messageKind === 'document' || p.messageKind === 'image' || p.messageKind === 'video' || p.messageKind === 'audio' ? p.messageKind : 'text',
         attachment:
           p.deleted || !p.attachment || typeof p.attachment !== 'object'
             ? null
@@ -704,7 +704,7 @@ export function InboxPage() {
                 enterpriseFileId: (p.attachment as { enterpriseFileId?: number | null }).enterpriseFileId ?? null,
                 templateMediaSettingId: (p.attachment as { templateMediaSettingId?: number | null }).templateMediaSettingId ?? null,
                 storageFolder: (p.attachment as { storageFolder?: string | null }).storageFolder ?? null,
-                mediaType: (p.attachment as { mediaType?: 'image' | 'video' | 'document' | null }).mediaType ?? null,
+                mediaType: (p.attachment as { mediaType?: 'image' | 'video' | 'document' | 'audio' | null }).mediaType ?? null,
                 downloadUrl: (p.attachment as { downloadUrl?: string | null }).downloadUrl ?? null,
               }),
         status: p.status ?? 'sent',
