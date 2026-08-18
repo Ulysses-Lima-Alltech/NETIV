@@ -15,6 +15,7 @@ function SecureAttachment({ message, isAgent }: { message: Message; isAgent: boo
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const canPreview = message.messageType === 'image' || message.messageType === 'video' || message.messageType === 'audio';
 
   useEffect(() => {
@@ -57,7 +58,35 @@ function SecureAttachment({ message, isAgent }: { message: Message; isAgent: boo
   return (
     <div className="mb-2 space-y-1.5">
       {objectUrl && message.messageType === 'image' && (
-        <img src={objectUrl} alt={attachment.fileName || 'Imagem do template'} className="max-h-72 w-full rounded-xl object-contain" />
+        <img
+          src={objectUrl}
+          alt={attachment.fileName || 'Imagem do template'}
+          className="max-h-72 w-full cursor-zoom-in rounded-xl object-contain"
+          onClick={() => setLightboxOpen(true)}
+        />
+      )}
+      {lightboxOpen && objectUrl && message.messageType === 'image' && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4"
+          onClick={() => setLightboxOpen(false)}
+        >
+          <button
+            type="button"
+            onClick={() => setLightboxOpen(false)}
+            className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
+            aria-label="Fechar"
+          >
+            <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5" aria-hidden>
+              <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+            </svg>
+          </button>
+          <img
+            src={objectUrl}
+            alt={attachment.fileName || 'Imagem ampliada'}
+            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
       )}
       {objectUrl && message.messageType === 'video' && (
         <video src={objectUrl} controls className="max-h-72 w-full rounded-xl" aria-label={attachment.fileName || 'Vídeo do template'} />
