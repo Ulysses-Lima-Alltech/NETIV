@@ -12,11 +12,6 @@ export const config = {
   storageEmpreendimentos: env.STORAGE_EMPREENDIMENTOS ?? join(repoRoot, 'storage', 'empreendimentos'),
   dbPath: env.DB_PATH ?? './data/inbox.db',
   metaApiVersion: env.META_API_VERSION ?? 'v21.0',
-  openai: {
-    apiKey: env.OPENAI_API_KEY ?? '',
-    baseUrl: (env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/$/, ''),
-    model: env.OPENAI_MODEL ?? 'gpt-4.1',
-  },
   meta: {
     appSecret: env.META_APP_SECRET ?? '',
     verifyToken: env.META_VERIFY_TOKEN ?? '',

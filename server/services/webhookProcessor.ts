@@ -20,7 +20,8 @@ import {
   type MessageKindDb,
 } from '../repositories/messageRepository.js';
 import { downloadInboundMedia } from './whatsappMetaService.js';
-import { putObjectToKnowledgeS3, isKnowledgeS3Configured } from './s3Storage.js';
+import { putObjectToKnowledgeS3, isKnowledgeS3Configured, getKnowledgeS3Bucket } from './s3Storage.js';
+import { transcribeInboundAudioFromS3 } from './audioTranscriptionService.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
 import { scheduleWhatsAppAiAfterUserMessage } from './whatsappAiDebounce.js';
 import { handleIncomingMessage } from './conversationEngine.js';
@@ -484,10 +485,53 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
 
           const type = msg.type ?? 'unknown';
           const bodyText = getMessageBody(msg);
+          const isTextMessage = type === 'text' && !!bodyText?.trim();
 
-          if (type !== 'text' || !bodyText?.trim()) {
+          let media: Awaited<ReturnType<typeof downloadAndStoreInboundMedia>> = null;
+          let transcribedAudioText: string | null = null;
+
+          if (!isTextMessage) {
             console.log('[ANA_PIPELINE] non_text_branch', { conversationId: conv.id, metaMessageId: mid, type });
-            const media = await downloadAndStoreInboundMedia(msg, conv.id);
+            media = await downloadAndStoreInboundMedia(msg, conv.id);
+
+            if (type === 'audio' && media?.attachment.storageKey) {
+              try {
+                const transcription = await transcribeInboundAudioFromS3({
+                  bucket: getKnowledgeS3Bucket(),
+                  key: media.attachment.storageKey,
+                  mimeType: media.attachment.mimeType,
+                  jobNameSeed: `${conv.id}-${mid}`,
+                });
+                if (transcription.success && transcription.text) {
+                  transcribedAudioText = transcription.text;
+                  console.log('[ANA_AUDIO_TRANSCRIPTION_OK]', {
+                    conversationId: conv.id,
+                    metaMessageId: mid,
+                    textPreview: transcription.text.slice(0, 120),
+                  });
+                } else {
+                  console.error('[ANA_AUDIO_TRANSCRIPTION_FAILED]', {
+                    conversationId: conv.id,
+                    metaMessageId: mid,
+                    error: transcription.error ?? null,
+                  });
+                }
+              } catch (e) {
+                console.error('[ANA_AUDIO_TRANSCRIPTION_ERROR]', {
+                  conversationId: conv.id,
+                  metaMessageId: mid,
+                  detail: e instanceof Error ? e.message : String(e),
+                });
+              }
+            }
+          }
+
+          // Áudio transcrito com sucesso segue pelo mesmo caminho de texto puro
+          // (classificador, engine da Ana etc.) — só imagem/vídeo/documento e
+          // áudio sem transcrição caem no branch "não sei responder isso".
+          const effectiveText = isTextMessage ? bodyText!.trim() : transcribedAudioText;
+
+          if (!effectiveText) {
             // Com mídia baixada com sucesso, o anexo já é o conteúdo visual —
             // não duplica com o texto "[Mensagem image]" embaixo. Sem
             // download (S3 não configurado, falha na Meta), mantém o
@@ -556,7 +600,7 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
             continue;
           }
 
-          const text = bodyText.trim();
+          const text = effectiveText;
 
           anaWebhookTrace('insert_message_start', {
             conversationId: conv.id,
@@ -564,7 +608,11 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
             textLen: text.length,
           });
           try {
-            await insertMessage(conv.id, 'user', text, mid);
+            if (media) {
+              await insertMessage(conv.id, 'user', text, mid, { messageKind: media.messageKind, attachment: media.attachment });
+            } else {
+              await insertMessage(conv.id, 'user', text, mid);
+            }
             anaWebhookTrace('insert_message_success', { conversationId: conv.id, metaMessageId: mid });
           } catch (e) {
             const code = e && typeof e === 'object' && 'code' in e ? String((e as { code: unknown }).code) : '';
