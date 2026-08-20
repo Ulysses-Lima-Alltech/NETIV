@@ -13,7 +13,7 @@ export type CommercialAxis =
   | 'visita_agendamento'
   | 'intencao_compra';
 
-export type PurchaseIntent = 'MORADIA' | 'INVESTIMENTO';
+export type PurchaseIntent = 'MORADIA' | 'INVESTIMENTO' | 'AVALIANDO';
 
 const AXIS_ORDER: CommercialAxis[] = [
   'preco',
@@ -189,8 +189,16 @@ function hasInvestmentIntentSignal(t: string): boolean {
   );
 }
 
+const STILL_EVALUATING_RE =
+  /\b(avaliando|ainda\s+(nao|não)\s+sei|ainda\s+(nao|não)\s+decidi|ainda\s+(nao|não)\s+sabemos|nao\s+sei\s+ainda|não\s+sei\s+ainda|ainda\s+estou\s+vendo|ainda\s+estamos\s+vendo|ainda\s+decidindo|os\s+dois|ambos|tanto\s+faz)\b/;
+
 /**
- * Detecta quando o cliente respondeu de forma definitiva ao eixo morar x investir.
+ * Detecta quando o cliente respondeu de forma definitiva ao eixo morar x investir
+ * -- incluindo a resposta "ainda estou avaliando" (a própria pergunta da Ana
+ * oferece essa terceira opção: "É pra morar, investir, ou você ainda está
+ * avaliando?"). Sem esse branch, "avaliando" nunca resolvia o eixo e a
+ * pergunta ficava se repetindo pra sempre (reportado em produção: 4x
+ * seguidas, cliente respondendo "avaliando" a cada turno).
  * Retorna null quando o texto nao resolve esse eixo.
  */
 export function inferResolvedPurchaseIntent(userMessage: string | null | undefined): PurchaseIntent | null {
@@ -205,6 +213,8 @@ export function inferResolvedPurchaseIntent(userMessage: string | null | undefin
 
   if (/\b(mais\s+pra|mais\s+para)\s+investir\b/.test(u)) return 'INVESTIMENTO';
   if (/\b(mais\s+pra|mais\s+para)\s+morar\b/.test(u)) return 'MORADIA';
+
+  if (STILL_EVALUATING_RE.test(u)) return 'AVALIANDO';
 
   return null;
 }

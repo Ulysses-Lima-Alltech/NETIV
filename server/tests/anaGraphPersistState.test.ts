@@ -47,6 +47,28 @@ test('persistStateNode grava purchaseIntent quando cliente responde "Morar" apos
   assert.equal(result.commercialFlowState?.purchaseIntent, 'MORADIA');
 });
 
+test('persistStateNode grava purchaseIntent AVALIANDO quando cliente responde "ainda estou avaliando" -- sem isso a pergunta morar/investir/avaliando ficava se repetindo pra sempre', async () => {
+  const state = baseState({
+    userMessage: 'ainda estou avaliando',
+    assistantReplyText: 'Sem problema! Me conta mais sobre o que você procura.',
+    commercialFlowState: {
+      lastAssistantAskedPurchaseIntent: true,
+    },
+  });
+
+  let persistedState: AnaGraphState['commercialFlowState'] | undefined;
+  const result = await persistStateNode(state, {
+    conversationId: 19604,
+    persist: async (_conversationId, nextState) => {
+      persistedState = nextState;
+    },
+    listActiveEnterprises: async () => [],
+  });
+
+  assert.equal(persistedState?.purchaseIntent, 'AVALIANDO');
+  assert.equal(result.commercialFlowState?.purchaseIntent, 'AVALIANDO');
+});
+
 test('persistStateNode mantem purchaseIntent anterior quando o turno atual nao resolve o eixo', async () => {
   const state = baseState({
     userMessage: 'qual o valor do lote?',

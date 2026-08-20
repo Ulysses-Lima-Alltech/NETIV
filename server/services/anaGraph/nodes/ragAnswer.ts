@@ -61,6 +61,7 @@ export async function ragAnswerNode(
   if (knownName) knownFactsLines.push(`- Nome do cliente: ${knownName}. Não pergunte o nome de novo.`);
   if (flowState.purchaseIntent === 'MORADIA') knownFactsLines.push('- Interesse do cliente: MORAR. Não pergunte de novo se é morar ou investir.');
   else if (flowState.purchaseIntent === 'INVESTIMENTO') knownFactsLines.push('- Interesse do cliente: INVESTIR. Não pergunte de novo se é morar ou investir.');
+  else if (flowState.purchaseIntent === 'AVALIANDO') knownFactsLines.push('- Cliente ainda está avaliando/decidindo entre morar ou investir. Não pergunte de novo se é morar ou investir — siga qualificando por outros pontos (orçamento, prazo etc).');
   const knownFactsBlock = knownFactsLines.length > 0 ? `\n\nO QUE JÁ SABEMOS (não repita estas perguntas):\n${knownFactsLines.join('\n')}` : '';
 
   // Sequência de qualificação estilo BANT — ver nextOpenQuestion.ts (compartilhado
