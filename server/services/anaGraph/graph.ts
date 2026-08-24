@@ -14,6 +14,8 @@ import { inferBudgetAnswerFromCurrentTurn, inferBuyingTimelineAnswerFromCurrentT
 import { mergeLeadQualificationState } from '../../utils/anaLeadQualificationPolicy.js';
 import { AnaGraphStateAnnotation, type AnaGraphState } from './state.js';
 import { automationGateNode } from './nodes/automationGate.js';
+import { aiAvailabilityGateNode } from './nodes/aiAvailabilityGate.js';
+import { aiBlockedReplyNode } from './nodes/aiBlockedReply.js';
 import { resolveEnterpriseNode } from './nodes/resolveEnterprise.js';
 import { classifyLeadTurnNode } from './nodes/classifyLeadTurn.js';
 import { decisionPolicyNode, routeAfterDecisionPolicy } from './nodes/decisionPolicy.js';
@@ -80,6 +82,11 @@ export function routeAfterFinalizeReply(state: AnaGraphState): 'sendWhatsapp' | 
   return state.assistantReplyText != null || state.replyIntentionallyEmpty ? 'sendWhatsapp' : 'humanHandoff';
 }
 
+/** Ver aiAvailabilityGateNode: quando bloqueado (bloqueio emergencial/IA desativada/API key ausente), desvia pra aiBlockedReply em vez do fluxo normal de classificação/LLM. */
+export function routeAfterAiAvailabilityGate(state: AnaGraphState): 'aiBlockedReply' | 'classifyLeadTurn' {
+  return state.aiBlocked ? 'aiBlockedReply' : 'classifyLeadTurn';
+}
+
 /**
  * Pedido explícito de corretor ("falar com corretor", "quero um atendente")
  * tem prioridade sobre qualquer outra rota — reaproveita hasExplicitHandoffIntent
@@ -109,6 +116,15 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
       const conversation = await loadConversationOrThrow(state.conversationId);
       return resolveEnterpriseNode(state, conversation);
     })
+    .addNode('aiAvailabilityGate', (state) => aiAvailabilityGateNode(state))
+    .addNode('aiBlockedReply', (state) =>
+      aiBlockedReplyNode(state, {
+        conversationId: state.conversationId,
+        toPhoneNumber: state.customerPhone ?? '',
+        sendText: deps.sendWhatsappText,
+        insertAssistantMessage: deps.insertAssistantMessage,
+      })
+    )
     .addNode('loadTurnContext', async (state) => {
       const conversation = await loadConversationOrThrow(state.conversationId);
       const enterprise = state.enterpriseId != null ? await getEnterpriseById(state.enterpriseId) : null;
@@ -269,7 +285,15 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
       [END]: END,
     })
     .addEdge('resolveEnterprise', 'loadTurnContext')
-    .addEdge('loadTurnContext', 'classifyLeadTurn')
+    .addEdge('loadTurnContext', 'aiAvailabilityGate')
+    .addConditionalEdges('aiAvailabilityGate', routeAfterAiAvailabilityGate, {
+      aiBlockedReply: 'aiBlockedReply',
+      classifyLeadTurn: 'classifyLeadTurn',
+    })
+    // aiBlockedReplyNode já envia e persiste a mensagem sozinho (mesmo padrão
+    // de humanHandoff) -- vai direto pra persistState, nunca passa por
+    // finalizeReply/sendWhatsapp de novo (evitaria reenvio duplicado).
+    .addEdge('aiBlockedReply', 'persistState')
     .addEdge('classifyLeadTurn', 'decisionPolicy')
     .addConditionalEdges('decisionPolicy', routeAfterDecisionPolicyWithExplicitHandoff, {
       visitScheduling: 'visitScheduling',

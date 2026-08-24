@@ -68,6 +68,23 @@ export const AnaGraphStateAnnotation = Annotation.Root({
     default: () => null,
   }),
 
+  /**
+   * Gate de disponibilidade de IA por empreendimento (enterprise_ai_settings:
+   * bloqueio emergencial, IA desativada, API key ausente) -- ver
+   * aiAvailabilityGateNode. Distinto de automationBlockedByHandoff (esse é
+   * sobre handoff pra corretor, não sobre a IA estar habilitada pro
+   * empreendimento).
+   */
+  aiBlocked: Annotation<boolean>({
+    reducer: (_current, update) => update,
+    default: () => false,
+  }),
+  /** Texto fixo a enviar quando aiBlocked=true; null quando o bloqueio deve ficar em silêncio (ex.: modelo mal configurado). */
+  aiBlockedReplyText: Annotation<string | null>({
+    reducer: (_current, update) => update,
+    default: () => null,
+  }),
+
   // Estado comercial espelhado (persistido em conversations.commercial_flow_state)
   commercialFlowState: Annotation<CommercialFlowState>({
     reducer: mergeCommercialFlowState,
