@@ -6,8 +6,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: netiv
-    ports:
-      - "5432:5432"
+    # Postgres é acessível apenas dentro da rede interna do Compose
+    # (não é necessário expor a porta 5432 para fora do container).
     volumes:
       - netiv_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -16,11 +16,44 @@ services:
       timeout: 5s
       retries: 5
 
-# Nota: em produção (AWS ECS/Fargate) sem disco persistente, os arquivos de
-# empreendimento são preservados via coluna file_data BYTEA no PostgreSQL (migration 027).
-# Em dev local, este volume garante persistência entre restarts do container do server.
-# Se rodar o server em Node diretamente (sem container), o diretório
-# storage/empreendimentos/ no monorepo já persiste naturalmente.
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: netiv-server
+    environment:
+      PORT: "3000"
+      NODE_ENV: "production"
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/netiv"
+      TEST_ACCESS_PASSWORD: "teste123"
+      CORS_ORIGIN: "http://localhost:5173"
+      FRONTEND_URL: "http://localhost:5173"
+      MOBILE_AUTH_JWT_SECRET: "troque-por-um-segredo-forte"
+      REALTIME_ENABLED: "false"
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - netiv_storage:/app/storage
+    command: >
+      sh -c "npm run migrate:deploy &&
+             node dist/scripts/seed-single-test-user.js &&
+             npm run start:prod"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: netiv-frontend
+    environment:
+      VITE_API_URL: "http://localhost:3000"
+    ports:
+      - "127.0.0.1:5173:5173"
+    depends_on:
+      - server
+
 volumes:
   netiv_pgdata:
   netiv_storage:

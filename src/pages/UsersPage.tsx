@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import {
   userRoleLabel,
   usersApi,
+  ApiError,
+  DEFAULT_TEMPORARY_PASSWORD,
   type AssignableResources,
   type UserListItem,
   type UserRole,
@@ -17,6 +19,22 @@ function toggleId(ids: number[], id: number): number[] {
   return ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id];
 }
 
+function slugifyName(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '.')
+    .replace(/^\.+|\.+$/g, '')
+    .slice(0, 60);
+}
+
+function generateUsernameSuggestion(nameValue: string): string {
+  const base = slugifyName(nameValue) || 'usuario';
+  const hash = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+  return `${base}.${hash}`;
+}
+
 export function UsersPage() {
   const { user: actor } = useAuth();
   const isAdmin = actor?.role === 'ADMIN';
@@ -30,9 +48,12 @@ export function UsersPage() {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [useDefaultPassword, setUseDefaultPassword] = useState(false);
   const [role, setRole] = useState<UserRole>('COLLABORATOR');
   const [active, setActive] = useState(true);
+  const [createBrokerAccess, setCreateBrokerAccess] = useState(false);
   const [scope, setScope] = useState<UserScopeInput>(emptyScope());
+  const [usernameTouched, setUsernameTouched] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -57,7 +78,7 @@ export function UsersPage() {
 
   const openCreate = () => {
     setEditing('new');
-    setName(''); setUsername(''); setEmail(''); setPassword(''); setRole('COLLABORATOR'); setActive(true); setScope(emptyScope()); setError(null);
+    setName(''); setUsername(''); setUsernameTouched(false); setEmail(''); setPassword(''); setUseDefaultPassword(false); setRole('COLLABORATOR'); setActive(true); setCreateBrokerAccess(false); setScope(emptyScope()); setError(null);
   };
 
   const openEdit = (item: UserListItem) => {
@@ -82,10 +103,27 @@ export function UsersPage() {
     try {
       if (editing === 'new') {
         const submittedScope = role === 'COLLABORATOR' ? scope : { ...scope, managerId: null };
-        await usersApi.create({
-          name, username, email: email || null, password, role, active, ...submittedScope,
-          allowDirectAssignment: role === 'COLLABORATOR' && submittedScope.managerId == null,
-        });
+        let attemptUsername = username;
+        let attemptsLeft = usernameTouched ? 1 : 5;
+        for (;;) {
+          try {
+            await usersApi.create({
+              name, username: attemptUsername, email: email || null, password,
+              useDefaultTemporaryPassword: useDefaultPassword,
+              role, active,
+              createBrokerAccess: role === 'COLLABORATOR' ? createBrokerAccess : false,
+              ...submittedScope,
+              allowDirectAssignment: role === 'COLLABORATOR' && submittedScope.managerId == null,
+            });
+            break;
+          } catch (createError) {
+            attemptsLeft -= 1;
+            const isDuplicate = createError instanceof ApiError && createError.code === 'DUPLICATE_USERNAME';
+            if (!isDuplicate || attemptsLeft <= 0) throw createError;
+            attemptUsername = generateUsernameSuggestion(name);
+            setUsername(attemptUsername);
+          }
+        }
       } else {
         const submittedScope = role === 'COLLABORATOR' ? scope : { ...scope, managerId: null };
         await usersApi.update(editing.id, isAdmin
@@ -149,7 +187,51 @@ export function UsersPage() {
       </main>
 
       {editing && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={() => setEditing(null)}><div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl" onMouseDown={(e) => e.stopPropagation()}><h2 className="mb-4 text-lg font-semibold">{editing === 'new' ? 'Novo acesso' : `Editar ${editing.name}`}</h2>{error && <p className="mb-3 text-sm text-red-600">{error}</p>}<form onSubmit={save} className="space-y-5">
-        <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm">Nome<input className={`${field} mt-1`} value={name} onChange={(e) => setName(e.target.value)} required /></label><label className="text-sm">Username<input className={`${field} mt-1`} value={username} onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/\s/g, ''))} required disabled={!isAdmin && editing !== 'new'} /></label><label className="text-sm">E-mail opcional<input className={`${field} mt-1`} type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>{editing === 'new' && <label className="text-sm">Senha temporária<input className={`${field} mt-1`} type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} required /></label>}<label className="text-sm">Perfil<select className={`${field} mt-1`} value={role} onChange={(e) => setRole(e.target.value as UserRole)} disabled={!isAdmin}><option value="COLLABORATOR">Colaborador</option><option value="MANAGERIAL">Gestor</option><option value="ADMIN">Administrador</option></select></label>{role === 'COLLABORATOR' && <label className="text-sm">Gestor responsável<select className={`${field} mt-1`} value={scope.managerId ?? ''} onChange={(e) => setScope((current) => ({ ...current, managerId: e.target.value ? Number(e.target.value) : null }))} disabled={!isAdmin}><option value="">Atribuição direta por ADMIN</option>{managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select></label>}{isAdmin && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />Acesso ativo</label>}</div>
+        <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm">Nome<input className={`${field} mt-1`} value={name} onChange={(e) => { const value = e.target.value; setName(value); if (editing === 'new' && !usernameTouched) { setUsername(generateUsernameSuggestion(value)); } }} required /></label><label className="text-sm">Username<input className={`${field} mt-1`} value={username} onChange={(e) => { if (editing === 'new') setUsernameTouched(true); setUsername(e.target.value.toLowerCase().replace(/\s/g, '')); }} required disabled={!isAdmin && editing !== 'new'} /></label><label className="text-sm">E-mail opcional<input className={`${field} mt-1`} type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>{editing === 'new' && (
+          <div className="grid gap-2">
+            <label className="text-sm">
+              Senha temporária
+              <input
+                className={`${field} mt-1`}
+                type="password"
+                minLength={useDefaultPassword ? undefined : 8}
+                value={password}
+                disabled={useDefaultPassword}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={useDefaultPassword}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setUseDefaultPassword(checked);
+                  setPassword(checked ? DEFAULT_TEMPORARY_PASSWORD : '');
+                }}
+              />
+              Usar senha temporária padrão ({DEFAULT_TEMPORARY_PASSWORD})
+            </label>
+          </div>
+        )}<label className="text-sm">Perfil<select className={`${field} mt-1`} value={role} onChange={(e) => setRole(e.target.value as UserRole)} disabled={!isAdmin}><option value="COLLABORATOR">Colaborador</option><option value="MANAGERIAL">Gestor</option><option value="ADMIN">Administrador</option></select></label>{role === 'COLLABORATOR' && <label className="text-sm">Gestor responsável<select className={`${field} mt-1`} value={scope.managerId ?? ''} onChange={(e) => setScope((current) => ({ ...current, managerId: e.target.value ? Number(e.target.value) : null }))} disabled={!isAdmin}><option value="">Atribuição direta por ADMIN</option>{managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select></label>}{isAdmin && (
+          <>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
+              Acesso ativo
+            </label>
+            {editing === 'new' && role === 'COLLABORATOR' && (
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={createBrokerAccess}
+                  onChange={(e) => setCreateBrokerAccess(e.target.checked)}
+                />
+                Criar e atribuir acesso de corretor
+              </label>
+            )}
+          </>
+        )}</div>
         {role !== 'ADMIN' && <div className="grid gap-5 sm:grid-cols-2"><fieldset><legend className="mb-2 text-sm font-semibold">Empreendimentos</legend><div className="max-h-40 space-y-2 overflow-y-auto rounded-lg border p-3">{resources.enterprises.map((resource) => <label key={resource.id} className="flex gap-2 text-sm"><input type="checkbox" checked={scope.enterpriseIds.includes(resource.id)} onChange={() => setScope((current) => ({ ...current, enterpriseIds: toggleId(current.enterpriseIds, resource.id) }))} />{resource.name}</label>)}{resources.enterprises.length === 0 && <span className="text-xs text-[#6B7280]">Nenhum disponível.</span>}</div></fieldset><fieldset><legend className="mb-2 text-sm font-semibold">Corretores</legend><div className="max-h-40 space-y-2 overflow-y-auto rounded-lg border p-3">{resources.brokers.map((resource) => <label key={resource.id} className="flex gap-2 text-sm"><input type="checkbox" checked={scope.brokerIds.includes(resource.id)} onChange={() => setScope((current) => ({ ...current, brokerIds: toggleId(current.brokerIds, resource.id) }))} />{resource.name}{!resource.active && ' (inativo)'}</label>)}{resources.brokers.length === 0 && <span className="text-xs text-[#6B7280]">Nenhum disponível.</span>}</div></fieldset></div>}
         <p className="text-xs text-[#6B7280]">Conversas, contatos e visitas atribuídos diretamente continuam preservados. Empreendimentos e corretores também derivam o escopo operacional relacionado.</p><div className="flex justify-end gap-2"><button type="button" onClick={() => setEditing(null)} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button><button disabled={saving} className="rounded-lg bg-[#F97316] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Salvando…' : 'Salvar'}</button></div>
       </form></div></div>}
