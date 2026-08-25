@@ -17,6 +17,7 @@ import {
   wouldRemoveLastActiveAdmin,
   type AppUser,
 } from '../repositories/userRepository.js';
+import { createCorretor } from '../repositories/corretorRepository.js';
 import { createUserSchema, updatePasswordSchema, updateUserSchema, userScopeSchema } from '../validators/users.js';
 import {
   AuthorizationError,
@@ -198,6 +199,20 @@ router.post('/', async (req, res) => {
       contactIds: data.contactIds,
       appointmentIds: data.appointmentIds,
     };
+    if (data.createBrokerAccess) {
+      if (data.role !== 'COLLABORATOR') {
+        return res.status(400).json({
+          error: 'Acesso de corretor só pode ser criado para o perfil Colaborador.',
+          code: 'BROKER_ACCESS_REQUIRES_COLLABORATOR',
+        });
+      }
+      if (scope.enterpriseIds.length === 0) {
+        return res.status(400).json({
+          error: 'Selecione ao menos um empreendimento para criar o acesso de corretor.',
+          code: 'BROKER_ACCESS_REQUIRES_ENTERPRISE',
+        });
+      }
+    }
     if (data.role === 'COLLABORATOR') {
       await validateManager(scope.managerId);
       if (scope.managerId == null && (!data.allowDirectAssignment || !hasAnyDirectScope(scope))) {
@@ -212,6 +227,15 @@ router.post('/', async (req, res) => {
     await assertScopeResourcesExist(scope);
     client = await getPool().connect();
     await client.query('BEGIN');
+    let brokerId: number | null = null;
+    if (data.createBrokerAccess) {
+      const corretor = await createCorretor(
+        { fullName: data.name, city: '', phone: '', realEstateAgency: '', enterpriseIds: scope.enterpriseIds },
+        client
+      );
+      brokerId = corretor.id;
+      scope.brokerIds = [...new Set([...scope.brokerIds, corretor.id])];
+    }
     const user = await createUser({
       username: data.username,
       name: data.name,
@@ -220,9 +244,10 @@ router.post('/', async (req, res) => {
       role: data.role,
       active: data.active,
       must_change_password: true,
+      broker_id: brokerId,
     }, client);
     await replaceUserScope(actor, user, scope, client);
-    await recordAccessAudit({ actorUserId: actor.id, targetUserId: user.id, action: 'USER_CREATED', resourceType: 'user', resourceId: user.id, metadata: { role: user.role } }, client);
+    await recordAccessAudit({ actorUserId: actor.id, targetUserId: user.id, action: 'USER_CREATED', resourceType: 'user', resourceId: user.id, metadata: { role: user.role, brokerId } }, client);
     await client.query('COMMIT');
     res.status(201).json({ user: await toUserDto(user) });
   } catch (error) {

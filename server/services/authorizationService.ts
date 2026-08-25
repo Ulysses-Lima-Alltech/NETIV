@@ -542,7 +542,7 @@ export async function listAssignableResources(user: AppUser): Promise<{
   ]);
   const [enterprises, brokers] = await Promise.all([
     query<{ id: number; name: string }>(
-      `SELECT id, name FROM enterprises WHERE id = ANY($1::int[]) ORDER BY name`,
+      `SELECT id, name FROM enterprises WHERE id = ANY($1::int[]) AND status = 'ativo' ORDER BY name`,
       [enterpriseIds]
     ),
     query<{ id: number; name: string; active: boolean }>(

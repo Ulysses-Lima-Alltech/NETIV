@@ -1313,10 +1313,22 @@ export interface AssignableResources {
   brokers: Array<{ id: number; name: string; active: boolean }>;
 }
 
+/** Precisa ficar igual a DEFAULT_TEMPORARY_PASSWORD em server/validators/users.ts */
+export const DEFAULT_TEMPORARY_PASSWORD = 'ia@123';
+
 export const usersApi = {
   list: () => request<{ users: UserListItem[] }>('/users'),
   resources: () => request<AssignableResources>('/users/resources'),
-  create: (body: { name: string; username: string; email?: string | null; password: string; role: UserRole; active: boolean } & UserScopeInput & { allowDirectAssignment?: boolean }) =>
+  create: (body: {
+    name: string;
+    username: string;
+    email?: string | null;
+    password: string;
+    useDefaultTemporaryPassword?: boolean;
+    role: UserRole;
+    active: boolean;
+    createBrokerAccess?: boolean;
+  } & UserScopeInput & { allowDirectAssignment?: boolean }) =>
     request<{ user: UserListItem }>('/users', { method: 'POST', body }),
   update: (id: number, body: { name?: string; username?: string | null; email?: string | null; role?: UserRole; active?: boolean }) =>
     request<{ user: UserListItem }>(`/users/${id}`, { method: 'PATCH', body }),
