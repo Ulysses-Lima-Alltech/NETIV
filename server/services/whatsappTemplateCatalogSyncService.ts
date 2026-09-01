@@ -131,6 +131,8 @@ function mapMetaTemplateToCatalogItem(
   const hasHeaderVideo = headerFormat === 'VIDEO';
   const hasHeaderDocument = headerFormat === 'DOCUMENT';
   const hasButtons = components.some((component) => String(component.type ?? '').toUpperCase() === 'BUTTONS');
+  const bodyComponent = components.find((component) => String(component.type ?? '').toUpperCase() === 'BODY');
+  const messageBodyTemplate = bodyComponent?.text?.trim() || undefined;
   const variables = buildVariablesFromBody(components);
   const persisted = configuredMedia.get(buildTemplateLangKey(key, languageCode));
   const headerImageUrl = persisted?.headerImageUrl?.trim() || null;
@@ -146,6 +148,7 @@ function mapMetaTemplateToCatalogItem(
     status,
     source: 'meta',
     components: components as Array<Record<string, unknown>>,
+    messageBodyTemplate,
     createdAt: template.created_time ?? null,
     updatedAt: template.updated_time ?? null,
     hasHeaderImage,
