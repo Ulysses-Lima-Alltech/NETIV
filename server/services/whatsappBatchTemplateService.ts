@@ -149,9 +149,11 @@ export function resolveBatchHandoffDeliveryDecision(params: {
   const inHandoff = isAnaAutomationBlockedByHandoff(params.conversation);
   const inCarteira = normalizeBatchClassification(params.conversation?.classification) === 'carteira';
 
-  if (isScheduledAutomation) {
-    if (inHandoff) return { allowed: false, reason: 'handoff' };
-    if (inCarteira) return { allowed: false, reason: 'carteira' };
+  // Conversa em handoff não bloqueia mais o envio agendado — o disparo agendado
+  // agora se comporta como o manual: envia e preserva o handoff (não deixa a Ana
+  // retomar automações depois). Só "carteira" continua bloqueando disparo agendado.
+  if (isScheduledAutomation && inCarteira) {
+    return { allowed: false, reason: 'carteira' };
   }
 
   return {

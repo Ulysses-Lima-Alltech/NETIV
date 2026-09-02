@@ -24,7 +24,7 @@ test('envio manual imediato em handoff permanece permitido e preserva HANDOFF', 
   assert.deepEqual(decision, { allowed: true, effectivePostSendMode: 'HANDOFF' });
 });
 
-test('lote agendado consulta o estado atual e bloqueia handoff e Carteira', () => {
+test('lote agendado consulta o estado atual, permite handoff (preservando HANDOFF) e bloqueia Carteira', () => {
   const scheduledHandoff = resolveBatchHandoffDeliveryDecision({
     sourceKeyPrefix: 'scheduled_batch:44',
     requestedPostSendMode: 'ANA',
@@ -36,15 +36,15 @@ test('lote agendado consulta o estado atual e bloqueia handoff e Carteira', () =
     conversation: { ...handoffConversation, handoff: false, classification: ' CARTEIRA ' },
   });
 
-  assert.deepEqual(scheduledHandoff, { allowed: false, reason: 'handoff' });
+  assert.deepEqual(scheduledHandoff, { allowed: true, effectivePostSendMode: 'HANDOFF' });
   assert.deepEqual(scheduledCarteira, { allowed: false, reason: 'carteira' });
 });
 
-test('decisão é isolada por conversa e um bloqueio não cancela destinatários elegíveis', () => {
+test('decisão é isolada por conversa e um bloqueio (Carteira) não cancela destinatários elegíveis', () => {
   const blocked = resolveBatchHandoffDeliveryDecision({
     sourceKeyPrefix: 'scheduled_batch:44',
     requestedPostSendMode: 'ANA',
-    conversation: handoffConversation,
+    conversation: { id: 102, contact_id: 203, handoff: false, classification: 'Carteira' },
   });
   const allowed = resolveBatchHandoffDeliveryDecision({
     sourceKeyPrefix: 'scheduled_batch:44',

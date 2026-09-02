@@ -3,8 +3,6 @@ import { setConversationEnterpriseIdAndOrigin } from '../../../repositories/conv
 import { listEnterprises } from '../../../repositories/enterpriseRepository.js';
 import type { AnaGraphState } from '../state.js';
 
-const ANA_EVORA_DEFAULT_PHONE_NUMBER_ID = '1070497299485505';
-
 function normalizeInboundEnterpriseText(value: string | null | undefined): string {
   return String(value ?? '')
     .toLowerCase()
@@ -38,28 +36,26 @@ export async function resolveAnaEnterpriseForTurn(params: {
   metaMessageId: string;
 }): Promise<ConversationRow> {
   const phoneNumberId = String(params.phoneNumberId ?? '').trim() || null;
+  // Classificação só ocorre quando o cliente demonstra interesse explícito no
+  // empreendimento (menciona o nome na mensagem). O número de WhatsApp que
+  // recebeu a mensagem é o canal geral da empresa, não um sinal de interesse
+  // — nunca deve, sozinho, classificar a conversa em nenhum empreendimento.
   const matchedByMessage = inboundMentionsEvora(params.userMessage);
-  const matchedByPhoneDefault =
-    !matchedByMessage &&
-    params.conversation.enterprise_id == null &&
-    phoneNumberId === ANA_EVORA_DEFAULT_PHONE_NUMBER_ID;
 
-  if (!matchedByMessage && !matchedByPhoneDefault) return params.conversation;
+  if (!matchedByMessage) return params.conversation;
 
   const activeEnterprises = await listEnterprises(true);
   const evoraEnterprise =
     activeEnterprises.find((enterprise) => isEvoraEnterpriseNameForInbound(enterprise.name, enterprise.slug)) ?? null;
-  const matchedBy = matchedByMessage ? 'message_evora_keyword' : 'phone_number_default_evora';
-  const reason = matchedByMessage ? 'inbound_message_mentions_evora' : 'phone_number_default_enterprise';
 
   console.log('[ANA_ENTERPRISE_RESOLVE]', {
     conversationId: params.conversation.id,
     metaMessageId: params.metaMessageId,
-    reason,
+    reason: 'inbound_message_mentions_evora',
     phoneNumberId,
     enterpriseId: evoraEnterprise?.id ?? null,
     enterpriseName: evoraEnterprise?.name ?? null,
-    matchedBy,
+    matchedBy: 'message_evora_keyword',
   });
 
   if (!evoraEnterprise) return params.conversation;
@@ -74,7 +70,7 @@ export async function resolveAnaEnterpriseForTurn(params: {
       phoneNumberId,
       enterpriseId: finalConversation.enterprise_id ?? null,
       enterpriseName: evoraEnterprise.name,
-      matchedBy,
+      matchedBy: 'message_evora_keyword',
     });
   }
   return finalConversation;

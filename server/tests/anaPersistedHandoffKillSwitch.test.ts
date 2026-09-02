@@ -361,7 +361,7 @@ test('env antiga nao mascara mais estado persistido e envio manual nao usa wrapp
   assert.doesNotMatch(mobile, /sendAnaTextMessageWithQuota/);
 });
 
-test('batch permite template manual em HANDOFF, mas bloqueia processamento agendado', () => {
+test('batch permite template manual e agendado em HANDOFF (preserva HANDOFF), só bloqueia Carteira no agendado', () => {
   const source = readServerSourceFile('services/whatsappBatchTemplateService.ts');
   const existingConversationLookup = source.indexOf('existingConversationResult = await query');
   const effectiveMode = source.indexOf('const effectivePostSendMode', existingConversationLookup);
@@ -371,7 +371,8 @@ test('batch permite template manual em HANDOFF, mas bloqueia processamento agend
   assert.match(source, /const existingConversationInHandoff = isAnaAutomationBlockedByHandoff\(existingConversation\)/);
   assert.match(source, /resolveBatchHandoffDeliveryDecision/);
   assert.match(source, /const isScheduledAutomation = params\.sourceKeyPrefix\.startsWith\('scheduled_batch:'\)/);
-  assert.match(source, /if \(inHandoff\) return \{ allowed: false, reason: 'handoff' \}/);
+  assert.doesNotMatch(source, /if \(inHandoff\) return \{ allowed: false, reason: 'handoff' \}/);
+  assert.match(source, /if \(isScheduledAutomation && inCarteira\)/);
   assert.match(source, /effectivePostSendMode: inHandoff \? 'HANDOFF' : params\.requestedPostSendMode/);
   assert.match(source, /const effectivePostSendMode = deliveryDecision\.effectivePostSendMode/);
   assert.match(source, /WHATSAPP_BATCH_OPERATOR_SEND_HANDOFF_PRESERVED/);

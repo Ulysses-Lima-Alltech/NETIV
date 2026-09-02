@@ -35,16 +35,26 @@ function visitTurn(
   });
 }
 
-test('webhook resolve Evora antes de atalhos de agenda/engine', () => {
-  assert.match(webhookSource, /ANA_ENTERPRISE_RESOLVE/);
-  assert.match(webhookSource, /ANA_EVORA_DEFAULT_PHONE_NUMBER_ID\s*=\s*'1070497299485505'/);
-  assert.match(webhookSource, /setConversationEnterpriseIdAndOrigin/);
+test('webhook resolve Evora antes de atalhos de agenda/engine, apenas por interesse explícito na mensagem', () => {
+  const resolveEnterpriseSource = fs.readFileSync(
+    new URL('../services/anaGraph/nodes/resolveEnterprise.ts', import.meta.url),
+    'utf8'
+  );
+  assert.match(resolveEnterpriseSource, /ANA_ENTERPRISE_RESOLVE/);
+  assert.match(resolveEnterpriseSource, /setConversationEnterpriseIdAndOrigin/);
 
   const resolveCall = webhookSource.indexOf('conv = await resolveAnaEnterpriseBeforeEngine');
   const fastSchedule = webhookSource.indexOf('const shouldFastScheduleAnaBeforeClassifier');
   assert.ok(resolveCall > -1, 'resolução determinística não foi chamada no webhook');
   assert.ok(fastSchedule > -1, 'atalho de schedule não encontrado');
   assert.ok(resolveCall < fastSchedule, 'Évora precisa ser resolvido antes do fast schedule');
+
+  // O número de WhatsApp que recebeu a mensagem nunca deve, sozinho, classificar
+  // a conversa num empreendimento — só a menção explícita do cliente no texto.
+  assert.doesNotMatch(resolveEnterpriseSource, /ANA_EVORA_DEFAULT_PHONE_NUMBER_ID/);
+  assert.doesNotMatch(resolveEnterpriseSource, /phone_number_default/);
+  assert.match(resolveEnterpriseSource, /matchedByMessage = inboundMentionsEvora\(params\.userMessage\)/);
+  assert.match(resolveEnterpriseSource, /if \(!matchedByMessage\) return params\.conversation/);
 });
 
 test('guardrail factual do Evora remove Campinas e força localização correta', () => {
