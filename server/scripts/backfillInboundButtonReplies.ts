@@ -76,43 +76,67 @@ function payloadMessages(payload: string | null): WebhookMessage[] {
   }
 }
 
-function findMessageInPayload(payload: string | null, metaMessageId: string): WebhookMessage | null {
-  return payloadMessages(payload).find((msg) => msg.id === metaMessageId) ?? null;
+function collectMatchesFromEvents(
+  lookup: Map<string, { msg: WebhookMessage; eventId: number }>,
+  missingIds: Set<string>,
+  events: WebhookEventRow[]
+): void {
+  for (const event of events) {
+    for (const msg of payloadMessages(event.payload)) {
+      if (missingIds.has(msg.id) && !lookup.has(msg.id)) {
+        lookup.set(msg.id, { msg, eventId: event.id });
+      }
+    }
+  }
 }
 
-async function findWebhookMessage(
-  metaMessageId: string,
-  messageCreatedAt: Date
-): Promise<{ msg: WebhookMessage; eventId: number } | null> {
+function messageDayKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+async function buildWebhookMessageLookup(
+  candidates: CandidateRow[]
+): Promise<Map<string, { msg: WebhookMessage; eventId: number }>> {
+  const lookup = new Map<string, { msg: WebhookMessage; eventId: number }>();
+  const ids = [...new Set(candidates.map((row) => row.meta_message_id))];
+  if (ids.length === 0) return lookup;
+
   const indexed = await query<WebhookEventRow>(
     `SELECT id, meta_message_id, payload
        FROM webhook_events
-      WHERE meta_message_id = $1
-      ORDER BY created_at ASC, id ASC
-      LIMIT 10`,
-    [metaMessageId]
+      WHERE meta_message_id = ANY($1::text[])
+      ORDER BY created_at ASC, id ASC`,
+    [ids]
   );
-  for (const event of indexed.rows) {
-    const msg = findMessageInPayload(event.payload, metaMessageId);
-    if (msg) return { msg, eventId: event.id };
+  collectMatchesFromEvents(lookup, new Set(ids), indexed.rows);
+
+  let missingIds = new Set(ids.filter((id) => !lookup.has(id)));
+  const missingByDay = new Map<string, Set<string>>();
+  for (const row of candidates) {
+    if (!missingIds.has(row.meta_message_id)) continue;
+    const day = messageDayKey(row.created_at);
+    const group = missingByDay.get(day) ?? new Set<string>();
+    group.add(row.meta_message_id);
+    missingByDay.set(day, group);
   }
 
-  const fallback = await query<WebhookEventRow>(
-    `SELECT id, meta_message_id, payload
-       FROM webhook_events
-      WHERE direction = 'incoming'
-        AND created_at >= $2::timestamptz - INTERVAL '2 days'
-        AND created_at <= $2::timestamptz + INTERVAL '2 days'
-      ORDER BY ABS(EXTRACT(EPOCH FROM (created_at - $2::timestamptz))) ASC, id ASC
-      LIMIT 250`,
-    [metaMessageId, messageCreatedAt]
-  );
-  for (const event of fallback.rows) {
-    const msg = findMessageInPayload(event.payload, metaMessageId);
-    if (msg) return { msg, eventId: event.id };
+  for (const [day, dayIds] of missingByDay) {
+    const fallback = await query<WebhookEventRow>(
+      `SELECT id, meta_message_id, payload
+         FROM webhook_events
+        WHERE direction = 'incoming'
+          AND created_at >= $1::date - INTERVAL '2 days'
+          AND created_at < $1::date + INTERVAL '3 days'
+        ORDER BY created_at ASC, id ASC
+        LIMIT 5000`,
+      [day]
+    );
+    collectMatchesFromEvents(lookup, dayIds, fallback.rows);
+    missingIds = new Set([...missingIds].filter((id) => !lookup.has(id)));
+    if (missingIds.size === 0) break;
   }
 
-  return null;
+  return lookup;
 }
 
 async function main() {
@@ -133,8 +157,10 @@ async function main() {
     before,
   });
 
+  const webhookMessages = await buildWebhookMessageLookup(candidates);
+
   for (const row of candidates) {
-    const found = await findWebhookMessage(row.meta_message_id, row.created_at);
+    const found = webhookMessages.get(row.meta_message_id) ?? null;
     if (!found) {
       skippedNoWebhookEvent += 1;
       continue;
