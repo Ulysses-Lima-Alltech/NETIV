@@ -9,6 +9,7 @@ interface CandidateRow {
   id: number;
   meta_message_id: string;
   content: string | null;
+  created_at: Date;
 }
 
 interface WebhookEventRow {
@@ -45,7 +46,7 @@ async function countPlaceholders(): Promise<Record<(typeof PLACEHOLDERS)[number]
 
 async function findCandidates(limit: number): Promise<CandidateRow[]> {
   const { rows } = await query<CandidateRow>(
-    `SELECT id, meta_message_id, content
+    `SELECT id, meta_message_id, content, created_at
        FROM messages
       WHERE role = 'user'
         AND content = ANY($1::text[])
@@ -79,7 +80,10 @@ function findMessageInPayload(payload: string | null, metaMessageId: string): We
   return payloadMessages(payload).find((msg) => msg.id === metaMessageId) ?? null;
 }
 
-async function findWebhookMessage(metaMessageId: string): Promise<{ msg: WebhookMessage; eventId: number } | null> {
+async function findWebhookMessage(
+  metaMessageId: string,
+  messageCreatedAt: Date
+): Promise<{ msg: WebhookMessage; eventId: number } | null> {
   const indexed = await query<WebhookEventRow>(
     `SELECT id, meta_message_id, payload
        FROM webhook_events
@@ -95,12 +99,14 @@ async function findWebhookMessage(metaMessageId: string): Promise<{ msg: Webhook
 
   const fallback = await query<WebhookEventRow>(
     `SELECT id, meta_message_id, payload
-      FROM webhook_events
+       FROM webhook_events
       WHERE direction = 'incoming'
+        AND created_at >= $2::timestamptz - INTERVAL '2 days'
+        AND created_at <= $2::timestamptz + INTERVAL '2 days'
         AND POSITION($1 IN payload) > 0
-      ORDER BY created_at ASC, id ASC
+      ORDER BY ABS(EXTRACT(EPOCH FROM (created_at - $2::timestamptz))) ASC, id ASC
       LIMIT 25`,
-    [metaMessageId]
+    [metaMessageId, messageCreatedAt]
   );
   for (const event of fallback.rows) {
     const msg = findMessageInPayload(event.payload, metaMessageId);
@@ -129,7 +135,7 @@ async function main() {
   });
 
   for (const row of candidates) {
-    const found = await findWebhookMessage(row.meta_message_id);
+    const found = await findWebhookMessage(row.meta_message_id, row.created_at);
     if (!found) {
       skippedNoWebhookEvent += 1;
       continue;
