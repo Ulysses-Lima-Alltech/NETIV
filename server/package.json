@@ -23,6 +23,7 @@
     "kb:migrate:r2-s3:prod": "node dist/scripts/migrateKnowledgeStorageR2ToS3.js",
     "diagnose:lead-classifier": "node dist/scripts/diagnoseLeadClassifier.js",
     "backfill:lead-classifier": "node dist/scripts/backfillLeadClassification.js",
+    "backfill:inbound-buttons": "node dist/scripts/backfillInboundButtonReplies.js",
     "anagraph:harness": "tsx scripts/anaGraphComparisonHarness.ts"
   },
   "dependencies": {

@@ -43,6 +43,7 @@ import {
   isAnaAutomationBlockedByHandoff,
   logAnaAutomationBlockedByHandoff,
 } from '../utils/anaAutomationEligibility.js';
+import { extractWhatsAppInboundMessageText } from '../utils/whatsappInboundMessageText.js';
 
 import {
   extractCustomerNameFromUserUtterance,
@@ -60,7 +61,8 @@ function phoneDigitsTail(raw: string | null | undefined, len = 6): string | null
 }
 
 function getMessageBody(msg: WebhookMessage): string | null {
-  if (msg.text?.body) return msg.text.body;
+  const inboundText = extractWhatsAppInboundMessageText(msg);
+  if (inboundText) return inboundText;
   if (msg.image?.caption) return msg.image.caption;
   return null;
 }
@@ -219,9 +221,8 @@ function classifyWebhookInboundSurface(payload: WebhookPayload): {
       totalInboundMessages += msgs.length;
       totalStatuses += sts.length;
       for (const m of msgs) {
-        const t = m.type ?? 'unknown';
-        const body = getMessageBody(m as WebhookMessage)?.trim();
-        if (t === 'text' && body) inboundTextWithBodyCount += 1;
+        const body = extractWhatsAppInboundMessageText(m as WebhookMessage);
+        if (body) inboundTextWithBodyCount += 1;
       }
     }
   }
@@ -484,8 +485,8 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           });
 
           const type = msg.type ?? 'unknown';
-          const bodyText = getMessageBody(msg);
-          const isTextMessage = type === 'text' && !!bodyText?.trim();
+          const bodyText = extractWhatsAppInboundMessageText(msg);
+          const isTextMessage = !!bodyText?.trim();
 
           let media: Awaited<ReturnType<typeof downloadAndStoreInboundMedia>> = null;
           let transcribedAudioText: string | null = null;

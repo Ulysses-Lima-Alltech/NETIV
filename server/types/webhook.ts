@@ -40,6 +40,22 @@ export interface WebhookMessage {
   timestamp: string;
   type: string;
   text?: { body: string };
+  button?: {
+    text?: string;
+    payload?: string;
+  };
+  interactive?: {
+    type?: 'button_reply' | 'list_reply' | string;
+    button_reply?: {
+      id?: string;
+      title?: string;
+    };
+    list_reply?: {
+      id?: string;
+      title?: string;
+      description?: string;
+    };
+  };
   image?: { id: string; caption?: string };
   audio?: { id: string };
   video?: { id: string };
