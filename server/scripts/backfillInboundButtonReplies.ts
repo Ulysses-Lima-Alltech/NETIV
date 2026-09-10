@@ -103,9 +103,8 @@ async function findWebhookMessage(
       WHERE direction = 'incoming'
         AND created_at >= $2::timestamptz - INTERVAL '2 days'
         AND created_at <= $2::timestamptz + INTERVAL '2 days'
-        AND POSITION($1 IN payload) > 0
       ORDER BY ABS(EXTRACT(EPOCH FROM (created_at - $2::timestamptz))) ASC, id ASC
-      LIMIT 25`,
+      LIMIT 250`,
     [metaMessageId, messageCreatedAt]
   );
   for (const event of fallback.rows) {
