@@ -615,7 +615,13 @@ export function SettingsWhatsAppPage() {
     if (newApiKey.length > 0) payload.openai_api_key = newApiKey;
 
     try {
-      await settingsApi.putApiEnterprise(enterpriseId, payload);
+      const saved = await settingsApi.putApiEnterprise(enterpriseId, payload);
+      if (
+        saved.emergency_block_enabled !== payload.emergency_block_enabled ||
+        saved.emergency_block_message !== payload.emergency_block_message
+      ) {
+        throw new Error('O servidor não confirmou o bloqueio e a mensagem. Recarregue a página e tente novamente.');
+      }
       await loadApiSettings();
       setApiMessage({ type: 'success', text: 'Configuração do empreendimento salva com sucesso.' });
     } catch (error) {
