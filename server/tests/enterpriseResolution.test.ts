@@ -29,6 +29,7 @@ const enterprises = [
   enterprise(1, 'Altis Pirituba', 'altis-pirituba'),
   enterprise(2, 'Residencial Évora', 'residencial-evora'),
   enterprise(3, 'Vista Sol', 'vista-sol'),
+  enterprise(4, 'OLIVA 317', 'oliva317'),
 ];
 
 function candidateIds(candidates: EnterpriseResolutionCandidate[]): number[] {
@@ -57,6 +58,14 @@ test('resolve Évora ignorando acento e caixa', () => {
   assert.equal(result.source, 'message_alias');
   assert.equal(result.enterpriseId, 2);
   assert.equal(result.enterpriseName, 'Residencial Évora');
+});
+
+test('resolve Oliva317 por nome, primeiro token e slug antes de consultar o bloqueio', () => {
+  for (const message of ['ola, queria informações do oliva', 'oliva317', 'Oliva 317']) {
+    const result = resolveEnterpriseFromMessageAliases(message, enterprises);
+    assert.equal(result.source, 'message_alias', message);
+    assert.equal(result.enterpriseId, 4, message);
+  }
 });
 
 test('termos comerciais sem alias nao escolhem empreendimento', () => {

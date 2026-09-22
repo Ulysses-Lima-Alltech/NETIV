@@ -1,28 +1,11 @@
 import type { ConversationRow } from '../../../repositories/conversationRepository.js';
 import { setConversationEnterpriseIdAndOrigin } from '../../../repositories/conversationRepository.js';
 import { listEnterprises } from '../../../repositories/enterpriseRepository.js';
+import {
+  listEnterpriseAliasRowsForActiveEnterprises,
+  resolveEnterpriseFromMessageAliases,
+} from '../../../repositories/enterpriseMatch.js';
 import type { AnaGraphState } from '../state.js';
-
-function normalizeInboundEnterpriseText(value: string | null | undefined): string {
-  return String(value ?? '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function inboundMentionsEvora(text: string): boolean {
-  const n = normalizeInboundEnterpriseText(text);
-  if (!n) return false;
-  return /\b(?:lote(?:amento)?\s+)?evora\b/.test(n);
-}
-
-function isEvoraEnterpriseNameForInbound(name: string | null | undefined, slug?: string | null): boolean {
-  const n = normalizeInboundEnterpriseText(`${name ?? ''} ${slug ?? ''}`);
-  return /\bevora\b/.test(n);
-}
 
 /**
  * Extraído de webhookProcessor.ts (resolveAnaEnterpriseBeforeEngine) para reuso
@@ -40,37 +23,34 @@ export async function resolveAnaEnterpriseForTurn(params: {
   // empreendimento (menciona o nome na mensagem). O número de WhatsApp que
   // recebeu a mensagem é o canal geral da empresa, não um sinal de interesse
   // — nunca deve, sozinho, classificar a conversa em nenhum empreendimento.
-  const matchedByMessage = inboundMentionsEvora(params.userMessage);
-
-  if (!matchedByMessage) return params.conversation;
-
   const activeEnterprises = await listEnterprises(true);
-  const evoraEnterprise =
-    activeEnterprises.find((enterprise) => isEvoraEnterpriseNameForInbound(enterprise.name, enterprise.slug)) ?? null;
+  const aliasRows = await listEnterpriseAliasRowsForActiveEnterprises(activeEnterprises.map((item) => item.id));
+  const match = resolveEnterpriseFromMessageAliases(params.userMessage, activeEnterprises, aliasRows);
+  // Keep the existing conversation when the message names no enterprise or
+  // matches more than one. A phone number alone is never an interest signal.
+  if (match.source !== 'message_alias' || match.enterpriseId == null) return params.conversation;
 
   console.log('[ANA_ENTERPRISE_RESOLVE]', {
     conversationId: params.conversation.id,
     metaMessageId: params.metaMessageId,
-    reason: 'inbound_message_mentions_evora',
+    reason: 'inbound_message_matches_enterprise_alias',
     phoneNumberId,
-    enterpriseId: evoraEnterprise?.id ?? null,
-    enterpriseName: evoraEnterprise?.name ?? null,
-    matchedBy: 'message_evora_keyword',
+    enterpriseId: match.enterpriseId,
+    enterpriseName: match.enterpriseName,
+    matchedBy: 'message_alias',
   });
 
-  if (!evoraEnterprise) return params.conversation;
-
-  const updated = await setConversationEnterpriseIdAndOrigin(params.conversation.id, evoraEnterprise.id);
+  const updated = await setConversationEnterpriseIdAndOrigin(params.conversation.id, match.enterpriseId);
   const finalConversation = updated ?? params.conversation;
-  if (finalConversation.enterprise_id !== evoraEnterprise.id) {
+  if (finalConversation.enterprise_id !== match.enterpriseId) {
     console.log('[ANA_ENTERPRISE_RESOLVE]', {
       conversationId: params.conversation.id,
       metaMessageId: params.metaMessageId,
       reason: 'enterprise_update_not_applied',
       phoneNumberId,
       enterpriseId: finalConversation.enterprise_id ?? null,
-      enterpriseName: evoraEnterprise.name,
-      matchedBy: 'message_evora_keyword',
+      enterpriseName: match.enterpriseName,
+      matchedBy: 'message_alias',
     });
   }
   return finalConversation;
