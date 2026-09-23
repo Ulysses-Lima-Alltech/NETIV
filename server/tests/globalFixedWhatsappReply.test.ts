@@ -61,7 +61,7 @@ test('falha de envio registra falha e nao persiste reply', async () => {
   assert.equal(persisted, false);
 });
 
-test('switch e opt-in e webhook envia antes de handoff, classificacao e atalhos para texto e midia', () => {
+test('switch e opt-in: texto do fixed reply resolve/classifica oliva317 antes de responder', () => {
   const previous = process.env[NETIV_GLOBAL_FIXED_REPLY_ENABLED_ENV];
   try {
     delete process.env[NETIV_GLOBAL_FIXED_REPLY_ENABLED_ENV];
@@ -75,11 +75,18 @@ test('switch e opt-in e webhook envia antes de handoff, classificacao e atalhos 
 
   const webhook = readWebhookSource();
   const fixedReplyCalls = [...webhook.matchAll(/if \(globalFixedReplyEnabled\) \{\s+await sendGlobalFixedWhatsappReply/g)];
-  assert.equal(fixedReplyCalls.length, 2);
+  assert.equal(fixedReplyCalls.length, 1);
   assert.ok(webhook.indexOf('await sendGlobalFixedWhatsappReply') < webhook.indexOf('await shouldBlockAnaWebhookAutomation'));
-  assert.ok(webhook.lastIndexOf('await sendGlobalFixedWhatsappReply') < webhook.lastIndexOf('await shouldBlockAnaWebhookAutomation'));
-  assert.ok(webhook.indexOf('await sendGlobalFixedWhatsappReply') < webhook.indexOf('conv = await resolveAnaEnterpriseBeforeEngine'));
-  assert.ok(webhook.indexOf('await sendGlobalFixedWhatsappReply') < webhook.indexOf('const shouldFastScheduleAnaBeforeClassifier'));
+
+  const textFixedBranch = webhook.slice(
+    webhook.indexOf('if (globalFixedReplyEnabled) {', webhook.indexOf("const text = effectiveText")),
+    webhook.indexOf('if (await shouldBlockAnaWebhookAutomation', webhook.indexOf("const text = effectiveText")),
+  );
+  assert.match(textFixedBranch, /conv = await resolveAnaEnterpriseBeforeEngine/);
+  assert.match(textFixedBranch, /if \(conv\.enterprise_id === OLIVA317_ENTERPRISE_ID\) \{\s+await classifyLeadForInboundText/);
+  assert.ok(textFixedBranch.indexOf('conv = await resolveAnaEnterpriseBeforeEngine') < textFixedBranch.indexOf('await classifyLeadForInboundText'));
+  assert.ok(textFixedBranch.indexOf('await classifyLeadForInboundText') < textFixedBranch.indexOf('await sendGlobalFixedWhatsappReply'));
+  assert.ok(textFixedBranch.indexOf('await sendGlobalFixedWhatsappReply') < textFixedBranch.indexOf('continue;'));
 });
 
 test('switch suprime outros envios automaticos da Ana enquanto ativo', async () => {

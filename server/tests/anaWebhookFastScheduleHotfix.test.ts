@@ -6,7 +6,7 @@ test('webhookProcessor agenda mensagens curtas antes do classificador', () => {
   const source = fs.readFileSync(new URL('../services/webhookProcessor.ts', import.meta.url), 'utf8');
 
   const fastScheduleIndex = source.indexOf('ANA_WEBHOOK_FAST_SCHEDULE_BEFORE_CLASSIFIER');
-  const classifierIndex = source.indexOf('const liveConv = (await getConversationById(conv.id)) ?? conv;');
+  const classifierIndex = source.indexOf('await classifyLeadForInboundText({ conversation: conv, text });', fastScheduleIndex);
 
   assert.ok(fastScheduleIndex > -1, 'fast schedule marker não encontrado');
   assert.ok(classifierIndex > -1, 'classificador não encontrado');

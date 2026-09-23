@@ -59,6 +59,7 @@ const ANA_DIAGNOSTIC_FIXED_REPLY = false;
 const ANA_DIAGNOSTIC_FIXED_TEXT = 'Diagnóstico: recebi sua mensagem no fluxo automático.';
 
 const NON_TEXT_MESSAGE = 'No momento só consigo responder a mensagens de texto.';
+const OLIVA317_ENTERPRISE_ID = 12;
 
 function phoneDigitsTail(raw: string | null | undefined, len = 6): string | null {
   const d = String(raw ?? '').replace(/\D/g, '');
@@ -179,6 +180,102 @@ async function resolveAnaEnterpriseBeforeEngine(params: {
   metaMessageId: string;
 }): Promise<ConversationRow> {
   return resolveAnaEnterpriseForTurn(params);
+}
+
+async function classifyLeadForInboundText(params: {
+  conversation: ConversationRow;
+  text: string;
+}): Promise<void> {
+  const { conversation, text } = params;
+  try {
+    const liveConv = (await getConversationById(conversation.id)) ?? conversation;
+    const manualOverrides = getConversationManualClassificationOverrides(liveConv.commercial_flow_state);
+    const recentMessages = await getRecentConversationMessages(conversation.id, 12);
+    const activeEnterprises = await listEnterprises(true);
+    const aliasRows =
+      activeEnterprises.length > 0
+        ? await listEnterpriseAliasRowsForActiveEnterprises(activeEnterprises.map((item) => item.id))
+        : [];
+    const decision = await classifyLeadConversation({
+      conversationId: conversation.id,
+      contactId: liveConv.contact_id ?? null,
+      latestCustomerMessage: text,
+      recentMessages,
+      currentTemperature: liveConv.lead_temperature ?? null,
+      currentEnterpriseId: liveConv.enterprise_id ?? null,
+      currentFunnelStatus: liveConv.classification ?? null,
+      availableEnterprises: activeEnterprises,
+      enterpriseAliasRows: aliasRows,
+      manualOverrideFlags: manualOverrides,
+    });
+
+    const oldTemperature = liveConv.lead_temperature ?? null;
+    const oldEnterpriseId = liveConv.enterprise_id ?? null;
+    const oldFunnelStatus = liveConv.classification ?? null;
+    let appliedTemperature = false;
+    let appliedEnterprise = false;
+    let appliedFunnel = false;
+
+    if (decision.shouldUpdateTemperature) {
+      const tempLower = decision.temperature.toLowerCase();
+      if (tempLower === 'frio' || tempLower === 'morno' || tempLower === 'quente') {
+        const updated = await setConversationLeadTemperature(conversation.id, tempLower);
+        appliedTemperature = (updated?.lead_temperature ?? oldTemperature) !== oldTemperature;
+      }
+    }
+    if (decision.shouldUpdateEnterprise && decision.enterpriseId != null) {
+      const updated = await setConversationEnterpriseId(conversation.id, decision.enterpriseId);
+      appliedEnterprise = (updated?.enterprise_id ?? oldEnterpriseId) !== oldEnterpriseId;
+    }
+    if (decision.shouldUpdateFunnel && decision.funnelStatus != null) {
+      const updated = await setConversationFunnelStatusAutomatic(conversation.id, decision.funnelStatus);
+      appliedFunnel = (updated?.classification ?? oldFunnelStatus) !== oldFunnelStatus;
+    }
+
+    const updatedAfterClassification = await getConversationById(conversation.id);
+    const classificationAudit = {
+      oldTemperature,
+      newTemperature: updatedAfterClassification?.lead_temperature ?? oldTemperature,
+      oldEnterpriseId,
+      newEnterpriseId: updatedAfterClassification?.enterprise_id ?? oldEnterpriseId,
+      oldFunnelStatus,
+      newFunnelStatus: updatedAfterClassification?.classification ?? oldFunnelStatus,
+      confidence: {
+        temperature: decision.temperatureConfidence,
+        enterprise: decision.enterpriseConfidence,
+        funnel: decision.funnelConfidence,
+      },
+      reason: {
+        temperature: decision.temperatureReason,
+        enterprise: decision.enterpriseReason,
+        ignored: decision.ignoredReasons,
+      },
+      applied: {
+        temperature: appliedTemperature,
+        enterprise: appliedEnterprise,
+        funnel: appliedFunnel,
+      },
+      ignoredReason: decision.ignoredReasons.length > 0 ? decision.ignoredReasons.join(';') : null,
+      mainIntent: decision.mainIntent,
+      classifierSource: decision.source,
+    } as const;
+    await saveLeadClassificationAudit(conversation.id, classificationAudit);
+    console.log('[LEAD_CLASSIFICATION]', {
+      conversationId: conversation.id,
+      ...classificationAudit,
+      updates: {
+        shouldUpdateTemperature: decision.shouldUpdateTemperature,
+        shouldUpdateEnterprise: decision.shouldUpdateEnterprise,
+        shouldUpdateFunnel: decision.shouldUpdateFunnel,
+      },
+    });
+  } catch (classificationError) {
+    console.error('[LEAD_CLASSIFICATION] classify_or_persist_error', {
+      conversationId: conversation.id,
+      detail:
+        classificationError instanceof Error ? classificationError.message : String(classificationError),
+    });
+  }
 }
 
 function anaWebhookTrace(tag: string, payload: Record<string, unknown>): void {
@@ -690,6 +787,15 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
           });
 
           if (globalFixedReplyEnabled) {
+            conv = await resolveAnaEnterpriseBeforeEngine({
+              conversation: conv,
+              userMessage: text,
+              phoneNumberId,
+              metaMessageId: mid,
+            });
+            if (conv.enterprise_id === OLIVA317_ENTERPRISE_ID) {
+              await classifyLeadForInboundText({ conversation: conv, text });
+            }
             await sendGlobalFixedWhatsappReply({
               conversationId: conv.id,
               to: String(msg.from),
@@ -886,95 +992,7 @@ const shouldFastScheduleAnaBeforeClassifier =
           }
 
 
-          try {
-            const liveConv = (await getConversationById(conv.id)) ?? conv;
-            const manualOverrides = getConversationManualClassificationOverrides(liveConv.commercial_flow_state);
-            const recentMessages = await getRecentConversationMessages(conv.id, 12);
-            const activeEnterprises = await listEnterprises(true);
-            const aliasRows =
-              activeEnterprises.length > 0
-                ? await listEnterpriseAliasRowsForActiveEnterprises(activeEnterprises.map((item) => item.id))
-                : [];
-            const decision = await classifyLeadConversation({
-              conversationId: conv.id,
-              contactId: liveConv.contact_id ?? null,
-              latestCustomerMessage: text,
-              recentMessages,
-              currentTemperature: liveConv.lead_temperature ?? null,
-              currentEnterpriseId: liveConv.enterprise_id ?? null,
-              currentFunnelStatus: liveConv.classification ?? null,
-              availableEnterprises: activeEnterprises,
-              enterpriseAliasRows: aliasRows,
-              manualOverrideFlags: manualOverrides,
-            });
-
-            const oldTemperature = liveConv.lead_temperature ?? null;
-            const oldEnterpriseId = liveConv.enterprise_id ?? null;
-            const oldFunnelStatus = liveConv.classification ?? null;
-            let appliedTemperature = false;
-            let appliedEnterprise = false;
-            let appliedFunnel = false;
-
-            if (decision.shouldUpdateTemperature) {
-              const tempLower = decision.temperature.toLowerCase();
-              if (tempLower === 'frio' || tempLower === 'morno' || tempLower === 'quente') {
-                await setConversationLeadTemperature(conv.id, tempLower);
-                appliedTemperature = true;
-              }
-            }
-            if (decision.shouldUpdateEnterprise && decision.enterpriseId != null) {
-              await setConversationEnterpriseId(conv.id, decision.enterpriseId);
-              appliedEnterprise = true;
-            }
-            if (decision.shouldUpdateFunnel && decision.funnelStatus != null) {
-              await setConversationFunnelStatusAutomatic(conv.id, decision.funnelStatus);
-              appliedFunnel = true;
-            }
-
-            const updatedAfterClassification = await getConversationById(conv.id);
-            const classificationAudit = {
-              oldTemperature,
-              newTemperature: updatedAfterClassification?.lead_temperature ?? oldTemperature,
-              oldEnterpriseId,
-              newEnterpriseId: updatedAfterClassification?.enterprise_id ?? oldEnterpriseId,
-              oldFunnelStatus,
-              newFunnelStatus: updatedAfterClassification?.classification ?? oldFunnelStatus,
-              confidence: {
-                temperature: decision.temperatureConfidence,
-                enterprise: decision.enterpriseConfidence,
-                funnel: decision.funnelConfidence,
-              },
-              reason: {
-                temperature: decision.temperatureReason,
-                enterprise: decision.enterpriseReason,
-                ignored: decision.ignoredReasons,
-              },
-              applied: {
-                temperature: appliedTemperature,
-                enterprise: appliedEnterprise,
-                funnel: appliedFunnel,
-              },
-              ignoredReason: decision.ignoredReasons.length > 0 ? decision.ignoredReasons.join(';') : null,
-              mainIntent: decision.mainIntent,
-              classifierSource: decision.source,
-            } as const;
-            await saveLeadClassificationAudit(conv.id, classificationAudit);
-            console.log('[LEAD_CLASSIFICATION]', {
-              conversationId: conv.id,
-              ...classificationAudit,
-              updates: {
-                shouldUpdateTemperature: decision.shouldUpdateTemperature,
-                shouldUpdateEnterprise: decision.shouldUpdateEnterprise,
-                shouldUpdateFunnel: decision.shouldUpdateFunnel,
-              },
-            });
-          } catch (classificationError) {
-            console.error('[LEAD_CLASSIFICATION] classify_or_persist_error', {
-              conversationId: conv.id,
-              detail:
-                classificationError instanceof Error ? classificationError.message : String(classificationError),
-            });
-          }
+          await classifyLeadForInboundText({ conversation: conv, text });
 
           if (ANA_DIAGNOSTIC_FIXED_REPLY) {
             const live = await getConversationById(conv.id);
