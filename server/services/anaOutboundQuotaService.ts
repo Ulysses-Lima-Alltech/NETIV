@@ -16,6 +16,7 @@ import {
   shouldBlockAnaAutomationOutbound,
 } from '../utils/anaAutomationKillSwitch.js';
 import { getConversationById } from '../repositories/conversationRepository.js';
+import { isGlobalFixedWhatsappReplyEnabled } from './globalFixedWhatsappReply.js';
 import {
   isAnaAutomationBlockedByHandoff,
   logAnaAutomationBlockedByHandoff,
@@ -57,6 +58,9 @@ export async function sendAnaTextMessageWithQuota(params: {
   text: string;
   phase: string;
 }): Promise<AnaQuotaSendResult> {
+  if (isGlobalFixedWhatsappReplyEnabled()) {
+    return { success: false, error: 'global_fixed_reply_active', code: 423 };
+  }
   const blocked = shouldBlockAnaAutomationOutbound({
     source: params.phase,
     conversationId: params.conversationId,
@@ -88,6 +92,9 @@ export async function sendAnaLocalMediaToWhatsAppWithQuota(params: {
   phase: string;
   options?: { logCtx?: DocumentSendLogContext; caption?: string | null };
 }): Promise<AnaQuotaSendResult> {
+  if (isGlobalFixedWhatsappReplyEnabled()) {
+    return { success: false, error: 'global_fixed_reply_active', code: 423 };
+  }
   const blocked = shouldBlockAnaAutomationOutbound({
     source: params.phase,
     conversationId: params.conversationId,
