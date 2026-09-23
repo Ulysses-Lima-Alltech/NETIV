@@ -31,6 +31,7 @@ import {
   isGlobalFixedWhatsappReplyEnabled,
   sendGlobalFixedWhatsappReply,
 } from './globalFixedWhatsappReply.js';
+import { filterBlockedWhatsappSenderMessages } from './blockedWhatsappSenders.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
 import { mergeContactNameIfMissing } from '../repositories/contactsRepository.js';
 import { listEnterprises } from '../repositories/enterpriseRepository.js';
@@ -319,6 +320,18 @@ async function canSendWhatsAppText(): Promise<boolean> {
 }
 
 export async function processIncomingWebhook(payload: WebhookPayload): Promise<void> {
+  const blockedSenderFilter = filterBlockedWhatsappSenderMessages(payload);
+  if (blockedSenderFilter.blockedCount > 0) {
+    console.warn('[WHATSAPP_BLOCKED_SENDER] inbound_messages_dropped', {
+      blockedCount: blockedSenderFilter.blockedCount,
+      audit: blockedSenderFilter.audit,
+    });
+  }
+  if (!blockedSenderFilter.payload) {
+    return;
+  }
+  payload = blockedSenderFilter.payload;
+
   const metaMessageIdTop = extractMessageId(payload);
   const idsForLog = extractMessageIdsForLog(payload);
   await logWebhookEvent(metaMessageIdTop, 'incoming', JSON.stringify(payload));
