@@ -7,6 +7,7 @@ import {
   getConversationManualClassificationOverrides,
   saveLeadClassificationAudit,
   setConversationEnterpriseId,
+  setConversationEnterpriseIdPreservingCommercialState,
   setConversationFunnelStatusAutomatic,
   setConversationLeadTemperature,
   mergeConfirmedCustomerNameIfEmpty,
@@ -35,7 +36,11 @@ import { filterBlockedWhatsappSenderMessages } from './blockedWhatsappSenders.js
 import { normalizePhoneE164 } from '../utils/phone.js';
 import { mergeContactNameIfMissing } from '../repositories/contactsRepository.js';
 import { listEnterprises } from '../repositories/enterpriseRepository.js';
-import { listEnterpriseAliasRowsForActiveEnterprises } from '../repositories/enterpriseMatch.js';
+import {
+  listEnterpriseAliasRowsForActiveEnterprises,
+  OLIVA317_ENTERPRISE_ID,
+  resolveOliva317EnterpriseFromMessage,
+} from '../repositories/enterpriseMatch.js';
 import { classifyLeadConversation } from './leadClassificationService.js';
 import {
   isAnaEmergencyHandoffEnabled,
@@ -59,7 +64,6 @@ const ANA_DIAGNOSTIC_FIXED_REPLY = false;
 const ANA_DIAGNOSTIC_FIXED_TEXT = 'Diagnóstico: recebi sua mensagem no fluxo automático.';
 
 const NON_TEXT_MESSAGE = 'No momento só consigo responder a mensagens de texto.';
-const OLIVA317_ENTERPRISE_ID = 12;
 
 function phoneDigitsTail(raw: string | null | undefined, len = 6): string | null {
   const d = String(raw ?? '').replace(/\D/g, '');
@@ -276,6 +280,48 @@ async function classifyLeadForInboundText(params: {
         classificationError instanceof Error ? classificationError.message : String(classificationError),
     });
   }
+}
+
+async function resolveOliva317EnterpriseBeforeAutomation(params: {
+  conversation: ConversationRow;
+  userMessage: string;
+  phoneNumberId: string | null | undefined;
+  metaMessageId: string;
+}): Promise<ConversationRow> {
+  const activeEnterprises = await listEnterprises(true);
+  const aliasRows =
+    activeEnterprises.length > 0
+      ? await listEnterpriseAliasRowsForActiveEnterprises(activeEnterprises.map((item) => item.id))
+      : [];
+  const match = resolveOliva317EnterpriseFromMessage(params.userMessage, activeEnterprises, aliasRows);
+  if (match.source !== 'message_alias' || match.enterpriseId !== OLIVA317_ENTERPRISE_ID) {
+    return params.conversation;
+  }
+
+  console.log('[OLIVA317_ENTERPRISE_RESOLVE]', {
+    conversationId: params.conversation.id,
+    metaMessageId: params.metaMessageId,
+    phoneNumberId: String(params.phoneNumberId ?? '').trim() || null,
+    enterpriseId: match.enterpriseId,
+    enterpriseName: match.enterpriseName,
+    matchedAliases: match.candidates[0]?.matchedAliases ?? [],
+  });
+
+  const updated = await setConversationEnterpriseIdPreservingCommercialState(
+    params.conversation.id,
+    OLIVA317_ENTERPRISE_ID
+  );
+  const finalConversation = updated ?? params.conversation;
+  if (finalConversation.enterprise_id !== OLIVA317_ENTERPRISE_ID) {
+    console.log('[OLIVA317_ENTERPRISE_RESOLVE]', {
+      conversationId: params.conversation.id,
+      metaMessageId: params.metaMessageId,
+      reason: 'enterprise_update_not_applied',
+      enterpriseId: finalConversation.enterprise_id ?? null,
+      matchedAliases: match.candidates[0]?.matchedAliases ?? [],
+    });
+  }
+  return finalConversation;
 }
 
 function anaWebhookTrace(tag: string, payload: Record<string, unknown>): void {
@@ -786,13 +832,14 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
             contactPhoneTail: phoneDigitsTail(conv.contact_phone, 4),
           });
 
+          conv = await resolveOliva317EnterpriseBeforeAutomation({
+            conversation: conv,
+            userMessage: text,
+            phoneNumberId,
+            metaMessageId: mid,
+          });
+
           if (globalFixedReplyEnabled) {
-            conv = await resolveAnaEnterpriseBeforeEngine({
-              conversation: conv,
-              userMessage: text,
-              phoneNumberId,
-              metaMessageId: mid,
-            });
             if (conv.enterprise_id === OLIVA317_ENTERPRISE_ID) {
               await classifyLeadForInboundText({ conversation: conv, text });
             }

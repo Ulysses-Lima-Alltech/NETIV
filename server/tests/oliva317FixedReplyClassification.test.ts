@@ -31,13 +31,16 @@ function classifierHelper(source: string): string {
 test('oliva317 com fixed reply: mensagem de texto resolve empreendimento, classifica e depois envia resposta fixa', () => {
   const source = readWebhookSource();
   const branch = textFixedReplyBranch(source);
+  const textStart = source.indexOf('const text = effectiveText');
+  const olivaResolveIndex = source.indexOf('conv = await resolveOliva317EnterpriseBeforeAutomation', textStart);
+  const fixedReplyBranchIndex = source.indexOf('if (globalFixedReplyEnabled) {', textStart);
 
-  assert.match(source, /const OLIVA317_ENTERPRISE_ID = 12;/);
-  assert.match(branch, /conv = await resolveAnaEnterpriseBeforeEngine/);
+  assert.match(source, /OLIVA317_ENTERPRISE_ID/);
+  assert.ok(olivaResolveIndex > textStart);
+  assert.ok(olivaResolveIndex < fixedReplyBranchIndex);
   assert.match(branch, /if \(conv\.enterprise_id === OLIVA317_ENTERPRISE_ID\)/);
   assert.match(branch, /await classifyLeadForInboundText\(\{ conversation: conv, text \}\)/);
   assert.match(branch, /await sendGlobalFixedWhatsappReply/);
-  assert.ok(branch.indexOf('conv = await resolveAnaEnterpriseBeforeEngine') < branch.indexOf('await classifyLeadForInboundText'));
   assert.ok(branch.indexOf('await classifyLeadForInboundText') < branch.indexOf('await sendGlobalFixedWhatsappReply'));
 });
 

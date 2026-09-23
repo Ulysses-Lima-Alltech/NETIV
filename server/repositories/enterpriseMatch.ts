@@ -41,6 +41,8 @@ export interface AnaEnterpriseResolution {
   reasonWhenNoEnterprise: string | null;
 }
 
+export const OLIVA317_ENTERPRISE_ID = 12;
+
 interface EnterpriseAliasRow {
   enterprise_id: number;
   alias: string;
@@ -285,6 +287,36 @@ export function resolveEnterpriseFromMessageAliases(
     enterpriseName: null,
     candidates: [],
     reasonWhenNoEnterprise: 'message_without_enterprise_alias',
+  };
+}
+
+export function resolveOliva317EnterpriseFromMessage(
+  userMessage: string,
+  enterprises: EnterpriseRow[],
+  aliasRows: EnterpriseAliasRow[] = []
+): EnterpriseMessageAliasResolution {
+  const messageNorm = normalizeEnterpriseAliasText(userMessage);
+  if (!/(^|\s)oliva\s*317(\s|$)/.test(messageNorm)) {
+    return {
+      source: 'unresolved',
+      enterpriseId: null,
+      enterpriseName: null,
+      candidates: [],
+      reasonWhenNoEnterprise: 'message_without_explicit_oliva317_alias',
+    };
+  }
+
+  const match = resolveEnterpriseFromMessageAliases(userMessage, enterprises, aliasRows);
+  if (match.source === 'message_alias' && match.enterpriseId === OLIVA317_ENTERPRISE_ID) return match;
+  return {
+    source: match.source === 'ambiguous' ? 'ambiguous' : 'unresolved',
+    enterpriseId: null,
+    enterpriseName: null,
+    candidates: match.candidates,
+    reasonWhenNoEnterprise:
+      match.source === 'ambiguous'
+        ? 'message_alias_ambiguous'
+        : 'message_without_oliva317_enterprise_alias',
   };
 }
 

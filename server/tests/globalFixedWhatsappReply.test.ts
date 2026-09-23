@@ -82,9 +82,11 @@ test('switch e opt-in: texto do fixed reply resolve/classifica oliva317 antes de
     webhook.indexOf('if (globalFixedReplyEnabled) {', webhook.indexOf("const text = effectiveText")),
     webhook.indexOf('if (await shouldBlockAnaWebhookAutomation', webhook.indexOf("const text = effectiveText")),
   );
-  assert.match(textFixedBranch, /conv = await resolveAnaEnterpriseBeforeEngine/);
+  const olivaResolveIndex = webhook.indexOf('conv = await resolveOliva317EnterpriseBeforeAutomation', webhook.indexOf("const text = effectiveText"));
+  const fixedBranchIndex = webhook.indexOf('if (globalFixedReplyEnabled) {', webhook.indexOf("const text = effectiveText"));
+  assert.ok(olivaResolveIndex > -1);
+  assert.ok(olivaResolveIndex < fixedBranchIndex);
   assert.match(textFixedBranch, /if \(conv\.enterprise_id === OLIVA317_ENTERPRISE_ID\) \{\s+await classifyLeadForInboundText/);
-  assert.ok(textFixedBranch.indexOf('conv = await resolveAnaEnterpriseBeforeEngine') < textFixedBranch.indexOf('await classifyLeadForInboundText'));
   assert.ok(textFixedBranch.indexOf('await classifyLeadForInboundText') < textFixedBranch.indexOf('await sendGlobalFixedWhatsappReply'));
   assert.ok(textFixedBranch.indexOf('await sendGlobalFixedWhatsappReply') < textFixedBranch.indexOf('continue;'));
 });

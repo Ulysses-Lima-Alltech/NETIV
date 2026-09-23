@@ -1289,6 +1289,7 @@ export async function setConversationEnterpriseId(
   if (manualOverrides.enterprise && current.enterprise_id !== enterpriseId) {
     return current;
   }
+  if (current.enterprise_id === enterpriseId) return current;
   if (enterpriseId != null) {
     const ok = await getActiveEnterpriseById(enterpriseId);
     if (!ok) return null;
@@ -1322,6 +1323,36 @@ export async function setConversationEnterpriseId(
         )).rows[0] ?? row;
   if (afterClass.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(afterClass.contact_id);
   return afterClass;
+}
+
+export async function setConversationEnterpriseIdPreservingCommercialState(
+  conversationId: number,
+  enterpriseId: number | null
+): Promise<ConversationRow | null> {
+  const current = await getConversationById(conversationId);
+  if (!current) return null;
+  const manualOverrides = getConversationManualClassificationOverrides(current.commercial_flow_state);
+  if (manualOverrides.enterprise && current.enterprise_id !== enterpriseId) {
+    return current;
+  }
+  if (current.enterprise_id === enterpriseId) return current;
+  if (enterpriseId != null) {
+    const ok = await getActiveEnterpriseById(enterpriseId);
+    if (!ok) return null;
+  }
+  const { rows } = await query<ConversationRow>(
+    `UPDATE conversations
+      SET enterprise_id = $1,
+          synced_to_django_at = NULL,
+          updated_at = NOW()
+    WHERE id = $2
+    RETURNING *`,
+    [enterpriseId, conversationId]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  if (row.contact_id != null) await trySyncContactEnterpriseFromLinkedConversations(row.contact_id);
+  return row;
 }
 
 export async function setConversationEnterpriseIdAndOrigin(
