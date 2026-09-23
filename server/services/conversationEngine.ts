@@ -158,6 +158,7 @@ import {
   type GenerateCompletionResult,
 } from './openaiService.js';
 import {
+  DEFAULT_EMERGENCY_BLOCK_MESSAGE,
   resolveAiSettingsForEnterprise,
   type ResolvedEnterpriseAiSettings,
 } from './enterpriseAiSettingsService.js';
@@ -6184,8 +6185,7 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
       }
       const blockedReply =
         blockedReason === 'emergency_block'
-          ? resolvedAiSettings?.blockedMessage ??
-            'No momento este empreendimento esta com atendimento automatico temporariamente bloqueado.'
+          ? resolvedAiSettings?.blockedMessage ?? DEFAULT_EMERGENCY_BLOCK_MESSAGE
           : blockedReason === 'ai_disabled'
             ? 'No momento o atendimento automatico deste empreendimento esta desativado. Vou direcionar voce para um corretor.'
             : blockedReason === 'missing_enterprise_api_key'

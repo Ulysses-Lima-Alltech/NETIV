@@ -1,8 +1,8 @@
-import { resolveAiSettingsForEnterprise } from '../../enterpriseAiSettingsService.js';
+import {
+  DEFAULT_EMERGENCY_BLOCK_MESSAGE,
+  resolveAiSettingsForEnterprise,
+} from '../../enterpriseAiSettingsService.js';
 import type { AnaGraphState } from '../state.js';
-
-const DEFAULT_EMERGENCY_BLOCK_MESSAGE =
-  'No momento este empreendimento esta com atendimento automatico temporariamente bloqueado.';
 
 /**
  * Espelha o gate de disponibilidade de IA por empreendimento que hoje só

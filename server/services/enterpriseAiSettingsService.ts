@@ -13,6 +13,9 @@ import {
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_MODEL_HOT = getDefaultOpenAiModelHot();
 const DEFAULT_MODEL_COLD = getDefaultOpenAiModelCold();
+export const DEFAULT_EMERGENCY_BLOCK_MESSAGE =
+  'Olá, que bom ter você por aqui !\n' +
+  'Em breve um dos nossos consultores entrará em contato para passar as informações do empreendimento';
 
 export type AiProvider = 'openai' | 'bedrock';
 export type AiApiKeySource = 'enterprise' | 'global_fallback';
@@ -61,6 +64,7 @@ interface EnterpriseAiSettingsRow {
 interface EnterpriseNameRow {
   id: number;
   name: string;
+  status: string;
 }
 
 export interface GlobalAiSettings {
@@ -156,6 +160,7 @@ export interface ResolvedEnterpriseAiSettings {
 export interface EnterpriseAiSettingsFrontendItem {
   enterprise_id: number;
   enterprise_name: string;
+  enterprise_status: string;
   provider: AiProvider;
   use_global_defaults: boolean;
   has_own_api_key: boolean;
@@ -353,9 +358,7 @@ function resolveFromRows(
       provider,
       blocked: true,
       reason: 'emergency_block',
-      blockedMessage:
-        emergencyBlockMessage ??
-        'No momento este empreendimento esta com atendimento de IA temporariamente bloqueado.',
+      blockedMessage: emergencyBlockMessage ?? DEFAULT_EMERGENCY_BLOCK_MESSAGE,
       apiKeySource: null,
       openaiApiKey: null,
       openaiApiKeyId: trimOrNull(enterprise?.openaiApiKeyId),
@@ -680,11 +683,11 @@ export async function updateGlobalAiSettings(
 
 async function ensureEnterpriseExists(enterpriseId: number): Promise<void> {
   const { rows } = await query<{ id: number }>(
-    `SELECT id FROM enterprises WHERE id = $1 LIMIT 1`,
+    `SELECT id FROM enterprises WHERE id = $1 AND status = 'ativo' LIMIT 1`,
     [enterpriseId]
   );
   if (!rows[0]) {
-    throw new Error('Empreendimento nao encontrado.');
+    throw new Error('Empreendimento nao encontrado ou inativo.');
   }
 }
 
@@ -944,7 +947,7 @@ export async function getSafeEnterpriseAiSettingsForFrontend(): Promise<Enterpri
   const [global, enterpriseRows, enterprises] = await Promise.all([
     getGlobalAiSettings(),
     query<EnterpriseAiSettingsRow>(`SELECT * FROM enterprise_ai_settings`),
-    query<EnterpriseNameRow>(`SELECT id, name FROM enterprises ORDER BY name`),
+    query<EnterpriseNameRow>(`SELECT id, name, status FROM enterprises WHERE status = 'ativo' ORDER BY name`),
   ]);
 
   const byEnterpriseId = new Map<number, EnterpriseAiSettings>();
@@ -959,6 +962,7 @@ export async function getSafeEnterpriseAiSettingsForFrontend(): Promise<Enterpri
     return {
       enterprise_id: enterprise.id,
       enterprise_name: enterprise.name,
+      enterprise_status: enterprise.status,
       provider: 'openai',
       use_global_defaults: enterpriseSettings?.useGlobalDefaults ?? true,
       has_own_api_key: trimOrNull(enterpriseSettings?.openaiApiKey) != null,

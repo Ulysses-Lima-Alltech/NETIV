@@ -271,6 +271,21 @@ function normalizeEnterpriseForms(items: EnterpriseApiSettingsItem[]): Record<nu
   return next;
 }
 
+function assertEnterpriseBlockPersisted(
+  item: EnterpriseApiSettingsItem | null | undefined,
+  expected: Pick<EnterpriseApiSettingsUpdate, 'emergency_block_enabled' | 'emergency_block_message'>
+): void {
+  if (!item) {
+    throw new Error('O servidor não confirmou o empreendimento salvo. Recarregue a página e tente novamente.');
+  }
+  if (
+    item.emergency_block_enabled !== expected.emergency_block_enabled ||
+    item.emergency_block_message !== expected.emergency_block_message
+  ) {
+    throw new Error('O servidor não confirmou o bloqueio e a mensagem. Recarregue a página e tente novamente.');
+  }
+}
+
 export function SettingsWhatsAppPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('whatsapp');
 
@@ -615,8 +630,19 @@ export function SettingsWhatsAppPage() {
     if (newApiKey.length > 0) payload.openai_api_key = newApiKey;
 
     try {
-      await settingsApi.putApiEnterprise(enterpriseId, payload);
-      await loadApiSettings();
+      const saved = await settingsApi.putApiEnterprise(enterpriseId, payload);
+      assertEnterpriseBlockPersisted(saved, payload);
+      const reloaded = await settingsApi.getApiEnterprises();
+      const reloadedItems = [...reloaded.enterprises].sort((a, b) =>
+        a.enterprise_name.localeCompare(b.enterprise_name, 'pt-BR')
+      );
+      const persisted = reloadedItems.find((item) => item.enterprise_id === enterpriseId) ?? null;
+      assertEnterpriseBlockPersisted(persisted, payload);
+      setApiEnterpriseItems(reloadedItems);
+      setApiEnterpriseForms(normalizeEnterpriseForms(reloadedItems));
+      if (Array.isArray(reloaded.available_models)) {
+        setAvailableModels(reloaded.available_models);
+      }
       setApiMessage({ type: 'success', text: 'Configuração do empreendimento salva com sucesso.' });
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Erro ao salvar configuração do empreendimento.';

@@ -36,9 +36,9 @@ function visitTurn(
 }
 
 test('webhook resolve Evora antes de atalhos de agenda/engine, apenas por interesse explícito na mensagem', () => {
-  const resolveEnterpriseSource = fs.readFileSync(
-    new URL('../services/anaGraph/nodes/resolveEnterprise.ts', import.meta.url),
-    'utf8'
+  const resolveEnterpriseSource = readSource(
+    '../services/anaGraph/nodes/resolveEnterprise.ts',
+    '../services/anaGraph/nodes/resolveEnterprise.js'
   );
   assert.match(resolveEnterpriseSource, /ANA_ENTERPRISE_RESOLVE/);
   assert.match(resolveEnterpriseSource, /setConversationEnterpriseIdAndOrigin/);
@@ -53,8 +53,8 @@ test('webhook resolve Evora antes de atalhos de agenda/engine, apenas por intere
   // a conversa num empreendimento — só a menção explícita do cliente no texto.
   assert.doesNotMatch(resolveEnterpriseSource, /ANA_EVORA_DEFAULT_PHONE_NUMBER_ID/);
   assert.doesNotMatch(resolveEnterpriseSource, /phone_number_default/);
-  assert.match(resolveEnterpriseSource, /matchedByMessage = inboundMentionsEvora\(params\.userMessage\)/);
-  assert.match(resolveEnterpriseSource, /if \(!matchedByMessage\) return params\.conversation/);
+  assert.match(resolveEnterpriseSource, /resolveEnterpriseFromMessageAliases\(params\.userMessage, activeEnterprises, aliasRows\)/);
+  assert.match(resolveEnterpriseSource, /match\.source !== 'message_alias'/);
 });
 
 test('guardrail factual do Evora remove Campinas e força localização correta', () => {

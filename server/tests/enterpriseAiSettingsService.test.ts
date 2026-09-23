@@ -2,11 +2,20 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
+  DEFAULT_EMERGENCY_BLOCK_MESSAGE,
   __resolveAiSettingsForTest,
   maskApiKey,
   type EnterpriseAiSettings,
   type GlobalAiSettings,
 } from '../services/enterpriseAiSettingsService.js';
+
+function readServiceSource(): string {
+  try {
+    return readFileSync(new URL('../services/enterpriseAiSettingsService.ts', import.meta.url), 'utf8');
+  } catch {
+    return readFileSync(new URL('../services/enterpriseAiSettingsService.js', import.meta.url), 'utf8');
+  }
+}
 
 const BASE_GLOBAL: GlobalAiSettings = {
   provider: 'openai',
@@ -87,6 +96,31 @@ test('bloqueio emergencial bloqueia chamada de IA antes da chave', () => {
   assert.equal(resolved.openaiApiKey, null);
 });
 
+test('lista de configuracao por empreendimento expoe apenas empreendimentos ativos usados pela Ana', () => {
+  const source = readServiceSource();
+  assert.match(source, /SELECT id, name, status FROM enterprises WHERE status = 'ativo' ORDER BY name/);
+  assert.match(source, /SELECT id FROM enterprises WHERE id = \$1 AND status = 'ativo' LIMIT 1/);
+  assert.match(source, /enterprise_status: enterprise\.status/);
+});
+
+test('bloqueio emergencial sem mensagem usa resposta fixa configurada para contingencia Oliva317', () => {
+  const enterprise = buildEnterprise({
+    enterpriseId: 12,
+    emergencyBlockEnabled: true,
+    emergencyBlockMessage: null,
+    openaiApiKey: 'sk-enterprise-blocked',
+  });
+  const resolved = __resolveAiSettingsForTest(12, BASE_GLOBAL, enterprise);
+
+  assert.equal(resolved.blocked, true);
+  assert.equal(resolved.reason, 'emergency_block');
+  assert.equal(
+    resolved.blockedMessage,
+    'Olá, que bom ter você por aqui !\nEm breve um dos nossos consultores entrará em contato para passar as informações do empreendimento'
+  );
+  assert.equal(resolved.blockedMessage, DEFAULT_EMERGENCY_BLOCK_MESSAGE);
+});
+
 test('ai_enabled=false bloqueia chamada de IA', () => {
   const enterprise = buildEnterprise({
     enterpriseId: 13,
@@ -149,13 +183,13 @@ test('maskApiKey nunca retorna chave completa', () => {
 });
 
 test('teste de conexão usa configuração efetiva resolvida do empreendimento', () => {
-  const source = readFileSync(new URL('../services/enterpriseAiSettingsService.js', import.meta.url), 'utf8');
+  const source = readServiceSource();
   assert.match(source, /const resolved = await resolveAiSettingsForEnterprise\(enterpriseId\);/);
   assert.match(source, /apiKey: resolved\.openaiApiKey/);
 });
 
 test('DTO seguro para frontend expõe somente chave mascarada', () => {
-  const source = readFileSync(new URL('../services/enterpriseAiSettingsService.js', import.meta.url), 'utf8');
+  const source = readServiceSource();
   assert.match(source, /masked_api_key:\s*maskApiKey\(enterpriseSettings\?\.openaiApiKey\)/);
   assert.doesNotMatch(source, /openai_api_key:\s*enterpriseSettings\?\.openaiApiKey/);
 });

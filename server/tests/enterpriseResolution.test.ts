@@ -29,6 +29,7 @@ const enterprises = [
   enterprise(1, 'Altis Pirituba', 'altis-pirituba'),
   enterprise(2, 'Residencial Évora', 'residencial-evora'),
   enterprise(3, 'Vista Sol', 'vista-sol'),
+  enterprise(4, 'oliva317', 'oliva317'),
 ];
 
 function candidateIds(candidates: EnterpriseResolutionCandidate[]): number[] {
@@ -64,6 +65,15 @@ test('termos comerciais sem alias nao escolhem empreendimento', () => {
 
   assert.equal(result.source, 'unresolved');
   assert.equal(result.enterpriseId, null);
+});
+
+test('resolve Oliva317 por nome, primeiro token e slug antes do bloqueio de IA', () => {
+  for (const message of ['ola, queria informacoes do oliva', 'oliva317', 'Oliva 317']) {
+    const result = resolveEnterpriseFromMessageAliases(message, enterprises);
+    assert.equal(result.source, 'message_alias', message);
+    assert.equal(result.enterpriseId, 4, message);
+    assert.equal(result.enterpriseName, 'oliva317', message);
+  }
 });
 
 test('alias compartilhado entre empreendimentos exige esclarecimento', () => {

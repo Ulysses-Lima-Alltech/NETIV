@@ -1,0 +1,54 @@
+import { insertMessage } from '../repositories/messageRepository.js';
+import { sendTextMessage, type SendTextResult } from './whatsappMetaService.js';
+
+export const NETIV_GLOBAL_FIXED_REPLY_ENABLED_ENV = 'NETIV_GLOBAL_FIXED_REPLY_ENABLED';
+
+export const GLOBAL_FIXED_WHATSAPP_REPLY =
+  'Olá, que bom ter você por aqui !\n' +
+  'Em breve um dos nossos consultores entrará em contato para passar as informações do empreendimento';
+
+export function isGlobalFixedWhatsappReplyEnabled(): boolean {
+  return process.env[NETIV_GLOBAL_FIXED_REPLY_ENABLED_ENV]?.trim().toLowerCase() === 'true';
+}
+
+export async function sendGlobalFixedWhatsappReply(params: {
+  conversationId: number;
+  to: string;
+  inboundMetaMessageId: string;
+  send?: (to: string, text: string) => Promise<SendTextResult>;
+  persist?: (conversationId: number, text: string, metaMessageId: string) => Promise<unknown>;
+}): Promise<boolean> {
+  const result = await (params.send ?? sendTextMessage)(params.to, GLOBAL_FIXED_WHATSAPP_REPLY);
+  if (!result.success || !result.metaMessageId) {
+    console.error('[GLOBAL_FIXED_WHATSAPP_REPLY] send_failed', {
+      conversationId: params.conversationId,
+      inboundMetaMessageId: params.inboundMetaMessageId,
+      code: result.code ?? null,
+      error: result.error ?? 'missing_outbound_message_id',
+    });
+    return false;
+  }
+
+  try {
+    await (params.persist ?? ((id, text, mid) => insertMessage(id, 'assistant', text, mid)))(
+      params.conversationId,
+      GLOBAL_FIXED_WHATSAPP_REPLY,
+      result.metaMessageId
+    );
+  } catch (error) {
+    console.error('[GLOBAL_FIXED_WHATSAPP_REPLY] persist_failed', {
+      conversationId: params.conversationId,
+      inboundMetaMessageId: params.inboundMetaMessageId,
+      outboundMetaMessageId: result.metaMessageId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return true;
+  }
+
+  console.log('[GLOBAL_FIXED_WHATSAPP_REPLY] sent', {
+    conversationId: params.conversationId,
+    inboundMetaMessageId: params.inboundMetaMessageId,
+    outboundMetaMessageId: result.metaMessageId,
+  });
+  return true;
+}

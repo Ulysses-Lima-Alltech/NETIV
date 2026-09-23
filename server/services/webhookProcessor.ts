@@ -27,6 +27,10 @@ import { scheduleWhatsAppAiAfterUserMessage } from './whatsappAiDebounce.js';
 import { handleIncomingMessage } from './conversationEngine.js';
 import { leadOriginFromMetaWhatsAppMessage } from './leadOriginResolver.js';
 import { sendAnaTextMessageWithQuota } from './anaOutboundQuotaService.js';
+import {
+  isGlobalFixedWhatsappReplyEnabled,
+  sendGlobalFixedWhatsappReply,
+} from './globalFixedWhatsappReply.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
 import { mergeContactNameIfMissing } from '../repositories/contactsRepository.js';
 import { listEnterprises } from '../repositories/enterpriseRepository.js';
@@ -346,13 +350,18 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
   }
 
   const anaEmergencyHandoffActive = isAnaEmergencyHandoffEnabled();
+  const globalFixedReplyEnabled = isGlobalFixedWhatsappReplyEnabled();
   if (anaEmergencyHandoffActive) {
     console.log('[ANA_EMERGENCY_HANDOFF] webhook_ai_gate_bypassed', {
       reason: 'emergency_handoff_active',
     });
   }
+  if (globalFixedReplyEnabled) {
+    console.log('[GLOBAL_FIXED_WHATSAPP_REPLY] webhook_gate_active');
+  }
   console.log('[ANA_PIPELINE] integration_ai_gate', {
     ana_emergency_handoff: anaEmergencyHandoffActive,
+    global_fixed_reply: globalFixedReplyEnabled,
     note:
       'Decisao de chave/API bloqueada por empreendimento foi movida para conversationEngine + enterpriseAiSettingsService.',
   });
@@ -495,7 +504,7 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
             console.log('[ANA_PIPELINE] non_text_branch', { conversationId: conv.id, metaMessageId: mid, type });
             media = await downloadAndStoreInboundMedia(msg, conv.id);
 
-            if (type === 'audio' && media?.attachment.storageKey) {
+            if (!globalFixedReplyEnabled && type === 'audio' && media?.attachment.storageKey) {
               try {
                 const transcription = await transcribeInboundAudioFromS3({
                   bucket: getKnowledgeS3Bucket(),
@@ -549,6 +558,14 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
               externalContactIdTail: phoneDigitsTail(conv.external_contact_id, 4),
               contactPhoneTail: phoneDigitsTail(conv.contact_phone, 4),
             });
+            if (globalFixedReplyEnabled) {
+              await sendGlobalFixedWhatsappReply({
+                conversationId: conv.id,
+                to: String(msg.from),
+                inboundMetaMessageId: mid,
+              });
+              continue;
+            }
             if (await shouldBlockAnaWebhookAutomation({
               conversationId: conv.id,
               metaMessageId: mid,
@@ -658,6 +675,15 @@ export async function processIncomingWebhook(payload: WebhookPayload): Promise<v
             externalContactIdTail: phoneDigitsTail(conv.external_contact_id, 4),
             contactPhoneTail: phoneDigitsTail(conv.contact_phone, 4),
           });
+
+          if (globalFixedReplyEnabled) {
+            await sendGlobalFixedWhatsappReply({
+              conversationId: conv.id,
+              to: String(msg.from),
+              inboundMetaMessageId: mid,
+            });
+            continue;
+          }
 
           if (await shouldBlockAnaWebhookAutomation({
             conversationId: conv.id,

@@ -149,14 +149,26 @@ function addAliasCandidate(
   if (normalizedAlias.length < 3) return;
   if (isGenericEnterpriseAlias(normalizedAlias)) return;
   const key = `${enterprise.id}:${normalizedAlias}`;
-  if (seen.has(key)) return;
-  seen.add(key);
-  target.push({
-    enterpriseId: enterprise.id,
-    enterpriseName: enterprise.name,
-    alias: alias.trim(),
-    normalizedAlias,
-  });
+  if (!seen.has(key)) {
+    seen.add(key);
+    target.push({
+      enterpriseId: enterprise.id,
+      enterpriseName: enterprise.name,
+      alias: alias.trim(),
+      normalizedAlias,
+    });
+  }
+
+  const compactAlphaNumeric = normalizedAlias.replace(/\s+/g, '');
+  const alphaNumericMatch = compactAlphaNumeric.match(/^([a-z]{3,})(\d+)$/);
+  if (!alphaNumericMatch) return;
+  const [, alphaPrefix, numericSuffix] = alphaNumericMatch;
+  if (alphaPrefix && !isGenericEnterpriseAlias(alphaPrefix)) {
+    addAliasCandidate(target, seen, enterprise, alphaPrefix);
+  }
+  if (alphaPrefix && numericSuffix && normalizedAlias !== `${alphaPrefix} ${numericSuffix}`) {
+    addAliasCandidate(target, seen, enterprise, `${alphaPrefix} ${numericSuffix}`);
+  }
 }
 
 function firstDistinctiveNameToken(enterpriseName: string): string | null {

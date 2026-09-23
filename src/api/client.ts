@@ -382,6 +382,7 @@ export interface ApiGlobalSettingsUpdate {
 export interface EnterpriseApiSettingsItem {
   enterprise_id: number;
   enterprise_name: string;
+  enterprise_status: string;
   provider: 'openai';
   use_global_defaults: boolean;
   has_own_api_key: boolean;
