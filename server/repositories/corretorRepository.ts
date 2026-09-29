@@ -1,4 +1,11 @@
-import { query } from '../db/pg.js';
+import { getPool, query } from '../db/pg.js';
+import type pg from 'pg';
+
+export type CorretorRepositoryClient = Pick<pg.PoolClient, 'query'>;
+
+function corretorDb(client?: CorretorRepositoryClient): Pick<pg.Pool, 'query'> | CorretorRepositoryClient {
+  return client ?? getPool();
+}
 
 export interface CorretorRow {
   id: number;
@@ -33,11 +40,16 @@ export async function getCorretorEnterpriseIds(corretorId: number): Promise<numb
   return rows.map((r: { enterprise_id: number }) => r.enterprise_id);
 }
 
-export async function setCorretorEnterprises(corretorId: number, enterpriseIds: number[]): Promise<void> {
-  await query(`DELETE FROM corretor_empreendimentos WHERE corretor_id = $1`, [corretorId]);
+export async function setCorretorEnterprises(
+  corretorId: number,
+  enterpriseIds: number[],
+  client?: CorretorRepositoryClient
+): Promise<void> {
+  const db = corretorDb(client);
+  await db.query(`DELETE FROM corretor_empreendimentos WHERE corretor_id = $1`, [corretorId]);
   const unique = [...new Set(enterpriseIds.filter((e) => e > 0))];
   for (const eid of unique) {
-    await query(
+    await db.query(
       `INSERT INTO corretor_empreendimentos (corretor_id, enterprise_id) VALUES ($1, $2)`,
       [corretorId, eid]
     );
@@ -76,24 +88,28 @@ export async function listCorretoresByEnterprise(enterpriseId: number): Promise<
   return rows;
 }
 
-export async function createCorretor(data: {
-  fullName: string;
-  city: string;
-  phone: string;
-  realEstateAgency: string;
-  enterpriseIds?: number[];
-  email?: string | null;
-}): Promise<CorretorRow> {
+export async function createCorretor(
+  data: {
+    fullName: string;
+    city: string;
+    phone: string;
+    realEstateAgency: string;
+    enterpriseIds?: number[];
+    email?: string | null;
+  },
+  client?: CorretorRepositoryClient
+): Promise<CorretorRow> {
   const fullName = data.fullName.trim();
   if (!fullName) throw new Error('Nome completo é obrigatório.');
-  const { rows } = await query<CorretorRow>(
+  const db = corretorDb(client);
+  const { rows } = await db.query<CorretorRow>(
     `INSERT INTO corretores (full_name, city, phone, real_estate_agency, email, active, updated_at)
      VALUES ($1, $2, $3, $4, $5, true, NOW()) RETURNING *`,
     [fullName, (data.city || '').trim(), (data.phone || '').trim(), (data.realEstateAgency || '').trim(), data.email || null]
   );
   const corretor = rows[0];
   const ids = data.enterpriseIds ?? [];
-  if (ids.length > 0) await setCorretorEnterprises(corretor.id, ids);
+  if (ids.length > 0) await setCorretorEnterprises(corretor.id, ids, client);
   return corretor;
 }
 
