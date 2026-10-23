@@ -212,8 +212,8 @@ async function listConversationsByScope(
 ): Promise<MobileConversationItem[]> {
   const typeConditionSql =
     type === 'INTERNO'
-      ? `COALESCE(c.conversation_type, 'CLIENT') IN ('ADMIN', 'CORRETOR')`
-      : `COALESCE(c.conversation_type, 'CLIENT') = 'CLIENT'`;
+      ? `(COALESCE(c.conversation_type, 'CLIENT') IN ('ADMIN', 'CORRETOR') OR c.is_event_lead = TRUE)`
+      : `(COALESCE(c.conversation_type, 'CLIENT') = 'CLIENT' AND c.is_event_lead = FALSE)`;
 
   const result = await query<ConversationRow>(
     `SELECT

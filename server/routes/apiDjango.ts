@@ -149,6 +149,7 @@ router.get('/conversations', requireServiceJwt(['django']), async (req: JwtReque
     const filters: any = {
       limit: pageSize,
       offset,
+      excludeEventLeads: true,
     };
     if (enterprise_id) filters.enterpriseId = parseInt(enterprise_id as string);
     if (classification) filters.status = classification as string;  // classification → status
@@ -186,6 +187,9 @@ router.get('/conversations/:id', requireServiceJwt(['django']), async (req: JwtR
 
     const conversation = await getConversationById(id);
     if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+    if (conversation.is_event_lead === true) {
       return res.status(404).json({ error: 'Conversation not found' });
     }
 

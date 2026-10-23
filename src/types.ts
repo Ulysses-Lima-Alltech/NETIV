@@ -56,6 +56,7 @@ export interface Conversation {
   manualClosedReason?: string | null;
   /** Tipo operacional da conversa no backend. */
   conversationType?: 'CLIENT' | 'ADMIN' | 'CORRETOR' | string;
+  isEventLead?: boolean;
 }
 
 export type MessageSender = 'LEAD' | 'AGENT';

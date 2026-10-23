@@ -8,7 +8,7 @@
 // reenviar — mas o carimbo evita reenvio desnecessário.
 
 import { query } from '../db/pg.js';
-import { notifyDjangoLead } from './djangoWebhook.js';
+import { notifyDjangoLead, type DjangoNotifyResult } from './djangoWebhook.js';
 import type { ConversationRow } from '../repositories/conversationRepository.js';
 
 declare const process: {
@@ -55,6 +55,7 @@ async function selectPending(): Promise<PendingRow[]> {
        LEFT JOIN contacts ct ON ct.id = c.contact_id
       WHERE c.enterprise_id IS NOT NULL
         AND c.conversation_type = 'CLIENT'
+        AND c.is_event_lead = FALSE
         AND c.django_sync_dead_letter = FALSE
         AND (
           c.synced_to_django_at IS NULL
@@ -119,12 +120,14 @@ async function markAttemptFailed(
  * NÃO carimba — o lead volta a aparecer no próximo SELECT e é reenviado
  * no próximo tick. Comportamento: "tenta pra sempre" (decisão B).
  */
-async function processOne(row: PendingRow): Promise<{ ok: boolean; status?: number }> {
+async function processOne(row: PendingRow): Promise<DjangoNotifyResult> {
   const result = await notifyDjangoLead(row, {
     whatsappDisplayName: row.whatsapp_display_name ?? null,
     contactFullName: row.contact_full_name ?? null,
     contactFirstName: row.contact_first_name ?? null,
   });
+
+  if (result.skipped === 'event') return result;
 
   if (result.ok && row.enterprise_id != null) {
     await markSynced(row.id, row.enterprise_id);
@@ -163,11 +166,13 @@ export async function runDjangoSyncWorker(): Promise<void> {
 
     let okCount = 0;
     let failCount = 0;
+    let skippedCount = 0;
 
     for (const row of pending) {
       try {
         const r = await processOne(row);
-        if (r.ok) okCount++;
+        if (r.skipped) skippedCount++;
+        else if (r.ok) okCount++;
         else failCount++;
       } catch (err) {
         failCount++;
@@ -178,7 +183,7 @@ export async function runDjangoSyncWorker(): Promise<void> {
     }
 
     console.log(
-      `[django sync] tick concluído. enviados=${okCount} falhas=${failCount} ` +
+      `[django sync] tick concluído. enviados=${okCount} ignorados=${skippedCount} falhas=${failCount} ` +
       `pendentes_no_lote=${pending.length} max_tentativas=${MAX_SYNC_ATTEMPTS}`
     );
   } finally {

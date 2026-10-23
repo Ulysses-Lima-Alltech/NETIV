@@ -179,6 +179,8 @@ export interface TemplateParamsContext {
   city?: string | null;
   productType?: string | null;
   parameters?: string[];
+  headerMediaOverride?: { mediaId: string };
+  suppressHeaderMedia?: boolean;
 }
 
 export function buildTemplateParams(
@@ -340,8 +342,17 @@ export async function sendTemplateMessage(
   // Nome na Meta = `key` do catálogo (snake_case); o campo `name` legível do catálogo não é o ID do template.
   const components: Array<Record<string, unknown>> = [];
   const persisted = await getMediaSetting(template.key, template.languageCode);
-  const headerMediaId = (persisted?.headerMediaId ?? template.headerMediaId ?? '').trim();
-  const headerImageUrl = (persisted?.headerImageUrl ?? template.headerImageUrl ?? '').trim();
+  const headerMediaId = ctx?.suppressHeaderMedia
+    ? ''
+    : (
+      ctx?.headerMediaOverride?.mediaId
+      ?? persisted?.headerMediaId
+      ?? template.headerMediaId
+      ?? ''
+    ).trim();
+  const headerImageUrl = ctx?.suppressHeaderMedia || ctx?.headerMediaOverride
+    ? ''
+    : (persisted?.headerImageUrl ?? template.headerImageUrl ?? '').trim();
 
   if (template.requiresHeaderMedia) {
     if (headerMediaId) {
@@ -1220,6 +1231,4 @@ export async function testConnection(): Promise<{ success: boolean; error?: stri
     return { success: false, error: 'Erro de conexão.', detail: e instanceof Error ? e.message : String(e) };
   }
 }
-
-
 

@@ -20,7 +20,9 @@ import {
 } from '../repositories/conversationRepository.js';
 import { insertMessage } from '../repositories/messageRepository.js';
 import { getWhatsAppConfig } from '../repositories/whatsappConfigRepository.js';
-import { sendTemplateMessage } from './whatsappMetaService.js';
+import { sendTemplateMessage, uploadWhatsAppMedia } from './whatsappMetaService.js';
+import { listBatchTemplatesFromMetaOrFallback } from './whatsappTemplateCatalogSyncService.js';
+import { publishConversationUpdated } from '../realtime/realtimePublisher.js';
 import { getCorretorById } from '../repositories/corretorRepository.js';
 import { findOrCreateContactByPhone, updateContactType } from '../repositories/contactsRepository.js';
 import { isAnaAutomationBlockedByHandoff } from '../utils/anaAutomationEligibility.js';
@@ -59,8 +61,22 @@ export interface BatchExecutionResult {
     httpStatus?: number;
     templateKey: string;
     metaMessageId?: string;
+    conversationId?: number;
   }>;
 }
+
+export interface DispatchEventDraft {
+  requestId: string;
+  fingerprint: string;
+  name: string;
+  sendMode: 'NOW' | 'SCHEDULED';
+  artBytes: Buffer;
+  artMimeType: string;
+  artFilename: string;
+}
+
+export class DispatchEventConflictError extends Error {}
+export class DispatchEventValidationError extends Error {}
 
 export interface BatchPersistedConversationState {
   id: number;
@@ -107,6 +123,7 @@ interface PreparedBatchCandidate {
   resolvedValues: string[];
   assignedBrokerId: number | null;
   assignedBrokerName: string | null;
+  customerName: string | null;
 }
 
 interface PreparedBatchCandidatesResult {
@@ -123,6 +140,10 @@ interface ScheduledBatchRow {
   post_send_mode: NormalizedBatchPostSendMode;
   scheduled_at: Date;
   status: 'PENDING' | 'PROCESSING' | 'SENT' | 'PARTIAL_FAILED' | 'FAILED' | 'CANCELED';
+  event_name: string | null;
+  event_art_bytes: Buffer | null;
+  event_art_mime_type: string | null;
+  event_art_filename: string | null;
 }
 
 interface ScheduledBatchRecipientRow {
@@ -131,6 +152,7 @@ interface ScheduledBatchRecipientRow {
   row_number: number;
   phone: string;
   name: string | null;
+  customer_name: string | null;
   variables_json: unknown;
   assigned_broker_id: number | null;
   status: 'PENDING' | 'PROCESSING' | 'SENT' | 'FAILED' | 'CANCELED';
@@ -182,8 +204,9 @@ function getTemplateOrThrow(templateKey: string): WhatsAppTemplateCatalogItem {
   return template;
 }
 
-function assertTemplateHeaderMediaConfigured(template: WhatsAppTemplateCatalogItem): void {
+function assertTemplateHeaderMediaConfigured(template: WhatsAppTemplateCatalogItem, hasEventArt = false): void {
   if (!template.requiresHeaderMedia) return;
+  if (template.hasHeaderImage && hasEventArt) return;
   if (template.hasConfiguredHeaderMedia || template.headerMediaId || template.headerImageUrl?.trim()) return;
   throw new Error('Este template exige imagem de cabeçalho. Anexe uma imagem antes de enviar.');
 }
@@ -332,6 +355,7 @@ export function buildBatchSuggestions(headers: string[]): BatchColumnSuggestions
 export async function buildBatchPreview(params: {
   rows: Record<string, string>[];
   mapping: BatchMappingDto;
+  hasEventArt?: boolean;
 }): Promise<{
   total: number;
   validCount: number;
@@ -341,7 +365,7 @@ export async function buildBatchPreview(params: {
 }> {
   const template = getTemplateOrThrow(params.mapping.templateKey);
   assertTemplateApproved(template);
-  assertTemplateHeaderMediaConfigured(template);
+  assertTemplateHeaderMediaConfigured(template, params.hasEventArt === true);
   const selectedBrokers = await resolveSelectedBrokers(params.mapping);
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
   const previewRows: BatchPreviewRow[] = [];
@@ -492,6 +516,9 @@ function buildPreparedBatchCandidates(params: {
       resolvedValues: resolved.values,
       assignedBrokerId: assignedBroker?.id ?? null,
       assignedBrokerName: assignedBroker?.fullName ?? null,
+      customerName: params.mapping.customerNameColumn
+        ? normalizeValue(row[params.mapping.customerNameColumn])
+        : null,
     });
   }
 
@@ -504,6 +531,7 @@ async function applyBatchOwnershipAndContextByPhone(params: {
   brokerId: number | null;
   sourceKey: string;
   sourceRowNumber: number;
+  onlyConversationId?: number;
 }): Promise<void> {
   await query(
     `UPDATE contacts
@@ -541,8 +569,16 @@ async function applyBatchOwnershipAndContextByPhone(params: {
             'brokerId', $5::integer
            ),
          updated_at = NOW()
-     WHERE regexp_replace(COALESCE(c.contact_phone, c.external_contact_id, ''), '\\D', '', 'g') = $1`,
-    [params.phoneE164, params.enterpriseId, params.sourceKey, params.sourceRowNumber, params.brokerId]
+     WHERE regexp_replace(COALESCE(c.contact_phone, c.external_contact_id, ''), '\\D', '', 'g') = $1
+       AND ($6::int IS NULL OR c.id = $6::int)`,
+    [
+      params.phoneE164,
+      params.enterpriseId,
+      params.sourceKey,
+      params.sourceRowNumber,
+      params.brokerId,
+      params.onlyConversationId ?? null,
+    ]
   );
 }
 
@@ -559,7 +595,7 @@ async function applyBatchConversationRouting(params: {
   }
   await updateClassification(params.conversationId, {
     handoff: params.postSendMode === 'HANDOFF',
-    assigned_broker_id: params.brokerId,
+    assigned_broker_id: params.brokerId ?? undefined,
   });
 }
 
@@ -571,6 +607,9 @@ async function sendBatchCandidateNow(params: {
   conversationType: NormalizedBatchConversationType;
   postSendMode: NormalizedBatchPostSendMode;
   sourceKeyPrefix: string;
+  headerMediaOverride?: { mediaId: string };
+  suppressHeaderMedia?: boolean;
+  markEventLead?: boolean;
 }): Promise<BatchExecutionResult['details'][number]> {
   // O template inicial foi solicitado por um operador. Ele pode ser entregue
   // mesmo em handoff, mas nunca pode reativar automações posteriores da Ana.
@@ -631,6 +670,8 @@ async function sendBatchCandidateNow(params: {
   }
   const result = await sendTemplateMessage(params.candidate.phoneNormalized, params.template.key, {
     parameters: params.candidate.resolvedValues,
+    headerMediaOverride: params.headerMediaOverride,
+    suppressHeaderMedia: params.suppressHeaderMedia,
   });
   if (!result.success) {
     return {
@@ -660,6 +701,21 @@ async function sendBatchCandidateNow(params: {
     null,
     null
   );
+  if (params.markEventLead) {
+    await query(
+      'UPDATE conversations SET is_event_lead = TRUE, updated_at = NOW() WHERE id = $1',
+      [conversation.id]
+    );
+    conversation.is_event_lead = true;
+  }
+  if (params.candidate.customerName) {
+    await query(
+      `UPDATE conversations
+       SET customer_name = COALESCE(NULLIF(TRIM(customer_name), ''), $2)
+       WHERE id = $1`,
+      [conversation.id, params.candidate.customerName]
+    );
+  }
   const conversationInHandoffAfterSend =
     isAnaAutomationBlockedByHandoff(conversation);
 
@@ -700,7 +756,12 @@ async function sendBatchCandidateNow(params: {
     brokerId: params.candidate.assignedBrokerId,
     sourceKey: `${params.sourceKeyPrefix}:${params.template.key}`,
     sourceRowNumber: params.candidate.rowNumber,
+    onlyConversationId: params.markEventLead ? conversation.id : undefined,
   });
+
+  if (params.markEventLead) {
+    await publishConversationUpdated(conversation.id);
+  }
 
   return {
     rowNumber: params.candidate.rowNumber,
@@ -710,6 +771,7 @@ async function sendBatchCandidateNow(params: {
     error: null,
     templateKey: params.template.key,
     metaMessageId: result.metaMessageId,
+    conversationId: conversation.id,
   };
 }
 
@@ -721,12 +783,13 @@ export async function sendBatchTemplate(params: {
   sendMode?: BatchSendMode;
   scheduledAt?: string | null;
   createdByUserId?: number | null;
+  dispatchEvent?: DispatchEventDraft;
 }): Promise<BatchSendResult> {
   const conversationType = normalizeConversationType(params.conversationType);
   const postSendMode = normalizePostSendMode(params.postSendMode);
   const sendMode = normalizeSendMode(params.sendMode);
 
-  if (sendMode === 'SCHEDULED') {
+  if (sendMode === 'SCHEDULED' || params.dispatchEvent) {
     return scheduleBatchTemplate({
       rows: params.rows,
       mapping: params.mapping,
@@ -734,6 +797,7 @@ export async function sendBatchTemplate(params: {
       postSendMode,
       scheduledAt: params.scheduledAt ?? null,
       createdByUserId: params.createdByUserId ?? null,
+      dispatchEvent: params.dispatchEvent,
     });
   }
 
@@ -789,13 +853,14 @@ async function scheduleBatchTemplate(params: {
   postSendMode: NormalizedBatchPostSendMode;
   scheduledAt: string | null;
   createdByUserId: number | null;
+  dispatchEvent?: DispatchEventDraft;
 }): Promise<BatchScheduleResult> {
+  const event = params.dispatchEvent;
   const template = getTemplateOrThrow(params.mapping.templateKey);
   assertTemplateApproved(template);
-  assertTemplateHeaderMediaConfigured(template);
+  assertTemplateHeaderMediaConfigured(template, Boolean(event?.artBytes));
   const enterprise = await resolveEnterprise(params.mapping.selectedEnterpriseId);
   const selectedBrokers = await resolveSelectedBrokers(params.mapping);
-  const scheduledAt = parseScheduledAtOrThrow(params.scheduledAt);
   const prepared = buildPreparedBatchCandidates({
     rows: params.rows,
     mapping: params.mapping,
@@ -807,10 +872,108 @@ async function scheduleBatchTemplate(params: {
   if (prepared.candidates.length === 0) {
     throw new Error('Nenhum número válido para agendamento.');
   }
+  if (event) {
+    if (prepared.blockedDetails.length > 0) {
+      throw new DispatchEventValidationError('Corrija os destinatários inválidos antes de salvar.');
+    }
+    const phones = prepared.candidates.map((candidate) => candidate.phoneNormalized);
+    if (new Set(phones).size !== phones.length) {
+      throw new DispatchEventValidationError('A planilha contém telefones repetidos.');
+    }
+  }
 
   const client = await getPool().connect();
+  const eventTaggedConversationIds: number[] = [];
   try {
     await client.query('BEGIN');
+    if (event) {
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+        [event.requestId]
+      );
+      const previous = await client.query<{
+        id: string;
+        scheduled_at: Date;
+        event_fingerprint: string;
+        payload_json: { rowsCount: number; validRecipients: number; invalidRecipients: number };
+      }>(
+        `SELECT id::text AS id, scheduled_at, event_fingerprint, payload_json
+         FROM whatsapp_batch_scheduled_sends WHERE event_request_id = $1`,
+        [event.requestId]
+      );
+      const existing = previous.rows[0];
+      if (existing) {
+        if (existing.event_fingerprint !== event.fingerprint) {
+          throw new DispatchEventConflictError('Esta requisição já foi usada com dados diferentes.');
+        }
+        await client.query('COMMIT');
+        return {
+          scheduled: true,
+          batchId: Number(existing.id),
+          status: 'PENDING',
+          total: existing.payload_json.rowsCount,
+          validRecipients: existing.payload_json.validRecipients,
+          invalidRecipients: existing.payload_json.invalidRecipients,
+          scheduledAt: existing.scheduled_at.toISOString(),
+          conversationType: params.conversationType,
+          postSendMode: params.postSendMode,
+          message: 'Requisição já registrada. Nenhum envio duplicado foi criado.',
+        };
+      }
+    }
+    if (event?.sendMode === 'SCHEDULED' && (
+      !params.scheduledAt ||
+      !Number.isFinite(Date.parse(params.scheduledAt)) ||
+      Date.parse(params.scheduledAt) <= Date.now()
+    )) {
+      throw new DispatchEventValidationError('Escolha uma data e hora futuras.');
+    }
+    const scheduledAt = event?.sendMode === 'NOW'
+      ? new Date()
+      : parseScheduledAtOrThrow(params.scheduledAt);
+    if (event) {
+      const phones = prepared.candidates.map((candidate) => candidate.phoneNormalized);
+      const internal = await client.query(
+        `SELECT id FROM conversations
+         WHERE channel = 'whatsapp'
+           AND regexp_replace(COALESCE(contact_phone, external_contact_id, ''), '\\D', '', 'g')
+               = ANY($1::text[])
+           AND COALESCE(conversation_type, 'CLIENT') <> 'CLIENT'
+         LIMIT 1`,
+        [phones]
+      );
+      if (internal.rows.length > 0) {
+        throw new DispatchEventValidationError('Há destinatários internos na planilha. Revise a lista.');
+      }
+      const existingConversations = await client.query<{ id: number }>(
+        `SELECT id
+         FROM conversations
+         WHERE channel = 'whatsapp'
+           AND COALESCE(conversation_type, 'CLIENT') = 'CLIENT'
+           AND regexp_replace(COALESCE(contact_phone, external_contact_id, ''), '\\D', '', 'g')
+               = ANY($1::text[])
+         ORDER BY id`,
+        [phones]
+      );
+      for (const conversation of existingConversations.rows) {
+        eventTaggedConversationIds.push(conversation.id);
+        await client.query(
+          'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+          [`django-lead:${conversation.id}`]
+        );
+      }
+      // Marcar conversas existentes antes de atribuir empreendimento/handoff,
+      // impedindo que o worker Django as processe no intervalo.
+      await client.query(
+        `UPDATE conversations
+         SET is_event_lead = TRUE, updated_at = NOW()
+         WHERE channel = 'whatsapp'
+           AND COALESCE(conversation_type, 'CLIENT') = 'CLIENT'
+           AND regexp_replace(COALESCE(contact_phone, external_contact_id, ''), '\\D', '', 'g')
+               = ANY($1::text[])`,
+        [phones]
+      );
+    }
     const payloadJson = {
       mapping: params.mapping,
       rowsCount: params.rows.length,
@@ -830,9 +993,12 @@ async function scheduleBatchTemplate(params: {
          scheduled_at,
          status,
          created_by,
-         created_at,
-         updated_at
-       ) VALUES ($1, $2, $3::jsonb, $4, $5, $6, 'PENDING', $7, NOW(), NOW())
+         event_name, event_request_id, event_fingerprint, event_send_mode,
+         event_art_bytes, event_art_mime_type, event_art_filename,
+         created_at, updated_at
+       ) VALUES (
+         $1,$2,$3::jsonb,$4,$5,$6,'PENDING',$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW()
+       )
        RETURNING id, scheduled_at`,
       [
         enterprise?.id ?? null,
@@ -840,8 +1006,15 @@ async function scheduleBatchTemplate(params: {
         JSON.stringify(payloadJson),
         params.conversationType,
         params.postSendMode,
-        scheduledAt.toISOString(),
+        scheduledAt,
         params.createdByUserId,
+        event?.name ?? null,
+        event?.requestId ?? null,
+        event?.fingerprint ?? null,
+        event?.sendMode ?? null,
+        event?.artBytes ?? null,
+        event?.artMimeType ?? null,
+        event?.artFilename ?? null,
       ]
     );
     const batchId = batchInsert.rows[0]?.id;
@@ -855,23 +1028,28 @@ async function scheduleBatchTemplate(params: {
            row_number,
            phone,
            name,
+           customer_name,
            variables_json,
            assigned_broker_id,
            status,
            created_at,
            updated_at
-         ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, 'PENDING', NOW(), NOW())`,
+         ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, 'PENDING', NOW(), NOW())`,
         [
           batchId,
           candidate.rowNumber,
           candidate.phoneNormalized,
           candidate.assignedBrokerName,
+          candidate.customerName,
           JSON.stringify(candidate.resolvedValues),
           candidate.assignedBrokerId,
         ]
       );
     }
     await client.query('COMMIT');
+    for (const conversationId of eventTaggedConversationIds) {
+      void publishConversationUpdated(conversationId);
+    }
     return {
       scheduled: true,
       batchId,
@@ -882,7 +1060,9 @@ async function scheduleBatchTemplate(params: {
       scheduledAt: (batchInsert.rows[0]?.scheduled_at ?? scheduledAt).toISOString(),
       conversationType: params.conversationType,
       postSendMode: params.postSendMode,
-      message: 'Lote agendado com sucesso.',
+      message: event?.sendMode === 'NOW'
+        ? 'Salvo. Disparo na fila para iniciar agora.'
+        : 'Lote agendado com sucesso.',
     };
   } catch (error) {
     await client.query('ROLLBACK');
@@ -937,13 +1117,43 @@ async function finalizeScheduledBatch(batchId: number): Promise<void> {
 
 async function processClaimedScheduledBatch(batch: ScheduledBatchRow): Promise<void> {
   try {
+    if (batch.event_name) {
+      const catalog = await listBatchTemplatesFromMetaOrFallback({ forceRefresh: true });
+      if (catalog.fallbackUsed) {
+        throw new Error('Não foi possível confirmar o template na Meta. Nenhum envio iniciado.');
+      }
+    }
     const template = getTemplateOrThrow(batch.template_key);
     assertTemplateApproved(template);
-    assertTemplateHeaderMediaConfigured(template);
+    assertTemplateHeaderMediaConfigured(template, Boolean(batch.event_art_bytes));
+    let headerMediaOverride: { mediaId: string } | undefined;
+    const suppressHeaderMedia = Boolean(batch.event_name && !template.hasHeaderImage);
+    if (batch.event_name) {
+      if (template.hasHeaderVideo || template.hasHeaderDocument) {
+        throw new Error('Este evento aceita somente template de texto ou cabeçalho de imagem.');
+      }
+      if (template.requiresHeaderMedia && !template.hasHeaderImage) {
+        throw new Error('O cabeçalho do template não é compatível com imagem.');
+      }
+      if (template.hasHeaderImage) {
+        if (!batch.event_art_bytes || !batch.event_art_mime_type) {
+          throw new Error('Arte do evento indisponível.');
+        }
+        const media = await uploadWhatsAppMedia({
+          buffer: batch.event_art_bytes,
+          filename: batch.event_art_filename ?? 'evento.jpg',
+          mimeType: batch.event_art_mime_type,
+        });
+        if (!media.success || !media.mediaId) {
+          throw new Error(media.error ?? 'Falha ao preparar arte do evento.');
+        }
+        headerMediaOverride = { mediaId: media.mediaId };
+      }
+    }
     const config = await getWhatsAppConfig();
 
     const recipientsRes = await query<ScheduledBatchRecipientRow>(
-      `SELECT id, batch_id, row_number, phone, name, variables_json, assigned_broker_id, status
+      `SELECT id, batch_id, row_number, phone, name, customer_name, variables_json, assigned_broker_id, status
        FROM whatsapp_batch_scheduled_send_recipients
        WHERE batch_id = $1 AND status = 'PENDING'
        ORDER BY id ASC`,
@@ -954,7 +1164,7 @@ async function processClaimedScheduledBatch(batch: ScheduledBatchRow): Promise<v
         `UPDATE whatsapp_batch_scheduled_send_recipients
          SET status = 'PROCESSING', updated_at = NOW()
          WHERE id = $1 AND status = 'PENDING'
-         RETURNING id, batch_id, row_number, phone, name, variables_json, assigned_broker_id, status`,
+         RETURNING id, batch_id, row_number, phone, name, customer_name, variables_json, assigned_broker_id, status`,
         [recipient.id]
       );
       const claimed = claimRes.rows[0];
@@ -969,12 +1179,16 @@ async function processClaimedScheduledBatch(batch: ScheduledBatchRow): Promise<v
           resolvedValues: parseScheduledRecipientVariables(claimed.variables_json),
           assignedBrokerId: claimed.assigned_broker_id ?? null,
           assignedBrokerName: claimed.name ?? null,
+          customerName: claimed.customer_name ?? null,
         },
         configPhoneNumberId: config?.whatsappPhoneNumberId ?? null,
         enterpriseId: batch.enterprise_id ?? null,
         conversationType: normalizeConversationType(batch.conversation_type),
         postSendMode: normalizePostSendMode(batch.post_send_mode),
         sourceKeyPrefix: `scheduled_batch:${batch.id}`,
+        headerMediaOverride,
+        suppressHeaderMedia,
+        markEventLead: Boolean(batch.event_name),
       });
 
       if (detail.status === 'sent') {
@@ -984,15 +1198,9 @@ async function processClaimedScheduledBatch(batch: ScheduledBatchRow): Promise<v
                sent_at = NOW(),
                updated_at = NOW(),
                error_message = NULL,
-               conversation_id = (
-                 SELECT id
-                 FROM conversations
-                 WHERE regexp_replace(COALESCE(contact_phone, external_contact_id, ''), '\\D', '', 'g') = $1
-                 ORDER BY updated_at DESC
-                 LIMIT 1
-               )
-           WHERE id = $2`,
-          [claimed.phone, claimed.id]
+               conversation_id = $2
+           WHERE id = $1`,
+          [claimed.id, detail.conversationId ?? null]
         );
       } else {
         await query(
@@ -1051,7 +1259,8 @@ export async function processDueScheduledBatchSends(limit = 5): Promise<number> 
            updated_at = NOW(),
            error_message = NULL
        WHERE id = $1 AND status = 'PENDING'
-       RETURNING id, enterprise_id, template_key, payload_json, conversation_type, post_send_mode, scheduled_at, status`,
+       RETURNING id, enterprise_id, template_key, payload_json, conversation_type, post_send_mode,
+                 scheduled_at, status, event_name, event_art_bytes, event_art_mime_type, event_art_filename`,
       [row.id]
     );
     const claimed = claim.rows[0];
@@ -1186,4 +1395,3 @@ export async function sendBatchTemplateTest(params: {
     metaMessageId: result.metaMessageId,
   };
 }
-

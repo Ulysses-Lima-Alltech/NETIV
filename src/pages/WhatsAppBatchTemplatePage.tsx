@@ -1,6 +1,8 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { useCallback } from 'react';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
+import { DispatchEventsSection } from '../components/DispatchEventsSection';
 import { useAuth } from '../contexts/AuthContext';
 import {
   ApiError,
@@ -141,6 +143,30 @@ function isTemplateUsableForBatch(
 
 export function WhatsAppBatchTemplatePage() {
   const { isAdmin } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') === 'templates' ? 'templates' : 'batch';
+  const metaTemplateView = searchParams.get('view') === 'list' ? 'list' : 'create';
+
+  const setActiveTab = (tab: 'batch' | 'templates') => {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      if (tab === 'templates') next.set('tab', 'templates');
+      else {
+        next.delete('tab');
+        next.delete('view');
+      }
+      return next;
+    });
+  };
+  const setMetaTemplateView = (view: 'create' | 'list') => {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set('tab', 'templates');
+      if (view === 'list') next.set('view', 'list');
+      else next.delete('view');
+      return next;
+    });
+  };
   const [file, setFile] = useState<File | null>(null);
   const [templates, setTemplates] = useState<BatchTemplateCatalogItem[]>([]);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
@@ -175,7 +201,6 @@ export function WhatsAppBatchTemplatePage() {
   const [headerImageUploading, setHeaderImageUploading] = useState(false);
   const [headerImageRemoving, setHeaderImageRemoving] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<'batch' | 'templates'>('batch');
   const [metaTemplates, setMetaTemplates] = useState<WhatsAppMetaTemplateItem[]>([]);
   const [metaTemplatesLoading, setMetaTemplatesLoading] = useState(false);
   const [metaTemplatesError, setMetaTemplatesError] = useState<string | null>(null);
@@ -234,7 +259,7 @@ export function WhatsAppBatchTemplatePage() {
     void corretoresApi.list().then((d) => setBrokers(d.corretores)).catch(() => setBrokers([]));
   }, []);
 
-  const loadMetaTemplates = async () => {
+  const loadMetaTemplates = useCallback(async () => {
     setMetaTemplatesLoading(true);
     setMetaTemplatesError(null);
     try {
@@ -246,10 +271,18 @@ export function WhatsAppBatchTemplatePage() {
     } finally {
       setMetaTemplatesLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'templates') void loadMetaTemplates();
+  }, [activeTab, loadMetaTemplates]);
+
+  const handleEnterTemplatesTab = () => {
+    setActiveTab('templates');
   };
 
-  const handleEnterTemplatesTab = async () => {
-    setActiveTab('templates');
+  const handleShowMetaTemplates = async () => {
+    setMetaTemplateView('list');
     if (metaTemplates.length === 0 && !metaTemplatesLoading) {
       await loadMetaTemplates();
     }
@@ -283,6 +316,7 @@ export function WhatsAppBatchTemplatePage() {
         bodyExamples: bodyExamplesPayload,
       });
       setMetaActionFeedback('Solicitação enviada para a Meta. Acompanhe o status na lista de templates.');
+      setMetaTemplateView('list');
       setMetaTemplateName('');
       setMetaTemplateBody('');
       setMetaTemplateBodyExamples({});
@@ -721,58 +755,75 @@ export function WhatsAppBatchTemplatePage() {
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-[#111827]">
       <nav className="h-14 border-b border-[#E5E7EB] bg-white/90 backdrop-blur-sm sticky top-0 z-20 px-6 flex items-center justify-between">
-        <span className="text-[15px] font-semibold">Disparo em Lote</span>
+        <span className="text-[18px] font-extrabold uppercase tracking-wide">Disparo em Lote</span>
         <AppNav />
       </nav>
 
       <div className="w-full max-w-none px-6 lg:px-8 py-6 space-y-5">
         <div>
-          <p className="text-[13px] text-[#6B7280]">
+          <p className="text-[16px] italic leading-relaxed text-[#475569]">
             Envie templates do WhatsApp em lote a partir de uma planilha: faça o upload, escolha o template, mapeie colunas e envie.
           </p>
         </div>
 
-        <div className="bg-white border border-[#E5E7EB] rounded-[12px] p-2 inline-flex gap-2">
+        <div className="relative grid w-full max-w-[520px] grid-cols-2 gap-2 rounded-[12px] border-2 border-[#F97316] bg-[#FFF1E8] p-2">
           <button
             type="button"
             onClick={() => setActiveTab('batch')}
-            className={`px-3 py-2 rounded-[10px] text-[13px] font-medium ${
-              activeTab === 'batch' ? 'bg-[#DBEAFE] text-[#1D4ED8]' : 'text-[#4B5563] hover:bg-[#F3F4F6]'
+            className={`inline-flex min-h-[42px] items-center justify-center gap-2 rounded-[8px] px-2 py-2 text-[11px] font-extrabold uppercase tracking-wide transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C2410C] sm:px-5 sm:text-[13px] ${
+              activeTab === 'batch' ? 'bg-white text-[#C2410C] shadow-sm' : 'text-[#9A3412] hover:bg-white/70'
             }`}
           >
-            Disparo em lote
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none"
+              className="h-4 w-4 shrink-0" stroke="currentColor" strokeWidth="2"
+              strokeLinecap="round" strokeLinejoin="round">
+              <rect x="4" y="3" width="16" height="18" rx="2" />
+              <path d="M8 8h8M8 12h8M8 16h5" />
+            </svg>
+            <span>DISPARO EM LOTE</span>
           </button>
           <button
             type="button"
             onClick={() => void handleEnterTemplatesTab()}
-            className={`px-3 py-2 rounded-[10px] text-[13px] font-medium ${
-              activeTab === 'templates' ? 'bg-[#DBEAFE] text-[#1D4ED8]' : 'text-[#4B5563] hover:bg-[#F3F4F6]'
+            className={`inline-flex min-h-[42px] items-center justify-center gap-2 rounded-[8px] px-2 py-2 text-[11px] font-extrabold uppercase tracking-wide transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C2410C] sm:px-5 sm:text-[13px] ${
+              activeTab === 'templates' ? 'bg-white text-[#C2410C] shadow-sm' : 'text-[#9A3412] hover:bg-white/70'
             }`}
           >
-            Templates META
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none"
+              className="h-4 w-4 shrink-0" stroke="currentColor" strokeWidth="2"
+              strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+              <path d="M14 2v6h6M8 13h8M8 17h8" />
+            </svg>
+            <span>TEMPLATES META</span>
           </button>
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute bottom-3 left-1/2 top-3 w-px -translate-x-1/2 bg-[#FDBA74]"
+          />
         </div>
+
+        <DispatchEventsSection showEvents={false} />
 
         {activeTab === 'templates' ? (
           <section className="bg-white border border-[#E5E7EB] rounded-[12px] p-5 space-y-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-[16px] font-semibold">Templates META</h2>
+                <h2 className="text-[20px] font-bold text-[#123A73]">Templates do WhatsApp</h2>
                 <p className="text-[13px] text-[#4B5563] mt-1">
-                  Crie modelos de mensagem para envio em lote e acompanhe a aprovação pela Meta.
-                </p>
-                <p className="text-[12px] text-[#6B7280] mt-1">
-                  Templates novos precisam ser aprovados pela Meta antes de poderem ser usados em disparos.
+                  Crie um modelo e acompanhe a aprovação. Criar um modelo não envia mensagens.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => void handleSyncMetaTemplates()}
-                disabled={metaActionLoading || metaTemplatesLoading}
-                className="px-3 py-2 rounded-[10px] border border-[#BFDBFE] text-[#1D4ED8] bg-[#EFF6FF] hover:bg-[#DBEAFE] disabled:opacity-60"
-              >
-                {metaActionLoading ? 'Sincronizando...' : 'Atualizar/Sincronizar'}
-              </button>
+              {metaTemplateView === 'list' && (
+                <button
+                  type="button"
+                  onClick={() => void handleSyncMetaTemplates()}
+                  disabled={metaActionLoading || metaTemplatesLoading}
+                  className="px-3 py-2 rounded-[10px] border border-[#BFDBFE] text-[#1D4ED8] bg-[#EFF6FF] hover:bg-[#DBEAFE] disabled:opacity-60"
+                >
+                  {metaActionLoading ? 'Atualizando...' : 'Atualizar lista'}
+                </button>
+              )}
             </div>
 
             {metaTemplatesError && (
@@ -782,12 +833,53 @@ export function WhatsAppBatchTemplatePage() {
               <div className="bg-slate-50 border border-slate-200 rounded-md p-3 text-sm text-slate-700">{metaActionFeedback}</div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] items-start gap-5">
-              <div className="space-y-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[12px] p-4">
-                <h3 className="text-[14px] font-semibold">Criar template</h3>
-                <div className="grid grid-cols-1 gap-3">
+            <div role="tablist" aria-label="Área de templates Meta" className="grid grid-cols-2 gap-2 rounded-[8px] border border-[#BFDBFE] bg-[#EFF6FF] p-1">
+              <button
+                type="button"
+                onClick={() => setMetaTemplateView('create')}
+                role="tab"
+                aria-selected={metaTemplateView === 'create'}
+                aria-controls="meta-template-create-panel"
+                aria-pressed={metaTemplateView === 'create'}
+                className={`rounded-[6px] px-3 py-2 text-sm font-semibold transition-colors ${
+                  metaTemplateView === 'create'
+                    ? 'bg-white text-[#123A73] shadow-sm'
+                    : 'text-[#475569] hover:bg-white/70'
+                }`}
+              >
+                1. Criar novo modelo
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleShowMetaTemplates()}
+                role="tab"
+                aria-selected={metaTemplateView === 'list'}
+                aria-controls="meta-template-list-panel"
+                aria-pressed={metaTemplateView === 'list'}
+                className={`rounded-[6px] px-3 py-2 text-sm font-semibold transition-colors ${
+                  metaTemplateView === 'list'
+                    ? 'bg-white text-[#123A73] shadow-sm'
+                    : 'text-[#475569] hover:bg-white/70'
+                }`}
+              >
+                2. Meus modelos e status
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {metaTemplateView === 'create' && (
+              <div id="meta-template-create-panel" role="tabpanel" aria-label="Criar novo modelo" className="space-y-4">
+                <section className="space-y-4 rounded-[6px] border border-[#F97316] bg-white p-4">
+                  <header className="flex items-start gap-3 border-b border-[#E2E8F0] pb-3">
+                    <span className="rounded-[4px] bg-[#FFF1E8] px-2 py-1 text-xs font-bold text-[#C2410C]">01</span>
+                    <div>
+                      <h3 className="text-base font-bold text-[#123A73]">Identifique o modelo</h3>
+                      <p className="mt-0.5 text-xs text-[#64748B]">Escolha um nome, a finalidade e o idioma.</p>
+                    </div>
+                  </header>
+                  <div className="grid grid-cols-1 gap-3">
                   <div>
-                    <label className="block text-[12px] text-[#374151] mb-1">Nome do template</label>
+                    <label className="block text-[12px] text-[#374151] mb-1">Nome interno do modelo</label>
                     <input
                       className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
                       placeholder="Ex: convite_evento_maio"
@@ -795,12 +887,12 @@ export function WhatsAppBatchTemplatePage() {
                       onChange={(e) => setMetaTemplateName(e.target.value)}
                     />
                     <p className="text-[11px] text-[#6B7280] mt-1">
-                      Use apenas letras minúsculas, números e underline. Esse nome identifica o modelo na Meta.
+                      Este nome identifica o modelo na Meta. Use letras minúsculas, números e underline (_).
                     </p>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[12px] text-[#374151] mb-1">Tipo de mensagem</label>
+                      <label className="block text-[12px] text-[#374151] mb-1">Finalidade da mensagem</label>
                       <select
                         className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
                         value={metaTemplateCategory}
@@ -811,7 +903,11 @@ export function WhatsAppBatchTemplatePage() {
                         <option value="AUTHENTICATION">Autenticação</option>
                       </select>
                       <p className="text-[11px] text-[#6B7280] mt-1">
-                        Marketing: divulgações e campanhas. Utilidade: confirmações e avisos. Autenticação: códigos de verificação.
+                        {metaTemplateCategory === 'MARKETING'
+                          ? 'Para convites, campanhas e divulgações.'
+                          : metaTemplateCategory === 'UTILITY'
+                            ? 'Para avisos ligados a uma solicitação ou transação existente, sem promoção.'
+                            : 'Para códigos de verificação em fluxos de autenticação.'}
                       </p>
                     </div>
                     <div>
@@ -822,21 +918,37 @@ export function WhatsAppBatchTemplatePage() {
                         value={metaTemplateLanguage}
                         onChange={(e) => setMetaTemplateLanguage(e.target.value)}
                       />
+                      <p className="text-[11px] text-[#6B7280] mt-1">
+                        Padrão recomendado: Português do Brasil (pt_BR). Mantenha esse valor se estiver em dúvida.
+                      </p>
                     </div>
                   </div>
+                  </div>
+                </section>
+
+                <section className="space-y-4 rounded-[6px] border border-emerald-600 bg-white p-4">
+                  <header className="flex items-start gap-3 border-b border-[#E2E8F0] pb-3">
+                    <span className="rounded-[4px] bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">02</span>
+                    <div>
+                      <h3 className="text-base font-bold text-emerald-700">Escreva a mensagem</h3>
+                      <p className="mt-0.5 text-xs text-[#64748B]">Adicione a mensagem e os dados que mudam para cada lead.</p>
+                    </div>
+                  </header>
+                  <div className="rounded-[6px] border border-[#BFDBFE] bg-[#EFF6FF] px-3 py-2 text-xs text-[#1E3A8A]">
+                    Este formulário cria cabeçalho de texto. Para um cabeçalho com imagem, use o WhatsApp Manager da Meta.
+                  </div>
+                  <div className="space-y-3">
                   <div>
-                    <label className="block text-[12px] text-[#374151] mb-1">Mensagem principal</label>
+                    <label className="block text-[12px] font-semibold text-[#374151] mb-1">Mensagem principal</label>
                     <textarea
                       ref={metaTemplateBodyRef}
                       className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px] min-h-[100px]"
-                      placeholder="Digite aqui o texto que será enviado ao cliente."
+                      placeholder="Exemplo: Olá, quero convidar você para conhecer nosso empreendimento."
                       value={metaTemplateBody}
                       onChange={(e) => setMetaTemplateBody(e.target.value)}
                     />
                     <p className="text-[11px] text-[#6B7280] mt-1">
-                      Use variáveis quando uma parte da mensagem mudar para cada contato, como nome, empreendimento ou corretor.
-                      Escreva as variáveis no formato {`{{1}}`}, {`{{2}}`}, {`{{3}}`}. Depois, no envio em lote, você escolherá
-                      qual coluna da planilha preencherá cada variável.
+                      Escreva a mensagem como se estivesse falando com uma pessoa. Use os botões abaixo para inserir dados variáveis.
                     </p>
                     <div className="mt-2 rounded-[10px] border border-[#DBEAFE] bg-[#EFF6FF] px-3 py-2">
                       <p className="text-[11px] font-semibold text-[#1E3A8A]">Exemplo:</p>
@@ -845,27 +957,30 @@ export function WhatsAppBatchTemplatePage() {
                       <p className="text-[11px] text-[#1D4ED8]">{`{{1}}`} pode ser a coluna Nome</p>
                       <p className="text-[11px] text-[#1D4ED8]">{`{{2}}`} pode ser a coluna Empreendimento</p>
                     </div>
+                    <p className="mt-3 text-[11px] text-[#64748B]">
+                      Clique nos dados na ordem, começando pelo número 1. O número indica a posição da informação.
+                    </p>
                     <div className="mt-2 flex flex-wrap gap-2">
                       <button
                         type="button"
                         onClick={() => insertVariableIntoBody('{{1}}')}
                         className="px-2.5 py-1 rounded-[8px] border border-[#BFDBFE] bg-white text-[#1E40AF] text-[11px] font-medium hover:bg-[#EFF6FF]"
                       >
-                        + Nome {`{{1}}`}
+                        + 1: Nome do lead
                       </button>
                       <button
                         type="button"
                         onClick={() => insertVariableIntoBody('{{2}}')}
                         className="px-2.5 py-1 rounded-[8px] border border-[#BFDBFE] bg-white text-[#1E40AF] text-[11px] font-medium hover:bg-[#EFF6FF]"
                       >
-                        + Empreendimento {`{{2}}`}
+                        + 2: Empreendimento
                       </button>
                       <button
                         type="button"
                         onClick={() => insertVariableIntoBody('{{3}}')}
                         className="px-2.5 py-1 rounded-[8px] border border-[#BFDBFE] bg-white text-[#1E40AF] text-[11px] font-medium hover:bg-[#EFF6FF]"
                       >
-                        + Corretor {`{{3}}`}
+                        + 3: Nome do corretor
                       </button>
                     </div>
                     {(variableValidation.hasSequenceGap || variableValidation.hasInvalidFormat) && (
@@ -888,7 +1003,7 @@ export function WhatsAppBatchTemplatePage() {
                           Exemplos para aprovação da Meta
                         </p>
                         <p className="text-[11px] text-[#6B7280]">
-                          Esses exemplos são enviados no campo <code>example.body_text</code> do BODY.
+                          A Meta usa estes exemplos para entender como cada variável será preenchida. Use dados fictícios.
                         </p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                           {metaTemplateVariableIds.map((id) => {
@@ -896,7 +1011,7 @@ export function WhatsAppBatchTemplatePage() {
                             return (
                               <label key={key} className="space-y-1">
                                 <span className="block text-[11px] text-[#374151]">
-                                  Variável {`{{${id}}}`}
+                                  Exemplo para o espaço {id}
                                 </span>
                                 <input
                                   className="w-full border border-[#E5E7EB] rounded-[8px] px-2.5 py-1.5 text-[12px]"
@@ -922,69 +1037,89 @@ export function WhatsAppBatchTemplatePage() {
                       </p>
                     </div>
                   </div>
-                  <div className="rounded-[10px] border border-[#E5E7EB] bg-white px-3 py-3 space-y-2">
-                    <h4 className="text-[12px] font-semibold text-[#111827]">Como usar variáveis</h4>
-                    <p className="text-[12px] text-[#4B5563]">
-                      Variáveis são espaços que serão preenchidos automaticamente com dados da planilha no momento do disparo.
-                    </p>
-                    <p className="text-[12px] text-[#111827]">Exemplo de mensagem:</p>
-                    <p className="text-[12px] text-[#4B5563]">
-                      Olá {`{{1}}`}, o empreendimento {`{{2}}`} tem uma condição especial para você.
-                    </p>
-                    <p className="text-[12px] text-[#111827]">Exemplo de preenchimento:</p>
-                    <p className="text-[12px] text-[#4B5563]">{`{{1}}`} = Nome do cliente</p>
-                    <p className="text-[12px] text-[#4B5563]">{`{{2}}`} = Nome do empreendimento</p>
-                    <p className="text-[12px] text-[#4B5563]">
-                      No disparo em lote, o sistema pedirá para você ligar cada variável a uma coluna da planilha.
-                    </p>
-                    <p className="text-[12px] font-semibold text-[#111827]">Regras importantes</p>
-                    <ul className="list-disc pl-5 text-[12px] text-[#4B5563] space-y-1">
-                      <li>Use sempre números em sequência: {`{{1}}`}, {`{{2}}`}, {`{{3}}`}.</li>
-                      <li>Não pule números. Evite usar {`{{1}}`} e {`{{3}}`} sem usar {`{{2}}`}.</li>
-                      <li>Não repita a mesma variável para informações diferentes.</li>
-                      <li>Não coloque dados reais fixos se eles mudarem por contato.</li>
-                      <li>Templates com variáveis precisam ser aprovados pela Meta antes do envio.</li>
-                    </ul>
+                  <details className="rounded-[6px] border border-[#BFDBFE] bg-[#F8FBFF] px-3 py-3">
+                    <summary className="cursor-pointer text-sm font-semibold text-[#123A73]">
+                      Como funcionam as variáveis?
+                    </summary>
+                    <div className="mt-3 space-y-2 text-[12px] text-[#4B5563]">
+                      <p>Variáveis são espaços preenchidos com dados da planilha no momento do disparo.</p>
+                      <p>Exemplo: Olá {`{{1}}`}, conheça o empreendimento {`{{2}}`}.</p>
+                      <p>{`{{1}}`} pode receber o nome do lead; {`{{2}}`} pode receber o empreendimento.</p>
+                      <ul className="list-disc space-y-1 pl-5">
+                        <li>Use números em sequência, sem pular nenhum.</li>
+                        <li>No disparo em lote, cada variável será ligada a uma coluna da planilha.</li>
+                        <li>Use exemplos fictícios para a análise da Meta.</li>
+                      </ul>
+                    </div>
+                  </details>
+                    <details className="rounded-[6px] border border-[#E2E8F0] bg-white px-3 py-3">
+                      <summary className="cursor-pointer text-sm font-semibold text-[#374151]">
+                        Personalizar apresentação (opcional)
+                      </summary>
+                      <div className="mt-3 space-y-3">
+                        <label className="block text-[12px] text-[#374151]">
+                          Título da mensagem <span className="text-[#6B7280]">(opcional, somente texto)</span>
+                          <input
+                            className="mt-1 w-full border border-[#E5E7EB] rounded-[8px] px-3 py-2 text-[13px]"
+                            placeholder="Exemplo: Convite especial"
+                            value={metaTemplateHeader}
+                            onChange={(e) => setMetaTemplateHeader(e.target.value)}
+                          />
+                        </label>
+                        <label className="block text-[12px] text-[#374151]">
+                          Texto final <span className="text-[#6B7280]">(opcional)</span>
+                          <input
+                            className="mt-1 w-full border border-[#E5E7EB] rounded-[8px] px-3 py-2 text-[13px]"
+                            placeholder="Exemplo: Equipe Quero Meu Apê"
+                            value={metaTemplateFooter}
+                            onChange={(e) => setMetaTemplateFooter(e.target.value)}
+                          />
+                        </label>
+                        <p className="text-xs text-[#64748B]">
+                          Este formulário aceita cabeçalho de texto. Para usar imagem no cabeçalho, crie o modelo no WhatsApp Manager da Meta.
+                        </p>
+                      </div>
+                    </details>
                   </div>
-                  <div>
-                    <label className="block text-[12px] text-[#374151] mb-1">Título da mensagem, opcional</label>
-                    <input
-                      className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
-                      placeholder="Ex: Convite especial"
-                      value={metaTemplateHeader}
-                      onChange={(e) => setMetaTemplateHeader(e.target.value)}
-                    />
-                    <p className="text-[11px] text-[#6B7280] mt-1">
-                      Aparece antes da mensagem principal. Aqui é aceito apenas texto.
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block text-[12px] text-[#374151] mb-1">Texto final, opcional</label>
-                    <input
-                      className="w-full border border-[#E5E7EB] rounded-[10px] px-3 py-2 text-[13px]"
-                      placeholder="Ex: Equipe Quero Meu Apê"
-                      value={metaTemplateFooter}
-                      onChange={(e) => setMetaTemplateFooter(e.target.value)}
-                    />
-                    <p className="text-[11px] text-[#6B7280] mt-1">Aparece no final da mensagem, em destaque discreto.</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleCreateMetaTemplate()}
-                    disabled={metaActionLoading}
-                    className="w-full px-4 py-2 rounded-[10px] bg-[#0EA5E9] text-white text-[13px] font-semibold hover:bg-[#0284C7] disabled:opacity-60"
-                  >
-                    {metaActionLoading ? 'Enviando...' : 'Solicitar criação do template na Meta'}
-                  </button>
-                  <p className="text-[11px] text-[#6B7280]">
-                    Após solicitar, a Meta analisará o template. Ele poderá ficar como Pendente, Aprovado ou Rejeitado.
-                  </p>
-                </div>
-              </div>
+                </section>
 
-              <div className="h-fit space-y-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[12px] p-4">
+                <details className="rounded-[6px] border-2 border-[#3B82F6] bg-[#EFF6FF] p-3 text-sm text-[#123A73]">
+                  <summary className="cursor-pointer font-semibold">Preciso de ajuda para criar o modelo</summary>
+                  <ol className="list-decimal space-y-2 pl-5 pt-3">
+                    <li>Escolha o nome, a finalidade e o idioma no bloco 01.</li>
+                    <li>Escreva a mensagem no bloco 02. Use os botões para inserir Nome, Empreendimento ou Corretor.</li>
+                    <li>Confira a prévia e preencha um exemplo fictício para cada variável.</li>
+                    <li>Envie para análise e aguarde a aprovação da Meta. Acompanhe o resultado em “Meus modelos e status”.</li>
+                  </ol>
+                  <p className="mt-3 text-xs">
+                    Criar ou aprovar um modelo não envia mensagens.
+                  </p>
+                </details>
+
+                <button
+                  type="button"
+                  onClick={() => void handleCreateMetaTemplate()}
+                  disabled={metaActionLoading}
+                  className="mx-auto flex w-full items-center justify-center gap-2 rounded-[8px] border-[3px] border-[#F97316] bg-white px-5 py-3 text-sm font-extrabold text-[#F97316] shadow-[0_3px_12px_rgba(249,115,22,0.16)] transition-colors hover:bg-[#FFF7ED] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F97316] disabled:opacity-60 sm:w-fit sm:min-w-[280px]"
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none"
+                    className="h-[18px] w-[18px]" stroke="currentColor" strokeWidth="2"
+                    strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m22 2-7 20-4-9-9-4Z" />
+                    <path d="M22 2 11 13" />
+                  </svg>
+                  {metaActionLoading ? 'Enviando para análise...' : 'Enviar modelo para aprovação'}
+                </button>
+                <p className="text-center text-xs text-[#64748B]">
+                  A solicitação não dispara mensagens. Acompanhe o status na Meta.
+                </p>
+              </div>
+              )}
+
+              {metaTemplateView === 'list' && (
+              <div id="meta-template-list-panel" role="tabpanel" aria-label="Meus modelos e status" className="h-fit space-y-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[12px] p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-[14px] font-semibold">Templates</h3>
+                  <h3 className="text-[14px] font-semibold">Meus modelos e status</h3>
                   <span className="text-[12px] text-[#6B7280]">
                     {filteredMetaTemplates.length} de {metaTemplates.length}
                   </span>
@@ -1076,6 +1211,7 @@ export function WhatsAppBatchTemplatePage() {
                   </div>
                 )}
               </div>
+              )}
             </div>
           </section>
         ) : (
@@ -1465,7 +1601,3 @@ export function WhatsAppBatchTemplatePage() {
     </div>
   );
 }
-
-
-
-

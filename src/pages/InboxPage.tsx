@@ -24,6 +24,7 @@ import {
 import { useRealtimeInbox } from '../hooks/useRealtimeInbox';
 import { useAuth } from '../contexts/AuthContext';
 import { isRealtimeClientEnabled } from '../realtime/socketClient';
+import { getInboxTab, matchesInboxTab, type InboxTab } from '../utils/inboxConversationTab';
 
 const INBOX_READ_STATE_KEY = 'inbox_read_state_v1';
 const INBOX_CONVERSATION_PANEL_COLLAPSED_KEY = 'inbox_conversation_panel_collapsed_v1';
@@ -151,6 +152,7 @@ function mapApiConversationToConversation(c: ApiConversation): Conversation {
     manualClosedByUserId: c.manualClosedByUserId ?? null,
     manualClosedReason: c.manualClosedReason ?? null,
     conversationType: c.conversationType ?? 'CLIENT',
+    isEventLead: c.isEventLead === true,
   };
 }
 
@@ -227,7 +229,7 @@ function upsertMessageList(prev: Message[], incoming: Message): Message[] {
 export function InboxPage() {
   const { sessionScope, isBrokerScoped } = useAuth();
   const [searchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState<'CLIENT' | 'INTERNO'>('CLIENT');
+  const [activeTab, setActiveTab] = useState<InboxTab>('CLIENT');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -344,9 +346,7 @@ export function InboxPage() {
     if (filters.mode === 'handoff' && conversation.handoff !== true) return false;
     if (filters.enterpriseId !== '' && conversation.projectId !== filters.enterpriseId) return false;
 
-    const conversationType = String(conversation.conversationType ?? 'CLIENT').toUpperCase();
-    if (activeTab === 'CLIENT' && conversationType !== 'CLIENT') return false;
-    if (activeTab === 'INTERNO' && conversationType !== 'ADMIN' && conversationType !== 'CORRETOR') return false;
+    if (!matchesInboxTab(conversation, activeTab)) return false;
 
     const search = searchDebounced.trim().toLowerCase();
     if (search) {
@@ -848,7 +848,7 @@ export function InboxPage() {
     return () => window.clearInterval(timerId);
   }, [isRealtimeConnected, loadConversations]);
 
-  const handleTabChange = useCallback((tab: 'CLIENT' | 'INTERNO') => {
+  const handleTabChange = useCallback((tab: InboxTab) => {
     if (tab === activeTab) return;
     conversationsRequestIdRef.current += 1;
     setConversations([]);
@@ -875,6 +875,7 @@ export function InboxPage() {
         const item = await whatsappApi.getConversation(parsedConversationId);
         if (cancelled) return;
         const mapped = mapApiConversationToConversation(item);
+        setActiveTab(getInboxTab(mapped));
         setConversations((prev) => {
           if (prev.some((c) => c.id === mapped.id)) return prev;
           return [mapped, ...prev];
@@ -1221,18 +1222,7 @@ export function InboxPage() {
       const mapped = mapApiConversationToConversation(updated);
       setConversations((prev) => {
         const next = prev.map((c) => (c.id === mapped.id ? { ...c, ...mapped } : c));
-        if (activeTab === 'CLIENT' && mapped.conversationType && mapped.conversationType !== 'CLIENT') {
-          if (selectedId === mapped.id) {
-            setSelectedId(null);
-            setMessages([]);
-            setMessagesError(null);
-          }
-          return next.filter((c) => c.id !== mapped.id);
-        }
-        if (
-          activeTab === 'INTERNO' &&
-          (!mapped.conversationType || (mapped.conversationType !== 'ADMIN' && mapped.conversationType !== 'CORRETOR'))
-        ) {
+        if (!matchesInboxTab(mapped, activeTab)) {
           if (selectedId === mapped.id) {
             setSelectedId(null);
             setMessages([]);

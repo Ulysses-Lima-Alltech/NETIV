@@ -38,6 +38,7 @@ export interface RealtimeConversationPayload {
   brokerNotificationStatus: string | null;
   brokerPushNotificationStatus: string | null;
   conversationType: string;
+  isEventLead: boolean;
   manualClosedAt: string | null;
   manualClosedByUserId: number | null;
   manualClosedReason: string | null;
@@ -86,6 +87,7 @@ interface ConversationRealtimeRow {
   broker_notification_status: string | null;
   broker_push_notification_status: string | null;
   conversation_type: string | null;
+  is_event_lead: boolean;
   manual_closed_at: Date | null;
   manual_closed_by_user_id: number | null;
   manual_closed_reason: string | null;
@@ -137,6 +139,7 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
        c.broker_notification_status,
        c.broker_push_notification_status,
        COALESCE(c.conversation_type, 'CLIENT') AS conversation_type,
+       c.is_event_lead,
        c.manual_closed_at,
        c.manual_closed_by_user_id,
        c.manual_closed_reason
@@ -190,6 +193,7 @@ async function buildConversationPayload(conversationId: number): Promise<Realtim
     brokerNotificationStatus: row.broker_notification_status ?? null,
     brokerPushNotificationStatus: row.broker_push_notification_status ?? null,
     conversationType: row.conversation_type ?? 'CLIENT',
+    isEventLead: row.is_event_lead === true,
     manualClosedAt: row.manual_closed_at?.toISOString() ?? null,
     manualClosedByUserId: row.manual_closed_by_user_id ?? null,
     manualClosedReason: row.manual_closed_reason ?? null,

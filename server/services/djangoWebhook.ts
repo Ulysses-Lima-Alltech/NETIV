@@ -5,6 +5,8 @@ import type { ConversationRow } from '../repositories/conversationRepository.js'
 import { createServiceJwt } from './jwtService.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
 import { resolveOperationalCustomerName } from '../utils/customerNameResolver.js';
+import { getPool } from '../db/pg.js';
+import type { PoolClient } from 'pg';
 
 /** Timeout por chamada (ms). Cabe folgado dentro do tick de 10s do worker. */
 const FETCH_TIMEOUT_MS = 8000;
@@ -17,6 +19,7 @@ export interface DjangoNotifyResult {
   ok: boolean;
   status?: number;
   error?: string;
+  skipped?: 'event';
 }
 
 /**
@@ -146,6 +149,10 @@ export async function notifyDjangoLead(
     contactFirstName?: string | null;
   }
 ): Promise<DjangoNotifyResult> {
+  if (conv.is_event_lead === true) {
+    console.log('[Django Webhook] lead_skip_event', { conversationId: conv.id });
+    return { ok: false, skipped: 'event' };
+  }
   if (!isClientConversation(conv)) {
     console.log('[Django Webhook] lead_skip_internal', {
       conversationId: conv.id,
@@ -153,5 +160,52 @@ export async function notifyDjangoLead(
     });
     return { ok: false };
   }
-  return notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(conv, fallbacks));
+  let client: PoolClient | null = null;
+  let lockAcquired = false;
+  let discardClient = false;
+  const lockKey = `django-lead:${conv.id}`;
+  try {
+    client = await getPool().connect();
+    // Share a per-conversation lock with event creation so a stale worker row
+    // cannot race the event tag and post after the lead is classified as an event.
+    await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [lockKey]);
+    lockAcquired = true;
+    const current = await client.query<{
+      conversation_type: string | null;
+      is_event_lead: boolean;
+    }>(
+      'SELECT conversation_type, is_event_lead FROM conversations WHERE id = $1',
+      [conv.id]
+    );
+    const currentType = current.rows[0]?.conversation_type ?? conv.conversation_type;
+    if (current.rows[0]?.is_event_lead === true) {
+      console.log('[Django Webhook] lead_skip_event', { conversationId: conv.id });
+      return { ok: false, skipped: 'event' };
+    }
+    if (!isClientConversation({ ...conv, conversation_type: currentType })) {
+      console.log('[Django Webhook] lead_skip_internal', {
+        conversationId: conv.id,
+        conversationType: currentType ?? 'CLIENT',
+      });
+      return { ok: false };
+    }
+    return await notifyDjango('api/webhook/netiv-lead/', buildLeadPayload(conv, fallbacks));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[Django Webhook] lead lock failed', { conversationId: conv.id, error: message });
+    return { ok: false, error: message.slice(0, 500) };
+  } finally {
+    if (client) {
+      try {
+        if (lockAcquired) {
+          await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [lockKey]);
+        }
+      } catch (error) {
+        discardClient = true;
+        console.error('[Django Webhook] lead lock release failed', { conversationId: conv.id, error });
+      } finally {
+        client.release(discardClient);
+      }
+    }
+  }
 }

@@ -111,6 +111,14 @@ export function ConversationListItem({
       </p>
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {conversation.isEventLead && (
+          <span
+            className="inline-flex items-center rounded-full bg-orange-100 px-2 py-[3px] text-[10px] font-medium text-orange-800"
+            title="Lead de disparo da Agenda. Não enviado ao Django."
+          >
+            Evento
+          </span>
+        )}
         {isHandoff && (
           <span className="inline-flex items-center rounded-full bg-[#fff2e8] px-2 py-[3px] text-[10px] font-medium text-[#c2410c]">
             Handoff
@@ -157,4 +165,3 @@ export function ConversationListItem({
     </div>
   );
 }
-

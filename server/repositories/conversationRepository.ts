@@ -30,6 +30,7 @@ export type { LeadOriginInput } from '../services/leadOriginResolver.js';
 export interface ConversationRow {
   id: number;
   conversation_type?: 'CLIENT' | 'CORRETOR' | 'ADMIN' | string | null;
+  is_event_lead?: boolean;
   channel: string;
   external_contact_id: string;
   contact_phone: string | null;
@@ -888,6 +889,7 @@ export interface ListConversationsFilters {
   dateReference?: 'last_message' | 'conversation_started';
   brokerId?: number;  // NOVO — filtra por assigned_broker_id
   conversationTypeFilter?: 'CLIENT' | 'INTERNO';
+  excludeEventLeads?: boolean;
   scopeConvIds?: number[];  // NOVO — filtra por whitelist de IDs de conversa (broker scope)
 }
 
@@ -962,8 +964,15 @@ export async function listConversationsWithPreview(
     conditions.push(`COALESCE(c.conversation_type, 'CLIENT') = $${paramIndex}`);
     params.push('CLIENT');
     paramIndex += 1;
+    conditions.push('c.is_event_lead = FALSE');
   } else if (filters?.conversationTypeFilter === 'INTERNO') {
-    conditions.push(`COALESCE(c.conversation_type, 'CLIENT') IN ('ADMIN', 'CORRETOR')`);
+    conditions.push(
+      `(COALESCE(c.conversation_type, 'CLIENT') IN ('ADMIN', 'CORRETOR') OR c.is_event_lead = TRUE)`
+    );
+  }
+
+  if (filters?.excludeEventLeads) {
+    conditions.push('c.is_event_lead = FALSE');
   }
 
   // ── Scope filtering (broker portfolio) ──
@@ -1756,5 +1765,4 @@ export async function reopenConversationManual(conversationId: number): Promise<
   );
   return rows[0] ?? null;
 }
-
 
