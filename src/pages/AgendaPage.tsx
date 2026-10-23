@@ -1,5 +1,6 @@
 ﻿import { useCallback, useEffect, useState } from 'react';
 import { AppNav } from '../components/AppNav';
+import { DispatchEventsSection } from '../components/DispatchEventsSection';
 import { appointmentsApi, projectsApi, corretoresApi } from '../api/client';
 import type { Appointment, AssignAppointmentResult } from '../api/client';
 
@@ -101,20 +102,6 @@ export function AgendaPage() {
   };
   const closeAssignModal = () => setAssignModalAppointment(null);
 
-  const handleAssignConfirm = () => {
-    if (!assignModalAppointment || assignBrokerId === '') return;
-    setAssigning(true);
-    setAssignErr(null);
-    appointmentsApi
-      .assignPending(assignModalAppointment.id, assignBrokerId as number)
-      .then(() => {
-        loadAppointments();
-        closeAssignModal();
-      })
-      .catch((e) => setAssignErr(e instanceof Error ? e.message : 'Erro ao atribuir'))
-      .finally(() => setAssigning(false));
-  };
-
   const openNew = () => {
     const today = formatDateForInput(new Date());
     setCustomerName('');
@@ -128,6 +115,20 @@ export function AgendaPage() {
     setNotes('');
     setErr(null);
     setModalOpen(true);
+  };
+
+  const handleAssignConfirm = () => {
+    if (!assignModalAppointment || assignBrokerId === '') return;
+    setAssigning(true);
+    setAssignErr(null);
+    appointmentsApi
+      .assignPending(assignModalAppointment.id, assignBrokerId as number)
+      .then(() => {
+        loadAppointments();
+        closeAssignModal();
+      })
+      .catch((e) => setAssignErr(e instanceof Error ? e.message : 'Erro ao atribuir'))
+      .finally(() => setAssigning(false));
   };
 
   const closeModal = () => setModalOpen(false);
@@ -213,6 +214,8 @@ export function AgendaPage() {
     NO_SHOW: 'No-show',
   };
 
+  const showManualAppointmentEntry = false;
+
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
       <header className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
@@ -223,11 +226,17 @@ export function AgendaPage() {
       </header>
 
       <div className="w-full max-w-none px-6 lg:px-8 py-8">
-        <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
-          <p className="text-[13px] text-[#6B7280]">Agendamentos com distribuição automática para corretores.</p>
-          <button type="button" onClick={openNew} className={btnPrimary}>
-            Novo agendamento
-          </button>
+        {showManualAppointmentEntry && (
+          <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
+            <p className="text-[13px] text-[#6B7280]">Agendamentos com distribuição automática para corretores.</p>
+            <button type="button" onClick={openNew} className={btnPrimary}>
+              Novo agendamento
+            </button>
+          </div>
+        )}
+
+        <div className="mb-6">
+          <DispatchEventsSection />
         </div>
 
         <div className={`${card} mb-6`}>
@@ -295,9 +304,7 @@ export function AgendaPage() {
             </div>
           ) : appointments.length === 0 ? (
             <div className="py-12 text-center">
-              <p className="text-[15px] font-medium text-[#111827] mb-1">Nenhum agendamento</p>
-              <p className="text-[13px] text-[#6B7280] mb-4">Clique em &quot;Novo agendamento&quot; para começar.</p>
-              <button type="button" onClick={openNew} className={btnPrimary}>Novo agendamento</button>
+              <p className="text-[15px] font-medium text-[#111827]">Nenhum agendamento de visita encontrado.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -482,6 +489,3 @@ export function AgendaPage() {
     </div>
   );
 }
-
-
-

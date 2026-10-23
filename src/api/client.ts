@@ -242,6 +242,7 @@ export interface ConversationListItem {
   manualClosedByUserId?: number | null;
   manualClosedReason?: string | null;
   conversationType?: 'CLIENT' | 'INTERNO' | string;
+  isEventLead?: boolean;
 }
 
 /** Corpo parcial para PATCH de classificação + segmentação Carteira. */
@@ -1407,6 +1408,29 @@ export const whatsappBatchApi = {
     }>(`/whatsapp-batch/templates/${encodeURIComponent(templateName)}/header-image?language=${encodeURIComponent(language)}`, {
       method: 'DELETE',
     }),
+};
+
+export interface DispatchEvent {
+  id: string;
+  name: string;
+  enterpriseId: number | null;
+  enterpriseName: string | null;
+  templateKey: string;
+  status: string;
+  sendMode: 'NOW' | 'SCHEDULED';
+  postSendMode: 'ANA' | 'HANDOFF';
+  scheduledAt: string;
+  createdAt: string;
+  error: string | null;
+  total: number;
+  accepted: number;
+  failed: number;
+}
+
+export const dispatchEventsApi = {
+  list: () => request<{ events: DispatchEvent[] }>('/dispatch-events'),
+  create: (form: FormData) =>
+    requestFormData<{ event: DispatchEvent }>('/dispatch-events', form),
 };
 
 // Knowledge API

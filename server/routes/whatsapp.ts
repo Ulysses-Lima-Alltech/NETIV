@@ -171,6 +171,7 @@ function mapConversationWithPreviewRow(r: ConversationWithPreview) {
     brokerNotificationStatus: isHandoff ? brokerNotificationStatusRaw : null,
     brokerPushNotificationStatus: isHandoff ? brokerPushNotificationStatusRaw : null,
     conversationType: (r as { conversation_type?: string | null }).conversation_type ?? 'CLIENT',
+    isEventLead: r.is_event_lead === true,
     manualClosedAt: (r as { manual_closed_at?: Date | null }).manual_closed_at?.toISOString() ?? null,
     manualClosedByUserId: (r as { manual_closed_by_user_id?: number | null }).manual_closed_by_user_id ?? null,
     manualClosedReason: (r as { manual_closed_reason?: string | null }).manual_closed_reason ?? null,
@@ -1135,4 +1136,3 @@ router.get('/conversations/:convId/messages/:msgId/attachment', async (req, res)
 });
 
 export default router;
-

@@ -18,7 +18,10 @@ import {
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+});
 const imageUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
@@ -132,7 +135,15 @@ router.post('/suggestions', (req, res) => {
 /**
  * Upload multipart: apenas leitura da planilha + sugestões de colunas (sem mapping completo).
  */
-router.post('/parse', upload.single('file'), async (req, res) => {
+router.post('/parse', (req, res, next) => {
+  upload.single('file')(req, res, (error: unknown) => {
+    if (error instanceof multer.MulterError) {
+      return res.status(413).json({ success: false, error: 'A planilha deve ter até 10 MB.' });
+    }
+    if (error) return res.status(400).json({ success: false, error: 'Não foi possível receber a planilha.' });
+    return next();
+  });
+}, async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Arquivo é obrigatório' });

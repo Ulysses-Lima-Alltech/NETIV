@@ -21,6 +21,7 @@ import dashboardRouter from './dashboard.js';
 import contactsRouter from './contacts.js';
 import apiDjangoRouter from './apiDjango.js';
 import whatsappBatchRouter from './whatsappBatch.js';
+import dispatchEventsRouter from './dispatchEvents.js';
 import knowledgeRouter from './knowledge.js';
 import realtimeRouter from './realtime.js';
 import { requireAuth, requirePasswordChangeComplete, requireRole } from '../middleware/auth.js';
@@ -60,6 +61,7 @@ router.use('/corretores', corretoresRouter);
 router.use('/appointments', appointmentsRouter);
 router.use('/contacts', contactsRouter);
 router.use('/whatsapp-batch', requireRole(...ROLES_SETTINGS_ADMIN), whatsappBatchRouter);
+router.use('/dispatch-events', requireRole(...ROLES_SETTINGS_ADMIN), dispatchEventsRouter);
 router.use('/knowledge', requireRole(...ROLES_SETTINGS_ADMIN), knowledgeRouter);
 
 export default router;
