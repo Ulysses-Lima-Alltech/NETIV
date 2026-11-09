@@ -2,15 +2,13 @@ export {
   ANA_EMERGENCY_HANDOFF_ENV,
   isAnaEmergencyHandoffEnabled,
 } from './anaAutomationKillSwitch.js';
+import { ANA_EMERGENCY_HANDOFF_MESSAGE } from '../constants/anaMessages.js';
 import {
   isAnaAutomationDisabled,
   isAnaOutboundDisabled,
 } from './anaAutomationKillSwitch.js';
 
-export const ANA_EMERGENCY_HANDOFF_MESSAGE =
-  'Ol\u00e1! Obrigada pelo seu contato e pelo interesse.\n\n' +
-  'No momento, seu atendimento ser\u00e1 direcionado para um corretor. Em breve, ' +
-  'um especialista entrar\u00e1 em contato para passar mais informa\u00e7\u00f5es e te ajudar da melhor forma.';
+export { ANA_EMERGENCY_HANDOFF_MESSAGE } from '../constants/anaMessages.js';
 
 export interface AnaEmergencyHandoffSendResult {
   success: boolean;

@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { END } from '@langchain/langgraph';
 import {
+  routeAfterUnclassifiedLeadTriage,
   routeAfterReplyOrHandoff,
   routeAfterFinalizeReply,
   routeAfterDecisionPolicyWithExplicitHandoff,
 } from '../services/anaGraph/graph.js';
 import { humanHandoffNode } from '../services/anaGraph/nodes/humanHandoff.js';
 import type { AnaGraphState } from '../services/anaGraph/state.js';
+
+test('triage de lead encerra o grafo apos responder, sem reenvio pelo sendWhatsapp', () => {
+  assert.equal(routeAfterUnclassifiedLeadTriage({ unclassifiedLeadTurnHandled: true } as AnaGraphState), END);
+  assert.equal(routeAfterUnclassifiedLeadTriage({ unclassifiedLeadTurnHandled: false } as AnaGraphState), 'loadTurnContext');
+});
 
 function baseState(overrides: Partial<AnaGraphState> = {}): AnaGraphState {
   return {

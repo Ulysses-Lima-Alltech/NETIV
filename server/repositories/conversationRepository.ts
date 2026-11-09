@@ -6,7 +6,11 @@ import { notifyDjangoLead } from '../services/djangoWebhook.js';
 import { logAutoHandoffBlocked } from '../utils/autoHandoffPolicy.js';
 import type { LeadOriginInput } from '../services/leadOriginResolver.js';
 import { resolveEnterpriseFromLeadSource } from '../services/leadOriginResolver.js';
-import { parseCommercialFlowState, type CommercialFlowState } from '../utils/commercialFlowState.js';
+import {
+  parseCommercialFlowState,
+  type CommercialFlowState,
+  type UnclassifiedLeadTriageState,
+} from '../utils/commercialFlowState.js';
 import { normalizePhoneE164 } from '../utils/phone.js';
 import { INBOX_DATE_TIME_ZONE } from '../utils/inboxDateFilter.js';
 import {
@@ -1579,6 +1583,35 @@ export async function mergeConversationCommercialFlowState(
   );
 }
 
+export async function setConversationUnclassifiedLeadTriageState(
+  conversationId: number,
+  state: UnclassifiedLeadTriageState | null
+): Promise<boolean> {
+  const { rowCount } = await query(
+    state
+      ? `UPDATE conversations
+           SET commercial_flow_state = jsonb_set(
+                 COALESCE(commercial_flow_state, '{}'::jsonb),
+                 '{unclassifiedLeadTriage}',
+                 $1::jsonb,
+                 true
+               ),
+               updated_at = NOW()
+         WHERE id = $2
+           AND COALESCE(handoff, false) = false
+           AND lower(trim(COALESCE(classification, ''))) <> 'handoff'`
+      : `UPDATE conversations
+           SET commercial_flow_state =
+                 COALESCE(commercial_flow_state, '{}'::jsonb) - 'unclassifiedLeadTriage',
+               updated_at = NOW()
+         WHERE id = $1
+           AND COALESCE(handoff, false) = false
+           AND lower(trim(COALESCE(classification, ''))) <> 'handoff'`,
+    state ? [JSON.stringify(state), conversationId] : [conversationId]
+  );
+  return (rowCount ?? 0) > 0;
+}
+
 /**
  * Após confirmação de agendamento: agenda handoff para 5 minutos (permite reagendar sem ir para humano na hora).
  */
@@ -1765,4 +1798,3 @@ export async function reopenConversationManual(conversationId: number): Promise<
   );
   return rows[0] ?? null;
 }
-

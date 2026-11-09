@@ -30,6 +30,10 @@ export const AnaGraphStateAnnotation = Annotation.Root({
     reducer: (_current, update) => update,
     default: () => null,
   }),
+  pipelineToken: Annotation<number | null>({
+    reducer: (_current, update) => update,
+    default: () => null,
+  }),
   phoneNumberId: Annotation<string | null>({
     reducer: (_current, update) => update,
     default: () => null,
@@ -118,6 +122,10 @@ export const AnaGraphStateAnnotation = Annotation.Root({
    * de localização/corretor sem relação nenhuma com o agendamento).
    */
   replyIsDeterministic: Annotation<boolean>({
+    reducer: (_current, update) => update,
+    default: () => false,
+  }),
+  unclassifiedLeadTurnHandled: Annotation<boolean>({
     reducer: (_current, update) => update,
     default: () => false,
   }),

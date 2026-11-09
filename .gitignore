@@ -76,3 +76,8 @@ ssm-portforward.json
 
 # Local Ana/Qwen temporary scripts
 server/tmp-test-*.ts
+
+# anaGraph harness/validation reports (contain real customer PII)
+anagraph-harness-report-*.json
+anagraph-review-*.md
+anagraph-resumo-validacao.md

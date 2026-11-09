@@ -35,6 +35,8 @@ import {
 import { finalizeReplyNode, type FinalizeReplyNodeParams } from './nodes/finalizeReply.js';
 import { sendWhatsappNode, type SendWhatsappTextFn } from './nodes/sendWhatsapp.js';
 import { persistStateNode, type PersistCommercialFlowStateFn } from './nodes/persistState.js';
+import { unclassifiedLeadTriageNode } from './nodes/unclassifiedLeadTriage.js';
+import type { UnclassifiedLeadTriageState } from '../../utils/commercialFlowState.js';
 
 /**
  * Dependências que hoje só existem como lógica embutida em
@@ -60,11 +62,20 @@ export interface AnaGraphRuntimeDeps {
   persistAppointment?: PersistAppointmentFn;
   sendMaterial: SendMaterialFn;
   sendEmergencyHandoffText: SendEmergencyHandoffTextFn;
+  sendUnclassifiedLeadReply: SendWhatsappTextFn;
   insertAssistantMessage: InsertAssistantMessageFn;
   assignBroker?: AssignBrokerFn;
   updateHandoffClassification?: UpdateHandoffClassificationFn;
   sendWhatsappText?: SendWhatsappTextFn;
   persistCommercialFlowState?: PersistCommercialFlowStateFn;
+  assignTriageEnterprise: (
+    conversation: ConversationRow,
+    enterpriseId: number
+  ) => Promise<ConversationRow | null>;
+  persistTriageState: (
+    conversationId: number,
+    state: UnclassifiedLeadTriageState | null
+  ) => Promise<boolean>;
 }
 
 /**
@@ -85,6 +96,12 @@ export function routeAfterFinalizeReply(state: AnaGraphState): 'sendWhatsapp' | 
 /** Ver aiAvailabilityGateNode: quando bloqueado (bloqueio emergencial/IA desativada/API key ausente), desvia pra aiBlockedReply em vez do fluxo normal de classificação/LLM. */
 export function routeAfterAiAvailabilityGate(state: AnaGraphState): 'aiBlockedReply' | 'classifyLeadTurn' {
   return state.aiBlocked ? 'aiBlockedReply' : 'classifyLeadTurn';
+}
+
+export function routeAfterUnclassifiedLeadTriage(
+  state: AnaGraphState
+): typeof END | 'loadTurnContext' {
+  return state.unclassifiedLeadTurnHandled ? END : 'loadTurnContext';
 }
 
 /**
@@ -116,6 +133,14 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
       const conversation = await loadConversationOrThrow(state.conversationId);
       return resolveEnterpriseNode(state, conversation);
     })
+    .addNode('unclassifiedLeadTriage', (state) =>
+      unclassifiedLeadTriageNode(state, {
+        sendReply: deps.sendUnclassifiedLeadReply,
+        insertAssistantMessage: deps.insertAssistantMessage,
+        assignEnterprise: deps.assignTriageEnterprise,
+        persistState: deps.persistTriageState,
+      })
+    )
     .addNode('aiAvailabilityGate', (state) => aiAvailabilityGateNode(state))
     .addNode('aiBlockedReply', (state) =>
       aiBlockedReplyNode(state, {
@@ -284,7 +309,11 @@ export function buildAnaGraph(deps: AnaGraphRuntimeDeps) {
       resolveEnterprise: 'resolveEnterprise',
       [END]: END,
     })
-    .addEdge('resolveEnterprise', 'loadTurnContext')
+    .addEdge('resolveEnterprise', 'unclassifiedLeadTriage')
+    .addConditionalEdges('unclassifiedLeadTriage', routeAfterUnclassifiedLeadTriage, {
+      END,
+      loadTurnContext: 'loadTurnContext',
+    })
     .addEdge('loadTurnContext', 'aiAvailabilityGate')
     .addConditionalEdges('aiAvailabilityGate', routeAfterAiAvailabilityGate, {
       aiBlockedReply: 'aiBlockedReply',

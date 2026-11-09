@@ -102,6 +102,7 @@ import {
   maxLeadTemperature,
   incrementAnaCustomerNameMentions,
   mergeConversationCommercialFlowState,
+  setConversationUnclassifiedLeadTriageState,
   mergeConfirmedCustomerNameIfEmpty,
   markAnaAskedForCustomerName,
   setConversationPendingResolutionState,
@@ -152,6 +153,7 @@ import {
 import { getCorretorById } from '../repositories/corretorRepository.js';
 import { loadRankedKnowledgeChunksForPromptWithMeta } from '../repositories/enterpriseKnowledgeChunkRepository.js';
 import { isPipelineStale } from './conversationPipelineToken.js';
+import { runUnclassifiedLeadTriage } from './anaUnclassifiedLeadTriageService.js';
 import {
   generateChatCompletion,
   type ChatMessage,
@@ -3453,7 +3455,6 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
     if (anaTurnAuditOutcome !== 'silent' && anaTurnAuditOutcome !== 'blocked') return false;
     if (assistantReplyAttemptedOrSent) return false;
     if (silentExitContext.hardBlockReason != null) return false;
-    const safeReply = ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY;
     console.log('[ANA_GLOBAL_NO_ENTERPRISE_FINAL_SAFE_REPLY]', {
       conversationId,
       channel: silentExitContext.channel,
@@ -3463,21 +3464,38 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
       enterpriseId: silentExitContext.enterpriseId,
       reason: reason ?? 'unknown_silent_exit',
     });
-    assistantReplyAttemptedOrSent = true;
-    const safeSend = await sendAnaOutboundMessages({
+    const triageResult = await runUnclassifiedLeadTriage({
       conversationId,
-      toPhoneNumber,
-      text: safeReply,
-      phase: 'ana_global_no_enterprise_final_safe_reply',
-      replyPipelineToken,
+      userMessage: trimmed,
+      deps: {
+        source: 'ana_inbound_engine',
+        assignEnterprise: (conversation, enterpriseId) =>
+          setConversationEnterpriseId(conversation.id, enterpriseId),
+        persistState: setConversationUnclassifiedLeadTriageState,
+        sendReply: async (_conversation, text) => {
+          assistantReplyAttemptedOrSent = true;
+          if (isPipelineStale(conversationId, replyPipelineToken)) return false;
+          const result = await sendAnaOutboundMessages({
+            conversationId,
+            toPhoneNumber,
+            text,
+            phase: 'ana_unclassified_lead_final_safe_reply',
+            replyPipelineToken,
+          });
+          return result.success && result.metaMessageIds.length > 0;
+        },
+      },
     });
-    if (!safeSend.success || safeSend.metaMessageIds.length === 0) {
+    if (triageResult.kind === 'skipped') return false;
+    if (triageResult.kind === 'failed') {
+      assistantReplyAttemptedOrSent = true;
       anaTurnAuditOutcome = 'send_failed';
-      anaTurnAuditBlockedReason = 'global_no_enterprise_final_safe_reply_send_failed';
+      anaTurnAuditBlockedReason = triageResult.reason;
       anaTurnDiagnostics.finalResponse.replySource = 'global_no_enterprise_safe_reply';
       anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
       return false;
     }
+    if (triageResult.kind === 'resolved') return true;
     anaTurnAuditOutcome = 'sent';
     anaTurnAuditBlockedReason = null;
     anaTurnDiagnostics.finalResponse.replySource = 'global_no_enterprise_safe_reply';
@@ -3486,15 +3504,14 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
     anaTurnAuditGuardsApplied.globalNoEnterpriseFinalSafeReply = {
       sent: true,
       originalReason: reason ?? 'unknown_silent_exit',
-      reply: safeReply,
+      reply: triageResult.text,
     };
     console.log('[ANA_GLOBAL_NO_ENTERPRISE_FINAL_SAFE_REPLY_SENT]', {
       conversationId,
       reason: reason ?? 'unknown_silent_exit',
       globalNoEnterpriseMode: silentExitContext.globalNoEnterpriseMode,
       activeWhatsAppNoEnterprise: silentExitContext.activeWhatsAppNoEnterprise,
-      outboundMetaMessageId: safeSend.metaMessageIds[safeSend.metaMessageIds.length - 1] ?? null,
-      replyLen: safeReply.length,
+      replyLen: triageResult.text.length,
     });
     return true;
   };
@@ -4029,6 +4046,63 @@ async function handleIncomingMessageCore(ctx: IncomingMessageContext): Promise<v
       enterpriseId: effectiveConv.enterprise_id ?? null,
       activeWhatsAppNoEnterprise: activeWhatsAppNoEnterpriseForTurn,
     });
+
+    if (activeWhatsAppNoEnterpriseForTurn) {
+      const triageResult = await runUnclassifiedLeadTriage({
+        conversationId,
+        userMessage: trimmed,
+        deps: {
+          source: 'ana_inbound_engine',
+          assignEnterprise: (conversation, enterpriseId) =>
+            setConversationEnterpriseId(conversation.id, enterpriseId),
+          persistState: setConversationUnclassifiedLeadTriageState,
+          sendReply: async (_conversation, text) => {
+            assistantReplyAttemptedOrSent = true;
+            if (isPipelineStale(conversationId, replyPipelineToken)) return false;
+            const result = await sendAnaOutboundMessages({
+              conversationId,
+              toPhoneNumber,
+              text,
+              phase: 'ana_unclassified_lead_triage',
+              replyPipelineToken,
+            });
+            return result.success && result.metaMessageIds.length > 0;
+          },
+        },
+      });
+
+      if (triageResult.kind === 'replied') {
+        anaTurnAuditOutcome = 'sent';
+        anaTurnAuditBlockedReason = null;
+        anaTurnAuditLlmStatus = 'skipped';
+        anaTurnDiagnostics.finalResponse.replySource = 'unclassified_lead_triage';
+        anaTurnDiagnostics.finalResponse.handoffUsed = false;
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        console.log('[ANA_UNCLASSIFIED_TRIAGE_REPLY_SENT]', {
+          conversationId,
+          replyLen: triageResult.text.length,
+          statePersisted: triageResult.statePersisted,
+        });
+        return;
+      }
+      if (triageResult.kind === 'failed') {
+        assistantReplyAttemptedOrSent = true;
+        anaTurnAuditOutcome = 'send_failed';
+        anaTurnAuditBlockedReason = triageResult.reason;
+        anaTurnAuditLlmStatus = 'skipped';
+        anaTurnDiagnostics.finalResponse.replySource = 'unclassified_lead_triage';
+        anaTurnDiagnostics.finalResponse.handoffUsed = false;
+        anaTurnDiagnostics.finalResponse.outboundStatus = anaTurnAuditOutcome;
+        return;
+      }
+      if (triageResult.kind === 'resolved') {
+        effectiveConv = triageResult.conversation;
+        conv = triageResult.conversation;
+        flowStateParsed = parseCommercialFlowState(triageResult.conversation.commercial_flow_state) ?? flowStateParsed;
+        anaLatestConversationForSilentExit = triageResult.conversation;
+        activeWhatsAppNoEnterpriseForTurn = false;
+      }
+    }
 
     const pendingContinuationTurn = await tryHandlePendingAssistantContinuation({
       conversationId,
@@ -13861,4 +13935,3 @@ console.log('[ANA_QWEN_GUARDRAIL_DECISION]', {
     }
   }
 }
-

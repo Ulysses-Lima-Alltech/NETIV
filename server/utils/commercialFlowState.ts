@@ -40,6 +40,13 @@ export type LeadQualificationPurpose = 'moradia' | 'investimento' | 'construcao'
 export type LeadQualificationProductFit = 'loteamento' | 'casa' | 'apartamento' | 'indefinido';
 export type LeadQualificationPurchaseIntent = 'MORAR' | 'INVESTIR';
 
+export interface UnclassifiedLeadTriageState {
+  stage: 'awaiting_city' | 'awaiting_enterprise';
+  cityKey: string | null;
+  offeredEnterpriseIds: number[];
+  pageOffset?: number;
+}
+
 export interface LeadQualificationState {
   name: string | null;
   nameAsked: boolean;
@@ -82,6 +89,7 @@ export interface CommercialFlowState {
   purchaseIntentUpdatedAt?: string;
   /** Se a ultima resposta da Ana perguntou explicitamente morar x investir. */
   lastAssistantAskedPurchaseIntent?: boolean;
+  unclassifiedLeadTriage?: UnclassifiedLeadTriageState | null;
   updatedAt?: string;
   /** Marca último reset de escopo comercial (saída de foco / catálogo). */
   clearedAt?: string;
@@ -187,6 +195,7 @@ export function resetCommercialScopeHints(prev: CommercialFlowState | null): Com
   delete next.productTypeHint;
   delete next.stage;
   delete next.pending_action;
+  delete next.unclassifiedLeadTriage;
   delete next.pending_material_type;
   delete next.pending_enterprise_id;
   delete next.last_requested_material_type;

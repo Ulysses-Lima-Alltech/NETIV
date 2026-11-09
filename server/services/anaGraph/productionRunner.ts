@@ -11,6 +11,7 @@ export interface RunAnaGraphProductionParams {
   userMessage: string;
   metaMessageId: string | null;
   phoneNumberId: string | null;
+  pipelineToken?: number;
 }
 
 /**
@@ -50,6 +51,7 @@ export async function runAnaGraphProduction(
         userMessage: params.userMessage,
         metaMessageId: params.metaMessageId,
         phoneNumberId: params.phoneNumberId,
+        pipelineToken: params.pipelineToken ?? null,
       },
       { configurable: { thread_id: String(params.conversationId) } }
     );
