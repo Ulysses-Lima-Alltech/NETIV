@@ -9,7 +9,12 @@ import { loadRankedKnowledgeChunksForPromptWithMeta } from '../../repositories/e
 import { sendAnaLocalMediaToWhatsAppWithQuota } from '../anaOutboundQuotaService.js';
 import { sendTextMessage } from '../whatsappMetaService.js';
 import { insertMessage } from '../../repositories/messageRepository.js';
-import type { ConversationRow } from '../../repositories/conversationRepository.js';
+import {
+  setConversationEnterpriseId,
+  setConversationUnclassifiedLeadTriageState,
+  type ConversationRow,
+} from '../../repositories/conversationRepository.js';
+import { sendAnaTextMessageWithQuota } from '../anaOutboundQuotaService.js';
 
 /**
  * Deps de produção real do anaGraph — usadas quando o grafo novo responde
@@ -105,8 +110,12 @@ export function buildProductionDeps(): AnaGraphRuntimeDeps {
     },
 
     sendEmergencyHandoffText: sendTextMessage,
+    sendUnclassifiedLeadReply: sendAnaTextMessageWithQuota,
 
     insertAssistantMessage: async (conversationId, text, metaMessageId) =>
       insertMessage(conversationId, 'assistant', text, metaMessageId),
+    assignTriageEnterprise: (conversation, enterpriseId) =>
+      setConversationEnterpriseId(conversation.id, enterpriseId),
+    persistTriageState: setConversationUnclassifiedLeadTriageState,
   };
 }

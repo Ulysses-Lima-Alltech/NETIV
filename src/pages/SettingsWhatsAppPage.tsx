@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AppNav } from '../components/AppNav';
+import { UnclassifiedLeadMessageCard } from '../components/UnclassifiedLeadMessageCard';
 import {
   settingsApi,
   type ApiGlobalSettingsPublic,
@@ -735,7 +736,7 @@ export function SettingsWhatsAppPage() {
       <header className="sticky top-0 z-10 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
         <div className="w-full max-w-none flex items-center gap-4 px-6 lg:px-8 h-14">
           <AppNav />
-          <h1 className="text-[15px] font-semibold text-[#111827]">Configurações</h1>
+          <h1 className="text-[15px] font-semibold text-[#111827]">CONFIGURAÇÕES</h1>
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
@@ -1537,6 +1538,7 @@ export function SettingsWhatsAppPage() {
           </div>
         )}
 
+        <UnclassifiedLeadMessageCard />
         <div className="h-10" />
       </main>
     </div>

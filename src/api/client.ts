@@ -456,6 +456,37 @@ export interface OpenAiCostSettingsUpdate {
   enabled?: boolean;
 }
 
+export interface UnclassifiedLeadSettings {
+  initialMessage: string | null;
+  followUpMessage: string | null;
+  defaultMessage: string;
+}
+
+export interface UnclassifiedLeadFollowupTemplate {
+  key: string;
+  name: string;
+  languageCode: string;
+  body: string;
+}
+
+export interface UnclassifiedLeadFollowupPreview {
+  previewFingerprint: string;
+  total: number;
+  serviceTextCount: number;
+  marketingTemplateCount: number;
+  followUpMessageConfigured: boolean;
+  requiresMarketingTemplate: boolean;
+  serviceTextPreview: string | null;
+  marketingTemplateBody: string;
+  leads: Array<{
+    conversationId: number;
+    customerName: string | null;
+    phoneMasked: string;
+    lastUserMessageAt: string;
+    deliveryType: 'SERVICE_TEXT' | 'MARKETING_TEMPLATE';
+  }>;
+}
+
 export const settingsApi = {
   getWhatsApp: () => request<WhatsAppConfigPublic>('/settings/integrations/whatsapp'),
   putWhatsApp: (body: WhatsAppConfigUpdate) =>
@@ -468,6 +499,44 @@ export const settingsApi = {
   getApiGlobal: () => request<ApiGlobalSettingsPublic>('/settings/api/global'),
   putApiGlobal: (body: ApiGlobalSettingsUpdate) =>
     request<ApiGlobalSettingsPublic>('/settings/api/global', { method: 'PUT', body }),
+  getUnclassifiedLeads: () =>
+    request<UnclassifiedLeadSettings>('/settings/unclassified-leads'),
+  putUnclassifiedLeads: (body: {
+    initialMessage: string | null;
+    followUpMessage?: string | null;
+  }) =>
+    request<UnclassifiedLeadSettings>('/settings/unclassified-leads', {
+      method: 'PUT',
+      body,
+    }),
+  getUnclassifiedLeadFollowupTemplates: () =>
+    request<{ templates: UnclassifiedLeadFollowupTemplate[] }>(
+      '/settings/unclassified-leads/follow-up/templates'
+    ),
+  previewUnclassifiedLeadFollowup: (templateKey: string) =>
+    request<UnclassifiedLeadFollowupPreview>('/settings/unclassified-leads/follow-up/preview', {
+      method: 'POST',
+      body: { templateKey },
+    }),
+  sendUnclassifiedLeadFollowup: (body: {
+    requestId: string;
+    templateKey: string;
+    previewFingerprint: string;
+    confirmed: true;
+    consentConfirmed: true;
+  }) =>
+    request<{
+      campaignId: number;
+      status: 'SENDING' | 'COMPLETED' | 'PARTIAL_FAILED';
+      total: number;
+      sent: number;
+      failed: number;
+      skipped: number;
+      alreadyProcessed?: boolean;
+    }>('/settings/unclassified-leads/follow-up/send', {
+      method: 'POST',
+      body,
+    }),
   getApiEnterprises: () =>
     request<{
       enterprises: EnterpriseApiSettingsItem[];

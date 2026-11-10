@@ -57,7 +57,7 @@ function enterprise(id: number, name: string, slug: string): EnterpriseRow {
 }
 
 const SAFE_DISCOVERY_REPLY =
-  'Claro, posso te ajudar. Você busca apartamento ou loteamento? Tem algum empreendimento ou região em mente?';
+  'Claro, posso te ajudar. Qual empreendimento, região ou tipo de imóvel você procura?';
 
 test('conversation Novo sem enterprise e baixa confianca usa config global, LLM e envio normal', () => {
   const lowConfidenceSettings = globalAiSettings();

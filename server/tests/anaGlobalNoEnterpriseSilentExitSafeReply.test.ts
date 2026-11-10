@@ -2,22 +2,22 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const source = readFileSync(new URL('../services/conversationEngine.js', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
 
 test('globalNoEnterpriseMode bloqueia saida silenciosa com safe discovery reply', () => {
   assert.match(
     source,
-    /const ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY =\s*['"]Claro, posso te ajudar\. Voc/
+    /const ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY =\s*['"]Claro, posso te ajudar\. Qual empreendimento/
   );
   assert.match(source, /let anaGlobalNoEnterpriseModeForTurn = false/);
   assert.match(source, /let activeWhatsAppNoEnterpriseForTurn = false/);
   assert.match(source, /let assistantReplyAttemptedOrSent = false/);
   assert.match(source, /let anaLatestConversationForSilentExit/);
   assert.match(source, /anaGlobalNoEnterpriseModeForTurn = globalNoEnterpriseMode/);
-  assert.match(source, /const sendGlobalNoEnterpriseFinalSafeReply = async \(reason\)/);
+  assert.match(source, /const sendGlobalNoEnterpriseFinalSafeReply = async \(reason: string \| null\)/);
   assert.match(source, /activeWhatsAppNoEnterprise/);
   assert.match(source, /channel === 'whatsapp'/);
-  assert.match(source, /phase: 'ana_global_no_enterprise_final_safe_reply'/);
+  assert.match(source, /phase: 'ana_unclassified_lead_final_safe_reply'/);
   assert.match(source, /\[ANA_GLOBAL_NO_ENTERPRISE_FINAL_SAFE_REPLY\]/);
   assert.match(
     source,
@@ -25,18 +25,16 @@ test('globalNoEnterpriseMode bloqueia saida silenciosa com safe discovery reply'
   );
 });
 
-test('safe reply usa envio central sem ativar handoff ou setar empreendimento', () => {
+test('fallback final reutiliza a triagem configuravel sem criar handoff', () => {
   const helperStart = source.indexOf('const sendGlobalNoEnterpriseFinalSafeReply = async');
   const helperEnd = source.indexOf('const selectTurnDecision', helperStart);
   const helperSource = source.slice(helperStart, helperEnd);
 
-  assert.match(helperSource, /sendAnaOutboundMessages\(\{/);
+  assert.match(helperSource, /runUnclassifiedLeadTriage\(\{/);
   assert.match(helperSource, /anaTurnAuditOutcome = 'sent'/);
   assert.match(helperSource, /anaTurnDiagnostics\.finalResponse\.handoffUsed = false/);
-  assert.doesNotMatch(helperSource, /setConversationEnterpriseId/);
-  assert.doesNotMatch(helperSource, /enterprise_id\s*=/);
-  assert.doesNotMatch(helperSource, /classification = 'Handoff'/);
-  assert.doesNotMatch(helperSource, /handoff = true/);
+  assert.doesNotMatch(helperSource, /updateClassification\(/);
+  assert.doesNotMatch(helperSource, /assignConversationToNextBroker\(/);
   assert.doesNotMatch(helperSource, /Evora/);
 });
 
@@ -63,7 +61,7 @@ test('conversa WhatsApp ativa sem enterprise tem safe reply mesmo antes da flag 
 
   assert.match(contextSource, /enterpriseId == null/);
   assert.match(contextSource, /!handoff/);
-  assert.match(contextSource, /classification !== 'Handoff'/);
+  assert.match(contextSource, /normalizeAnaHandoffClassification\(classification\) !== 'handoff'/);
   assert.match(contextSource, /classification !== 'Carteira'/);
   assert.match(contextSource, /!manualClosedAt/);
   assert.match(contextSource, /activeWhatsAppNoEnterprise/);
@@ -72,12 +70,12 @@ test('conversa WhatsApp ativa sem enterprise tem safe reply mesmo antes da flag 
 test('conversa 15298: WhatsApp Novo sem enterprise dispara safe reply no finally', () => {
   assert.match(
     source,
-    /activeWhatsAppNoEnterpriseForTurn =\s*String\(effectiveConv\.channel \?\? ''\)[\s\S]*effectiveConv\.enterprise_id == null[\s\S]*effectiveConv\.classification !== 'Handoff'[\s\S]*effectiveConv\.classification !== 'Carteira'[\s\S]*effectiveConv\.manual_closed_at == null/
+    /activeWhatsAppNoEnterpriseForTurn =\s*String\(effectiveConv\.channel \?\? ''\)[\s\S]*effectiveConv\.enterprise_id == null[\s\S]*!isAnaAutomationBlockedByHandoff\(effectiveConv\)[\s\S]*effectiveConv\.classification !== 'Carteira'[\s\S]*effectiveConv\.manual_closed_at == null/
   );
   assert.match(source, /\[ANA_ACTIVE_WHATSAPP_NO_ENTERPRISE_GUARD\]/);
   assert.match(
     source,
     /console\.log\('\[ANA_GLOBAL_NO_ENTERPRISE_FINAL_SAFE_REPLY\]'[\s\S]*channel: silentExitContext\.channel[\s\S]*classification: silentExitContext\.classification[\s\S]*enterpriseId: silentExitContext\.enterpriseId[\s\S]*reason: reason \?\? 'unknown_silent_exit'/
   );
-  assert.match(source, /assistantReplyAttemptedOrSent = true;[\s\S]*sendAnaOutboundMessages\(\{[\s\S]*phase: 'ana_global_no_enterprise_final_safe_reply'/);
+  assert.match(source, /assistantReplyAttemptedOrSent = true;[\s\S]*sendAnaOutboundMessages\(\{[\s\S]*phase: 'ana_unclassified_lead_final_safe_reply'/);
 });

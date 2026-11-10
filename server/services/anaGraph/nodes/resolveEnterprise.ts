@@ -5,6 +5,7 @@ import {
   listEnterpriseAliasRowsForActiveEnterprises,
   resolveEnterpriseFromMessageAliases,
 } from '../../../repositories/enterpriseMatch.js';
+import { isTriageCityAnswer } from '../../../utils/anaUnclassifiedLeadTriage.js';
 import type { AnaGraphState } from '../state.js';
 
 /**
@@ -20,6 +21,7 @@ export async function resolveAnaEnterpriseForTurn(params: {
 }): Promise<ConversationRow> {
   const phoneNumberId = String(params.phoneNumberId ?? '').trim() || null;
   const activeEnterprises = await listEnterprises(true);
+  if (isTriageCityAnswer(params.userMessage, activeEnterprises)) return params.conversation;
   const aliasRows =
     activeEnterprises.length > 0
       ? await listEnterpriseAliasRowsForActiveEnterprises(activeEnterprises.map((item) => item.id))

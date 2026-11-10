@@ -2,51 +2,43 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const source = readFileSync(new URL('../services/conversationEngine.js', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../services/conversationEngine.ts', import.meta.url), 'utf8');
+const triageService = readFileSync(
+  new URL('../services/anaUnclassifiedLeadTriageService.ts', import.meta.url),
+  'utf8'
+);
 
-test('WhatsApp ativo sem enterprise tenta LLM global antes do airbag final', () => {
+test('triagem deterministica intercepta leads ativos sem empreendimento antes da descoberta por LLM', () => {
   const guardIndex = source.indexOf("console.log('[ANA_ACTIVE_WHATSAPP_NO_ENTERPRISE_GUARD]'");
-  const llmStartIndex = source.indexOf("console.log('[ANA_NO_ENTERPRISE_GLOBAL_LLM_START]'");
-  const enterpriseResolutionIndex = source.indexOf('let enterpriseResolution = await resolveEnterpriseForAnaTurn');
+  const triageIndex = source.indexOf('const triageResult = await runUnclassifiedLeadTriage', guardIndex);
+  const pendingContinuationIndex = source.indexOf('const pendingContinuationTurn =', triageIndex);
+  const globalLlmIndex = source.indexOf("console.log('[ANA_NO_ENTERPRISE_GLOBAL_LLM_START]'");
 
   assert.notEqual(guardIndex, -1);
-  assert.notEqual(llmStartIndex, -1);
-  assert.notEqual(enterpriseResolutionIndex, -1);
-  assert.ok(guardIndex < llmStartIndex);
-  assert.ok(llmStartIndex < enterpriseResolutionIndex);
-  assert.match(source, /if \(activeWhatsAppNoEnterpriseForTurn\) \{/);
-  assert.match(source, /const globalAiSettings = await resolveAiSettingsForEnterprise\(null\)/);
-  assert.match(source, /const globalResult = await generateChatCompletion\(\{/);
-  assert.match(source, /requestType: 'ana_no_enterprise_global_llm'/);
-  assert.match(source, /\[ANA_NO_ENTERPRISE_GLOBAL_LLM_REPLY\]/);
+  assert.notEqual(triageIndex, -1);
+  assert.notEqual(pendingContinuationIndex, -1);
+  assert.notEqual(globalLlmIndex, -1);
+  assert.ok(guardIndex < triageIndex);
+  assert.ok(triageIndex < pendingContinuationIndex);
+  assert.match(source.slice(triageIndex, pendingContinuationIndex), /phase: 'ana_unclassified_lead_triage'/);
+  assert.match(source.slice(triageIndex, pendingContinuationIndex), /triageResult\.kind === 'replied'[\s\S]*return;/);
+  assert.match(source.slice(triageIndex, pendingContinuationIndex), /triageResult\.kind === 'resolved'/);
 });
 
-test('pergunta de portfolio usa contexto seguro e nao associa empreendimento', () => {
-  const pathStart = source.indexOf('if (activeWhatsAppNoEnterpriseForTurn) {');
-  const pathEnd = source.indexOf('const linkedContact =', pathStart);
-  const pathSource = source.slice(pathStart, pathEnd);
-
-  assert.match(pathSource, /Portfolio ativo seguro/);
-  assert.match(pathSource, /enterprise\.name/);
-  assert.match(pathSource, /enterprise\.tipo/);
-  assert.match(pathSource, /enterprise\.city/);
-  assert.match(pathSource, /nao fixe interesse sem escolha do cliente/);
-  assert.match(pathSource, /Nao assuma empreendimento especifico/);
-  assert.match(pathSource, /Se o cliente perguntar quais opcoes voces tem/);
-  assert.doesNotMatch(pathSource, /setConversationEnterpriseId/);
-  assert.doesNotMatch(pathSource, /classification = 'Handoff'/);
-  assert.doesNotMatch(pathSource, /handoff = true/);
+test('triagem respeita a resolução por empreendimento e não transforma cidade em handoff', () => {
+  assert.match(triageService, /resolveEnterpriseForAnaTurn/);
+  assert.match(triageService, /isTriageCityAnswer/);
+  assert.match(triageService, /assignEnterprise/);
+  assert.doesNotMatch(triageService, /updateClassification\(/);
+  assert.doesNotMatch(triageService, /assignConversationToNextBroker\(/);
+  assert.doesNotMatch(triageService, /handoff\s*:\s*true/);
 });
 
-test('LLM global envia resposta propria e safe discovery fica so como fallback', () => {
-  const pathStart = source.indexOf('if (activeWhatsAppNoEnterpriseForTurn) {');
-  const pathEnd = source.indexOf('const linkedContact =', pathStart);
-  const pathSource = source.slice(pathStart, pathEnd);
-
-  assert.match(pathSource, /assistantReplyAttemptedOrSent = true;[\s\S]*sendAnaOutboundMessages\(\{[\s\S]*phase: 'ana_no_enterprise_global_llm'/);
-  assert.match(pathSource, /anaTurnDiagnostics\.finalResponse\.replySource = 'global_no_enterprise_llm'/);
-  assert.match(pathSource, /global_no_enterprise_llm_failed/);
-  assert.match(pathSource, /global_no_enterprise_llm_empty/);
-  assert.doesNotMatch(pathSource, /ANA_GLOBAL_NO_ENTERPRISE_SAFE_DISCOVERY_REPLY/);
+test('resposta já tentada não cai em um segundo envio global no finally', () => {
+  const triageIndex = source.indexOf('const triageResult = await runUnclassifiedLeadTriage');
+  const triageEnd = source.indexOf('const pendingContinuationTurn =', triageIndex);
+  const triageSource = source.slice(triageIndex, triageEnd);
+  assert.match(triageSource, /assistantReplyAttemptedOrSent = true/);
+  assert.match(triageSource, /triageResult\.kind === 'failed'[\s\S]*return;/);
+  assert.match(source, /!assistantReplyAttemptedOrSent[\s\S]*sendGlobalNoEnterpriseFinalSafeReply/);
 });
-

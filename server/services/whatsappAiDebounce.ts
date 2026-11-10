@@ -112,6 +112,7 @@ async function flushSingleMessage(
         userMessage: merged,
         metaMessageId: effectiveMetaMessageId,
         phoneNumberId: null,
+        pipelineToken,
       });
       if (graphResult.handled) {
         return;

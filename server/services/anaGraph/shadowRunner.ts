@@ -97,6 +97,14 @@ export function buildShadowDeps(runId: string): AnaGraphRuntimeDeps {
       console.log(SHADOW_TAG, 'sendEmergencyHandoffText_skipped', { runId });
       return { success: false, error: 'shadow_mode_skipped' };
     },
+    sendUnclassifiedLeadReply: async ({ conversationId, text }) => {
+      console.log(SHADOW_TAG, 'unclassifiedLeadReply_skipped', {
+        runId,
+        conversationId,
+        textLength: text.length,
+      });
+      return { success: true, metaMessageId: `shadow-${runId}` };
+    },
     insertAssistantMessage: async () => {
       console.log(SHADOW_TAG, 'insertAssistantMessage_skipped', { runId });
       return null;
@@ -115,6 +123,22 @@ export function buildShadowDeps(runId: string): AnaGraphRuntimeDeps {
     },
     persistCommercialFlowState: async () => {
       console.log(SHADOW_TAG, 'persistCommercialFlowState_skipped', { runId });
+    },
+    assignTriageEnterprise: async (conversation, enterpriseId) => {
+      console.log(SHADOW_TAG, 'assignTriageEnterprise_skipped', {
+        runId,
+        conversationId: conversation.id,
+        enterpriseId,
+      });
+      return { ...conversation, enterprise_id: enterpriseId };
+    },
+    persistTriageState: async (conversationId, state) => {
+      console.log(SHADOW_TAG, 'persistTriageState_skipped', {
+        runId,
+        conversationId,
+        hasState: state != null,
+      });
+      return true;
     },
   };
 }

@@ -44,6 +44,7 @@ export async function automationGateNode(state: AnaGraphState): Promise<Partial<
     automationBlockedByHandoff: blocked,
     handoffBlockedReason: blocked ? 'HANDOFF_BLOCKS_ANA_AUTOMATION' : null,
     assistantReplyText: null,
+    unclassifiedLeadTurnHandled: false,
     // Mesmo motivo do reset de assistantReplyText acima: sem isso, um turno
     // que não passa por visitScheduling herdaria replyIsDeterministic:true
     // do último turno que passou, e finalizeReplyNode puraria o pipeline de
